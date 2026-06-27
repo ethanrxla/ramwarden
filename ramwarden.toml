@@ -1,0 +1,72 @@
+[thresholds]
+ram_percent = 65          # Heuristic (no API) triggers above this %
+critical_percent = 72     # Claude API triggers above this % (debounced)
+inactivity_minutes = 45   # Tab must be inactive this long to qualify
+debounce_minutes = 120    # Only auto-trigger once every 2 hours maximum
+
+[server]
+host = "0.0.0.0"   # accepts connections from Tailscale devices
+port = 7823
+
+[processes]
+# Cursor removed: it uses lockfiles, so SIGSTOP blocks new launches with "another instance running".
+# Add only background apps that don't hold lockfiles or IPC sockets (Discord, Slack, etc.).
+watchlist = [
+  "Discord",
+  "BurpSuiteCommunity",
+  "burpsuite",
+]
+
+# API key is read from the ANTHROPIC_API_KEY environment variable.
+# Do NOT put your key here — this file is tracked by git.
+# [api]
+# key = "sk-ant-..."
+
+# db_path = "/home/you/.local/share/ramwarden/history.db"
+
+# Workspace sorting rules — applied when "Sort Workspaces" is triggered.
+# Workspace indices are 0-based (0 = first desktop, 1 = second, etc.)
+# match_type: "class" (WM_CLASS, more reliable) or "title" (window title)
+# Workspace 2 — terminals
+# Note: cosmic-term runs natively on COSMIC Wayland and is NOT visible to wmctrl.
+# These rules apply to XWayland terminal emulators (gnome-terminal, tilix, alacritty).
+# cosmic-term workspace management requires COSMIC compositor support (not yet available via CLI).
+[[workspaces.rules]]
+match = "cosmic-term"
+match_type = "class"
+workspace = 2
+
+[[workspaces.rules]]
+match = "gnome-terminal"
+match_type = "class"
+workspace = 2
+
+[[workspaces.rules]]
+match = "tilix"
+match_type = "class"
+workspace = 2
+
+[[workspaces.rules]]
+match = "alacritty"
+match_type = "class"
+workspace = 2
+
+[[workspaces.rules]]
+match = "brave-browser"
+match_type = "class"
+workspace = 0
+
+[[workspaces.rules]]
+match = "firefox"
+match_type = "class"
+workspace = 0
+
+[[workspaces.rules]]
+match = "cursor"
+match_type = "class"
+workspace = 2
+
+[[workspaces.rules]]
+match = "code"
+match_type = "class"
+workspace = 2

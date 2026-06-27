@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Secrets — never commit real keys
+secrets.toml
+.secrets
+
+# Runtime / user data
+*.db
+*.db-journal
+*.log
+
+# OS
+.DS_Store
