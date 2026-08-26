@@ -60,8 +60,11 @@ RULES — read carefully:
    - When in doubt, keep the tab and note it in the summary.
 
 3. Process suspension:
-   - ONLY suspend from the provided watchlist.
-   - NEVER suspend: already-stopped processes, security tools (BurpSuite, ZAP, Wireshark), or dev servers.
+   - ONLY name processes from the RECLAIMABLE list below. It is already filtered by
+     the watchlist and by live activity signals — anything absent from it will be
+     refused by the daemon regardless of what you say, so naming it wastes the turn.
+   - The PROTECTED list explains what is off-limits and why. Do not argue with it.
+   - Prefer suspending nothing over suspending something the user is mid-way through.
 
 4. Idle terminals:
    - idle_terminals_to_close: ONLY PIDs with zero child processes.
@@ -74,6 +77,27 @@ RULES — read carefully:
 {"tabs_to_close":[],"processes_to_suspend":[],"idle_terminals_to_close":[],"workspaces_to_sort":false,"estimated_ram_freed_mb":0,"summary":"<one sentence>"}"""
 
 
+# Constrains the reply to exactly the shape below. Without this the model is free
+# to answer in prose — which it does when the tab list prompts a comment — and the
+# analysis falls back to heuristics for a reason that has nothing to do with RAM.
+RECOMMENDATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tabs_to_close": {"type": "array", "items": {"type": "integer"}},
+        "processes_to_suspend": {"type": "array", "items": {"type": "string"}},
+        "idle_terminals_to_close": {"type": "array", "items": {"type": "integer"}},
+        "workspaces_to_sort": {"type": "boolean"},
+        "estimated_ram_freed_mb": {"type": "number"},
+        "summary": {"type": "string"},
+    },
+    "required": [
+        "tabs_to_close", "processes_to_suspend", "idle_terminals_to_close",
+        "workspaces_to_sort", "estimated_ram_freed_mb", "summary",
+    ],
+    "additionalProperties": False,
+}
+
+
 @dataclass
 class Recommendation:
     tabs_to_close: list[int] = field(default_factory=list)
@@ -83,6 +107,36 @@ class Recommendation:
     estimated_ram_freed_mb: float = 0.0
     summary: str = ""
     tier: str = "none"  # "none" | "heuristic" | "claude"
+
+
+def _activity_section() -> tuple[str, set[str]]:
+    """
+    Render the live activity picture for the prompt, and return the set of process
+    names that are actually reclaimable so the reply can be clamped to it.
+    """
+    from .activity import get_detector
+
+    det = get_detector()
+    if not det.snapshot():
+        return "(activity detector still warming up — suspend nothing)", set()
+
+    cfg = config.get()
+    reclaimable = det.reclaimable(cfg.watchlist)
+    allowed = {s.name for s in reclaimable}
+
+    protected = [
+        s for s in sorted(det.snapshot().values(), key=lambda s: s.rss_mb, reverse=True)
+        if s.verdict == "PROTECTED" and s.rss_mb >= 100
+    ][:12]
+
+    lines = ["PROTECTED — never suggest these:"]
+    lines += [f"  - {s.name} ({s.rss_mb:.0f} MB): {s.reasons[0]}" for s in protected] or ["  none"]
+    lines.append("")
+    lines.append("RECLAIMABLE — the only names you may put in processes_to_suspend:")
+    lines += [
+        f"  - {s.name} ({s.rss_mb:.0f} MB): {'; '.join(s.reasons)}" for s in reclaimable
+    ] or ["  none — suspend nothing this round"]
+    return "\n".join(lines), allowed
 
 
 def analyze(
@@ -176,6 +230,33 @@ def _heuristic_fallback(snap: RAMSnapshot, tabs: list[dict], threshold_min: int,
     )
 
 
+def _extract_json(raw: str) -> dict:
+    """
+    Pull the JSON object out of a model reply.
+
+    The prompt asks for bare JSON, but a reply occasionally arrives wrapped in a
+    markdown fence or with a sentence in front of it. Rather than special-casing
+    each wrapper, take the outermost brace pair — that is the object regardless of
+    what surrounds it.
+    """
+    text = raw.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    log.warning("Could not parse a JSON object from the reply: %.400r", text)
+    raise ValueError("no JSON object in model reply")
+
+
 def _claude_analyze(snap: RAMSnapshot, tabs: list[dict], cfg, terminals=None, workspace_layout=None, goal_context: str = "") -> Recommendation:
     proc_summary = "\n".join(
         f"  - {p.name}: {p.rss_mb:.0f} MB [status: {p.status}]" for p in snap.processes[:10]
@@ -195,6 +276,8 @@ def _claude_analyze(snap: RAMSnapshot, tabs: list[dict], cfg, terminals=None, wo
         )
         term_summary = "\n".join(lines) or "  none found"
 
+    activity_summary, allowed_names = _activity_section()
+
     ws_summary = "(not collected)"
     if workspace_layout is not None:
         ws_summary = f"{workspace_layout.n_workspaces} workspaces, {len(workspace_layout.windows)} windows"
@@ -211,7 +294,8 @@ Inactivity threshold: {cfg.thresholds.inactivity_minutes} min
 Top processes:
 {proc_summary}
 
-Watchlist (suspendable): {', '.join(cfg.watchlist)}
+What the user is actually using right now:
+{activity_summary}
 
 Browser tabs:
 {tab_summary}
@@ -226,29 +310,31 @@ Return your JSON recommendation."""
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=512,
+        max_tokens=1024,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
+        output_config={"format": {"type": "json_schema", "schema": RECOMMENDATION_SCHEMA}},
     )
 
-    if not message.content:
-        raise ValueError("Claude returned empty content")
-    raw = message.content[0].text.strip()
+    raw = next(
+        (b.text for b in message.content if getattr(b, "type", None) == "text"), ""
+    ).strip()
     if not raw:
-        raise ValueError("Claude returned empty text")
+        raise ValueError(f"no text in reply (stop_reason={message.stop_reason})")
 
-    # Strip markdown fences
-    if "```" in raw:
-        for part in raw.split("```"):
-            c = part.strip().lstrip("json").strip()
-            if c.startswith("{"):
-                raw = c
-                break
+    data = _extract_json(raw)
 
-    data = json.loads(raw)
+    # Clamp suspensions to what the activity gate would actually allow. The daemon
+    # enforces this again before signalling, but dropping it here keeps the UI from
+    # promising the user something that will then be refused.
+    suggested = data.get("processes_to_suspend", []) or []
+    approved = [n for n in suggested if n in allowed_names]
+    for rejected in set(suggested) - set(approved):
+        log.warning("Ignoring suggested suspend %r — not in the reclaimable set", rejected)
+
     return Recommendation(
         tabs_to_close=data.get("tabs_to_close", []),
-        processes_to_suspend=data.get("processes_to_suspend", []),
+        processes_to_suspend=approved,
         idle_terminals_to_close=data.get("idle_terminals_to_close", []),
         workspaces_to_sort=bool(data.get("workspaces_to_sort", False)),
         estimated_ram_freed_mb=data.get("estimated_ram_freed_mb", 0.0),
