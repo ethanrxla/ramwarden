@@ -95,7 +95,9 @@ class Monitor:
 
     def _tick(self):
         from .process_profiler import tick as profiler_tick
-        profiler_tick()  # always sample — builds CPU history
+        from .activity import tick as activity_tick
+        profiler_tick()   # always sample — builds CPU history
+        activity_tick()   # always sample — builds the "what is in use" picture
 
         cfg = config.get()
         snap = snapshot()

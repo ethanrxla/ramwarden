@@ -9,9 +9,28 @@ from . import config
 log = logging.getLogger("ramwarden.process_manager")
 
 
+class SuspendRefused(Exception):
+    """Raised when a suspend is blocked by the watchlist or an activity signal."""
+
+
 class ProcessManager:
-    def suspend(self, name_pattern: str) -> list[int]:
-        """Send SIGSTOP to all processes matching name_pattern. Skips already-stopped. Returns suspended PIDs."""
+    def suspend(self, name_pattern: str, force: bool = False) -> list[int]:
+        """
+        Send SIGSTOP to all processes matching name_pattern.
+
+        Every suspend goes through the activity gate first: the target must be on
+        the configured watchlist and must not be structurally protected (VM,
+        container runtime, compositor, agent, system service) or visibly in use.
+        The gate is what stops a hallucinated or fat-fingered name from freezing a
+        4 GB virtual machine. `force=True` skips only the watchlist and in-use
+        checks — structural protection is never bypassable.
+        """
+        allowed, why = self._gate(name_pattern, force=force)
+        if not allowed:
+            log.warning("Refusing to suspend %s — %s", name_pattern, why)
+            raise SuspendRefused(why)
+        log.info("Suspend allowed for %s — %s", name_pattern, why)
+
         pids = self._find(name_pattern)
         suspended = []
         for pid in pids:
@@ -58,6 +77,30 @@ class ProcessManager:
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                 log.warning("Could not kill PID %d: %s", pid, e)
         return killed
+
+    @staticmethod
+    def _gate(name_pattern: str, force: bool = False) -> tuple[bool, str]:
+        """Consult the activity detector. Fails closed if it has no data yet."""
+        from .activity import get_detector
+
+        det = get_detector()
+        if not det.warm:
+            # Fewer than two samples: no CPU deltas exist yet, so nothing can be
+            # honestly called idle. Refuse rather than guess.
+            return False, "activity detector is still warming up — try again in ~20s"
+        if not det.snapshot():
+            # No samples yet (daemon just started). Refuse rather than guess.
+            return False, "activity detector has no samples yet — try again in a few seconds"
+
+        if force:
+            structural = [
+                s for s in det.match(name_pattern) if s.protection == "structural"
+            ]
+            if structural:
+                return False, f"{name_pattern}: {structural[0].reasons[0]} (not forceable)"
+            return True, f"forced by user for {name_pattern}"
+
+        return det.may_suspend(name_pattern, config.get().watchlist)
 
     def _find(self, name_pattern: str) -> list[int]:
         pids = []
