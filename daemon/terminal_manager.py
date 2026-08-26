@@ -7,6 +7,7 @@ NEVER be auto-closed; the user must close those manually.
 """
 import logging
 import os
+import signal
 from dataclasses import dataclass, field
 
 import psutil
@@ -107,20 +108,49 @@ def idle_terminal_summary(terminals: list[TerminalInfo]) -> str:
     return "; ".join(parts) if parts else "no interactive terminals found"
 
 
-def close_idle_terminals(terminals: list[TerminalInfo]) -> list[int]:
+def close_idle_terminals(terminals: list[TerminalInfo], timeout: float = 2.0) -> list[int]:
     """
-    Send SIGTERM to idle shells only. Returns list of PIDs acted on.
-    Never touches shells that have children.
+    Close idle shells and return the PIDs that actually exited.
+
+    An interactive bash ignores SIGTERM — it is a session leader with a controlling
+    terminal, so the signal is discarded and the shell carries on. The old version
+    sent SIGTERM, appended the PID, and reported success, which meant RamWarden
+    claimed to close the same six shells on every run while all six stayed alive.
+
+    SIGHUP is what a closing terminal actually sends and what a shell acts on. We
+    send that, wait for the process to go, and escalate to SIGKILL only if it does
+    not. Nothing is reported closed until the process is confirmed gone.
     """
-    closed = []
+    targets = []
     for t in terminals:
         if not t.is_idle:
             continue
         try:
             proc = psutil.Process(t.pid)
-            proc.terminate()
-            closed.append(t.pid)
-            log.info("Closed idle terminal shell PID %d (%s)", t.pid, t.shell_name)
+            proc.send_signal(signal.SIGHUP)
+            targets.append((t, proc))
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            log.warning("Could not close PID %d: %s", t.pid, e)
-    return closed
+            log.warning("Could not signal PID %d: %s", t.pid, e)
+
+    if not targets:
+        return []
+
+    gone, alive = psutil.wait_procs([p for _, p in targets], timeout=timeout)
+
+    for proc in alive:
+        try:
+            proc.kill()
+            log.info("PID %d ignored SIGHUP — escalating to SIGKILL", proc.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            log.warning("Could not kill PID %d: %s", proc.pid, e)
+    if alive:
+        killed, still_alive = psutil.wait_procs(alive, timeout=timeout)
+        gone.extend(killed)
+        for proc in still_alive:
+            log.warning("PID %d survived SIGKILL — not reporting it closed", proc.pid)
+
+    closed = {p.pid for p in gone}
+    for t, _ in targets:
+        if t.pid in closed:
+            log.info("Closed idle terminal shell PID %d (%s)", t.pid, t.shell_name)
+    return [t.pid for t, _ in targets if t.pid in closed]

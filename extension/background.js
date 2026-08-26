@@ -120,20 +120,58 @@ chrome.tabs.query({}, (allTabs) => {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
+// The live tab list is the source of truth; tabActivity only supplies "when was
+// this last touched". Building the report from the stored map alone let entries
+// from previous browser sessions survive forever — onRemoved never fired for them,
+// so the daemon kept being handed IDs of tabs that no longer existed, and every
+// close aimed at ghosts.
 function buildTabReport(activity) {
-  const now = Date.now();
-  return Object.entries(activity)
-    .map(([id, d]) => ({
-      id: parseInt(id),
-      url: d.url,
-      title: d.title,
-      lastActiveMs: d.lastActiveMs,
-      inactiveMinutes: Math.round((now - d.lastActiveMs) / 60000),
-      incognito: d.incognito || false,
-    }))
-    .filter(t => !isProtected(t.url));
+  return new Promise((resolve) => {
+    chrome.tabs.query({}, (liveTabs) => {
+      if (chrome.runtime.lastError) {
+        console.warn("[RamWarden] tabs.query failed:", chrome.runtime.lastError.message);
+        resolve([]);
+        return;
+      }
+
+      const now = Date.now();
+      const liveIds = new Set(liveTabs.map(t => t.id));
+
+      let pruned = 0;
+      for (const id of Object.keys(activity)) {
+        if (!liveIds.has(parseInt(id))) {
+          delete activity[id];
+          pruned++;
+        }
+      }
+      if (pruned) {
+        console.log(`[RamWarden] pruned ${pruned} stale tab entr${pruned === 1 ? "y" : "ies"}`);
+        chrome.storage.local.set({ tabActivity: activity });
+        tabActivity = activity;
+      }
+
+      const report = [];
+      for (const tab of liveTabs) {
+        if (isProtected(tab.url)) continue;
+        const known = activity[tab.id];
+        const lastActiveMs = known?.lastActiveMs ?? tab.lastAccessed ?? now;
+        report.push({
+          id: tab.id,
+          url: tab.url || "",
+          title: tab.title || tab.url || "",
+          lastActiveMs,
+          inactiveMinutes: Math.round((now - lastActiveMs) / 60000),
+          incognito: tab.incognito || false,
+        });
+      }
+      resolve(report);
+    });
+  });
 }
 
+// chrome.tabs.remove() fails the WHOLE batch if any single ID is invalid, and its
+// callback fires either way. Ignoring lastError meant a batch that closed nothing
+// still reported every ID as closed. Confirm only what actually went away.
 function closeTabs(tabIds) {
   if (!tabIds?.length) return;
   const safeIds = tabIds.filter(id => {
@@ -141,13 +179,48 @@ function closeTabs(tabIds) {
     return entry && !isProtected(entry.url);
   });
   if (!safeIds.length) return;
+
   chrome.tabs.remove(safeIds, () => {
-    if (IS_FIREFOX) {
-      _poll();
-    } else {
-      _send({ action: "tabs_closed", tabIds: safeIds });
+    if (!chrome.runtime.lastError) {
+      _confirmClosed(safeIds);
+      return;
     }
+    console.warn("[RamWarden] batch close failed:", chrome.runtime.lastError.message,
+                 "— retrying individually");
+    _closeOneByOne(safeIds);
   });
+}
+
+// Remove tabs one at a time so a single dead ID cannot block the rest, and collect
+// the ones that genuinely closed.
+function _closeOneByOne(ids) {
+  const closed = [];
+  let remaining = ids.length;
+
+  for (const id of ids) {
+    chrome.tabs.remove(id, () => {
+      if (chrome.runtime.lastError) {
+        // Already gone — drop it from tracking so it stops being re-reported.
+        delete tabActivity[id];
+      } else {
+        closed.push(id);
+      }
+      if (--remaining === 0) {
+        persistActivity();
+        _confirmClosed(closed);
+      }
+    });
+  }
+}
+
+function _confirmClosed(ids) {
+  for (const id of ids) delete tabActivity[id];
+  persistActivity();
+  if (IS_FIREFOX) {
+    _poll();
+  } else {
+    _send({ action: "tabs_closed", tabIds: ids });
+  }
 }
 
 function _badge(connected) {
@@ -190,7 +263,7 @@ async function _poll() {
   }
 
   const activity = localData.tabActivity || {};
-  const tabs = buildTabReport(activity);
+  const tabs = await buildTabReport(activity);
   console.log(`[RamWarden] poll → ${tabs.length} tabs to report (activity keys: ${Object.keys(activity).length})`);
 
   try {
@@ -255,10 +328,10 @@ function _connect() {
   ws.onerror = () => { ws.close(); };
 }
 
-function _sendTabReport() {
-  chrome.storage.local.get("tabActivity", (r) => {
-    _send({ action: "tab_report", tabs: buildTabReport(r.tabActivity || {}) });
-  });
+async function _sendTabReport() {
+  const r = await new Promise(res => chrome.storage.local.get("tabActivity", res));
+  const tabs = await buildTabReport(r.tabActivity || {});
+  _send({ action: "tab_report", tabs });
 }
 
 function _send(obj) {

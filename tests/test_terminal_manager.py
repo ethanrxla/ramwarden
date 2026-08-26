@@ -3,6 +3,7 @@ TDD for terminal_manager — ensure only session-leader shells are closed,
 not Docker/script subshells that inherit a terminal from their parent.
 """
 import os
+import signal
 import unittest.mock as mock
 from unittest.mock import MagicMock, patch
 import pytest
@@ -105,25 +106,70 @@ def test_busy_shell_has_children():
     assert result[0].is_idle is False
 
 
+def _signal_capture():
+    """Patch psutil.Process so we can see which signals reach which PID."""
+    signalled: dict[int, list] = {}
+
+    def make_mock(pid):
+        m = MagicMock()
+        m.pid = pid
+        m.send_signal.side_effect = lambda sig: signalled.setdefault(pid, []).append(sig)
+        m.kill.side_effect = lambda: signalled.setdefault(pid, []).append("KILL")
+        return m
+
+    return signalled, make_mock
+
+
 def test_close_idle_terminals_skips_busy():
+    """Only idle shells are signalled; a shell with children is never touched."""
     idle = TerminalInfo(pid=3000, shell_name="bash", is_idle=True)
     busy = TerminalInfo(pid=3001, shell_name="bash", is_idle=False, child_processes=["vim"])
 
-    killed = []
-    def mock_terminate(self_):
-        killed.append(self_.pid)
+    signalled, make_mock = _signal_capture()
+    with patch("psutil.Process", side_effect=make_mock), \
+         patch("psutil.wait_procs", side_effect=lambda procs, timeout=None: (list(procs), [])):
+        closed = close_idle_terminals([idle, busy])
 
-    with patch("psutil.Process") as MockProc:
-        def make_mock(pid):
-            m = MagicMock()
-            m.pid = pid
-            m.terminate.side_effect = lambda: killed.append(pid)
-            return m
-        MockProc.side_effect = make_mock
-        close_idle_terminals([idle, busy])
+    assert signal.SIGHUP in signalled.get(3000, []), "Idle shell must be sent SIGHUP"
+    assert 3001 not in signalled, "Busy shell must NOT be signalled"
+    assert closed == [3000]
 
-    assert 3000 in killed, "Idle shell must be terminated"
-    assert 3001 not in killed, "Busy shell must NOT be terminated"
+
+def test_interactive_shell_ignoring_sighup_is_escalated():
+    """
+    An interactive bash discards SIGTERM and may ignore SIGHUP. If it survives, it
+    must be killed — and only reported closed once it is actually gone.
+    """
+    idle = TerminalInfo(pid=3100, shell_name="bash", is_idle=True)
+    signalled, make_mock = _signal_capture()
+
+    calls = []
+
+    def fake_wait(procs, timeout=None):
+        calls.append(list(procs))
+        if len(calls) == 1:
+            return [], list(procs)      # survived SIGHUP
+        return list(procs), []          # died after SIGKILL
+
+    with patch("psutil.Process", side_effect=make_mock), \
+         patch("psutil.wait_procs", side_effect=fake_wait):
+        closed = close_idle_terminals([idle])
+
+    assert signal.SIGHUP in signalled[3100]
+    assert "KILL" in signalled[3100], "A surviving shell must be escalated"
+    assert closed == [3100]
+
+
+def test_shell_that_survives_is_not_reported_closed():
+    """The bug this guards: reporting a still-running shell as closed."""
+    idle = TerminalInfo(pid=3200, shell_name="bash", is_idle=True)
+    _, make_mock = _signal_capture()
+
+    with patch("psutil.Process", side_effect=make_mock), \
+         patch("psutil.wait_procs", side_effect=lambda procs, timeout=None: ([], list(procs))):
+        closed = close_idle_terminals([idle])
+
+    assert closed == [], "A shell that never exited must not be counted as closed"
 
 
 # ── 3. No terminal → excluded ─────────────────────────────────────────────────
