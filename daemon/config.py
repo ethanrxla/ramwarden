@@ -52,6 +52,16 @@ def load(path: str | Path | None = None) -> Config:
     if path and Path(path).exists():
         with open(path, "rb") as f:
             raw = tomllib.load(f)
+        # Load secrets.toml from the same directory (gitignored override)
+        secrets_path = Path(path).parent / "secrets.toml"
+        if secrets_path.exists():
+            with open(secrets_path, "rb") as f:
+                secrets = tomllib.load(f)
+            for k, v in secrets.items():
+                if isinstance(v, dict) and isinstance(raw.get(k), dict):
+                    raw[k] = {**raw.get(k, {}), **v}
+                else:
+                    raw[k] = v
 
     t = raw.get("thresholds", {})
     s = raw.get("server", {})
