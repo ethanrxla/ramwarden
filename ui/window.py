@@ -34,6 +34,7 @@ class WindowController:
     request_analysis: Callable[[str], None]
     apply_selection: Callable[[dict], None]
     resume_all: Callable[[], None]
+    resume_one: Callable[[str], None] | None = None
 
 
 # Module state — one window per process.
@@ -196,6 +197,36 @@ class _RamWardenWindow:
         self.detail_label.set_line_wrap(True)
         outer.pack_start(self.detail_label, False, False, 0)
 
+        # ── suspended banner ─────────────────────────────────────────────────
+        # A SIGSTOPped GUI app looks exactly like a crashed one. Without this the
+        # only clue that RamWarden froze something is that it stopped responding,
+        # which reads as a bug in the app and gets it force-quit.
+        self.susp_frame = Gtk.Frame()
+        self.susp_frame.get_style_context().add_class("app-notification")
+        susp_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        susp_box.set_margin_top(6)
+        susp_box.set_margin_bottom(6)
+        susp_box.set_margin_start(8)
+        susp_box.set_margin_end(8)
+        self.susp_frame.add(susp_box)
+
+        susp_title = Gtk.Label(xalign=0)
+        susp_title.set_markup(
+            "<b><span foreground='#facc15'>\u23f8  Suspended by RamWarden</span></b>"
+        )
+        susp_box.pack_start(susp_title, False, False, 0)
+
+        self.susp_rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        susp_box.pack_start(self.susp_rows, False, False, 0)
+
+        self.susp_note = Gtk.Label(xalign=0)
+        self.susp_note.get_style_context().add_class("dim-label")
+        self.susp_note.set_line_wrap(True)
+        susp_box.pack_start(self.susp_note, False, False, 0)
+
+        outer.pack_start(self.susp_frame, False, False, 0)
+        self._susp_shown: list[tuple] = []
+
         outer.pack_start(Gtk.Separator(), False, False, 4)
 
         # ── what RamWarden thinks you are using ──────────────────────────────
@@ -311,6 +342,7 @@ class _RamWardenWindow:
 
         self.win.show_all()
         self.rec_frame.hide()
+        self.susp_frame.hide()
 
     # ── refresh ──────────────────────────────────────────────────────────────
 
@@ -346,8 +378,45 @@ class _RamWardenWindow:
                 "<small>sampling — the monitor ticks every 10 seconds</small>"
             )
 
+        self._fill_suspended(state.get("suspended") or [], state.get("warn_percent", 65.0))
         self._fill_processes(state.get("processes") or [])
         return True
+
+    def _fill_suspended(self, entries: list[dict], warn_pct: float):
+        Gtk = self.Gtk
+        shape = [(e["name"], round(e.get("minutes", 0))) for e in entries]
+        if shape == self._susp_shown:
+            return
+        self._susp_shown = shape
+
+        for child in self.susp_rows.get_children():
+            self.susp_rows.remove(child)
+
+        if not entries:
+            self.susp_frame.hide()
+            return
+
+        for e in entries:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            label = Gtk.Label(xalign=0)
+            label.set_markup(
+                f"<b>{self.GLib.markup_escape_text(e['name'])}</b>  "
+                f"<span foreground='gray'>{_fmt_mb(e.get('rss_mb', 0))} · "
+                f"frozen {int(e.get('minutes', 0))} min</span>"
+            )
+            row.pack_start(label, True, True, 0)
+
+            btn = Gtk.Button(label="Resume")
+            btn.connect("clicked", self._on_resume_one, e["name"])
+            row.pack_end(btn, False, False, 0)
+            self.susp_rows.pack_start(row, False, False, 0)
+
+        self.susp_note.set_markup(
+            f"<small>Frozen apps cannot respond or quit until resumed. "
+            f"RamWarden wakes them automatically once RAM drops below "
+            f"{warn_pct:.0f}%.</small>"
+        )
+        self.susp_frame.show_all()
 
     def _fill_processes(self, procs: list[dict]):
         # Rebuilding the store on every tick would fight the user's scroll position,
@@ -407,7 +476,11 @@ class _RamWardenWindow:
             ])
 
         for name in rec.processes_to_suspend:
-            self.item_store.append([True, f"Suspend {name}", "process", "process", name])
+            # Spell out the consequence: a suspended app stops responding entirely,
+            # which is indistinguishable from a crash if you do not know why.
+            self.item_store.append([
+                True, f"Freeze {name}", "stops responding until resumed", "process", name,
+            ])
 
         term_map = {t.pid: t for t in context.get("terminals", [])}
         for pid in rec.idle_terminals_to_close:
@@ -494,12 +567,24 @@ class _RamWardenWindow:
         except Exception as e:
             self._set_status(f"error: {e}")
 
+    def _on_resume_one(self, _btn, name: str):
+        if self.ctl.resume_one is None:
+            self._on_resume(None)
+            return
+        self._set_status(f"resuming {name}…")
+        try:
+            self.ctl.resume_one(name)
+        except Exception as e:
+            self._set_status(f"error: {e}")
+        self._susp_shown = []   # force the banner to rebuild on next refresh
+
     def _on_resume(self, _btn):
         try:
             self.ctl.resume_all()
             self._set_status("resumed suspended processes")
         except Exception as e:
             self._set_status(f"error: {e}")
+        self._susp_shown = []
 
     def _on_delete(self, _w, _e):
         self.win.hide()

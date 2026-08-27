@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from . import config, history, monitor
 from .analyzer import analyze, _claude_analyze
 from .browser_windows import detect_private_windows, close_private_window
-from .process_manager import ProcessManager, SuspendRefused
+from .process_manager import ProcessManager, SuspendRefused, suspended_entries
 from .terminal_manager import list_terminals, close_idle_terminals
 from . import workspace_manager as wm
 from .workspace_manager import start_workspace_watcher, stop_workspace_watcher
@@ -81,6 +81,15 @@ def _window_state() -> dict:
         "browsers_connected": len(_connections) + len(_poll_browsers),
         "processes": [],
         "totals_mb": {},
+        "suspended": [
+            {
+                "name": e.name,
+                "pids": e.live_pids(),
+                "rss_mb": e.rss_mb(),
+                "minutes": e.minutes,
+            }
+            for e in suspended_entries()
+        ],
     }
 
     sigs = det.snapshot()
@@ -136,13 +145,29 @@ def _window_apply(selection: dict) -> None:
 
 
 def _window_resume_all() -> None:
-    """Window → daemon: SIGCONT everything on the watchlist that we stopped."""
+    """Window → daemon: SIGCONT everything RamWarden stopped."""
     pm = ProcessManager()
+    for entry in suspended_entries():
+        _window_resume_one(entry.name)
+    # Belt and braces for anything suspended before the registry existed.
     for name in config.get().watchlist:
         try:
             pm.resume(name)
         except Exception as e:
             log.warning("Resume failed for %s: %s", name, e)
+
+
+def _window_resume_one(name: str) -> None:
+    """Window → daemon: wake one app, by the exact PIDs we froze."""
+    try:
+        pm = ProcessManager()
+        entry = next((e for e in suspended_entries() if e.name == name), None)
+        resumed = pm.resume_entry(entry) if entry else pm.resume(name)
+        log.info("Resumed %s (%d process(es)) at user request", name, len(resumed))
+        window.set_status(f"resumed {name}")
+    except Exception as e:
+        log.warning("Resume failed for %s: %s", name, e)
+        window.set_status(f"resume failed: {e}")
 
 
 @asynccontextmanager
@@ -152,7 +177,12 @@ async def lifespan(app: FastAPI):
     history.init_db()
     _loop = asyncio.get_event_loop()
 
-    mon = monitor.Monitor(on_threshold=_threshold_callback, poll_interval=10.0)
+    def _on_auto_resume(name: str, count: int):
+        window.set_status(f"auto-resumed {name} — memory pressure eased")
+
+    mon = monitor.Monitor(
+        on_threshold=_threshold_callback, poll_interval=10.0, on_resume=_on_auto_resume,
+    )
     t = threading.Thread(target=mon.start, daemon=True)
     t.start()
     log.info("RAM monitor started (threshold=%.0f%%)", cfg.thresholds.ram_percent)
@@ -168,6 +198,7 @@ async def lifespan(app: FastAPI):
         request_analysis=_window_request_analysis,
         apply_selection=_window_apply,
         resume_all=_window_resume_all,
+        resume_one=_window_resume_one,
     )):
         log.info("Window ready — RamWarden is running as an app, not a popup")
 
@@ -748,6 +779,19 @@ async def resume_process(name: str):
     if not resumed:
         return {"ok": False, "error": f"No stopped process found matching '{name}'"}
     return {"ok": True, "resumed_pids": resumed, "count": len(resumed)}
+
+
+@app.get("/suspended")
+def get_suspended():
+    """What RamWarden currently has frozen, and for how long."""
+    return {
+        "suspended": [
+            {"name": e.name, "pids": e.live_pids(),
+             "rss_mb": round(e.rss_mb(), 1), "minutes": round(e.minutes, 1)}
+            for e in suspended_entries()
+        ],
+        "auto_resume_below_percent": config.get().thresholds.ram_percent,
+    }
 
 
 @app.get("/watchlist")

@@ -1,6 +1,9 @@
 import fnmatch
 import logging
 import signal
+import threading
+import time
+from dataclasses import dataclass, field
 
 import psutil
 
@@ -11,6 +14,60 @@ log = logging.getLogger("ramwarden.process_manager")
 
 class SuspendRefused(Exception):
     """Raised when a suspend is blocked by the watchlist or an activity signal."""
+
+
+@dataclass
+class SuspendedEntry:
+    """One app RamWarden froze, and when."""
+    name: str
+    pids: list[int]
+    since: float = field(default_factory=time.time)
+
+    @property
+    def minutes(self) -> float:
+        return max(0.0, (time.time() - self.since) / 60.0)
+
+    def live_pids(self) -> list[int]:
+        """PIDs still stopped. A process the user killed or continued drops out."""
+        alive = []
+        for pid in self.pids:
+            try:
+                if psutil.Process(pid).status() == psutil.STATUS_STOPPED:
+                    alive.append(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return alive
+
+    def rss_mb(self) -> float:
+        total = 0.0
+        for pid in self.live_pids():
+            try:
+                total += psutil.Process(pid).memory_info().rss / (1024 * 1024)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return total
+
+
+# Only what RamWarden froze. A process the user stopped themselves (Ctrl-Z, or a
+# debugger) must never be swept up by auto-resume, so membership here — not the
+# STOPPED status — is what makes something ours to wake.
+_suspended: dict[str, SuspendedEntry] = {}
+_registry_lock = threading.Lock()
+
+
+def suspended_entries() -> list[SuspendedEntry]:
+    """Currently-frozen apps, pruned of anything that has since died or woken."""
+    with _registry_lock:
+        for name in list(_suspended):
+            if not _suspended[name].live_pids():
+                log.info("%s is no longer stopped — dropping it from the registry", name)
+                _suspended.pop(name, None)
+        return sorted(_suspended.values(), key=lambda e: e.since)
+
+
+def forget(name: str) -> None:
+    with _registry_lock:
+        _suspended.pop(name, None)
 
 
 class ProcessManager:
@@ -44,6 +101,10 @@ class ProcessManager:
                 suspended.append(pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                 log.warning("Could not suspend PID %d: %s", pid, e)
+
+        if suspended:
+            with _registry_lock:
+                _suspended[name_pattern] = SuspendedEntry(name=name_pattern, pids=suspended)
         return suspended
 
     def resume(self, name_pattern: str) -> list[int]:
@@ -58,6 +119,29 @@ class ProcessManager:
                 resumed.append(pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                 log.warning("Could not resume PID %d: %s", pid, e)
+
+        forget(name_pattern)
+        return resumed
+
+    def resume_pids(self, pids: list[int]) -> list[int]:
+        """
+        SIGCONT specific PIDs. Resuming by name would also touch a newly launched
+        instance of the same app — after a frozen app gets force-quit and relaunched,
+        the name matches two different process trees.
+        """
+        resumed = []
+        for pid in pids:
+            try:
+                psutil.Process(pid).resume()
+                resumed.append(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                log.warning("Could not resume PID %d: %s", pid, e)
+        return resumed
+
+    def resume_entry(self, entry: "SuspendedEntry") -> list[int]:
+        """Wake exactly the processes RamWarden froze under this entry."""
+        resumed = self.resume_pids(entry.live_pids())
+        forget(entry.name)
         return resumed
 
     def kill(self, name_pattern: str) -> list[int]:

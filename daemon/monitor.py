@@ -1,9 +1,12 @@
+import logging
 import time
 from dataclasses import dataclass
 
 import psutil
 
 from . import config
+
+log = logging.getLogger("ramwarden.monitor")
 
 # Chromium renderer processes all appear under these names
 _BRAVE_NAMES = {"brave", "brave-browser"}
@@ -78,8 +81,9 @@ def _bucket(name: str) -> str:
 class Monitor:
     """Polls RAM on an interval and calls on_threshold when pressure is high."""
 
-    def __init__(self, on_threshold, poll_interval: float = 10.0):
+    def __init__(self, on_threshold, poll_interval: float = 10.0, on_resume=None):
         self._on_threshold = on_threshold
+        self._on_resume = on_resume
         self._poll_interval = poll_interval
         self._last_trigger: float = 0.0
         self._running = False
@@ -101,7 +105,13 @@ class Monitor:
 
         cfg = config.get()
         snap = snapshot()
+
         if snap.percent < cfg.thresholds.ram_percent:
+            # Pressure is off. Anything RamWarden froze was frozen to buy headroom
+            # we no longer need, so give it back — a suspended GUI app is
+            # indistinguishable from a crashed one, and leaving it stopped once the
+            # reason has passed is how a user ends up force-quitting a healthy app.
+            self._auto_resume(snap)
             return
         now = time.monotonic()
         debounce_secs = cfg.thresholds.debounce_minutes * 60
@@ -109,3 +119,21 @@ class Monitor:
             return
         self._last_trigger = now
         self._on_threshold(snap)
+
+    def _auto_resume(self, snap):
+        """Wake anything RamWarden suspended, now that memory pressure has eased."""
+        from .process_manager import ProcessManager, suspended_entries
+
+        entries = suspended_entries()
+        if not entries:
+            return
+
+        pm = ProcessManager()
+        for entry in entries:
+            resumed = pm.resume_entry(entry)
+            log.info(
+                "Auto-resumed %s (%d process(es)) — RAM back to %.0f%% after %.0f min frozen",
+                entry.name, len(resumed), snap.percent, entry.minutes,
+            )
+            if self._on_resume:
+                self._on_resume(entry.name, len(resumed))

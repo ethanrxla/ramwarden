@@ -185,3 +185,63 @@ def test_activity_propagates_up_the_process_tree():
         det._score(s)
     assert "cargo" in parent.active_descendant
     assert parent.verdict == "IN_USE"
+
+
+# ── 6. Suspended registry and auto-resume ────────────────────────────────────
+
+def test_registry_only_tracks_what_ramwarden_froze(monkeypatch):
+    """
+    A process the user stopped themselves (Ctrl-Z, a debugger) must never be swept
+    up by auto-resume — membership in the registry, not the STOPPED status, is what
+    makes something ours to wake.
+    """
+    import daemon.process_manager as pmod
+
+    monkeypatch.setattr(pmod, "_suspended", {}, raising=False)
+    assert pmod.suspended_entries() == []
+
+    entry = pmod.SuspendedEntry(name="Discord", pids=[111, 222])
+    pmod._suspended["Discord"] = entry
+
+    # Neither PID is actually stopped, so the entry prunes itself away.
+    monkeypatch.setattr(pmod.psutil, "Process", _raise_no_such)
+    assert pmod.suspended_entries() == []
+
+
+def _raise_no_such(pid):
+    raise psutil.NoSuchProcess(pid)
+
+
+def test_monitor_auto_resumes_only_below_the_threshold(monkeypatch):
+    """Pressure gone → give the frozen app back without being asked."""
+    from daemon import monitor as mon_mod
+    import daemon.process_manager as pmod
+
+    resumed: list[str] = []
+
+    class FakePM:
+        def resume_entry(self, entry):
+            resumed.append(entry.name)
+            return list(entry.pids)
+
+    entry = pmod.SuspendedEntry(name="Discord", pids=[1])
+    monkeypatch.setattr(pmod, "suspended_entries", lambda: [entry])
+    monkeypatch.setattr(pmod, "ProcessManager", FakePM)
+
+    m = mon_mod.Monitor(on_threshold=lambda s: None)
+
+    snap = mon_mod.RAMSnapshot(total_mb=1000, used_mb=400, percent=40.0, processes=[])
+    monkeypatch.setattr(mon_mod, "snapshot", lambda: snap)
+    monkeypatch.setattr(mon_mod, "tick", lambda: None, raising=False)
+    monkeypatch.setattr("daemon.process_profiler.tick", lambda: None)
+    monkeypatch.setattr("daemon.activity.tick", lambda: None)
+
+    m._tick()
+    assert resumed == ["Discord"], "below the threshold, frozen apps must be woken"
+
+    # Under pressure it must NOT resume — that would undo the relief immediately.
+    resumed.clear()
+    busy = mon_mod.RAMSnapshot(total_mb=1000, used_mb=900, percent=90.0, processes=[])
+    monkeypatch.setattr(mon_mod, "snapshot", lambda: busy)
+    m._tick()
+    assert resumed == []
