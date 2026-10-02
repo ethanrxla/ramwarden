@@ -1,0 +1,23 @@
+[Unit]
+Description=RamWarden page-out helper
+Documentation=https://github.com/ethanrisden/ramwarden
+# Optional. Without it the daemon falls back to cgroup reclaim, which needs no
+# privileges and does most of the work anyway.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ramwarden-helper
+Restart=on-failure
+RestartSec=10
+Environment=RAMWARDEN_LOG=info
+
+# The binary carries cap_sys_nice+ep from the package postinst. It is a few
+# hundred lines that accept one message shape and make one syscall, which is the
+# whole reason it is separate from the daemon.
+NoNewPrivileges=no
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical-session.target

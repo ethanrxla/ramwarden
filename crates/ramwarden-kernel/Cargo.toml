@@ -1,0 +1,16 @@
+[package]
+name    = "ramwarden-kernel"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Linux kernel memory primitives for RamWarden: cgroup v2 reclaim, PSI, PSS, pidfd, zram."
+
+[dependencies]
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+nix       = { workspace = true, features = ["process", "signal", "poll", "fs"] }
+libc      = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

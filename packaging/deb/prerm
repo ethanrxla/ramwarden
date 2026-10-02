@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+# The units are per-user, so there is nothing system-wide to stop. Users who
+# enabled them are told how to disable them in the README.
+exit 0

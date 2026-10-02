@@ -1,0 +1,43 @@
+[package]
+name    = "ramwarden-ui"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's task manager: a GTK4 window over the daemon's API."
+
+[lib]
+name = "ramwarden_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ramwarden"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[features]
+# The GUI needs GTK4 development headers. Without them the crate still builds as
+# a library, so the client and the row model stay testable on a headless box.
+default = []
+gui = ["dep:gtk4"]
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+reqwest    = { workspace = true }
+tokio      = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror  = { workspace = true }
+gtk4       = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[[example]]
+name = "inspect"
+required-features = ["gui"]
+
+[[example]]
+name = "live_display"
+required-features = ["gui"]

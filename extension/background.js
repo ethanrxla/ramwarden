@@ -152,9 +152,8 @@ function buildTabReport(activity) {
 
       const report = [];
       for (const tab of liveTabs) {
-        if (isProtected(tab.url)) continue;
         const known = activity[tab.id];
-        const lastActiveMs = known?.lastActiveMs ?? tab.lastAccessed ?? now;
+        const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
         report.push({
           id: tab.id,
           url: tab.url || "",
@@ -162,6 +161,13 @@ function buildTabReport(activity) {
           lastActiveMs,
           inactiveMinutes: Math.round((now - lastActiveMs) / 60000),
           incognito: tab.incognito || false,
+          active: tab.active,
+          pinned: tab.pinned,
+          audible: tab.audible ?? false,
+          discarded: tab.discarded ?? false,
+          autoDiscardable: tab.autoDiscardable ?? false,
+          status: tab.status,
+          discardSupported: typeof chrome.tabs.discard === "function",
         });
       }
       resolve(report);
@@ -281,6 +287,7 @@ async function _poll() {
     const data = await resp.json();
     for (const cmd of (data.commands || [])) {
       if (cmd.action === "close") closeTabs(cmd.tabIds);
+      if (cmd.action === "discard") await discardTabs(cmd);
     }
   } catch (e) {
     console.warn("[RamWarden] poll fetch error:", e);
@@ -312,6 +319,7 @@ function _connect() {
   ws.onopen = () => {
     console.log("[RamWarden] WS connected to", _wsUrl);
     _badge(true);
+    _sendTabReport();
   };
 
   ws.onmessage = (ev) => {
@@ -320,6 +328,7 @@ function _connect() {
     switch (msg.action) {
       case "get_tabs": _sendTabReport(); break;
       case "close":    closeTabs(msg.tabIds); break;
+      case "discard":  discardTabs(msg); break;
       case "ping":     _send({ action: "pong" }); break;
     }
   };
@@ -341,7 +350,40 @@ function _send(obj) {
 // Keep WS alive (Chrome/Brave only)
 if (!IS_FIREFOX) {
   setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) _send({ action: "ping" });
+    if (ws?.readyState === WebSocket.OPEN) { _send({ action: "ping" }); _sendTabReport(); }
     else _connect();
   }, 25000);
+}
+
+
+// Policy/ranking lives in Rust. This is the final race guard at the browser API.
+async function discardTabs(command) {
+  const confirmed = [];
+  const minimum = Math.max(5, Number(command.minInactiveMinutes) || 5);
+  for (const target of (command.tabs || []).slice(0, 5)) {
+    if (typeof chrome.tabs.discard !== "function") break;
+    const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
+      resolve(chrome.runtime.lastError ? null : tab);
+    }));
+    if (!tab || tab.url !== target.url || isProtected(tab.url) || tab.active || tab.pinned || tab.audible
+        || tab.incognito || tab.discarded || tab.autoDiscardable !== true || tab.status !== "complete") continue;
+    const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
+    if (!last || (Date.now() - last) / 60000 < minimum) continue;
+    // Check stored activity again: activation may have arrived while get awaited.
+    if (Date.now() - (tabActivity[tab.id]?.lastActiveMs || last) < minimum * 60000) continue;
+    const ok = await new Promise(resolve => chrome.tabs.discard(tab.id, result => {
+      if (chrome.runtime.lastError) { resolve(false); return; }
+      // Firefox may return no Tab from discard; confirm from fresh state.
+      chrome.tabs.get(tab.id, observed => {
+        resolve(!chrome.runtime.lastError && observed?.url === target.url && observed?.discarded === true);
+      });
+    }));
+    if (ok) confirmed.push(tab.id);
+  }
+  if (!IS_FIREFOX) {
+    _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed});
+    await _sendTabReport();
+  }
+  // Poll transport reports the resulting discarded flags in its next report.
+  return confirmed;
 }

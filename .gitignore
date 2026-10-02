@@ -19,3 +19,7 @@ secrets.toml
 
 # OS
 .DS_Store
+
+# Rust build output and local secrets
+/target
+Cargo.lock.orig

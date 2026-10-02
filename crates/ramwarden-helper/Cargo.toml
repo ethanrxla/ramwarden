@@ -1,0 +1,22 @@
+[package]
+name    = "ramwarden-helper"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Minimal setcap'd helper granting RamWarden process_madvise, and nothing else."
+
+[[bin]]
+name = "ramwarden-helper"
+path = "src/main.rs"
+
+[dependencies]
+ramwarden-kernel = { path = "../ramwarden-kernel" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+nix        = { workspace = true, features = ["socket", "uio", "user"] }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

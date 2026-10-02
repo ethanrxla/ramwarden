@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RamWarden
+GenericName=Memory Manager
+Comment=See what is using your memory, and reclaim it without losing your work
+Exec=ramwarden
+Icon=ramwarden
+Terminal=false
+Categories=System;Monitor;
+Keywords=memory;RAM;task manager;process;
+StartupNotify=true

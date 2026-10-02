@@ -1,0 +1,21 @@
+[package]
+name    = "ramwarden-ai"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's model tier: local Nemotron, GPU goal re-ranking, and VRAM accounting."
+
+[dependencies]
+ramwarden-core   = { path = "../ramwarden-core" }
+ramwarden-kernel = { path = "../ramwarden-kernel" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+reqwest    = { workspace = true }
+tokio      = { workspace = true }
+tracing    = { workspace = true }
+thiserror  = { workspace = true }
+nvml-wrapper = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

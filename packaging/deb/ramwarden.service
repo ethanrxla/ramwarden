@@ -1,0 +1,36 @@
+[Unit]
+Description=RamWarden — memory manager daemon
+Documentation=https://github.com/ethanrisden/ramwarden
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ramwarden-daemon
+Restart=on-failure
+RestartSec=5
+
+# Where the daemon looks for its config, in order: $RAMWARDEN_CONFIG, the
+# working directory, ~/.config/ramwarden/config.toml, /etc/ramwarden/config.toml.
+# An API key belongs in ~/.config/ramwarden/secrets.toml, never in config.toml.
+Environment=RAMWARDEN_LOG=info
+
+# ── Do not add mount-namespace sandboxing here ───────────────────────────────
+# `PrivateTmp=`, `ProtectKernelTunables=`, `ProtectSystem=` and friends put the
+# unit in its own mount namespace with a restricted /proc, and that makes
+# /proc/<pid>/smaps_rollup unreadable for every process but this one:
+#
+#   $ systemd-run --user -p PrivateTmp=yes /bin/sh -c 'head /proc/6669/smaps_rollup'
+#   head: cannot open '/proc/6669/smaps_rollup' for reading: Permission denied
+#
+# Proportional set size is the whole basis of RamWarden's accounting — without it
+# the daemon falls back to summed RSS, which is the 2.3x overcount this rewrite
+# exists to eliminate. It was briefly shipped that way and the symptom was
+# subtle: every process reporting pss == rss.
+#
+# These two are safe because neither needs a namespace.
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=graphical-session.target

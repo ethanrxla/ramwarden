@@ -68,8 +68,14 @@ async function init() {
     btn.disabled = true;
     btn.textContent = "Analyzing…";
     try {
-      await fetch((window.DAEMON_HTTP || DAEMON_HTTP) + "/analyze", { method: "POST" });
-      btn.textContent = "Sent — check for prompt";
+      const response = await fetch((window.DAEMON_HTTP || DAEMON_HTTP) + "/browser/analyze", {
+        method: "POST", signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const analysis = await response.json();
+      document.getElementById("analysis-result").textContent =
+        `${analysis.tabs.length} tabs inspected; ${analysis.candidates} can be unloaded. Review and select them in RamWarden → Browser tabs.`;
+      btn.textContent = "Analysis ready";
     } catch {
       btn.textContent = "Daemon offline";
     }
@@ -148,9 +154,27 @@ function renderHistory(items) {
 
 // ── Daemon host ───────────────────────────────────────────────────────────────
 
+const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
 function saveDaemonHost() {
   const val = document.getElementById("daemon-host-input").value.trim() || "localhost:7823";
-  chrome.storage.sync.set({ daemonHost: val }, () => chrome.runtime.reload());
+  const commit = () =>
+    chrome.storage.sync.set({ daemonHost: val }, () => chrome.runtime.reload());
+
+  // localhost is covered by the manifest. Anything else — a Tailscale address,
+  // another machine on the LAN — falls under the optional host permission, which
+  // the store build does not grant up front. Ask for it before saving, or the
+  // extension would silently fail to reach the daemon it was just pointed at.
+  if (LOCAL_HOSTS.test(val) || !chrome.permissions) return commit();
+
+  chrome.permissions.request({ origins: [`http://${val}/*`] }, (granted) => {
+    if (!granted) {
+      const el = document.getElementById("daemon-host-status");
+      if (el) el.textContent = "Permission denied — host not saved.";
+      return;
+    }
+    commit();
+  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

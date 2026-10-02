@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+# `process_madvise` on another process needs CAP_SYS_NICE. Granting it to the
+# tiny helper rather than to the daemon means the HTTP server, the WebSocket, the
+# SQLite database, the model client and the GTK window all stay unprivileged.
+#
+# This is optional: without the capability the helper still answers and reports
+# EPERM, and the daemon falls back to cgroup reclaim — which needs no privileges
+# and returns most of the memory anyway.
+if [ "$1" = "configure" ]; then
+    if command -v setcap >/dev/null 2>&1; then
+        setcap cap_sys_nice+ep /usr/bin/ramwarden-helper || {
+            echo "ramwarden: could not set cap_sys_nice on the helper;" >&2
+            echo "           targeted page-out will be unavailable." >&2
+        }
+    else
+        echo "ramwarden: setcap not found (install libcap2-bin) —" >&2
+        echo "           targeted page-out will be unavailable." >&2
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+fi
+
+exit 0

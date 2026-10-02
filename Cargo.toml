@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/ramwarden-kernel", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
+
+[workspace.package]
+version = "0.2.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ethanrisden/ramwarden"
+
+[workspace.dependencies]
+anyhow     = "1"
+thiserror  = "2"
+nix        = { version = "0.30", default-features = false }
+libc       = "0.2"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile   = "3"
+toml       = "0.9"
+rusqlite   = { version = "0.37", features = ["bundled"] }
+axum       = { version = "0.8", features = ["ws"] }
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tower-http = { version = "0.7", features = ["cors"] }
+futures    = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid       = { version = "1", features = ["v4"] }
+reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+nvml-wrapper = "0.13"
+gtk4       = { version = "0.11", features = ["v4_10"] }
+tracing    = "0.1"
+
+[profile.release]
+lto       = "thin"
+codegen-units = 1
+strip     = true

@@ -108,6 +108,7 @@
   </div>
 
   <button class="action" id="analyze-btn">Analyze Now</button>
+  <div id="analysis-result" style="padding:0 10px 10px;color:#94a3b8;font-size:12px" aria-live="polite"></div>
 
   <div class="section">
     <div class="section-title">Recently Closed</div>
@@ -119,6 +120,7 @@
     <input type="text" id="daemon-host-input" placeholder="localhost:7823" />
     <button onclick="saveDaemonHost()">Save</button>
   </div>
+  <div id="daemon-host-status" style="color:#f59e0b;font-size:11px;padding:0 10px 6px"></div>
 
   <footer>RamWarden · <span id="browsers-connected">—</span> browser(s) connected</footer>
 
