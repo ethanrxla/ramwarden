@@ -154,62 +154,144 @@ The following are never acted on:
 - any session 0 process
 - any process the user cannot open
 
+### The daemon's API is not reachable from web pages
+- The daemon binds `127.0.0.1` by default. A non-loopback bind logs a loud
+  warning, because the API has no authentication.
+- Every request passes `guard` before routing:
+  - A request carrying an `Origin` must come from a browser extension
+    (`chrome-extension://`, `moz-extension://`) or the daemon's own origin.
+    CORS alone is not enough here: a cross-site "simple" POST is still sent.
+  - On a loopback bind, `Host` must be a loopback name. This blocks DNS
+    rebinding.
+
 ### `ramwarden-service`
 - Runs as LocalSystem and listens on `\\.\pipe\ramwarden`.
-- **Access:** the pipe DACL grants only SYSTEM and the interactive user's SID.
-  Each connection is checked by resolving the client PID to its token user,
-  and is refused if that user does not match.
-- **Requests** are JSON lines. The vocabulary is closed:
+- **Access:** the pipe DACL (`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`)
+  admits only SYSTEM, Administrators and interactive users, and remote
+  clients are rejected.
+- **Requests** are one JSON line per connection, at most 16 KB. The vocabulary
+  is closed, and anything else does not parse:
+  - `ping`
   - `purge_low_priority_standby`
   - `trim {pid}`
-  - `memory_priority {pid, level}`
-  - `tweak_apply {id}` and `tweak_revert {id}`
-- It refuses PIDs ≤ 4, protected processes, and any tweak id that is not in a
-  shipped profile.
-- **Without the service** the daemon uses only user-level levers. This is a
-  normal configuration.
+  - `tweak_apply {id}`, `tweak_revert {id}` and `tweak_status`
+- **`trim` refuses:**
+  - PIDs ≤ 4
+  - session 0
+  - a process outside the client's own session (resolved from the pipe's
+    client PID)
+  - any structural role
+- **Tweaks:** the id must be in a compiled-in profile, and only
+  machine-scope tweaks are accepted.
+- **`install` refuses a binary outside `%ProgramFiles%`.** A user-writable
+  SYSTEM binary is a privilege escalation.
+- **At start, the service takes ownership of `%ProgramData%\RamWarden`** and
+  applies an admin-only DACL, with users read-only. The machine journal it
+  restores from as SYSTEM therefore cannot be edited by the user.
+- **Without the service** the daemon uses only user-level levers, and
+  per-user tweaks still work. This is a normal configuration.
 
 ### Debloat (`ramwarden-debloat`)
-- Each tweak implements `detect` / `apply` / `revert`. `apply` stores a
-  `Snapshot` of the prior state in SQLite **before** writing, and `revert`
-  restores it exactly.
-- Profiles are TOML:
+- **The `Tweak` trait.** Each tweak (`detect`, `snapshot`, `apply`, `revert`)
+  is one of:
+  - a registry value
+  - a service start type (only ever disabled or manual)
+  - a scheduled task, through the Task Scheduler COM API
+  - a startup entry, through `StartupApproved` exactly as Task Manager does it
+- **Snapshot before change.** The engine writes the snapshot to a SQLite
+  journal *before* applying.
+  - It never records a setting that was already in place, so revert cannot
+    undo a choice the user made themselves.
+  - Revert is byte-exact, including "this value or key did not exist".
+- **Drift:** a tweak recorded as applied that Windows has put back. Applying
+  it again keeps the original snapshot.
+- **Scope decides who applies a tweak.**
+  - User tweaks (HKCU, startup entries) run in the caller's process: SYSTEM's
+    `HKCU` is not the user's hive.
+  - Machine tweaks go through the service, unless the caller is already
+    elevated.
+- **Profiles** are compiled-in TOML (`crates/ramwarden-debloat/profiles`):
   - **`privacy`:**
     - DiagTrack and dmwappushservice disabled
     - `AllowTelemetry=1`
-    - CEIP and Compatibility Appraiser tasks disabled
+    - Compatibility Appraiser and CEIP tasks disabled
     - advertising ID, tailored experiences and activity history off
     - Bing in Start off
     - Copilot, Recall and Widgets policies off
     - ContentDeliveryManager suggestions off
   - **`background`:**
     - Edge startup boost and background mode off
-    - launcher autostart (Epic, Riot Client) off through `StartupApproved`
-    - OneDrive and Discord autostart off (opt-in)
+    - Epic and Riot Client start-at-sign-in off
+    - LM Studio, Discord and OneDrive start-at-sign-in off (optional, only
+      when asked)
     - `lfsvc` and `MapsBroker` set to manual
-- **Never touched:** Defender, Windows Update, SysMain, WSearch, anti-cheat
-  services, drivers. No Appx removal.
-- `detect` reports **drift**: tweaks that a Windows update has reverted.
+- **A forbidden list is checked when profiles load.** A profile naming any of
+  these fails to build:
+  - Defender, the firewall, Windows Update, BITS, SysMain, WSearch
+  - anti-cheat services, and Vanguard's startup entry
+  - `...\Services` and Winlogon keys
+- **Surfaces:** CLI `ramwarden-debloat status|apply|revert`, `/debloat` routes,
+  and the window's "Privacy & startup" panel.
 
-### GPU (RTX 5070, CUDA 12.8+)
+### GPU (RTX 5070)
 - **VRAM:**
   - Device totals come from NVML.
-  - Per-process VRAM comes from PDH `GPU Process Memory(*)\Dedicated Usage`,
-    because NVML per-process figures are unavailable under WDDM.
-  - **Lever:** unload idle local models through the LM Studio API
-    (`127.0.0.1:1234`) or Ollama (`keep_alive: 0`).
-- **Embeddings:** `CandleEmbedder` runs mxbai-embed-large in fp16 on CUDA, inside
-  the daemon. It is used only when there is room on the GPU
-  (`vram::Gpu::has_room_for`). The Ollama embedder is the fallback.
-- **Batch scoring:** a CUDA kernel compiled at runtime with NVRTC scores the
-  process × signal matrix. A CPU implementation produces identical results and
-  is the default path.
-- **Predictive ranker (JEPA-style):**
-  - It learns from the `/signals` log to predict each process's or tab's next
-    activity embedding, and from that the probability of reuse within T minutes.
-  - It can only **reorder** candidates. It never makes anything eligible.
-  - It is disabled until its held-out AUC beats the LRU baseline
-    (`/predict/eval`).
+  - Per-process VRAM comes from PDH `GPU Process Memory(*)\Dedicated Usage`
+    (`ramwarden-nt::gpu`). NVML reports per-process figures as unavailable
+    under WDDM.
+  - Measured live: Fortnite 723 MB, dwm 667 MB, LM Studio 169 MB.
+- **Model unloading:** `ai::models` lists and unloads loaded models in Ollama
+  (`/api/ps`, `keep_alive: 0`) and LM Studio (the `lms` CLI, since its API
+  server is off by default).
+  - **Policy:** when a game is running and VRAM is at least
+    `[gpu] vram_percent` (default 85) used, idle local models are unloaded,
+    with a 5-minute cooldown.
+  - This is the only VRAM lever pulled automatically.
+- **Embeddings:** `ml::embed` runs mxbai-embed-large through candle, in-process.
+  - **Attached only when a CUDA device exists** (f16, about 0.7 GB VRAM). On
+    the CPU it would hold about 1.3 GB of RAM indefinitely.
+  - It loads on first use and is dropped after 10 idle minutes.
+  - Ollama is the fallback.
+- **Batch scoring:** the predictor scores every process in one batched forward
+  pass on candle's device: CUDA with the `cuda` feature, otherwise the CPU.
+  - A hand-written NVRTC kernel was planned. It was dropped as redundant,
+    because candle already runs the same matmul and sigmoid on the GPU.
+- **Reuse predictor (JEPA-style)**, `ramwarden-ml::jepa`:
+  - **Model:**
+    - A context encoder reads a window of four behaviour samples.
+    - An EMA target encoder (stop-gradient) encodes the window one step later.
+    - A predictor regresses that embedding.
+    - A linear probe gives P(the user returns within the horizon).
+  - **Features** are behaviour only (size, CPU, focus, audio, sockets, time of
+    day, pressure), plus a hashed app identity, so per-app routines are
+    learnable.
+  - **Training:**
+    - Time-ordered splits: the newest 20% is held out for the final test, and
+      the newest 10% of the rest is used for early stopping. Without early
+      stopping, full-batch training collapsed to chance at 1000 epochs.
+    - The daemon retrains it daily in the background.
+  - **The gate:** it is enabled only with at least 300 training examples
+    *and* a held-out AUC 0.02 above the LRU baseline.
+  - **On a synthetic daily-routine benchmark:** AUC 0.88 against LRU 0.61.
+    Without app identity it reached only 0.69.
+  - **Effect when enabled:**
+    - Suspend candidates are ordered by size × (1 − P(return)).
+    - Tidy defers the trim of anything with P(return) ≥ 0.7.
+    - It never makes anything eligible.
+  - **Routes:** `/predict/eval` reports the metrics; `POST /predict/train`
+    trains now.
+
+### Window and tray (`ramwarden-tray`)
+- **Panels:** Overview, Processes (right-click actions through `menu_for`,
+  with confirmation for destructive ones), Privacy & startup, and GPU.
+- **Two processes**, because the UI must not cost memory while closed:
+  - The **tray host** never loads a graphics driver: a tray icon, a Win32
+    message pump and a `/state` poll for the live memory gauge. It uses
+    13 MB working set and 2 MB private.
+  - **Open** launches `ramwarden-tray --window` (egui, glow renderer, about
+    80 MB while open). Closing the window ends that process.
+  - Measured, the first single-process version held 433 MB private and
+    253 MB of VRAM while hidden.
 
 ## Verification
 - **Unit tests:** `cargo test --workspace` on Windows, and on Linux in CI.
@@ -232,9 +314,19 @@ The following are never acted on:
 - **Debloat:** apply a profile, `detect` reports it applied, revert, and the
   state diff against the snapshot is empty.
 - **GPU:**
-  - CUDA embeddings rank the same as Ollama, with cosine within 1e-3.
-  - CUDA scoring is bit-identical to the CPU path.
   - Per-process VRAM matches Task Manager's dedicated GPU memory column.
+  - The real mxbai model ranks a related passage above an unrelated one. This
+    is an opt-in test, because it downloads about 1.3 GB.
+  - With `--features cuda`, the predictor's tests pass on the GPU device.
+    This needs the CUDA toolkit.
+- **Predictor:** on the routine benchmark the model beats LRU by more than the
+  gate's margin. With too little data the gate stays shut. Scores survive a
+  save and load.
+- **Security:**
+  - A web origin POSTing `/kill` gets 403, while an extension and a local
+    client are served.
+  - Over the real pipe, an unknown op, an out-of-catalog tweak and explorer
+    are all refused.
 
 ## Basis and limitations
 - `EmptyWorkingSet` moves pages to the standby or modified lists. They fault
