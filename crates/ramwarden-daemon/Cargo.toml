@@ -19,6 +19,7 @@ ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
 ramwarden-ml     = { path = "../ramwarden-ml" }
+candle-core      = { version = "0.11", optional = true }
 axum       = { workspace = true }
 tokio      = { workspace = true }
 tower-http = { workspace = true }
@@ -39,7 +40,9 @@ ramwarden-kernel = { path = "../ramwarden-kernel" }
 
 [features]
 # Run the reuse predictor (and, with `embed`, embeddings) on an NVIDIA GPU.
-cuda = ["ramwarden-ml/cuda"]
+cuda = ["ramwarden-ml/cuda", "candle-core/cuda"]
+# In-process tab-relevance embeddings (attached only when a CUDA device exists).
+embed = ["ramwarden-ml/embed", "dep:candle-core"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

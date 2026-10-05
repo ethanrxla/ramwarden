@@ -62,6 +62,7 @@ pub fn provider(cfg: &Config) -> Provider {
             Prefer::Local
         },
         respect_vram: cfg.ollama.respect_vram,
+        local_embedder: Default::default(),
     }
 }
 

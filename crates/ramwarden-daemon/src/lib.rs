@@ -6,6 +6,8 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+#[cfg(feature = "embed")]
+pub mod embedder;
 pub mod extras;
 pub mod gpu;
 pub mod guard;

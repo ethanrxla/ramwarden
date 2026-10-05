@@ -2,3 +2,6 @@
 
 pub mod features;
 pub mod jepa;
+
+#[cfg(feature = "embed")]
+pub mod embed;
