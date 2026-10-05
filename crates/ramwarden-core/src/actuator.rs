@@ -462,9 +462,8 @@ mod tests {
     }
 
     fn state_of(pid: i32) -> Option<char> {
-        let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        let tail = &s[s.rfind(')')? + 1..];
-        tail.trim_start().chars().next()
+        // Through the kernel crate so the same helper works on Linux and macOS.
+        ramwarden_kernel::process::entry(&Root::system(), pid).ok().map(|e| e.state)
     }
 
     /// Block until `pid` reaches `want`, or give up.

@@ -136,6 +136,12 @@ pub fn read(path: impl AsRef<Path>) -> Result<Psi> {
 
 /// System-wide memory pressure.
 pub fn system_memory(root: &Root) -> Result<Psi> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::pressure();
+        }
+    }
     read(root.join("proc/pressure/memory"))
 }
 
@@ -167,6 +173,13 @@ impl Trigger {
                 &path,
                 format!("stall {stall:?} cannot exceed window {window:?}"),
             ));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if root == &Root::system() {
+                return Err(Error::Unsupported("PSI triggers (Linux only)"));
+            }
         }
 
         let spec = format!("some {} {}", stall.as_micros(), window.as_micros());

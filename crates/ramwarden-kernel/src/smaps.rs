@@ -75,6 +75,12 @@ impl Rollup {
 /// same totals means walking thousands of entries per process per tick — the
 /// reason v1 never attempted PSS at all.
 pub fn rollup(root: &Root, pid: i32) -> Result<Rollup> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::rollup(pid);
+        }
+    }
     let path = root.proc_pid(pid, "smaps_rollup");
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
     parse_rollup(&text, &path)

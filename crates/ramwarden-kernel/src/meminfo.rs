@@ -54,6 +54,12 @@ impl Memory {
 }
 
 pub fn read(root: &Root) -> Result<Memory> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::meminfo();
+        }
+    }
     let path = root.join("proc/meminfo");
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
 

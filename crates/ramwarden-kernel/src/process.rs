@@ -134,6 +134,12 @@ impl ProcEntry {
 
 /// Read one process.
 pub fn entry(root: &Root, pid: i32) -> Result<ProcEntry> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::entry(pid);
+        }
+    }
     let path = root.proc_pid(pid, "stat");
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
     ProcEntry::parse(&text, &path)
@@ -144,6 +150,12 @@ pub fn entry(root: &Root, pid: i32) -> Result<ProcEntry> {
 /// Processes that vanish mid-walk are skipped rather than failing the sweep —
 /// on a desktop running a browser, several exit during any given tick.
 pub fn table(root: &Root) -> Result<Vec<ProcEntry>> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::table();
+        }
+    }
     let proc_dir = root.join("proc");
     let entries = fs::read_dir(&proc_dir).map_err(|e| Error::io(&proc_dir, e))?;
 
@@ -174,6 +186,12 @@ pub fn table(root: &Root) -> Result<Vec<ProcEntry>> {
 /// name alone is ambiguous — `ollama serve` is an agent runtime, `ollama list`
 /// is a command that will exit in a moment.
 pub fn cmdline(root: &Root, pid: i32) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::cmdline(pid);
+        }
+    }
     let path = root.proc_pid(pid, "cmdline");
     let raw = fs::read(&path).map_err(|e| Error::io(&path, e))?;
     Ok(raw
@@ -186,6 +204,12 @@ pub fn cmdline(root: &Root, pid: i32) -> Result<String> {
 
 /// Real UID, from `/proc/<pid>/status`.
 pub fn uid(root: &Root, pid: i32) -> Result<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::uid(pid);
+        }
+    }
     let path = root.proc_pid(pid, "status");
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
     for line in text.lines() {
@@ -205,6 +229,12 @@ pub fn uid(root: &Root, pid: i32) -> Result<u32> {
 /// Unreadable for another user's processes and for kernel threads, which is why
 /// callers treat absence as "unknown" rather than as evidence.
 pub fn exe(root: &Root, pid: i32) -> Result<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::exe(pid);
+        }
+    }
     let path = root.proc_pid(pid, "exe");
     fs::read_link(&path).map_err(|e| Error::io(&path, e))
 }
@@ -214,6 +244,12 @@ pub fn exe(root: &Root, pid: i32) -> Result<std::path::PathBuf> {
 /// Needed because `stat` reports process start as ticks since boot, not as a
 /// date. Read once per tick, not once per process.
 pub fn boot_time(root: &Root) -> Result<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        if root == &Root::system() {
+            return crate::macos::boot_time();
+        }
+    }
     let path = root.join("proc/stat");
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
     text.lines()

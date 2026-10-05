@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "macos", allow(unused_imports, unused_variables, dead_code))]
 //! Linux kernel memory primitives for RamWarden.
 //!
 //! This crate is the reason RamWarden moved to Rust. It is deliberately free of
@@ -21,12 +22,23 @@
 mod error;
 mod root;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+
 pub mod cgroup;
+#[cfg(target_os = "linux")]
+pub mod madvise;
+#[cfg(target_os = "macos")]
+#[path = "madvise_macos.rs"]
 pub mod madvise;
 pub mod meminfo;
 pub mod net;
 pub mod oom;
 pub mod process;
+#[cfg(target_os = "linux")]
+pub mod procfd;
+#[cfg(target_os = "macos")]
+#[path = "procfd_macos.rs"]
 pub mod procfd;
 pub mod psi;
 pub mod smaps;
