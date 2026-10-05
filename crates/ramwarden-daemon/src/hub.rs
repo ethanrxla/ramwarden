@@ -9,6 +9,7 @@ use ramwarden_core::config::Config;
 use ramwarden_core::detector::Detector;
 use ramwarden_core::history::History;
 use ramwarden_core::ladder::Ladder;
+use ramwarden_ai::models::ModelHosts;
 use ramwarden_ai::provider::Provider;
 use ramwarden_platform::{MemoryStatus, Platform, Pressure};
 use tokio::sync::{mpsc, oneshot};
@@ -135,6 +136,8 @@ pub struct AppState {
     /// The model tier. Shared and immutable — the clients are cheap to clone and
     /// hold no mutable state.
     pub ai: Arc<Provider>,
+    /// LM Studio and Ollama, for VRAM reporting and unloading.
+    pub models: Arc<ModelHosts>,
     pub started: Instant,
 }
 

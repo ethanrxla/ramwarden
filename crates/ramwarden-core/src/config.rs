@@ -251,6 +251,24 @@ impl Default for Tidy {
     }
 }
 
+/// VRAM policy: unload idle local models when a game needs the card.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Gpu {
+    pub unload_models_for_games: bool,
+    /// Act only when the card is at least this full.
+    pub vram_percent: f64,
+}
+
+impl Default for Gpu {
+    fn default() -> Self {
+        Gpu {
+            unload_models_for_games: true,
+            vram_percent: 85.0,
+        }
+    }
+}
+
 /// The cloud tier: NVIDIA NIM at build.nvidia.com.
 ///
 /// **Off by default, even with a key present.** The prompt carries the titles and
@@ -313,6 +331,7 @@ pub struct Config {
     pub nvidia: Nvidia,
     pub logging: Logging,
     pub tidy: Tidy,
+    pub gpu: Gpu,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -334,6 +353,7 @@ struct Raw {
     nvidia: Nvidia,
     logging: Logging,
     tidy: Tidy,
+    gpu: Gpu,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -396,6 +416,7 @@ impl Default for Config {
             nvidia: Nvidia::default(),
             logging: Logging::default(),
             tidy: Tidy::default(),
+            gpu: Gpu::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -489,6 +510,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         nvidia: raw.nvidia,
         logging: raw.logging,
         tidy: raw.tidy,
+        gpu: raw.gpu,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),

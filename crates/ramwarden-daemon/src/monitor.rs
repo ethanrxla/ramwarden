@@ -116,6 +116,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     };
 
     let cfg = Arc::clone(&state.cfg);
+    let mut gpu_policy = crate::gpu::GpuPolicy::default();
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
@@ -193,6 +194,26 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                             format!(" ({})", outcome.notes.join("; "))
                         }
                     );
+                }
+            }
+        }
+
+        // ── VRAM: unload idle local models when a game needs the card ──────
+        if cfg.gpu.unload_models_for_games {
+            let game = crate::gpu::game_running(&state.det.read().unwrap());
+            let notes = handle.block_on(gpu_policy.tick(game, cfg.gpu.vram_percent, &state.models));
+            for n in notes {
+                tracing::info!("gpu: {n}");
+                if let Ok(h) = state.history.lock() {
+                    let _ = h.log(&ramwarden_core::history::NewAction {
+                        rung: -1,
+                        trigger: "vram".into(),
+                        action: "unload_model".into(),
+                        target: n.clone(),
+                        succeeded: n.starts_with("unloaded"),
+                        notes: n,
+                        ..Default::default()
+                    });
                 }
             }
         }

@@ -31,6 +31,7 @@ fn state() -> AppState {
             History::open(std::path::Path::new(":memory:")).unwrap(),
         )),
         ai: Arc::new(ramwarden_daemon::ai::provider(&cfg)),
+        models: Arc::new(Default::default()),
         started: std::time::Instant::now(),
     }
 }

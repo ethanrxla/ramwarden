@@ -61,6 +61,8 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
         .route("/tidy", get(tidy))
+        .route("/gpu", get(gpu_report))
+        .route("/gpu/unload", post(gpu_unload))
         .route("/debloat", get(debloat_status))
         .route("/debloat/apply", post(debloat_apply))
         .route("/debloat/revert", post(debloat_revert))
@@ -614,6 +616,37 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 }
 
 // ── Ladder ──────────────────────────────────────────────────────────────────
+
+/// The card, who holds its memory, and which local models are loaded.
+async fn gpu_report(State(st): State<AppState>) -> Json<Value> {
+    let det = {
+        // Clone the names out so the lock is not held across the awaits.
+        let det = st.det.read().unwrap();
+        ramwarden_core::detector::Detector::preloaded(det.is_warm(), det.snapshot().values().cloned().collect())
+    };
+    Json(crate::gpu::report(&det, &st.models).await)
+}
+
+#[derive(Deserialize, Default)]
+struct UnloadBody {
+    /// One model by name; every loaded model when absent.
+    #[serde(default)]
+    name: Option<String>,
+}
+
+async fn gpu_unload(State(st): State<AppState>, body: Option<Json<UnloadBody>>) -> Json<Value> {
+    let want = body.and_then(|b| b.0.name);
+    let mut results = Vec::new();
+    for m in st.models.loaded().await {
+        if want.as_ref().is_some_and(|w| *w != m.name) {
+            continue;
+        }
+        let r = st.models.unload(&m).await;
+        results.push(json!({"host": m.host, "name": m.name, "ok": r.is_ok(),
+                            "error": r.err().map(|e| e.to_string())}));
+    }
+    Json(json!({"results": results}))
+}
 
 #[derive(Deserialize)]
 struct DebloatBody {

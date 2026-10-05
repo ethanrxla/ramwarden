@@ -15,6 +15,7 @@
 //! model falls back to the heuristic, and the heuristic always works.
 
 pub mod client;
+pub mod models;
 pub mod prompt;
 pub mod provider;
 pub mod rerank;

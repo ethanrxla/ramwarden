@@ -90,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ladder: Arc::new(Mutex::new(ladder)),
         hub: Arc::new(Mutex::new(Hub::new())),
         history: Arc::new(Mutex::new(api_history)),
+        models: Arc::new(ramwarden_ai::models::ModelHosts::new(provider.ollama.clone())),
         ai: Arc::new(provider),
         started: Instant::now(),
     };

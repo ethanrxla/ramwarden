@@ -1319,6 +1319,7 @@ name = "ramwarden-ai"
 version = "0.2.1"
 dependencies = [
  "nvml-wrapper",
+ "ramwarden-nt",
  "reqwest",
  "serde",
  "serde_json",
