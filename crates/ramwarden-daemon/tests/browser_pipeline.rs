@@ -10,22 +10,22 @@ use ramwarden_daemon::{
     hub::{AppState, Hub},
     tabs::{Tab, Transport},
 };
-use ramwarden_kernel::Root;
+use ramwarden_platform::fake;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 
 fn state() -> AppState {
     let cfg = Config::default();
-    let root = Root::at("/nonexistent");
+    let platform = Arc::new(fake::platform(Default::default()));
     AppState {
         cfg: Arc::new(cfg.clone()),
-        root: root.clone(),
-        det: Arc::new(RwLock::new(Detector::new(root.clone()))),
+        det: Arc::new(RwLock::new(Detector::new(platform.processes()))),
         ladder: Arc::new(Mutex::new(Ladder::new(
             cfg.ladder.clone(),
-            Actuator::new(root),
+            Actuator::for_platform(&platform),
         ))),
+        platform,
         hub: Arc::new(Mutex::new(Hub::new())),
         history: Arc::new(Mutex::new(
             History::open(std::path::Path::new(":memory:")).unwrap(),

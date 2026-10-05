@@ -15,7 +15,7 @@ name = "ramwarden-daemon"
 path = "src/main.rs"
 
 [dependencies]
-ramwarden-kernel = { path = "../ramwarden-kernel" }
+ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
 axum       = { workspace = true }
@@ -28,6 +28,9 @@ tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid       = { workspace = true }
 url = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ramwarden-kernel = { path = "../ramwarden-kernel" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

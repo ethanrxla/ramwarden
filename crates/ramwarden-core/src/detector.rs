@@ -17,37 +17,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ramwarden_kernel::{Root, cgroup, net, process, smaps};
+use ramwarden_platform::{Owner, ProcessSample, ProcessSource};
 
 use crate::pattern;
 use crate::roles::classify;
 use crate::signals::{Protection, Signals, Verdict};
 
-/// Resident size below which PSS is approximated rather than measured.
-///
-/// Reading `smaps_rollup` costs a syscall and a parse per process. For a 4 MB
-/// helper the distinction between RSS and PSS cannot change any decision — it is
-/// far below [`crate::signals::IDLE_FLOOR_BYTES`] either way — so the cheap
-/// figure from `stat` is used instead. v1 paid full price for every process.
-const PSS_MEASURE_FLOOR: u64 = 24 * 1024 * 1024;
-
-/// Signals that do not come from `/proc`.
-///
-/// Separated so tests can supply them directly: collecting them means running
-/// `pactl` and `wmctrl`, which have no business executing in a unit test.
-#[derive(Clone, Debug, Default)]
-pub struct Desktop {
-    /// PIDs with an active audio stream, playing or recording.
-    pub audio_pids: HashSet<i32>,
-    /// PIDs owning a mapped window.
-    ///
-    /// Only ever a positive signal. Under Wayland, `wmctrl` sees XWayland
-    /// clients but not native ones, so an absent window proves nothing — which
-    /// is why [`Signals::score`] never treats its absence as evidence.
-    pub window_pids: HashSet<i32>,
-    /// PID owning the focused window, if known.
-    pub focused_pid: Option<i32>,
-}
+/// Signals that do not come from the process table — audio, windows, focus.
+/// Supplied separately so tests can hand them in directly.
+pub use ramwarden_platform::Desktop;
 
 /// The outcome of asking the gate.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,48 +51,55 @@ impl Decision {
 
 /// Scores every process from live system signals.
 pub struct Detector {
-    root: Root,
+    /// Where process facts come from: `/proc` on Linux, the NT process table on
+    /// Windows. The detector itself only interprets them.
+    source: Box<dyn ProcessSource>,
     signals: HashMap<i32, Signals>,
-    /// pid -> cumulative CPU ticks at the previous sample. The CPU signal is a
-    /// difference, which is the whole reason [`Detector::is_warm`] exists.
-    cpu_prev: HashMap<i32, u64>,
+    /// pid -> cumulative CPU seconds at the previous sample. The CPU signal is
+    /// a difference, which is the whole reason [`Detector::is_warm`] exists.
+    cpu_prev: HashMap<i32, f64>,
     ticks: u32,
     our_pid: i32,
-    /// Set when `smaps_rollup` could not be read for a process large enough to
-    /// matter, so PSS fell back to RSS.
-    ///
-    /// This must be visible. A silent fallback is a silent return to v1's
-    /// accounting — the 2.3x browser overcount the whole rewrite exists to fix —
-    /// and the only symptom is every row reporting `pss == rss`, which looks
-    /// plausible. It was shipped that way once, caused by systemd mount-namespace
-    /// sandboxing on the service unit.
-    pss_unavailable: bool,
+}
+
+/// A source with nothing in it, for detectors that are only ever preloaded.
+struct NoProcesses;
+
+impl ProcessSource for NoProcesses {
+    fn sample(&mut self) -> ramwarden_platform::Result<Vec<ProcessSample>> {
+        Ok(Vec::new())
+    }
 }
 
 impl Detector {
-    pub fn new(root: Root) -> Self {
+    pub fn new(source: Box<dyn ProcessSource>) -> Self {
         Detector {
-            root,
+            source,
             signals: HashMap::new(),
             cpu_prev: HashMap::new(),
             ticks: 0,
             our_pid: std::process::id() as i32,
-            pss_unavailable: false,
         }
     }
 
-    /// Whether PSS measurement is working.
+    /// A detector over a real or synthetic `/proc` tree.
+    #[cfg(target_os = "linux")]
+    pub fn linux(root: ramwarden_kernel::Root) -> Self {
+        Detector::new(Box::new(ramwarden_kernel::platform::LinuxProcesses::new(root)))
+    }
+
+    /// Whether proportional accounting (PSS, private working set) is working.
     ///
-    /// False means accounting has degraded to summed RSS and over-reports any
-    /// process that shares pages — which is every browser.
+    /// False means accounting has degraded to summed resident size and
+    /// over-reports any process that shares pages — which is every browser.
     pub fn pss_available(&self) -> bool {
-        !self.pss_unavailable
+        !self.source.accounting_degraded()
     }
 
     /// A detector holding hand-built signals, for tests and for replaying a
     /// captured snapshot. `warm` controls whether the CPU signal is trusted.
-    pub fn preloaded(root: Root, warm: bool, sigs: Vec<Signals>) -> Self {
-        let mut d = Detector::new(root);
+    pub fn preloaded(warm: bool, sigs: Vec<Signals>) -> Self {
+        let mut d = Detector::new(Box::new(NoProcesses));
         d.ticks = if warm { 2 } else { 1 };
         for mut s in sigs {
             s.score(warm);
@@ -134,79 +119,39 @@ impl Detector {
 
     /// Collect one sample and score everything.
     ///
-    /// `desktop` carries the signals that require subprocesses; the caller
-    /// refreshes it on its own slower cadence.
-    pub fn sample(&mut self, desktop: &Desktop) -> ramwarden_kernel::Result<()> {
-        let now_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let boot = process::boot_time(&self.root).unwrap_or(0);
-        let sockets = net::sockets(&self.root).unwrap_or_default();
-        let scopes = self.scope_map();
-
-        let table = process::table(&self.root)?;
+    /// `desktop` carries the signals that require subprocesses or window-system
+    /// calls; the caller refreshes it on its own slower cadence.
+    pub fn sample(&mut self, desktop: &Desktop) -> ramwarden_platform::Result<()> {
+        let table = self.source.sample()?;
         let mut fresh: HashMap<i32, Signals> = HashMap::with_capacity(table.len());
         let mut parents: HashMap<i32, i32> = HashMap::with_capacity(table.len());
-        let mut cpu_now: HashMap<i32, u64> = HashMap::with_capacity(table.len());
+        let mut cpu_now: HashMap<i32, f64> = HashMap::with_capacity(table.len());
 
         for p in table {
             if p.pid == self.our_pid {
                 continue;
             }
             parents.insert(p.pid, p.ppid);
-            cpu_now.insert(p.pid, p.cpu_ticks);
+            cpu_now.insert(p.pid, p.cpu_seconds);
 
             let cpu_delta = match self.cpu_prev.get(&p.pid) {
-                Some(&prev) => {
-                    (p.cpu_ticks.saturating_sub(prev)) as f64 / process::clock_ticks() as f64
-                }
+                Some(&prev) => (p.cpu_seconds - prev).max(0.0),
                 None => 0.0,
             };
 
-            let rss = p.rss_bytes();
-            // Measure PSS properly only where it could matter.
-            let pss = if rss >= PSS_MEASURE_FLOOR {
-                match smaps::rollup(&self.root, p.pid) {
-                    Ok(r) => r.pss,
-                    Err(e) if e.is_missing() => rss, // the process just exited
-                    Err(e) => {
-                        // Not a vanished process: we are being denied. Say so
-                        // loudly and once, because the fallback silently restores
-                        // v1's overcount.
-                        if !self.pss_unavailable {
-                            self.pss_unavailable = true;
-                            tracing::error!(
-                                "cannot read smaps_rollup ({e}) — accounting has fallen back \
-                                 to summed RSS, which over-reports any process that shares \
-                                 pages. If this daemon runs under systemd, check that the unit \
-                                 sets no mount-namespace sandboxing (PrivateTmp, \
-                                 ProtectKernelTunables, ProtectSystem)."
-                            );
-                        }
-                        rss
-                    }
-                }
-            } else {
-                rss
-            };
-
-            let cmdline = process::cmdline(&self.root, p.pid).unwrap_or_default();
-            let uid = process::uid(&self.root, p.pid).ok();
-
-            let mut s = Signals::new(p.pid, &p.comm, classify(&p.comm, &cmdline, uid));
-            s.pss = pss;
-            s.rss = rss;
+            let mut s = Signals::new(p.pid, &p.name, classify(&p.name, &p.cmdline, uid_hint(p.owner)));
+            s.pss = p.proportional;
+            s.rss = p.resident;
             s.state = p.state;
-            s.scope = scopes.get(&p.pid).cloned();
-            s.listening_ports = sockets.ports_for(p.pid).to_vec();
-            s.established = sockets.established_for(p.pid);
+            s.scope = p.group;
+            s.listening_ports = p.listening_ports;
+            s.established = p.established;
             s.is_focused = desktop.focused_pid == Some(p.pid);
             s.has_window = desktop.window_pids.contains(&p.pid);
             s.playing_audio = desktop.audio_pids.contains(&p.pid);
-            s.has_tty = p.has_tty();
+            s.has_tty = p.has_tty;
             s.cpu_seconds_recent = cpu_delta;
-            s.age_minutes = p.age_seconds(boot, now_epoch) / 60.0;
+            s.age_minutes = p.age_seconds / 60.0;
 
             fresh.insert(p.pid, s);
         }
@@ -221,35 +166,7 @@ impl Detector {
 
         self.cpu_prev = cpu_now;
         self.signals = fresh;
-        // Recoverable: if the unit is fixed and reloaded, a later tick will read
-        // rollups again and the warning should be able to fire once more.
-        if self.pss_unavailable && self.signals.values().any(|s| s.pss != s.rss) {
-            self.pss_unavailable = false;
-            tracing::info!("smaps_rollup is readable again — PSS accounting restored");
-        }
         Ok(())
-    }
-
-    /// pid -> cgroup scope name, for every process in the user's session.
-    ///
-    /// Processes outside it (system services, every Docker container) get no
-    /// scope, which is also a reminder that the ladder cannot reach them.
-    fn scope_map(&self) -> HashMap<i32, String> {
-        let mut out = HashMap::new();
-        // SAFETY: getuid cannot fail and touches no memory.
-        let uid = unsafe { libc_getuid() };
-        let Ok(h) = cgroup::Hierarchy::user_session(&self.root, uid) else {
-            return out;
-        };
-        let Ok(scopes) = h.scopes() else { return out };
-        for s in scopes {
-            if let Ok(pids) = s.pids() {
-                for pid in pids {
-                    out.insert(pid, s.name().to_string());
-                }
-            }
-        }
-        out
     }
 
     // ── Queries ─────────────────────────────────────────────────────────────
@@ -408,9 +325,14 @@ fn propagate(sigs: &mut HashMap<i32, Signals>, parents: &HashMap<i32, i32>) {
     }
 }
 
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn libc_getuid() -> u32;
+/// The owner as the UID [`classify`] understands: system-owned processes read
+/// as root, so they classify as [`crate::roles::Role::System`] on every
+/// platform. Anything else carries no UID, which classify treats as ordinary.
+fn uid_hint(owner: Owner) -> Option<u32> {
+    match owner {
+        Owner::System => Some(0),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -426,7 +348,7 @@ mod tests {
     /// A detector preloaded with hand-built signals, mirroring v1's `_detector`
     /// helper. Asserts on policy, not on whatever is running.
     fn detector(warm: bool, sigs: Vec<Signals>) -> Detector {
-        Detector::preloaded(Root::at("/nonexistent"), warm, sigs)
+        Detector::preloaded(warm, sigs)
     }
 
     fn sig(pid: i32, name: &str) -> Signals {

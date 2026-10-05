@@ -10,10 +10,9 @@ use ramwarden_core::actuator::Actuator;
 use ramwarden_core::detector::Detector;
 use ramwarden_core::history::History;
 use ramwarden_core::ladder::Ladder;
-use ramwarden_core::{config, desktop};
+use ramwarden_core::{config, host};
 use ramwarden_daemon::hub::{AppState, Hub};
 use ramwarden_daemon::{ai, monitor, routes};
-use ramwarden_kernel::Root;
 use tower_http::cors::CorsLayer;
 
 #[tokio::main]
@@ -33,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("config loaded from {}", src.display());
     }
 
-    let root = Root::system();
+    let platform = Arc::new(host::platform());
+    tracing::info!("platform: {}", platform.name);
 
     // The ladder and the read endpoints each get their own SQLite connection.
     let ladder_history = History::open(&cfg.db_path)?;
@@ -44,23 +44,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_history.count_tabs().unwrap_or(0)
     );
 
-    let mut detector = Detector::new(root.clone());
+    let mut detector = Detector::new(platform.processes());
 
     // Take the first sample before serving, so the first request sees something.
     // The detector still refuses to call anything idle until the second sample,
     // which is the point of `is_warm`.
-    let mut probe = desktop::DesktopProbe::new();
-    if let Err(e) = detector.sample(&probe.sample()) {
+    if let Err(e) = detector.sample(&platform.desktop().sample()) {
         tracing::warn!("first sample failed: {e}");
     }
 
-    let ladder =
-        Ladder::new(cfg.ladder.clone(), Actuator::new(root.clone())).with_history(ladder_history);
+    let ladder = Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform))
+        .with_history(ladder_history);
 
     let provider = ai::provider(&cfg);
     let state = AppState {
         cfg: Arc::new(cfg),
-        root,
+        platform,
         det: Arc::new(RwLock::new(detector)),
         ladder: Arc::new(Mutex::new(ladder)),
         hub: Arc::new(Mutex::new(Hub::new())),

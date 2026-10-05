@@ -6,6 +6,7 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod extras;
 pub mod hub;
 pub mod monitor;
 pub mod routes;

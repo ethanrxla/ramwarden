@@ -1319,8 +1319,6 @@ name = "ramwarden-ai"
 version = "0.2.1"
 dependencies = [
  "nvml-wrapper",
- "ramwarden-core",
- "ramwarden-kernel",
  "reqwest",
  "serde",
  "serde_json",
@@ -1336,6 +1334,7 @@ version = "0.2.1"
 dependencies = [
  "libc",
  "ramwarden-kernel",
+ "ramwarden-platform",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1354,6 +1353,7 @@ dependencies = [
  "ramwarden-ai",
  "ramwarden-core",
  "ramwarden-kernel",
+ "ramwarden-platform",
  "serde",
  "serde_json",
  "tempfile",
@@ -1385,9 +1385,19 @@ version = "0.2.1"
 dependencies = [
  "libc",
  "nix",
+ "ramwarden-platform",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "ramwarden-platform"
+version = "0.2.1"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

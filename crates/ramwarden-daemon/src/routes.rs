@@ -17,12 +17,12 @@ use axum::routing::{delete, get, post};
 use axum::{Router, response::IntoResponse};
 
 use ramwarden_core::signals::Verdict;
-use ramwarden_core::{ladder, private, terminals, workspaces};
+use ramwarden_core::{ladder, workspaces};
 use ramwarden_ai::vram;
-use ramwarden_kernel::{meminfo, psi, zram};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::extras;
 use crate::hub::AppState;
 use crate::tabs::{Tab, Transport};
 
@@ -67,7 +67,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-fn mb(bytes: u64) -> f64 {
+pub(crate) fn mb(bytes: u64) -> f64 {
     (bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
 }
 
@@ -132,10 +132,10 @@ async fn debug_tabs(State(st): State<AppState>) -> Json<Value> {
 // ── Memory and activity ─────────────────────────────────────────────────────
 
 async fn stats(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
+    let m = st.memory();
     let det = st.det.read().unwrap();
     let hub = st.hub.lock().unwrap();
-    let terms = terminals::list(&st.root).unwrap_or_default();
+    let terms = extras::terminals();
 
     let mut procs: Vec<_> = det.snapshot().values().collect();
     procs.sort_by_key(|s| std::cmp::Reverse(s.pss));
@@ -150,25 +150,15 @@ async fn stats(State(st): State<AppState>) -> Json<Value> {
         "browsers_connected": hub.reg.browsers_connected(),
         "ws_browsers": hub.reg.socket_count(),
         "poll_browsers": hub.reg.poll_count(),
-        "private_windows": private::detect(&st.root, false).iter().map(|c| json!({
-            "type": c.kind.as_str(), "title": c.title,
-            "rss_mb": mb(c.pss), "closeable": c.closeable,
-        })).collect::<Vec<_>>(),
-        "terminals": {
-            "idle": terms.iter().filter(|t| t.is_idle)
-                .map(|t| json!({"pid": t.pid, "shell": t.shell})).collect::<Vec<_>>(),
-            "busy": terms.iter().filter(|t| !t.is_idle)
-                .map(|t| json!({"pid": t.pid, "shell": t.shell,
-                                "children": t.children.iter().take(5).collect::<Vec<_>>()}))
-                .collect::<Vec<_>>(),
-        },
+        "private_windows": extras::private_windows(),
+        "terminals": extras::terminals_json(&terms),
     }))
 }
 
 /// A breakdown of what memory is doing, and how far v1 would have been wrong.
 async fn ram_report(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let z = zram::total(&st.root).unwrap_or_default();
+    let m = st.memory();
+    let z = st.platform.memory.compression().unwrap_or_default();
     let det = st.det.read().unwrap();
     let totals = det.totals();
 
@@ -182,9 +172,11 @@ async fn ram_report(State(st): State<AppState>) -> Json<Value> {
         "used_mb": mb(m.used()),
         "available_mb": mb(m.available),
         "swap_used_mb": mb(m.swap_used()),
+        // In-RAM compression: zram on Linux, the compression store on Windows.
+        // The key keeps its v1 name because the window reads it.
         "zram": {
-            "stored_mb": mb(z.orig_data_size),
-            "ram_cost_mb": mb(z.mem_used_total),
+            "stored_mb": mb(z.original),
+            "ram_cost_mb": mb(z.resident),
             "ratio": (z.ratio() * 100.0).round() / 100.0,
             // What a naive "used memory" reading overstates by.
             "saved_mb": mb(z.saved()),
@@ -295,13 +287,16 @@ async fn activity_one(State(st): State<AppState>, Path(name): Path<String>) -> J
 }
 
 async fn pressure(State(st): State<AppState>) -> Json<Value> {
-    let p = psi::system_memory(&st.root).unwrap_or_default();
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let rung = ladder::rung_for(&st.cfg.ladder, &p, m.available);
+    let p = st.pressure();
+    let available = ladder::available_bytes(st.platform.memory.as_ref());
+    let rung = ladder::rung_for(&st.cfg.ladder, &p, available);
     Json(json!({
-        "some": {"avg10": p.some.avg10, "avg60": p.some.avg60, "avg300": p.some.avg300},
-        "full": {"avg10": p.full.avg10, "avg60": p.full.avg60, "avg300": p.full.avg300},
-        "available_mb": mb(m.available),
+        "some": {"avg10": p.some_avg10, "avg60": p.some_avg60, "avg300": p.some_avg300},
+        "full": {"avg10": p.full_avg10, "avg60": p.full_avg60, "avg300": p.full_avg300},
+        // True on Windows, where there is no PSI and this is a fault/commit
+        // estimate on the same scale.
+        "estimated": p.estimated,
+        "available_mb": mb(st.memory().available),
         "rung": rung.as_str(),
     }))
 }
@@ -378,21 +373,7 @@ async fn resume(State(st): State<AppState>, Path(name): Path<String>) -> Json<Va
 
 async fn suspended(State(st): State<AppState>) -> Json<Value> {
     let mut ladder = st.ladder.lock().unwrap();
-    let root = ladder.actuator().root().clone();
-    let entries: Vec<Value> = ladder
-        .actuator()
-        .suspended()
-        .iter()
-        .map(|e| {
-            json!({
-                "name": e.name,
-                "pids": e.live_pids(),
-                "rss_mb": mb(e.pss(&root)),
-                "minutes": (e.minutes() * 10.0).round() / 10.0,
-            })
-        })
-        .collect();
-    Json(json!(entries))
+    Json(json!(suspended_json(ladder.actuator())))
 }
 
 async fn watchlist(State(st): State<AppState>) -> Json<Value> {
@@ -409,10 +390,10 @@ async fn watchlist(State(st): State<AppState>) -> Json<Value> {
     Json(json!({"patterns": st.cfg.watchlist, "processes": out}))
 }
 
-async fn list_terminals(State(st): State<AppState>) -> Json<Value> {
-    let terms = terminals::list(&st.root).unwrap_or_default();
+async fn list_terminals() -> Json<Value> {
+    let terms = extras::terminals();
     Json(json!({
-        "summary": terminals::summary(&terms),
+        "summary": extras::terminal_summary(&terms),
         "idle": terms.iter().filter(|t| t.is_idle)
             .map(|t| json!({"pid": t.pid, "shell": t.shell, "reason": t.reason()}))
             .collect::<Vec<_>>(),
@@ -423,9 +404,9 @@ async fn list_terminals(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn close_idle_terminals(State(st): State<AppState>) -> Json<Value> {
-    let terms = terminals::list(&st.root).unwrap_or_default();
-    let closed = terminals::close_idle(&terms);
+async fn close_idle_terminals() -> Json<Value> {
+    let terms = extras::terminals();
+    let closed = extras::close_idle_terminals(&terms);
     Json(json!({"closed": closed, "requested": terms.iter().filter(|t| t.is_idle).count()}))
 }
 
@@ -474,8 +455,8 @@ struct AnalyzeBody {
 /// failure. The reply names the tier so the user can see which answered.
 async fn analyze(State(st): State<AppState>, Json(body): Json<AnalyzeBody>) -> Json<Value> {
     let tabs = st.request_all_tabs().await;
-    let p = psi::system_memory(&st.root).unwrap_or_default();
-    let m = meminfo::read(&st.root).unwrap_or_default();
+    let p = st.pressure();
+    let m = st.memory();
 
     // Take what the model tier needs and release the lock before awaiting: the
     // guard is not Send, and holding it over a network round trip would block
@@ -490,7 +471,7 @@ async fn analyze(State(st): State<AppState>, Json(body): Json<AnalyzeBody>) -> J
         &snap,
         &tabs,
         crate::ai::MemoryState {
-            psi_some: p.some.avg10,
+            psi_some: p.some_avg10,
             used_mb: mb(m.used()),
             total_mb: mb(m.total),
         },
@@ -551,12 +532,14 @@ async fn ai_status(State(st): State<AppState>) -> Json<Value> {
 
     let page_out = {
         let mut ladder = st.ladder.lock().unwrap();
-        json!({
+        let mut out = json!({
             "available": ladder.actuator().can_page_out(),
             "route": ladder.actuator().page_out_route(),
-            "helper_socket": ramwarden_core::helper::socket_path(),
-            "helper_present": ramwarden_core::helper::present(),
-        })
+        });
+        if let (Some(o), Value::Object(extra)) = (out.as_object_mut(), extras::helper()) {
+            o.extend(extra);
+        }
+        out
     };
 
     Json(json!({
@@ -569,6 +552,7 @@ async fn ai_status(State(st): State<AppState>) -> Json<Value> {
             "key": n.key_fingerprint(),
         })).unwrap_or(json!({"configured": false})),
         "prefer": st.cfg.nvidia.prefer,
+        "platform": st.platform.name,
         "gpu": gpu,
         "page_out": page_out,
     }))
@@ -593,22 +577,22 @@ async fn close_tabs_route(
 }
 
 async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) -> impl IntoResponse {
-    let uid = unsafe { getuid() };
-    let Ok(h) = ramwarden_kernel::cgroup::Hierarchy::user_session(&st.root, uid) else {
+    let Some(groups) = st.platform.ready_groups() else {
+        let why = st.platform.groups.ready().err().map(|e| e.to_string()).unwrap_or_default();
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": "no delegated cgroup memory controller"})),
+            Json(json!({"error": format!("group reclaim unavailable: {why}")})),
         );
     };
-    let Ok(s) = h.scope(&scope) else {
+    let Ok(group) = groups.group(&scope) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": format!("no scope named {scope}")})),
         );
     };
-    let ask = s.stat().map(|st| st.reclaimable()).unwrap_or(0);
+    let ask = group.reclaimable().unwrap_or(0);
     let mut ladder = st.ladder.lock().unwrap();
-    let outcome = ladder.actuator().reclaim_scope(&s, ask);
+    let outcome = ladder.actuator().reclaim_scope(group.as_ref(), ask);
     (
         StatusCode::OK,
         Json(json!({
@@ -623,16 +607,14 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 // ── Ladder ──────────────────────────────────────────────────────────────────
 
 async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
-    let uid = unsafe { getuid() };
-    let h = ramwarden_kernel::cgroup::Hierarchy::user_session(&st.root, uid).ok();
     let det = st.det.read().unwrap();
-    let p = psi::system_memory(&st.root).unwrap_or_default();
+    let p = st.pressure();
 
     let w = ladder::World {
         det: &det,
-        hierarchy: h.as_ref(),
+        groups: st.platform.ready_groups(),
         psi: p,
-        available_bytes: ladder::available_bytes(&st.root),
+        available_bytes: ladder::available_bytes(st.platform.memory.as_ref()),
         watchlist: &st.cfg.watchlist,
         goal: String::new(),
         tabs: None,
@@ -750,9 +732,9 @@ async fn signals(State(st): State<AppState>) -> Json<Value> {
 /// Everything v1's `_window_state()` returned, so the GTK window can run out of
 /// process against this daemon without being modified.
 async fn window_state(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let z = zram::total(&st.root).unwrap_or_default();
-    let p = psi::system_memory(&st.root).unwrap_or_default();
+    let m = st.memory();
+    let z = st.platform.memory.compression().unwrap_or_default();
+    let p = st.pressure();
     let det = st.det.read().unwrap();
     let totals = det.totals();
 
@@ -761,20 +743,7 @@ async fn window_state(State(st): State<AppState>) -> Json<Value> {
 
     let suspended: Vec<Value> = {
         let mut ladder = st.ladder.lock().unwrap();
-        let root = ladder.actuator().root().clone();
-        ladder
-            .actuator()
-            .suspended()
-            .iter()
-            .map(|e| {
-                json!({
-                    "name": e.name,
-                    "pids": e.live_pids(),
-                    "rss_mb": mb(e.pss(&root)),
-                    "minutes": (e.minutes() * 10.0).round() / 10.0,
-                })
-            })
-            .collect()
+        suspended_json(ladder.actuator())
     };
 
     let hub = st.hub.lock().unwrap();
@@ -793,16 +762,28 @@ async fn window_state(State(st): State<AppState>) -> Json<Value> {
         },
         "suspended": suspended,
         // v2 additions the window can ignore.
-        "psi_some": p.some.avg10,
-        "psi_full": p.full.avg10,
+        "psi_some": p.some_avg10,
+        "psi_full": p.full_avg10,
+        "pressure_estimated": p.estimated,
         "zram_saved_mb": mb(z.saved()),
         "warm": det.is_warm(),
     }))
 }
 
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn getuid() -> u32;
+/// What RamWarden has frozen, as `/suspended` and `/state` report it.
+fn suspended_json(act: &mut ramwarden_core::actuator::Actuator) -> Vec<Value> {
+    let control = act.control();
+    act.suspended()
+        .iter()
+        .map(|e| {
+            json!({
+                "name": e.name,
+                "pids": e.live_pids(),
+                "rss_mb": mb(e.pss(control.as_ref())),
+                "minutes": (e.minutes() * 10.0).round() / 10.0,
+            })
+        })
+        .collect()
 }
 
 fn browser_snapshot(st: &AppState) -> Value {

@@ -21,12 +21,11 @@
 //!
 //! # What changed from v1
 //!
-//! Size is now PSS rather than summed RSS (see [`ramwarden_kernel::smaps`]), and
-//! `scope` is new — it ties a process to the cgroup the ladder can reclaim from.
+//! Size is now proportional (PSS on Linux, private working set on Windows)
+//! rather than summed RSS, and `scope` is new — it ties a process to the group
+//! the ladder can reclaim from.
 //! The verdicts, the ordering, and the user-facing reason strings are unchanged,
 //! because they were right.
-
-use ramwarden_kernel::smaps::Rollup;
 
 use crate::roles::Role;
 
@@ -139,12 +138,6 @@ impl Signals {
             protection: Protection::None,
             reasons: Vec::new(),
         }
-    }
-
-    pub fn with_memory(mut self, r: &Rollup) -> Self {
-        self.pss = r.pss;
-        self.rss = r.rss;
-        self
     }
 
     pub fn is_serving(&self) -> bool {
