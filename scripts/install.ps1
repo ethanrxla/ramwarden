@@ -20,6 +20,11 @@
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 .EXAMPLE
+  # With the GPU predictor and in-process embeddings (needs the CUDA toolkit):
+  scripts\cargo-cuda.cmd build --release -p ramwarden-daemon --features embed,cuda
+  powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+.EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall
 #>
 [CmdletBinding()]
@@ -76,6 +81,17 @@ Remove-RamWarden
 New-Item -ItemType Directory -Force $Dest | Out-Null
 Get-ChildItem $Source -Filter 'ramwarden-*.exe' | Copy-Item -Destination $Dest -Force
 
+# The daemon starts through a launcher that puts the CUDA runtime on PATH: a
+# daemon built with `--features cuda` imports cublas and curand at load time,
+# and the logon task's environment does not include CUDA's bin\x64. Harmless
+# for a CPU-only build. Lives in Program Files, so only admins can edit it.
+$Launcher = Join-Path $Dest 'ramwarden-daemon.cmd'
+@'
+@echo off
+if defined CUDA_PATH set "PATH=%CUDA_PATH%\bin\x64;%CUDA_PATH%\bin;%PATH%"
+"%~dp0ramwarden-daemon.exe" %*
+'@ | Set-Content -Encoding ascii $Launcher
+
 # Service: registered from Program Files, which it insists on.
 & $Service install
 if ($LASTEXITCODE -ne 0) { throw 'service install failed' }
@@ -93,7 +109,7 @@ if (-not (Test-Path $Config)) {
 $user    = "$env:USERDOMAIN\$env:USERNAME"
 $log     = Join-Path $env:LOCALAPPDATA 'ramwarden\daemon.log'
 $action  = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
-             -Argument "--headless `"$Dest\ramwarden-daemon.exe`" --log-file `"$log`"" `
+             -Argument "--headless `"$Launcher`" --log-file `"$log`"" `
              -WorkingDirectory $ConfigDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `

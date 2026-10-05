@@ -248,7 +248,7 @@ The following are never acted on:
     with a 5-minute cooldown.
   - This is the only VRAM lever pulled automatically.
 - **Embeddings:** `ml::embed` runs mxbai-embed-large through candle, in-process.
-  - **Attached only when a CUDA device exists** (f16, about 0.7 GB VRAM). On
+  - **Attached only when a CUDA device exists** (f32, about 1.3 GB VRAM: candle's f16 and bf16 BERT returned NaN on the RTX 5070). On
     the CPU it would hold about 1.3 GB of RAM indefinitely.
   - It loads on first use and is dropped after 10 idle minutes.
   - Ollama is the fallback.

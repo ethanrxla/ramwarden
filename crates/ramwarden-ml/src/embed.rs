@@ -6,7 +6,7 @@
 //! titles. This runs the same model — mxbai-embed-large, which the README
 //! measured as the one that actually separates relevant from irrelevant tabs —
 //! inside the daemon with candle: on the RTX 5070 when built with `cuda`
-//! (about 0.7 GB of VRAM in f16), on the CPU otherwise.
+//! (about 1.3 GB of VRAM in f32), on the CPU otherwise.
 //!
 //! Weights come from the Hugging Face hub on first use and are cached.
 
@@ -47,8 +47,12 @@ impl LocalEmbedder {
             }))
             .map_err(err)?;
 
-        // Half precision on the GPU halves the VRAM; the CPU path stays f32.
-        let dtype = if device.is_cuda() { DType::F16 } else { DType::F32 };
+        // f32 everywhere. Half precision would halve the VRAM, but candle
+        // 0.11's BERT returns NaN embeddings in both f16 and bf16 on the
+        // RTX 5070 (f32 on the same GPU is correct), so the GPU path pays
+        // ~1.3 GB of VRAM — on the card, not in system RAM, and released
+        // after ten idle minutes.
+        let dtype = DType::F32;
         // SAFETY: the file is a safetensors download from the hub, memory-
         // mapped read-only for the lifetime of the model.
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], dtype, device).map_err(err)? };

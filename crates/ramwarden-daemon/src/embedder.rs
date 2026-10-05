@@ -1,6 +1,6 @@
 //! The in-process embedder, loaded only on a GPU and only while it is used.
 //!
-//! On the RTX 5070 the model costs ~0.7 GB of VRAM in f16. On the CPU it would
+//! On the RTX 5070 the model costs ~1.3 GB of VRAM (f32; see `ml::embed`). On the CPU it would
 //! cost ~1.3 GB of *RAM* for as long as it stayed loaded — a memory manager
 //! holding a gigabyte to save a few hundred megabytes of tabs has lost the
 //! plot — so without a CUDA device it is never attached and the Ollama path
