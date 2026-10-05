@@ -21,5 +21,8 @@ rusqlite  = { workspace = true }
 ramwarden-kernel = { path = "../ramwarden-kernel" }
 libc      = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+ramwarden-nt = { path = "../ramwarden-nt" }
+
 [dev-dependencies]
 tempfile = { workspace = true }
