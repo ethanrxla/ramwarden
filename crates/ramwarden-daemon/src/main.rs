@@ -87,7 +87,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let provider = ai::provider(&cfg);
-    #[cfg(feature = "embed")]
     ramwarden_daemon::embedder::attach(&provider);
     let state = AppState {
         cfg: Arc::new(cfg),

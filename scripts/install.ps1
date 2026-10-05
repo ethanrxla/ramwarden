@@ -47,6 +47,7 @@ $Dest     = Join-Path $env:ProgramFiles 'RamWarden'
 $TaskName = 'RamWarden daemon'
 $TrayTask = 'RamWarden tray'
 $Service  = Join-Path $Dest 'ramwarden-service.exe'
+$Shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\RamWarden.lnk'
 
 function Remove-RamWarden {
   foreach ($t in @($TaskName, $TrayTask)) {
@@ -65,6 +66,7 @@ function Remove-RamWarden {
 if ($Uninstall) {
   Remove-RamWarden
   if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
+  if (Test-Path $Shortcut) { Remove-Item -Force $Shortcut }
   Write-Host 'RamWarden removed. Your config and journals were left in %APPDATA%, %LOCALAPPDATA% and %ProgramData%.'
   Write-Host 'Revert any applied profiles first with: ramwarden-debloat revert all'
   return
@@ -123,9 +125,18 @@ if (Test-Path $tray) {
   $a = New-ScheduledTaskAction -Execute $tray -Argument '--hidden'
   Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Settings $settings -Principal $task | Out-Null
   Start-ScheduledTask -TaskName $TrayTask
+
+  # Start menu entry. Launching the app while the tray runs opens the window.
+  $shell = New-Object -ComObject WScript.Shell
+  $lnk = $shell.CreateShortcut($Shortcut)
+  $lnk.TargetPath = $tray
+  $lnk.WorkingDirectory = $Dest
+  $lnk.Description = 'RamWarden memory manager'
+  $lnk.Save()
 }
 
 Write-Host "RamWarden installed to $Dest"
+Write-Host "  app     : Start menu -> RamWarden (or the ring icon in the system tray)"
 Write-Host "  service : $((Get-Service RamWarden).Status)"
 Write-Host "  daemon  : http://127.0.0.1:7823  (log: $log)"
 Write-Host "  debloat : & '$Dest\ramwarden-debloat.exe' status"

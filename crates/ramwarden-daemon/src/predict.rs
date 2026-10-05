@@ -2,8 +2,15 @@
 //!
 //! Keeps each process's last [`WINDOW`] behaviour samples (the same samples,
 //! at the same cadence, as the behaviour log the model trained on), scores
-//! every process in one batched pass whenever new samples arrive — on the GPU
-//! when built with `cuda` — and answers the ladder's `reuse(pid)` from that.
+//! every process in one batched pass whenever new samples arrive, and answers
+//! the ladder's `reuse(pid)` from that.
+//!
+//! # Where the GPU is used, and where it is not
+//!
+//! Training runs on the GPU, in the `ramwarden-gpu` worker, once a day.
+//! Scoring runs on the CPU: a few hundred windows through a 32-wide network
+//! takes microseconds, while keeping a CUDA context in the daemon cost 640 MB
+//! private on the target machine — for a memory manager, the wrong trade.
 //!
 //! It only answers at all while the loaded model passed its gate (beat the
 //! LRU baseline on held-out data). Until then, the ladder and Tidy behave
@@ -16,6 +23,7 @@ use std::sync::RwLock;
 use ramwarden_core::history::{History, SignalSample};
 use ramwarden_core::rank::ReuseRanker;
 use ramwarden_ml::features::{FEATURES, WINDOW, encode, examples};
+use candle_core::Device;
 use ramwarden_ml::jepa::{self, Jepa, Metrics};
 
 /// Training passes. Early stopping picks the best checkpoint within these.
@@ -40,7 +48,7 @@ impl LivePredictor {
     pub fn new(path: PathBuf) -> Self {
         let mut inner = Inner::default();
         if path.exists() {
-            match Jepa::load(&path, &jepa::device()) {
+            match Jepa::load(&path, &Device::Cpu) {
                 Ok(m) => {
                     tracing::info!(
                         "reuse predictor loaded (AUC {:?} vs LRU {:?}, {})",
@@ -101,7 +109,47 @@ impl LivePredictor {
         }
     }
 
-    /// Train from the behaviour log, save, and swap the model in.
+    /// Load the model at [`Self::model_path`] for CPU scoring.
+    pub fn reload(&self) -> Result<Metrics, String> {
+        let model = Jepa::load(&self.path, &Device::Cpu)?;
+        let metrics = model.metrics.clone();
+        let mut inner = self.inner.write().unwrap();
+        inner.metrics = Some(metrics.clone());
+        inner.model = Some(model);
+        Ok(metrics)
+    }
+
+    /// Train on the GPU in the worker process, then load the result here.
+    pub fn train_on_gpu(&self, worker: &Path, db: &Path, horizon_secs: i64) -> Result<Metrics, String> {
+        let mut cmd = std::process::Command::new(worker);
+        cmd.arg("train")
+            .arg("--db")
+            .arg(db)
+            .arg("--out")
+            .arg(&self.path)
+            .arg("--horizon")
+            .arg(horizon_secs.to_string());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let out = cmd.output().map_err(|e| format!("start {}: {e}", worker.display()))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        let metrics = self.reload()?;
+        tracing::info!(
+            "reuse predictor trained on the GPU: AUC {:?} vs LRU {:?} — {}",
+            metrics.auc,
+            metrics.lru_auc,
+            if metrics.enabled { "enabled" } else { "not better than LRU; gated off" }
+        );
+        Ok(metrics)
+    }
+
+    /// Train from the behaviour log in this process, on the CPU, save, and
+    /// swap the model in. Used when there is no GPU worker.
     ///
     /// A model that fails the gate is still saved, so `/predict/eval` can
     /// show how close it came, but it never answers `reuse`.
@@ -117,7 +165,7 @@ impl LivePredictor {
                 jepa::MIN_TRAIN
             ));
         }
-        let device = jepa::device();
+        let device = Device::Cpu;
         let model = Jepa::train(&ex, EPOCHS, &device).map_err(|e| e.to_string())?;
         model.save(&self.path)?;
         let metrics = model.metrics.clone();
@@ -148,13 +196,16 @@ pub fn train_in_background(state: &crate::hub::AppState) {
     let horizon = state.cfg.logging.horizon_seconds;
     let _ = std::thread::Builder::new()
         .name("ramwarden-train".into())
-        .spawn(move || match History::open(&db) {
-            Ok(h) => {
-                if let Err(e) = predictor.train(&h, horizon) {
-                    tracing::info!("reuse predictor not trained: {e}");
-                }
+        .spawn(move || {
+            let result = match crate::worker::gpu_worker() {
+                Some(worker) => predictor.train_on_gpu(&worker, &db, horizon),
+                None => History::open(&db)
+                    .map_err(|e| e.to_string())
+                    .and_then(|h| predictor.train(&h, horizon)),
+            };
+            if let Err(e) = result {
+                tracing::info!("reuse predictor not trained: {e}");
             }
-            Err(e) => tracing::warn!("reuse predictor: cannot open history: {e}"),
         });
 }
 

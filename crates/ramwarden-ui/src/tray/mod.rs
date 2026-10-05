@@ -207,7 +207,21 @@ fn open_window(child: &mut Option<Child>) {
 /// Run the tray until Quit. `start_hidden` (the logon task) does not open the
 /// window at start.
 pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
+    use windows::core::w;
+
+    // One tray per session. Launching the app again (Start menu, a second
+    // double-click) while the tray runs just opens the window.
+    // SAFETY: a named mutex held for the life of the process; never closed.
+    let _instance = unsafe { CreateMutexW(None, false, w!("Local\\RamWardenTray")) };
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        if start_hidden {
+            return Ok(()); // a second logon start: the tray is already there
+        }
+        return run_window(client);
+    }
 
     let poller = Poller::start(client, false, || {});
     let mut tray = Tray::new()?;

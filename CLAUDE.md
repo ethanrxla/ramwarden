@@ -100,7 +100,7 @@ cargo run -p ramwarden-nt --example probe          # compare with Task Manager
 cargo run -p ramwarden-daemon                      # API on 127.0.0.1:7823
 cargo run -p ramwarden-ui --features tray --bin ramwarden-tray   # tray; --window = the window process
 cargo run -p ramwarden-debloat -- status                          # reversible profiles
-cargo build --release -p ramwarden-daemon --features embed,cuda   # GPU predictor + embeddings; needs CUDA 12.8+ (sm_120)
+scripts\cargo-cuda.cmd build --release -p ramwarden-ml --features cuda,embed --bin ramwarden-gpu   # GPU worker; CUDA 13 toolkit + matching driver
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1      # elevated; installs everything
 ```
 
@@ -118,6 +118,13 @@ Tests never act on real processes or call real models. Linux tests use a
 synthetic `/proc` through `Root`. Windows policy tests use `FakePlatform`.
 Mechanism tests that need the real OS act only on a child process they spawn
 themselves.
+
+## The daemon never loads CUDA
+
+GPU work (predictor training, tab embeddings) runs in `ramwarden-gpu`, a
+worker the daemon starts on demand and that exits when done. A CUDA build of
+the daemon itself held 640 MB private permanently; the CPU daemon holds ~23 MB.
+Do not add `cuda` features to the daemon.
 
 ## Specs
 

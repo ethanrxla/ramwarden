@@ -33,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))
         // ── v1 endpoints ────────────────────────────────────────────────────
+        .route("/", get(index))
         .route("/health", get(health))
         .route("/stats", get(stats))
         .route("/ram-report", get(ram_report))
@@ -107,6 +108,26 @@ async fn poll_tabs(State(st): State<AppState>, Json(body): Json<TabPollBody>) ->
         );
     }
     Json(json!({"commands": commands, "browser_id": body.browser_id}))
+}
+
+/// What a person sees if they open the daemon's address in a browser: this
+/// is the background service, and the app is elsewhere.
+async fn index(State(st): State<AppState>) -> axum::response::Html<String> {
+    let m = st.memory();
+    axum::response::Html(format!(
+        r#"<!doctype html><meta charset="utf-8"><title>RamWarden</title>
+<style>body{{font:15px system-ui;max-width:36em;margin:3em auto;padding:0 1em;color:#222}}
+code{{background:#eee;padding:.1em .3em;border-radius:3px}}</style>
+<h1>RamWarden is running</h1>
+<p>This address is RamWarden's background service. It has no window of its own.</p>
+<p><b>To open the app:</b> Start menu &rarr; <b>RamWarden</b>, or click the ring icon
+in the system tray (it may be under the <code>^</code> arrow by the clock).</p>
+<p>Memory now: {used:.1} GB of {total:.1} GB in use.</p>
+<p>Status for tools and scripts: <a href="/state">/state</a>, <a href="/psi">/psi</a>,
+<a href="/tidy">/tidy</a>, <a href="/gpu">/gpu</a>, <a href="/predict/eval">/predict/eval</a>.</p>"#,
+        used = m.used() as f64 / 1e9,
+        total = m.total as f64 / 1e9,
+    ))
 }
 
 async fn health(State(st): State<AppState>) -> Json<Value> {
@@ -628,7 +649,11 @@ async fn predict_eval(State(st): State<AppState>) -> Json<Value> {
         "behaviour_samples": samples,
         "min_train_examples": ramwarden_ml::jepa::MIN_TRAIN,
         "margin_over_lru": ramwarden_ml::jepa::MARGIN,
-        "device": format!("{:?}", ramwarden_ml::jepa::device()),
+        // Scoring is always on the CPU; training goes to the GPU worker when
+        // one is installed. Asking for a CUDA device here would create a
+        // context in the daemon, which is exactly what the worker avoids.
+        "scoring": "cpu",
+        "training": if crate::worker::gpu_worker().is_some() { "gpu (ramwarden-gpu)" } else { "cpu" },
     }))
 }
 

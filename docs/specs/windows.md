@@ -281,7 +281,27 @@ The following are never acted on:
   - **Routes:** `/predict/eval` reports the metrics; `POST /predict/train`
     trains now.
 
+### The GPU worker (`ramwarden-gpu`)
+- **The daemon never loads CUDA.** Built with `--features cuda`, the daemon
+  held 640 MB private, because cuBLAS and the CUDA context load at startup
+  and never leave. The CPU daemon holds 23 MB.
+- **Training:** the daemon starts `ramwarden-gpu train` once a day. It trains
+  on the GPU (about 0.9 s), saves the model and exits.
+- **Embeddings:** `ramwarden-gpu embed` speaks JSON lines on stdin/stdout. The
+  daemon starts it on the first relevance query and keeps it for follow-ups,
+  and the worker exits after 10 idle minutes.
+  - Measured on the GPU: 0.5 s including model load; related 0.718 against
+    unrelated 0.262.
+- **Scoring stays on the CPU.** A few hundred windows take microseconds,
+  which is not worth a resident CUDA context.
+- **When it is used:** only if the worker is installed beside the daemon and
+  NVML reports an NVIDIA GPU. NVML creates no CUDA context.
+
 ### Window and tray (`ramwarden-tray`)
+- **Opening the app:** a Start-menu entry, or the tray icon. Launching the app
+  while the tray runs opens the window; it never starts a second tray.
+- **The daemon's address** (`http://127.0.0.1:7823/`) shows a page saying it
+  is the background service, and where the app is.
 - **Panels:** Overview, Processes (right-click actions through `menu_for`,
   with confirmation for destructive ones), Privacy & startup, and GPU.
 - **Two processes**, because the UI must not cost memory while closed:

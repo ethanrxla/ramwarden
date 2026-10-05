@@ -1,46 +1,67 @@
-//! The in-process embedder, loaded only on a GPU and only while it is used.
+//! In-process-quality embeddings without CUDA in the daemon's process.
 //!
-//! On the RTX 5070 the model costs ~1.3 GB of VRAM (f32; see `ml::embed`). On the CPU it would
-//! cost ~1.3 GB of *RAM* for as long as it stayed loaded — a memory manager
-//! holding a gigabyte to save a few hundred megabytes of tabs has lost the
-//! plot — so without a CUDA device it is never attached and the Ollama path
-//! stays in charge. On the GPU it loads on first use and is dropped again
-//! after [`IDLE`] without a request.
+//! Tab relevance uses mxbai-embed-large on the GPU, through the
+//! `ramwarden-gpu embed` worker: started on the first request, kept for
+//! follow-up requests, and gone — with its ~1.3 GB of VRAM and the whole CUDA
+//! runtime — after ten idle minutes, when it exits by itself. Without the
+//! worker (no GPU, or a CPU-only install) nothing is attached and the Ollama
+//! path stays in charge.
 
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use ramwarden_ai::embedder::TextEmbedder;
 use ramwarden_ai::provider::Provider;
-use ramwarden_ml::embed::{LocalEmbedder, MXBAI};
 
-/// Unload after this long without a request.
-pub const IDLE: Duration = Duration::from_secs(600);
+struct Worker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 pub struct GpuEmbedder {
-    device: candle_core::Device,
-    slot: Mutex<Option<(Arc<LocalEmbedder>, Instant)>>,
+    exe: PathBuf,
+    worker: Mutex<Option<Worker>>,
 }
 
 impl GpuEmbedder {
-    fn get(&self) -> Result<Arc<LocalEmbedder>, String> {
-        let mut slot = self.slot.lock().unwrap();
-        if let Some((e, at)) = slot.as_mut() {
-            *at = Instant::now();
-            return Ok(e.clone());
+    fn spawn(&self) -> Result<Worker, String> {
+        let mut cmd = Command::new(&self.exe);
+        cmd.arg("embed").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        tracing::info!("loading {MXBAI} on {:?}", self.device);
-        let e = Arc::new(LocalEmbedder::load(MXBAI, &self.device)?);
-        *slot = Some((e.clone(), Instant::now()));
-        Ok(e)
+        let mut child = cmd.spawn().map_err(|e| format!("start {}: {e}", self.exe.display()))?;
+        Ok(Worker {
+            stdin: child.stdin.take().ok_or("no stdin")?,
+            stdout: BufReader::new(child.stdout.take().ok_or("no stdout")?),
+            child,
+        })
     }
 
-    fn expire(&self) {
-        let mut slot = self.slot.lock().unwrap();
-        if slot.as_ref().is_some_and(|(_, at)| at.elapsed() >= IDLE) {
-            *slot = None;
-            tracing::info!("embedder idle for {} min — unloaded, VRAM returned", IDLE.as_secs() / 60);
+    fn ask(w: &mut Worker, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        writeln!(w.stdin, "{}", serde_json::json!({"texts": texts})).map_err(|e| e.to_string())?;
+        w.stdin.flush().map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        if w.stdout.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Err("worker exited".into());
         }
+        let v: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+            return Err(e.to_string());
+        }
+        serde_json::from_value(v["vectors"].clone()).map_err(|e| e.to_string())
     }
 }
 
@@ -50,31 +71,41 @@ impl TextEmbedder for GpuEmbedder {
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        self.get()?.embed(texts)
+        let mut slot = self.worker.lock().unwrap();
+        // A worker that idled out has closed its pipes: retry once with a
+        // fresh one rather than reporting a failure the user never caused.
+        for attempt in 0..2 {
+            if slot.is_none() {
+                *slot = Some(self.spawn()?);
+            }
+            match Self::ask(slot.as_mut().unwrap(), texts) {
+                Ok(v) => return Ok(v),
+                Err(e) if attempt == 0 => {
+                    tracing::debug!("embedding worker gone ({e}); starting a new one");
+                    *slot = None;
+                }
+                Err(e) => {
+                    *slot = None;
+                    return Err(e);
+                }
+            }
+        }
+        unreachable!()
     }
 }
 
-/// Attach a GPU embedder to `provider` when a CUDA device exists.
+/// Attach the GPU worker's embedder to `provider`, when the worker is
+/// installed and a GPU is present.
 pub fn attach(provider: &Provider) {
-    let device = ramwarden_ml::jepa::device();
-    if !device.is_cuda() {
-        tracing::info!("no CUDA device — tab relevance keeps using Ollama embeddings");
+    let Some(exe) = crate::worker::gpu_worker() else {
+        tracing::info!("no GPU worker — tab relevance keeps using Ollama embeddings");
         return;
-    }
+    };
     let e = Arc::new(GpuEmbedder {
-        device,
-        slot: Mutex::new(None),
+        exe,
+        worker: Mutex::new(None),
     });
-    let reaper = e.clone();
-    let _ = std::thread::Builder::new()
-        .name("ramwarden-embed-reaper".into())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(60));
-                reaper.expire();
-            }
-        });
     if provider.local_embedder.set(e).is_ok() {
-        tracing::info!("tab relevance will use {MXBAI} in-process on the GPU");
+        tracing::info!("tab relevance will use mxbai-embed-large on the GPU, via ramwarden-gpu");
     }
 }
