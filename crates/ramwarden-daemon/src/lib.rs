@@ -7,6 +7,7 @@
 
 pub mod ai;
 pub mod extras;
+pub mod guard;
 pub mod hub;
 pub mod monitor;
 pub mod routes;

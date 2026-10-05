@@ -13,7 +13,6 @@ use ramwarden_core::ladder::Ladder;
 use ramwarden_core::{config, host};
 use ramwarden_daemon::hub::{AppState, Hub};
 use ramwarden_daemon::{ai, monitor, routes};
-use tower_http::cors::CorsLayer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,9 +79,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());
 
     let bind = format!("{}:{}", state.cfg.server.host, state.cfg.server.port);
-    // The extensions run from a browser origin, so they need CORS. v1 allowed
-    // everything; the surface is a loopback daemon with no credentials.
-    let app = routes::router(state.clone()).layer(CorsLayer::permissive());
+    // CORS and the origin guard are part of the router; see `guard`.
+    let app = routes::router(state.clone());
+    if !ramwarden_daemon::guard::is_loopback(&state.cfg.server.host) {
+        tracing::warn!(
+            "listening on {} — reachable from other machines with NO authentication. \
+             Web pages are still refused, but anything on the network can freeze or \
+             kill your apps. Use host = \"127.0.0.1\" unless you mean this.",
+            state.cfg.server.host
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("RamWarden listening on http://{bind}");

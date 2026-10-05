@@ -235,3 +235,27 @@ async fn manual_close_works_with_legacy_extension_and_refuses_navigation_or_ambi
     assert!(st.hub.lock().unwrap().reg.tabs_for("legacy").is_empty());
     worker.abort();
 }
+
+/// Any web page can make the browser POST to the daemon; the guard must refuse
+/// it before the handler runs, while extensions and local tools still work.
+#[tokio::test]
+async fn a_web_page_cannot_kill_anything_but_an_extension_can_talk() {
+    let send = |origin: Option<&'static str>| async move {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/kill/brave?force=true")
+            .header("Host", "127.0.0.1:7823");
+        if let Some(o) = origin {
+            req = req.header("Origin", o);
+        }
+        ramwarden_daemon::routes::router(state())
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    };
+    assert_eq!(send(Some("https://evil.example")).await, 403);
+    assert_eq!(send(Some("null")).await, 403);
+    assert_ne!(send(Some("chrome-extension://abc")).await, 403);
+    assert_ne!(send(None).await, 403);
+}

@@ -27,6 +27,7 @@ use crate::hub::AppState;
 use crate::tabs::{Tab, Transport};
 
 pub fn router(state: AppState) -> Router {
+    let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     Router::new()
         // ── Contracts the shipped extensions depend on ──────────────────────
         .route("/api/tabs", post(poll_tabs))
@@ -66,6 +67,10 @@ pub fn router(state: AppState) -> Router {
         .route("/tabs/close", post(close_tabs_route))
         .route("/history/clear", delete(clear_history))
         .with_state(state)
+        // Outermost last: CORS answers allowed preflights, the guard refuses
+        // everything a web page might send. See `guard` for why both.
+        .layer(axum::middleware::from_fn_with_state(policy.clone(), crate::guard::enforce))
+        .layer(policy.cors())
 }
 
 pub(crate) fn mb(bytes: u64) -> f64 {
