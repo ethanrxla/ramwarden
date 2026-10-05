@@ -16,12 +16,30 @@ use ramwarden_daemon::{ai, monitor, routes};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RAMWARDEN_LOG")
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    // `--log-file <path>`: for a headless daemon (the Windows logon task)
+    // that has no terminal to write to.
+    let filter = tracing_subscriber::EnvFilter::try_from_env("RAMWARDEN_LOG")
+        .unwrap_or_else(|_| "info".into());
+    let args: Vec<String> = std::env::args().collect();
+    let log_file = args
+        .iter()
+        .position(|a| a == "--log-file")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|p| {
+            let p = std::path::Path::new(p);
+            if let Some(dir) = p.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            std::fs::OpenOptions::new().create(true).append(true).open(p).ok()
+        });
+    match log_file {
+        Some(f) => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(f))
+            .init(),
+        None => tracing_subscriber::fmt().with_env_filter(filter).init(),
+    }
 
     let cfg = config::load().unwrap_or_else(|e| {
         tracing::error!("config: {e} — falling back to defaults");

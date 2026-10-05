@@ -1353,7 +1353,9 @@ dependencies = [
  "futures",
  "ramwarden-ai",
  "ramwarden-core",
+ "ramwarden-debloat",
  "ramwarden-kernel",
+ "ramwarden-nt",
  "ramwarden-platform",
  "serde",
  "serde_json",
@@ -1365,6 +1367,22 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "ramwarden-debloat"
+version = "0.2.1"
+dependencies = [
+ "ramwarden-nt",
+ "ramwarden-platform",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "windows",
+ "winreg",
 ]
 
 [[package]]
@@ -1398,6 +1416,8 @@ name = "ramwarden-nt"
 version = "0.2.1"
 dependencies = [
  "ramwarden-platform",
+ "serde",
+ "serde_json",
  "tempfile",
  "tracing",
  "windows",
@@ -1409,6 +1429,22 @@ version = "0.2.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ramwarden-service"
+version = "0.2.1"
+dependencies = [
+ "ramwarden-core",
+ "ramwarden-debloat",
+ "ramwarden-nt",
+ "ramwarden-platform",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+ "windows-service",
 ]
 
 [[package]]
@@ -2391,6 +2427,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
 name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2480,6 +2522,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "windows-service"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "857224b3b211c6f3616921f081ee54721ee3ad2ace2fac6a6337e032f7b4dcf2"
+dependencies = [
+ "bitflags",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2595,6 +2648,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winreg"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

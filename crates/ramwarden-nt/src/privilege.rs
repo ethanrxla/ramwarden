@@ -8,8 +8,9 @@
 use ramwarden_platform::{Error, Result};
 use windows::Win32::Foundation::{ERROR_NOT_ALL_ASSIGNED, GetLastError, HANDLE, LUID};
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
-    TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, GetTokenInformation, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW,
+    SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    TokenElevation,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::core::HSTRING;
@@ -56,6 +57,30 @@ pub fn enable(name: &str) -> Result<()> {
         return Err(Error::denied(name, "this account does not hold the privilege; run as administrator or via ramwarden-service"));
     }
     Ok(())
+}
+
+/// Whether this process runs with an elevated (administrator) token.
+pub fn is_elevated() -> bool {
+    let mut raw = HANDLE::default();
+    // SAFETY: `raw` receives a token handle, owned immediately below.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) }.is_err() {
+        return false;
+    }
+    let Some(token) = Handle::new(raw) else { return false };
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut len = 0u32;
+    // SAFETY: the buffer is a TOKEN_ELEVATION of the stated size.
+    unsafe {
+        GetTokenInformation(
+            token.raw(),
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+    }
+    .is_ok()
+        && elevation.TokenIsElevated != 0
 }
 
 #[cfg(test)]

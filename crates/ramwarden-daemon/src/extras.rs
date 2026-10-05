@@ -101,3 +101,61 @@ pub fn terminals_json(terms: &[Terminal]) -> Value {
             .collect::<Vec<_>>(),
     })
 }
+
+/// The reversible Windows profiles, as `/debloat` serves them.
+#[cfg(windows)]
+pub mod debloat {
+    use ramwarden_debloat::Debloat;
+    use serde_json::{Value, json};
+
+    pub fn status() -> Value {
+        let d = match Debloat::for_user() {
+            Ok(d) => d,
+            Err(e) => return json!({"available": false, "error": e.to_string()}),
+        };
+        let profiles = Debloat::profiles().unwrap_or_default();
+        json!({
+            "available": true,
+            "service_present": ramwarden_nt::pipe::present(),
+            "elevated": ramwarden_nt::privilege::is_elevated(),
+            "profiles": profiles.iter().map(|p| json!({
+                "name": p.name,
+                "description": p.description,
+                "tweaks": p.tweaks.iter().map(|t| json!(d.status(t.as_ref()))).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn apply(name: &str, include_optional: bool) -> Value {
+        lines(Debloat::for_user().and_then(|d| d.apply_named(name, include_optional)))
+    }
+
+    pub fn revert(name: &str) -> Value {
+        lines(Debloat::for_user().and_then(|d| d.revert_named(name)))
+    }
+
+    fn lines(r: ramwarden_platform::Result<Vec<ramwarden_debloat::Line>>) -> Value {
+        match r {
+            Ok(lines) => json!({"results": lines}),
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+}
+
+/// Off Windows there is nothing to debloat.
+#[cfg(not(windows))]
+pub mod debloat {
+    use serde_json::{Value, json};
+
+    pub fn status() -> Value {
+        json!({"available": false, "error": "debloat profiles are Windows-only"})
+    }
+
+    pub fn apply(_: &str, _: bool) -> Value {
+        status()
+    }
+
+    pub fn revert(_: &str) -> Value {
+        status()
+    }
+}

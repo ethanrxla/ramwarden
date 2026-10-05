@@ -29,6 +29,10 @@ tracing-subscriber = { workspace = true }
 uuid       = { workspace = true }
 url = "2"
 
+[target.'cfg(windows)'.dependencies]
+ramwarden-debloat = { path = "../ramwarden-debloat" }
+ramwarden-nt = { path = "../ramwarden-nt" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 ramwarden-kernel = { path = "../ramwarden-kernel" }
 

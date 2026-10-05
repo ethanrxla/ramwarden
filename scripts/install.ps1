@@ -1,0 +1,110 @@
+<#
+.SYNOPSIS
+  Install (or remove) RamWarden on Windows.
+
+.DESCRIPTION
+  Must run elevated. Installs:
+    * binaries to %ProgramFiles%\RamWarden (administrator-writable only: the
+      service runs as SYSTEM, so a user-writable copy would be a privilege
+      escalation);
+    * ramwarden-service as an automatic LocalSystem service;
+    * the daemon as a logon task for the installing user, run headless through
+      `conhost --headless` so it has no window but still receives the console
+      close/logoff/shutdown events it uses to restore Tidy hints;
+    * the tray (when built) at logon;
+    * a starter config at %APPDATA%\ramwarden\config.toml if none exists.
+
+.EXAMPLE
+  cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat
+  powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall
+#>
+[CmdletBinding()]
+param(
+  [string]$Source = (Join-Path $PSScriptRoot '..\target\release'),
+  [switch]$Uninstall
+)
+$ErrorActionPreference = 'Stop'
+
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  throw 'Run this from an elevated PowerShell (Run as administrator).'
+}
+
+$Dest     = Join-Path $env:ProgramFiles 'RamWarden'
+$TaskName = 'RamWarden daemon'
+$TrayTask = 'RamWarden tray'
+$Service  = Join-Path $Dest 'ramwarden-service.exe'
+
+function Remove-RamWarden {
+  foreach ($t in @($TaskName, $TrayTask)) {
+    if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+      Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+      Unregister-ScheduledTask -TaskName $t -Confirm:$false
+    }
+  }
+  Get-Process ramwarden-daemon, ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
+    if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
+    Start-Sleep -Seconds 1
+  }
+}
+
+if ($Uninstall) {
+  Remove-RamWarden
+  if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
+  Write-Host 'RamWarden removed. Your config and journals were left in %APPDATA%, %LOCALAPPDATA% and %ProgramData%.'
+  Write-Host 'Revert any applied profiles first with: ramwarden-debloat revert all'
+  return
+}
+
+$Source = (Resolve-Path $Source).Path
+foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-debloat.exe') {
+  if (-not (Test-Path (Join-Path $Source $exe))) {
+    throw "$exe not found in $Source. Build first: cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat"
+  }
+}
+
+Remove-RamWarden
+New-Item -ItemType Directory -Force $Dest | Out-Null
+Get-ChildItem $Source -Filter 'ramwarden-*.exe' | Copy-Item -Destination $Dest -Force
+
+# Service: registered from Program Files, which it insists on.
+& $Service install
+if ($LASTEXITCODE -ne 0) { throw 'service install failed' }
+
+# Config, once.
+$ConfigDir = Join-Path $env:APPDATA 'ramwarden'
+$Config    = Join-Path $ConfigDir 'config.toml'
+if (-not (Test-Path $Config)) {
+  New-Item -ItemType Directory -Force $ConfigDir | Out-Null
+  Copy-Item (Join-Path $PSScriptRoot '..\ramwarden.toml') $Config
+  Write-Host "Wrote starter config to $Config"
+}
+
+# Daemon: at logon, as this user, not elevated, headless.
+$user    = "$env:USERDOMAIN\$env:USERNAME"
+$log     = Join-Path $env:LOCALAPPDATA 'ramwarden\daemon.log'
+$action  = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+             -Argument "--headless `"$Dest\ramwarden-daemon.exe`" --log-file `"$log`"" `
+             -WorkingDirectory $ConfigDir
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+             -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$task    = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $task | Out-Null
+Start-ScheduledTask -TaskName $TaskName
+
+$tray = Join-Path $Dest 'ramwarden-tray.exe'
+if (Test-Path $tray) {
+  $a = New-ScheduledTaskAction -Execute $tray
+  Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Settings $settings -Principal $task | Out-Null
+  Start-ScheduledTask -TaskName $TrayTask
+}
+
+Write-Host "RamWarden installed to $Dest"
+Write-Host "  service : $((Get-Service RamWarden).Status)"
+Write-Host "  daemon  : http://127.0.0.1:7823  (log: $log)"
+Write-Host "  debloat : & '$Dest\ramwarden-debloat.exe' status"

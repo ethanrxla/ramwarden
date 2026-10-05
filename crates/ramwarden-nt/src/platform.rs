@@ -74,6 +74,14 @@ impl Pager for NtPager {
         match workingset::trim(pid_u) {
             Ok(0) => Outcome::refused(format!("pid {pid}: nothing was trimmed")),
             Ok(bytes) => Outcome::freed(vec![pid], bytes),
+            // An elevated app in the user's session: ask the service, which
+            // applies its own checks before touching anything.
+            Err(e) if e.is_denied() => match crate::pipe::call(&crate::pipe::Request::Trim { pid: pid_u }) {
+                Ok(crate::pipe::Response::Ok { bytes, .. }) if bytes > 0 => Outcome::freed(vec![pid], bytes),
+                Ok(crate::pipe::Response::Ok { .. }) => Outcome::refused(format!("pid {pid}: nothing was trimmed")),
+                Ok(crate::pipe::Response::Error { message }) => Outcome::refused(format!("pid {pid}: {message}")),
+                Err(_) => Outcome::refused(format!("pid {pid}: {e}")),
+            },
             Err(e) => Outcome::refused(format!("pid {pid}: {e}")),
         }
     }

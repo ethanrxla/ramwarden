@@ -30,6 +30,7 @@ pub mod inventory;
 pub mod memory;
 pub mod net;
 pub mod owner;
+pub mod pipe;
 pub mod platform;
 pub mod pressure;
 pub mod priority;

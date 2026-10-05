@@ -61,6 +61,9 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
         .route("/tidy", get(tidy))
+        .route("/debloat", get(debloat_status))
+        .route("/debloat/apply", post(debloat_apply))
+        .route("/debloat/revert", post(debloat_revert))
         .route("/ai", get(ai_status))
         .route("/signals", get(signals))
         .route("/reclaim/{scope}", post(reclaim_scope))
@@ -611,6 +614,35 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 }
 
 // ── Ladder ──────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DebloatBody {
+    /// A profile name, a tweak id, or (for revert) `all`.
+    name: String,
+    #[serde(default)]
+    include_optional: bool,
+}
+
+/// Every shipped tweak and its state on this machine.
+async fn debloat_status() -> Json<Value> {
+    Json(tokio::task::spawn_blocking(extras::debloat::status).await.unwrap_or_default())
+}
+
+async fn debloat_apply(Json(body): Json<DebloatBody>) -> Json<Value> {
+    Json(
+        tokio::task::spawn_blocking(move || extras::debloat::apply(&body.name, body.include_optional))
+            .await
+            .unwrap_or_default(),
+    )
+}
+
+async fn debloat_revert(Json(body): Json<DebloatBody>) -> Json<Value> {
+    Json(
+        tokio::task::spawn_blocking(move || extras::debloat::revert(&body.name))
+            .await
+            .unwrap_or_default(),
+    )
+}
 
 /// What the Tidy rung is tracking: quiet apps, and whether each has been
 /// hinted as background and trimmed in its current quiet period.
