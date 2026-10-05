@@ -11,6 +11,7 @@ pub mod gpu;
 pub mod guard;
 pub mod hub;
 pub mod monitor;
+pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
 pub mod tabs;

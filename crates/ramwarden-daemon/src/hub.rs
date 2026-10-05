@@ -138,6 +138,8 @@ pub struct AppState {
     pub ai: Arc<Provider>,
     /// LM Studio and Ollama, for VRAM reporting and unloading.
     pub models: Arc<ModelHosts>,
+    /// The JEPA reuse predictor; silent until a model passes its gate.
+    pub predictor: Arc<crate::predict::LivePredictor>,
     pub started: Instant,
 }
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
+members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-ml", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
 
 [workspace.package]
 version = "0.2.1"
@@ -52,6 +52,11 @@ windows    = { version = "0.62", features = [
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Dependencies optimised even in dev builds: candle's matmuls are ~20x slower
+# unoptimised, which turns the predictor's tests from seconds into minutes.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto       = "thin"

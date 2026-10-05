@@ -32,6 +32,9 @@ fn state() -> AppState {
         )),
         ai: Arc::new(ramwarden_daemon::ai::provider(&cfg)),
         models: Arc::new(Default::default()),
+        predictor: Arc::new(ramwarden_daemon::predict::LivePredictor::new(
+            std::env::temp_dir().join("ramwarden-test-no-predictor.safetensors"),
+        )),
         started: std::time::Instant::now(),
     }
 }

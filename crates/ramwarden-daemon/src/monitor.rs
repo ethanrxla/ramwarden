@@ -117,6 +117,12 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
     let cfg = Arc::clone(&state.cfg);
     let mut gpu_policy = crate::gpu::GpuPolicy::default();
+    // Train soon after start when no model exists yet, then once a day.
+    let mut last_train = if state.predictor.model_path().exists() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
@@ -240,11 +246,23 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 psi_full: pressure.full_avg10,
                 available: available as i64,
             };
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            state.predictor.observe(&samples, epoch, pressure.some_avg10);
             if let Ok(h) = state.history.lock()
                 && let Err(e) = h.log_signals(&samples, ctx)
             {
                 tracing::debug!("behaviour log write failed: {e}");
             }
+        }
+
+        // Retrain the reuse predictor daily, off this thread: it reads the
+        // whole behaviour log and takes seconds to minutes.
+        if cfg.logging.enabled && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400)) {
+            last_train = Some(Instant::now());
+            crate::predict::train_in_background(&state);
         }
 
         // Pruning once a day is enough; it only deletes whole days.

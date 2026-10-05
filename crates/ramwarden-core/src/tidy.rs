@@ -34,6 +34,7 @@ use crate::actuator::{Actuator, Outcome};
 use crate::config;
 use crate::detector::Detector;
 use crate::ladder::{COLD_RATIO, COLD_VMA_FLOOR};
+use crate::rank::{DEFER_TRIM_ABOVE, ReuseRanker};
 use crate::signals::{Protection, Signals};
 
 /// Smaller than the ladder's floor, because tidying costs nothing: below this
@@ -89,7 +90,13 @@ impl Tidy {
     }
 
     /// One pass over the detector's snapshot. Returns only what changed.
-    pub fn step(&mut self, det: &Detector, act: &Actuator, now: Instant) -> Vec<Step> {
+    pub fn step(
+        &mut self,
+        det: &Detector,
+        act: &Actuator,
+        ranker: Option<&dyn ReuseRanker>,
+        now: Instant,
+    ) -> Vec<Step> {
         if !self.cfg.enabled || !det.is_warm() {
             return Vec::new();
         }
@@ -129,7 +136,12 @@ impl Tidy {
                 steps.push(("background", Self::label(s), outcome));
             }
 
-            if self.cfg.trim && act.can_page_out() && !self.trimmed.contains(pid) {
+            // A process the ranker expects back soon would fault its pages
+            // straight back in; leave it, and ask again next tick.
+            let expected_back = ranker
+                .and_then(|r| r.reuse(*pid))
+                .is_some_and(|p| p >= DEFER_TRIM_ABOVE);
+            if self.cfg.trim && act.can_page_out() && !self.trimmed.contains(pid) && !expected_back {
                 // Once per quiet period, whatever the outcome: a process that
                 // had nothing to trim will not have more on the next tick.
                 self.trimmed.insert(*pid);
@@ -213,13 +225,13 @@ mod tests {
         let mut t = tidy();
         let t0 = Instant::now();
 
-        assert!(t.step(&det, &act, t0).is_empty(), "not quiet long enough yet");
-        let steps = t.step(&det, &act, t0 + Duration::from_secs(601));
+        assert!(t.step(&det, &act, None, t0).is_empty(), "not quiet long enough yet");
+        let steps = t.step(&det, &act, None, t0 + Duration::from_secs(601));
         let actions: Vec<&str> = steps.iter().map(|(a, _, _)| *a).collect();
         assert_eq!(actions, vec!["background", "tidy_trim"]);
 
         // The next tick in the same quiet period does nothing more.
-        assert!(t.step(&det, &act, t0 + Duration::from_secs(700)).is_empty());
+        assert!(t.step(&det, &act, None, t0 + Duration::from_secs(700)).is_empty());
         let w = shared.lock().unwrap();
         assert_eq!(fake::count(&w, "pageout 20"), 1);
         assert_eq!(w.background, vec![20]);
@@ -232,20 +244,20 @@ mod tests {
         let mut t = tidy();
         let t0 = Instant::now();
         let det = Detector::preloaded(true, quiet.clone());
-        t.step(&det, &act, t0);
-        t.step(&det, &act, t0 + Duration::from_secs(601));
+        t.step(&det, &act, None, t0);
+        t.step(&det, &act, None, t0 + Duration::from_secs(601));
 
         let mut focused = quiet[0].clone();
         focused.is_focused = true;
         let det = Detector::preloaded(true, vec![focused]);
-        let steps = t.step(&det, &act, t0 + Duration::from_secs(620));
+        let steps = t.step(&det, &act, None, t0 + Duration::from_secs(620));
         assert_eq!(steps.iter().map(|(a, _, _)| *a).collect::<Vec<_>>(), vec!["foreground"]);
         assert!(shared.lock().unwrap().background.is_empty());
 
         // Quiet again: a fresh period, so a fresh trim once it has elapsed.
         let det = Detector::preloaded(true, quiet);
-        assert!(t.step(&det, &act, t0 + Duration::from_secs(630)).is_empty());
-        let steps = t.step(&det, &act, t0 + Duration::from_secs(1300));
+        assert!(t.step(&det, &act, None, t0 + Duration::from_secs(630)).is_empty());
+        let steps = t.step(&det, &act, None, t0 + Duration::from_secs(1300));
         assert!(steps.iter().any(|(a, _, _)| *a == "tidy_trim"));
     }
 
@@ -261,8 +273,8 @@ mod tests {
         let det = Detector::preloaded(true, sigs);
         let mut t = tidy();
         let t0 = Instant::now();
-        t.step(&det, &act, t0);
-        assert!(t.step(&det, &act, t0 + Duration::from_secs(3600)).is_empty());
+        t.step(&det, &act, None, t0);
+        assert!(t.step(&det, &act, None, t0 + Duration::from_secs(3600)).is_empty());
         assert!(shared.lock().unwrap().log.is_empty());
     }
 
@@ -277,8 +289,8 @@ mod tests {
         assert_eq!(det.get(20).unwrap().protection, Protection::Serving);
         let mut t = tidy();
         let t0 = Instant::now();
-        t.step(&det, &act, t0);
-        assert!(!t.step(&det, &act, t0 + Duration::from_secs(601)).is_empty());
+        t.step(&det, &act, None, t0);
+        assert!(!t.step(&det, &act, None, t0 + Duration::from_secs(601)).is_empty());
     }
 
     #[test]
@@ -289,13 +301,13 @@ mod tests {
 
         let cold = Detector::preloaded(false, sigs.clone());
         let mut t = tidy();
-        t.step(&cold, &act, t0);
-        assert!(t.step(&cold, &act, t0 + Duration::from_secs(3600)).is_empty());
+        t.step(&cold, &act, None, t0);
+        assert!(t.step(&cold, &act, None, t0 + Duration::from_secs(3600)).is_empty());
 
         let warm = Detector::preloaded(true, sigs);
         let mut off = Tidy::new(config::Tidy { enabled: false, ..Default::default() });
-        off.step(&warm, &act, t0);
-        assert!(off.step(&warm, &act, t0 + Duration::from_secs(3600)).is_empty());
+        off.step(&warm, &act, None, t0);
+        assert!(off.step(&warm, &act, None, t0 + Duration::from_secs(3600)).is_empty());
     }
 
     #[test]
@@ -305,8 +317,33 @@ mod tests {
         let det = Detector::preloaded(true, sigs);
         let mut t = tidy();
         let t0 = Instant::now();
-        t.step(&det, &act, t0);
-        assert!(t.step(&det, &act, t0 + Duration::from_secs(3600)).is_empty());
+        t.step(&det, &act, None, t0);
+        assert!(t.step(&det, &act, None, t0 + Duration::from_secs(3600)).is_empty());
+    }
+
+    struct Says(f64);
+    impl ReuseRanker for Says {
+        fn reuse(&self, _: i32) -> Option<f64> {
+            Some(self.0)
+        }
+    }
+
+    /// The ranker may defer a trim, never cause one.
+    #[test]
+    fn a_process_expected_back_soon_is_hinted_but_not_trimmed() {
+        let sigs = vec![sig(20, "Discord", 500)];
+        let (shared, act) = setup(&sigs);
+        let det = Detector::preloaded(true, sigs);
+        let mut t = tidy();
+        let t0 = Instant::now();
+        t.step(&det, &act, Some(&Says(0.9)), t0);
+        let steps = t.step(&det, &act, Some(&Says(0.9)), t0 + Duration::from_secs(601));
+        assert_eq!(steps.iter().map(|(a, _, _)| *a).collect::<Vec<_>>(), vec!["background"]);
+        assert_eq!(fake::count(&shared.lock().unwrap(), "pageout"), 0);
+
+        // Once the ranker no longer expects it, the deferred trim happens.
+        let steps = t.step(&det, &act, Some(&Says(0.1)), t0 + Duration::from_secs(700));
+        assert!(steps.iter().any(|(a, _, _)| *a == "tidy_trim"));
     }
 
     #[test]
@@ -316,8 +353,8 @@ mod tests {
         let det = Detector::preloaded(true, sigs);
         let mut t = tidy();
         let t0 = Instant::now();
-        t.step(&det, &act, t0);
-        t.step(&det, &act, t0 + Duration::from_secs(601));
+        t.step(&det, &act, None, t0);
+        t.step(&det, &act, None, t0 + Duration::from_secs(601));
         assert_eq!(shared.lock().unwrap().background.len(), 2);
 
         let steps = t.release_all(&act);
@@ -332,8 +369,8 @@ mod tests {
         let det = Detector::preloaded(true, sigs);
         let mut t = tidy();
         let t0 = Instant::now();
-        t.step(&det, &act, t0);
-        t.step(&det, &act, t0 + Duration::from_secs(601));
+        t.step(&det, &act, None, t0);
+        t.step(&det, &act, None, t0 + Duration::from_secs(601));
         let e = t.entries(&det, t0 + Duration::from_secs(601));
         assert_eq!(e.len(), 1);
         assert!(e[0].hinted && e[0].trimmed);

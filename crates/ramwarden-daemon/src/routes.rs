@@ -61,6 +61,8 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
         .route("/tidy", get(tidy))
+        .route("/predict/eval", get(predict_eval))
+        .route("/predict/train", post(predict_train))
         .route("/gpu", get(gpu_report))
         .route("/gpu/unload", post(gpu_unload))
         .route("/debloat", get(debloat_status))
@@ -616,6 +618,24 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 }
 
 // ── Ladder ──────────────────────────────────────────────────────────────────
+
+/// How the reuse predictor did on held-out data, against the LRU baseline,
+/// and whether it is allowed to influence anything.
+async fn predict_eval(State(st): State<AppState>) -> Json<Value> {
+    let samples = st.history.lock().ok().and_then(|h| h.count_signals().ok());
+    Json(json!({
+        "metrics": st.predictor.metrics(),
+        "behaviour_samples": samples,
+        "min_train_examples": ramwarden_ml::jepa::MIN_TRAIN,
+        "margin_over_lru": ramwarden_ml::jepa::MARGIN,
+        "device": format!("{:?}", ramwarden_ml::jepa::device()),
+    }))
+}
+
+async fn predict_train(State(st): State<AppState>) -> Json<Value> {
+    crate::predict::train_in_background(&st);
+    Json(json!({"started": true, "see": "/predict/eval"}))
+}
 
 /// The card, who holds its memory, and which local models are loaded.
 async fn gpu_report(State(st): State<AppState>) -> Json<Value> {

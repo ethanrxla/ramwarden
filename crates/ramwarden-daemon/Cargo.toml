@@ -18,6 +18,7 @@ path = "src/main.rs"
 ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
+ramwarden-ml     = { path = "../ramwarden-ml" }
 axum       = { workspace = true }
 tokio      = { workspace = true }
 tower-http = { workspace = true }
@@ -35,6 +36,10 @@ ramwarden-nt = { path = "../ramwarden-nt" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ramwarden-kernel = { path = "../ramwarden-kernel" }
+
+[features]
+# Run the reuse predictor (and, with `embed`, embeddings) on an NVIDIA GPU.
+cuda = ["ramwarden-ml/cuda"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

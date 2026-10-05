@@ -70,8 +70,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("first sample failed: {e}");
     }
 
+    let predictor = Arc::new(ramwarden_daemon::predict::LivePredictor::new(
+        cfg.db_path.with_file_name("predictor.safetensors"),
+    ));
     let mut ladder = Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform))
-        .with_history(ladder_history);
+        .with_history(ladder_history)
+        .with_ranker(predictor.clone());
     if cfg.tidy.enabled {
         tracing::info!(
             "tidy: hinting and trimming apps quiet for {} min (background hints: {}, trim: {})",
@@ -91,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hub: Arc::new(Mutex::new(Hub::new())),
         history: Arc::new(Mutex::new(api_history)),
         models: Arc::new(ramwarden_ai::models::ModelHosts::new(provider.ollama.clone())),
+        predictor,
         ai: Arc::new(provider),
         started: Instant::now(),
     };

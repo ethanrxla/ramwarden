@@ -45,6 +45,7 @@ use crate::config;
 use crate::detector::Detector;
 use crate::history::{History, NewAction};
 use crate::signals::Verdict;
+use crate::rank::ReuseRanker;
 use crate::tidy::{self, Tidy};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
@@ -234,6 +235,7 @@ pub struct Ladder {
     pending_kill: Option<PendingKill>,
     last_tabs: Option<Instant>,
     tidy: Option<Tidy>,
+    ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
 }
 
 impl Ladder {
@@ -245,7 +247,15 @@ impl Ladder {
             pending_kill: None,
             last_tabs: None,
             tidy: None,
+            ranker: None,
         }
+    }
+
+    /// Let a reuse ranker reorder suspend candidates and defer Tidy trims.
+    /// It never widens what may be touched; see [`crate::rank`].
+    pub fn with_ranker(mut self, ranker: std::sync::Arc<dyn ReuseRanker>) -> Self {
+        self.ranker = Some(ranker);
+        self
     }
 
     /// Run the Tidy rung on every tick, below the pressure rungs.
@@ -354,8 +364,19 @@ impl Ladder {
     /// `reclaimable` has already applied the gate and the watchlist ceiling, so
     /// this only deduplicates.
     fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
+        let mut candidates = w.det.reclaimable(w.watchlist);
+        // With a ranker, suspend what the user is least likely to want back
+        // first; without one, the detector's largest-first order stands.
+        if let Some(r) = &self.ranker {
+            let back = |pid: i32| r.reuse(pid).unwrap_or(0.5);
+            candidates.sort_by(|a, b| {
+                let ka = a.pss as f64 * (1.0 - back(a.pid));
+                let kb = b.pss as f64 * (1.0 - back(b.pid));
+                kb.total_cmp(&ka)
+            });
+        }
         let mut seen: Vec<String> = Vec::new();
-        for s in w.det.reclaimable(w.watchlist) {
+        for s in candidates {
             if !seen.contains(&s.name) {
                 seen.push(s.name.clone());
             }
@@ -385,7 +406,7 @@ impl Ladder {
 
         // Tidy first, at every rung: it waits on quiet, not on pressure.
         if let Some(t) = self.tidy.as_mut() {
-            for step in t.step(w.det, &self.act, Instant::now()) {
+            for step in t.step(w.det, &self.act, self.ranker.as_deref(), Instant::now()) {
                 report.total_freed += step.2.bytes_freed;
                 report.steps.push(step);
             }
