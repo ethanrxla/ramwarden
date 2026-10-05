@@ -14,6 +14,10 @@ use serde_json::Value;
 pub enum Scope {
     User,
     Machine,
+    /// The user's own hive, but a part only administrators may write:
+    /// `HKCU\Software\Policies`. Applied by the service (or an elevated
+    /// caller) into `HKEY_USERS\<the user's SID>`.
+    UserPolicy,
 }
 
 /// What a tweak finds on this machine right now.
@@ -43,6 +47,12 @@ pub trait Tweak: Send + Sync {
     fn optional(&self) -> bool;
     /// What it changes, for display: `service DiagTrack -> disabled`.
     fn target(&self) -> String;
+
+    /// For a [`Scope::UserPolicy`] tweak: the same change bound to one user's
+    /// hive under `HKEY_USERS`, with its own journal id. `None` otherwise.
+    fn for_user(&self, _sid: &str) -> Option<Box<dyn Tweak>> {
+        None
+    }
 
     fn detect(&self) -> Result<State>;
     fn snapshot(&self) -> Result<Value>;

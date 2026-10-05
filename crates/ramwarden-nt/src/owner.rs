@@ -217,3 +217,40 @@ mod tests {
         }
     }
 }
+
+/// A SID as its string form, e.g. `S-1-5-21-...-1001`.
+fn sid_string(sid: &[u8]) -> Option<String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    let mut out = windows::core::PWSTR::null();
+    // SAFETY: `sid` is a complete SID; the string is LocalAlloc'd and freed here.
+    unsafe {
+        ConvertSidToStringSidW(PSID(sid.as_ptr() as *mut c_void), &mut out).ok()?;
+        let s = out.to_string().ok();
+        let _ = LocalFree(Some(HLOCAL(out.0 as *mut c_void)));
+        s
+    }
+}
+
+/// The user SID of the process `pid`, as a string. The service uses this to
+/// find the *connecting* user's registry hive under `HKEY_USERS`.
+pub fn process_user_sid(pid: u32) -> Option<String> {
+    let h = open(pid, PROCESS_QUERY_LIMITED_INFORMATION).ok()?;
+    sid_string(&token_sid(h.raw())?)
+}
+
+/// The SID of the user running this process.
+pub fn current_user_sid() -> Option<String> {
+    // SAFETY: the pseudo-handle for the current process needs no closing.
+    sid_string(&token_sid(unsafe { GetCurrentProcess() })?)
+}
+
+#[cfg(test)]
+mod sid_tests {
+    #[test]
+    fn this_process_has_a_user_sid_and_it_matches_by_pid() {
+        let me = super::current_user_sid().unwrap();
+        assert!(me.starts_with("S-1-5-"), "{me}");
+        assert_eq!(super::process_user_sid(std::process::id()).as_deref(), Some(me.as_str()));
+    }
+}

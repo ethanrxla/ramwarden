@@ -383,6 +383,34 @@ mod tests {
         assert!(!m.metrics.enabled);
     }
 
+    /// With `cuda`, training and batch scoring run on the GPU, learn the
+    /// same routine, and agree with the same weights scored on the CPU.
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn trains_and_batch_scores_on_the_gpu() {
+        let gpu = device();
+        assert!(gpu.is_cuda(), "built with cuda but no CUDA device: {gpu:?}");
+        let ex = examples(&routine());
+        let t = std::time::Instant::now();
+        let m = Jepa::train(&ex, 300, &gpu).unwrap();
+        eprintln!(
+            "gpu: model AUC {:.3} vs LRU {:.3} in {:?}",
+            m.metrics.auc.unwrap(),
+            m.metrics.lru_auc.unwrap(),
+            t.elapsed()
+        );
+        assert!(m.metrics.enabled, "{:?}", m.metrics);
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("gpu.safetensors");
+        m.save(&p).unwrap();
+        let cpu = Jepa::load(&p, &Device::Cpu).unwrap();
+        let ctx: Vec<&[f32]> = ex.iter().take(512).map(|e| e.context.as_slice()).collect();
+        let (on_gpu, on_cpu) = (m.score(&ctx).unwrap(), cpu.score(&ctx).unwrap());
+        let worst = on_gpu.iter().zip(&on_cpu).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        assert!(worst < 1e-4, "GPU and CPU disagree by {worst}");
+    }
+
     #[test]
     fn scores_are_probabilities_and_survive_a_save_and_load() {
         let ex = examples(&routine());

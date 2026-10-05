@@ -11,6 +11,9 @@ pub struct Handler {
     /// The session the client runs in, from its pipe credentials. A client
     /// may only ever affect processes in its own session.
     client_session: Option<u32>,
+    /// The client's user SID, from its process token — never from the
+    /// request, so a client cannot name another user's hive.
+    client_sid: Option<String>,
 }
 
 impl Handler {
@@ -22,7 +25,11 @@ impl Handler {
                 .find(|p| p.pid == pid)
                 .map(|p| p.session)
         });
-        Handler { client_session }
+        let client_sid = client_pid.and_then(ramwarden_nt::owner::process_user_sid);
+        Handler {
+            client_session,
+            client_sid,
+        }
     }
 
     pub fn handle(&self, req: Request) -> Response {
@@ -36,10 +43,10 @@ impl Handler {
                 Err(e) => Response::error(e.to_string()),
             },
             Request::Trim { pid } => self.trim(pid),
-            Request::TweakApply { id } => machine_tweak(&id, |d, t| {
+            Request::TweakApply { id } => self.tweak(&id, |d, t| {
                 d.apply(t).map(|r| serde_json::to_value(r).unwrap_or_default())
             }),
-            Request::TweakRevert { id } => machine_tweak(&id, |d, t| {
+            Request::TweakRevert { id } => self.tweak(&id, |d, t| {
                 d.revert(t).map(|r| serde_json::to_value(r).unwrap_or_default())
             }),
             Request::TweakStatus => match Debloat::for_service().and_then(|d| {
@@ -91,19 +98,36 @@ impl Handler {
     }
 }
 
-/// Look `id` up in the shipped catalog and run `f` on it, machine scope only.
-fn machine_tweak(
+impl Handler {
+    /// Look `id` up in the shipped catalog and run `f` on it. Machine tweaks
+    /// run as they are; user-policy tweaks are bound to the client's own hive.
+    fn tweak(
+        &self,
+        id: &str,
+        f: impl FnOnce(&Debloat, &dyn ramwarden_debloat::Tweak) -> ramwarden_platform::Result<serde_json::Value>,
+    ) -> Response {
+        let tweak = match ramwarden_debloat::catalog::tweak(id) {
+            Ok(t) => t,
+            Err(e) => return Response::error(e.to_string()),
+        };
+        let tweak = match tweak.scope() {
+            Scope::Machine => tweak,
+            Scope::UserPolicy => match self.client_sid.as_deref().and_then(|sid| tweak.for_user(sid)) {
+                Some(t) => t,
+                None => return Response::error(format!("{id}: cannot identify the connecting user")),
+            },
+            Scope::User => return Response::error(format!("{id} is a per-user tweak; apply it as the user")),
+        };
+        run_tweak(id, tweak.as_ref(), f)
+    }
+}
+
+fn run_tweak(
     id: &str,
+    tweak: &dyn ramwarden_debloat::Tweak,
     f: impl FnOnce(&Debloat, &dyn ramwarden_debloat::Tweak) -> ramwarden_platform::Result<serde_json::Value>,
 ) -> Response {
-    let tweak = match ramwarden_debloat::catalog::tweak(id) {
-        Ok(t) => t,
-        Err(e) => return Response::error(e.to_string()),
-    };
-    if tweak.scope() != Scope::Machine {
-        return Response::error(format!("{id} is a per-user tweak; apply it as the user"));
-    }
-    match Debloat::for_service().and_then(|d| f(&d, tweak.as_ref())) {
+    match Debloat::for_service().and_then(|d| f(&d, tweak)) {
         Ok(detail) => {
             tracing::info!("tweak {id}: {detail}");
             Response::Ok { bytes: 0, detail }
@@ -151,6 +175,9 @@ mod tests {
     fn tweaks_outside_the_catalog_or_in_user_scope_are_refused() {
         let h = Handler::new(None);
         assert!(err(h.handle(Request::TweakApply { id: "privacy.disable-defender".into() })).contains("not in any shipped profile"));
-        assert!(err(h.handle(Request::TweakApply { id: "privacy.copilot".into() })).contains("per-user"));
+        assert!(err(h.handle(Request::TweakApply { id: "privacy.advertising-id".into() })).contains("per-user"));
+        // A user-policy tweak with no identifiable client is refused rather
+        // than written anywhere.
+        assert!(err(h.handle(Request::TweakApply { id: "privacy.copilot".into() })).contains("connecting user"));
     }
 }

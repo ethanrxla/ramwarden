@@ -23,3 +23,8 @@ pub mod tweak;
 
 pub use engine::{Applied, Debloat, Engine, Line, Reverted, Status};
 pub use tweak::{Scope, State, Tweak};
+
+/// Serialises tests that write the real registry, which otherwise race on
+/// their shared scratch parent key.
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

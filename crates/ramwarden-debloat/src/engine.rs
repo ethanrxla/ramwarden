@@ -195,8 +195,16 @@ impl Debloat {
             .ok_or_else(|| Error::denied("user tweak", "the service cannot reach the user's registry hive"))
     }
 
+    /// A user-policy tweak bound to the user running this process.
+    fn for_me(t: &dyn Tweak) -> Result<Box<dyn Tweak>> {
+        let sid = ramwarden_nt::owner::current_user_sid().ok_or_else(|| Error::os("cannot read this user's SID"))?;
+        t.for_user(&sid).ok_or_else(|| Error::os(format!("{} cannot be bound to a user", t.id())))
+    }
+
     pub fn apply(&self, t: &dyn Tweak) -> Result<Applied> {
         match (t.scope(), &self.machine) {
+            (Scope::UserPolicy, Machine::Local(e)) => e.apply(Self::for_me(t)?.as_ref()),
+            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakApply { id: t.id().to_string() }),
             (Scope::User, _) => self.user_engine()?.apply(t),
             (Scope::Machine, Machine::Local(e)) => e.apply(t),
             (Scope::Machine, Machine::Service) => {
@@ -207,6 +215,8 @@ impl Debloat {
 
     pub fn revert(&self, t: &dyn Tweak) -> Result<Reverted> {
         match (t.scope(), &self.machine) {
+            (Scope::UserPolicy, Machine::Local(e)) => e.revert(Self::for_me(t)?.as_ref()),
+            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakRevert { id: t.id().to_string() }),
             (Scope::User, _) => self.user_engine()?.revert(t),
             (Scope::Machine, Machine::Local(e)) => e.revert(t),
             (Scope::Machine, Machine::Service) => {
@@ -216,6 +226,17 @@ impl Debloat {
     }
 
     pub fn status(&self, t: &dyn Tweak) -> Status {
+        // A user-policy tweak's record lives in the machine journal under its
+        // per-user id; report it under the profile's id.
+        if t.scope() == Scope::UserPolicy
+            && let Ok(mine) = Self::for_me(t)
+        {
+            let mut s = self.status(mine.as_ref());
+            s.id = t.id().to_string();
+            s.scope = Scope::UserPolicy;
+            s.target = t.target();
+            return s;
+        }
         match (t.scope(), &self.machine) {
             (Scope::User, _) if self.user.is_some() => self.user.as_ref().unwrap().status(t),
             (Scope::Machine, Machine::Local(e)) => e.status(t),
@@ -296,6 +317,7 @@ mod tests {
 
     #[test]
     fn apply_snapshots_first_and_revert_restores() {
+        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         assert_eq!(e.apply(&t).unwrap(), Applied::Changed);
@@ -310,6 +332,7 @@ mod tests {
     /// keeps the *original* snapshot so revert still goes all the way back.
     #[test]
     fn drift_is_reported_and_reapplied_against_the_original_snapshot() {
+        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         e.apply(&t).unwrap();
@@ -326,6 +349,7 @@ mod tests {
     /// recorded — so revert can never undo a choice the user made themselves.
     #[test]
     fn a_setting_already_in_place_is_not_claimed() {
+        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         t.apply().unwrap();
