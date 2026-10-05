@@ -16,6 +16,7 @@
 
 .EXAMPLE
   cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat
+  cargo build --release -p ramwarden-ui --features tray --bin ramwarden-tray
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 .EXAMPLE
@@ -99,7 +100,7 @@ Start-ScheduledTask -TaskName $TaskName
 
 $tray = Join-Path $Dest 'ramwarden-tray.exe'
 if (Test-Path $tray) {
-  $a = New-ScheduledTaskAction -Execute $tray
+  $a = New-ScheduledTaskAction -Execute $tray -Argument '--hidden'
   Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Settings $settings -Principal $task | Out-Null
   Start-ScheduledTask -TaskName $TrayTask
 }

@@ -65,6 +65,9 @@ pub struct State {
     /// the window must not imply otherwise.
     #[serde(default)]
     pub warm: bool,
+    /// True on Windows, where pressure is estimated rather than measured.
+    #[serde(default)]
+    pub pressure_estimated: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -592,5 +595,183 @@ impl Client {
 impl Client {
     pub async fn close_tabs(&self, targets: &[TabTarget]) -> Result<DiscardResult> {
         self.post("/browser/close",serde_json::json!({"targets":targets}),Duration::from_secs(40)).await
+    }
+}
+
+// ── Windows-era endpoints: Tidy, GPU, debloat, predictor ────────────────────
+
+/// One process Tidy is tracking, from `/tidy`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TidyEntry {
+    #[serde(default)]
+    pub pid: i32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub quiet_minutes: f64,
+    #[serde(default)]
+    pub hinted: bool,
+    #[serde(default)]
+    pub trimmed: bool,
+    #[serde(default)]
+    pub pss_mb: f64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TidyState {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub after_minutes: f64,
+    #[serde(default)]
+    pub tracking: Vec<TidyEntry>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GpuCard {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub used_mb: u64,
+    #[serde(default)]
+    pub total_mb: u64,
+    #[serde(default)]
+    pub percent_used: f64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GpuProcess {
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub vram_mb: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct LoadedModel {
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub bytes: Option<u64>,
+}
+
+/// From `/gpu`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GpuReport {
+    #[serde(default)]
+    pub gpu: Option<GpuCard>,
+    #[serde(default)]
+    pub processes: Vec<GpuProcess>,
+    #[serde(default)]
+    pub models: Vec<LoadedModel>,
+    #[serde(default)]
+    pub game: Option<String>,
+}
+
+/// One tweak's state, from `/debloat`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TweakStatus {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub optional: bool,
+    /// `default`, `applied` or `missing`.
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub recorded: bool,
+    #[serde(default)]
+    pub drifted: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct DebloatProfile {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tweaks: Vec<TweakStatus>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct DebloatState {
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub service_present: bool,
+    #[serde(default)]
+    pub elevated: bool,
+    #[serde(default)]
+    pub profiles: Vec<DebloatProfile>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// One line of an apply/revert report.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TweakLine {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub result: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TweakReport {
+    #[serde(default)]
+    pub results: Vec<TweakLine>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Client {
+    pub async fn tidy(&self) -> Result<TidyState> {
+        self.get("/tidy", TIMEOUT).await
+    }
+
+    pub async fn gpu(&self) -> Result<GpuReport> {
+        self.get("/gpu", Duration::from_secs(30)).await
+    }
+
+    pub async fn gpu_unload(&self, name: Option<&str>) -> Result<serde_json::Value> {
+        self.post("/gpu/unload", serde_json::json!({"name": name}), Duration::from_secs(60))
+            .await
+    }
+
+    pub async fn debloat(&self) -> Result<DebloatState> {
+        self.get("/debloat", Duration::from_secs(30)).await
+    }
+
+    /// Apply a profile or one tweak id.
+    pub async fn debloat_apply(&self, name: &str, include_optional: bool) -> Result<TweakReport> {
+        self.post(
+            "/debloat/apply",
+            serde_json::json!({"name": name, "include_optional": include_optional}),
+            Duration::from_secs(120),
+        )
+        .await
+    }
+
+    /// Revert a profile, one tweak id, or `all`.
+    pub async fn debloat_revert(&self, name: &str) -> Result<TweakReport> {
+        self.post("/debloat/revert", serde_json::json!({"name": name}), Duration::from_secs(120))
+            .await
+    }
+
+    pub async fn predict_eval(&self) -> Result<serde_json::Value> {
+        self.get("/predict/eval", TIMEOUT).await
     }
 }

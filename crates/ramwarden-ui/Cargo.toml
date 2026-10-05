@@ -20,6 +20,8 @@ required-features = ["gui"]
 # a library, so the client and the row model stay testable on a headless box.
 default = []
 gui = ["dep:gtk4"]
+# The Windows window: egui plus a tray icon.
+tray = ["dep:eframe", "dep:tray-icon", "dep:windows"]
 
 [dependencies]
 serde      = { workspace = true }
@@ -30,6 +32,14 @@ tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror  = { workspace = true }
 gtk4       = { workspace = true, optional = true }
+eframe     = { version = "0.36", optional = true, default-features = false, features = ["glow", "default_fonts", "accesskit"] }
+windows    = { workspace = true, optional = true }
+tray-icon  = { version = "0.26", optional = true }
+
+[[bin]]
+name = "ramwarden-tray"
+path = "src/tray_main.rs"
+required-features = ["tray"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -98,8 +98,10 @@ cargo build --workspace
 cargo test  --workspace
 cargo run -p ramwarden-nt --example probe          # compare with Task Manager
 cargo run -p ramwarden-daemon                      # API on 127.0.0.1:7823
-cargo run -p ramwarden-ui --features tray --bin ramwarden-tray
-cargo build -p ramwarden-ai --features cuda        # needs CUDA 12.8+ (RTX 50xx / sm_120)
+cargo run -p ramwarden-ui --features tray --bin ramwarden-tray   # tray; --window = the window process
+cargo run -p ramwarden-debloat -- status                          # reversible profiles
+cargo build --release -p ramwarden-daemon --features embed,cuda   # GPU predictor + embeddings; needs CUDA 12.8+ (sm_120)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1      # elevated; installs everything
 ```
 
 Linux:

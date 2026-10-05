@@ -12,5 +12,7 @@ pub mod model;
 pub mod row_object;
 
 pub mod runtime;
+#[cfg(feature = "tray")]
+pub mod tray;
 #[cfg(feature = "gui")]
 pub mod browser;
