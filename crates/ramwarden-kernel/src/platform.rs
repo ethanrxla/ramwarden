@@ -42,6 +42,9 @@ pub fn platform(root: Root) -> p::Platform {
             pressure: Arc::new(LinuxPressure { root: root.clone() }),
             control: Arc::new(LinuxControl { root: root.clone() }),
             pager: Arc::new(LinuxPager { root: root.clone() }),
+            // MADV_COLD would be the analogue, but it needs the same capability
+            // as page-out; cgroup reclaim already covers the ground.
+            background: Arc::new(p::NoBackground),
             groups: Arc::new(CgroupGroups { root, uid }),
         },
         move || Box::new(LinuxProcesses::new(factory_root.clone())),

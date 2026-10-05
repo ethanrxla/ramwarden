@@ -53,8 +53,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("first sample failed: {e}");
     }
 
-    let ladder = Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform))
+    let mut ladder = Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform))
         .with_history(ladder_history);
+    if cfg.tidy.enabled {
+        tracing::info!(
+            "tidy: hinting and trimming apps quiet for {} min (background hints: {}, trim: {})",
+            cfg.tidy.after_minutes,
+            cfg.tidy.background_hints,
+            cfg.tidy.trim
+        );
+        ladder = ladder.with_tidy(cfg.tidy.clone());
+    }
 
     let provider = ai::provider(&cfg);
     let state = AppState {
@@ -73,16 +82,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = format!("{}:{}", state.cfg.server.host, state.cfg.server.port);
     // The extensions run from a browser origin, so they need CORS. v1 allowed
     // everything; the surface is a loopback daemon with no credentials.
-    let app = routes::router(state).layer(CorsLayer::permissive());
+    let app = routes::router(state.clone()).layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("RamWarden listening on http://{bind}");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            shutdown_signal().await;
             tracing::info!("shutting down");
         })
         .await?;
+
+    // No background hint outlives the daemon that set it.
+    for (_, target, outcome) in state.ladder.lock().unwrap().release_tidy() {
+        if !outcome.did_nothing() {
+            tracing::info!("restored {target}");
+        }
+    }
     Ok(())
+}
+
+/// Ctrl-C everywhere; on Windows also console close, logoff and shutdown, so
+/// a daemon ended with the session still restores what Tidy changed.
+async fn shutdown_signal() {
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
+        let (mut close, mut logoff, mut shutdown) = match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
+            (Ok(c), Ok(l), Ok(s)) => (c, l, s),
+            _ => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = close.recv() => {}
+            _ = logoff.recv() => {}
+            _ = shutdown.recv() => {}
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

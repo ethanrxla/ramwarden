@@ -17,10 +17,12 @@
 //! | [`DesktopSource`] | `pactl`, `wmctrl` | Win32 windows, WASAPI sessions |
 //! | [`ProcessControl`] | pidfd | process `HANDLE` |
 //! | [`Pager`] | `process_madvise` | working-set trim |
+//! | [`Background`] | — | memory priority + EcoQoS |
 //!
 //! Nothing here touches an OS. That is what lets [`fake`] drive the whole ladder
 //! in a unit test on either platform.
 
+mod background;
 mod desktop;
 mod error;
 pub mod fake;
@@ -32,6 +34,7 @@ mod platform;
 mod pressure;
 mod process;
 
+pub use background::{Background, NoBackground};
 pub use desktop::{Desktop, DesktopSource};
 pub use error::{Error, Result};
 pub use group::{AppGroup, GroupSource};

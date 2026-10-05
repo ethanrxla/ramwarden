@@ -30,7 +30,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ramwarden_platform::{AppGroup, GroupSource, Pager, Platform, ProcessControl, ProcessHandle};
+use ramwarden_platform::{
+    AppGroup, Background, GroupSource, Pager, Platform, ProcessControl, ProcessHandle,
+};
 
 pub use ramwarden_platform::Outcome;
 
@@ -88,6 +90,7 @@ impl SuspendedEntry {
 pub struct Actuator {
     control: Arc<dyn ProcessControl>,
     pager: Arc<dyn Pager>,
+    background: Arc<dyn Background>,
     suspended: HashMap<String, SuspendedEntry>,
     /// group name -> the soft cap before RamWarden capped it. `None` means it
     /// was uncapped, which is the usual case.
@@ -95,17 +98,22 @@ pub struct Actuator {
 }
 
 impl Actuator {
-    pub fn new(control: Arc<dyn ProcessControl>, pager: Arc<dyn Pager>) -> Self {
+    pub fn new(
+        control: Arc<dyn ProcessControl>,
+        pager: Arc<dyn Pager>,
+        background: Arc<dyn Background>,
+    ) -> Self {
         Actuator {
             control,
             pager,
+            background,
             suspended: HashMap::new(),
             capped: HashMap::new(),
         }
     }
 
     pub fn for_platform(p: &Platform) -> Self {
-        Actuator::new(p.control.clone(), p.pager.clone())
+        Actuator::new(p.control.clone(), p.pager.clone(), p.background.clone())
     }
 
     /// An actuator over the real Linux kernel (or a synthetic `/proc`).
@@ -319,6 +327,24 @@ impl Actuator {
     /// Where page-out would come from, for the status line.
     pub fn page_out_route(&self) -> &'static str {
         self.pager.route()
+    }
+
+    // ── Background hints ────────────────────────────────────────────────────
+
+    pub fn can_hint(&self) -> bool {
+        self.background.available()
+    }
+
+    /// Mark `pid` as background work (or restore it). Reports the pid as
+    /// affected on success; frees no bytes, because a hint frees none.
+    pub fn set_background(&self, pid: i32, background: bool) -> Outcome {
+        match self.background.set(pid, background) {
+            Ok(()) => Outcome {
+                affected: vec![pid],
+                ..Default::default()
+            },
+            Err(e) => Outcome::refused(format!("pid {pid}: {e}")),
+        }
     }
 
     // ── Group reclaim and soft caps ─────────────────────────────────────────

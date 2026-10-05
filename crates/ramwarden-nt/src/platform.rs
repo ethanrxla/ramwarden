@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use ramwarden_platform::{
-    Outcome, Pager, Parts, Platform, ProcessControl, ProcessHandle, Result,
+    Background, Outcome, Pager, Parts, Platform, ProcessControl, ProcessHandle, Result,
 };
 
 use crate::desktop::NtDesktop;
@@ -11,6 +11,7 @@ use crate::groups::NtGroups;
 use crate::inventory::NtProcesses;
 use crate::memory::NtMemory;
 use crate::pressure::NtPressure;
+use crate::priority::{self, MemoryPriority};
 use crate::process::NtProcessHandle;
 use crate::workingset;
 
@@ -23,6 +24,7 @@ pub fn platform() -> Platform {
             pressure: Arc::new(NtPressure::new()),
             control: Arc::new(NtControl),
             pager: Arc::new(NtPager),
+            background: Arc::new(NtBackground),
             groups: Arc::new(NtGroups::new()),
         },
         || Box::new(NtProcesses::new()),
@@ -74,5 +76,24 @@ impl Pager for NtPager {
             Ok(bytes) => Outcome::freed(vec![pid], bytes),
             Err(e) => Outcome::refused(format!("pid {pid}: {e}")),
         }
+    }
+}
+
+/// Low memory priority plus EcoQoS — the Tidy rung's free hint.
+pub struct NtBackground;
+
+impl Background for NtBackground {
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn set(&self, pid: i32, background: bool) -> Result<()> {
+        let pid = pid as u32;
+        let level = if background { MemoryPriority::Low } else { MemoryPriority::Normal };
+        priority::set_memory_priority(pid, level)?;
+        // EcoQoS is best-effort: some processes (games, elevated apps) refuse
+        // it, and the memory priority alone is what matters for memory.
+        let _ = priority::set_eco_qos(pid, background);
+        Ok(())
     }
 }

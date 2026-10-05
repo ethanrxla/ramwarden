@@ -24,6 +24,12 @@
 //! *and* page-out *and* tabs *and* suspend on this tick. Pressure high enough to
 //! warrant freezing an application is also high enough to want the free wins.
 //!
+//! # Tidy runs first, at every pressure
+//!
+//! Below the rungs, [`crate::tidy::Tidy`] hints and trims quiet background apps
+//! on every tick — free, reversible housekeeping that does not wait for
+//! pressure. It is attached with [`Ladder::with_tidy`].
+//!
 //! # Hysteresis
 //!
 //! Between `release_below` and `reclaim_at` the ladder holds: it neither acts nor
@@ -39,6 +45,7 @@ use crate::config;
 use crate::detector::Detector;
 use crate::history::{History, NewAction};
 use crate::signals::Verdict;
+use crate::tidy::{self, Tidy};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
 ///
@@ -54,10 +61,10 @@ const SCOPE_FLOOR: u64 = 64 * 1024 * 1024;
 const SOFT_CAP_FRACTION: f64 = 0.8;
 
 /// How much recent touching still counts as cold, for targeted page-out.
-const COLD_RATIO: f64 = 0.2;
+pub(crate) const COLD_RATIO: f64 = 0.2;
 
 /// Ignore mappings smaller than this — not worth an iovec entry.
-const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
+pub(crate) const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
 
 /// At most this many processes get targeted page-out per tick, largest first.
 /// Walking full `smaps` is expensive, and the cgroup rung has already taken the
@@ -226,6 +233,7 @@ pub struct Ladder {
     history: Option<History>,
     pending_kill: Option<PendingKill>,
     last_tabs: Option<Instant>,
+    tidy: Option<Tidy>,
 }
 
 impl Ladder {
@@ -236,6 +244,29 @@ impl Ladder {
             history: None,
             pending_kill: None,
             last_tabs: None,
+            tidy: None,
+        }
+    }
+
+    /// Run the Tidy rung on every tick, below the pressure rungs.
+    pub fn with_tidy(mut self, cfg: config::Tidy) -> Self {
+        self.tidy = Some(Tidy::new(cfg));
+        self
+    }
+
+    /// What Tidy is tracking right now.
+    pub fn tidy_entries(&self, det: &Detector) -> Vec<tidy::Entry> {
+        self.tidy
+            .as_ref()
+            .map(|t| t.entries(det, Instant::now()))
+            .unwrap_or_default()
+    }
+
+    /// Undo every Tidy hint. Called on shutdown.
+    pub fn release_tidy(&mut self) -> Vec<tidy::Step> {
+        match self.tidy.as_mut() {
+            Some(t) => t.release_all(&self.act),
+            None => Vec::new(),
         }
     }
 
@@ -352,14 +383,24 @@ impl Ladder {
             return report;
         }
 
+        // Tidy first, at every rung: it waits on quiet, not on pressure.
+        if let Some(t) = self.tidy.as_mut() {
+            for step in t.step(w.det, &self.act, Instant::now()) {
+                report.total_freed += step.2.bytes_freed;
+                report.steps.push(step);
+            }
+        }
+
         match rung {
             Rung::Release => {
                 self.pending_kill = None;
                 self.release(w, &mut report);
+                self.log(&report, w, rung);
                 return report;
             }
             Rung::Hold => {
                 self.pending_kill = None;
+                self.log(&report, w, rung);
                 return report;
             }
             _ => {}

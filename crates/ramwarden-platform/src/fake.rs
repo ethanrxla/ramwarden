@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::{
-    AppGroup, Compression, Desktop, DesktopSource, Error, GroupSource, MemorySource, MemoryStatus, Outcome, Pager, Parts,
+    AppGroup, Background, Compression, Desktop, DesktopSource, Error, GroupSource, MemorySource, MemoryStatus, Outcome, Pager, Parts,
     Platform, Pressure, PressureSource, PressureWaker, ProcessControl, ProcessHandle,
     ProcessSample, ProcessSource, Result,
 };
@@ -33,6 +33,8 @@ pub struct World {
     pub pressure: Pressure,
     pub memory: MemoryStatus,
     pub desktop: Desktop,
+    /// pids currently marked as background work.
+    pub background: Vec<i32>,
     /// pids currently suspended by a handle.
     pub suspended: Vec<i32>,
     /// pids that have exited (terminated, killed, or removed by the test).
@@ -59,6 +61,7 @@ pub fn platform(world: Shared) -> Platform {
             pressure: Arc::new(Fake(world.clone())),
             control: Arc::new(Fake(world.clone())),
             pager: Arc::new(Fake(world.clone())),
+            background: Arc::new(Fake(world.clone())),
             groups: Arc::new(Fake(world)),
         },
         {
@@ -207,6 +210,25 @@ impl Pager for Fake {
         let mut w = self.world();
         w.log.push(format!("pageout {pid}"));
         Outcome::freed(vec![pid], 1)
+    }
+}
+
+impl Background for Fake {
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn set(&self, pid: i32, background: bool) -> Result<()> {
+        let mut w = self.world();
+        if !w.alive(pid) {
+            return Err(Error::missing(format!("pid {pid}")));
+        }
+        w.log.push(format!("background {pid} {background}"));
+        w.background.retain(|p| *p != pid);
+        if background {
+            w.background.push(pid);
+        }
+        Ok(())
     }
 }
 

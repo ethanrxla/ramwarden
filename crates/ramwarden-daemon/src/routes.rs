@@ -59,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/plan", get(ladder_plan))
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
+        .route("/tidy", get(tidy))
         .route("/ai", get(ai_status))
         .route("/signals", get(signals))
         .route("/reclaim/{scope}", post(reclaim_scope))
@@ -605,6 +606,26 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 }
 
 // ── Ladder ──────────────────────────────────────────────────────────────────
+
+/// What the Tidy rung is tracking: quiet apps, and whether each has been
+/// hinted as background and trimmed in its current quiet period.
+async fn tidy(State(st): State<AppState>) -> Json<Value> {
+    let det = st.det.read().unwrap();
+    let ladder = st.ladder.lock().unwrap();
+    let entries = ladder.tidy_entries(&det);
+    Json(json!({
+        "enabled": st.cfg.tidy.enabled,
+        "after_minutes": st.cfg.tidy.after_minutes,
+        "background_hints": st.cfg.tidy.background_hints && st.platform.background.available(),
+        "trim": st.cfg.tidy.trim,
+        "tracking": entries.iter().map(|e| json!({
+            "pid": e.pid, "name": e.name,
+            "quiet_minutes": (e.quiet_minutes * 10.0).round() / 10.0,
+            "hinted": e.hinted, "trimmed": e.trimmed,
+            "pss_mb": det.get(e.pid).map(|s| mb(s.pss)).unwrap_or(0.0),
+        })).collect::<Vec<_>>(),
+    }))
+}
 
 async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
     let det = st.det.read().unwrap();

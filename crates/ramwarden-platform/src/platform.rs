@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl, ProcessSource,
+    Background, DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl, ProcessSource,
 };
 
 type Factory<T> = Box<dyn Fn() -> Box<T> + Send + Sync>;
@@ -18,6 +18,7 @@ pub struct Platform {
     pub pressure: Arc<dyn PressureSource>,
     pub control: Arc<dyn ProcessControl>,
     pub pager: Arc<dyn Pager>,
+    pub background: Arc<dyn Background>,
     pub groups: Arc<dyn GroupSource>,
     processes: Factory<dyn ProcessSource>,
     desktop: Factory<dyn DesktopSource>,
@@ -31,6 +32,7 @@ pub struct Parts {
     pub pressure: Arc<dyn PressureSource>,
     pub control: Arc<dyn ProcessControl>,
     pub pager: Arc<dyn Pager>,
+    pub background: Arc<dyn Background>,
     pub groups: Arc<dyn GroupSource>,
 }
 
@@ -48,6 +50,7 @@ impl Platform {
             pressure: parts.pressure,
             control: parts.control,
             pager: parts.pager,
+            background: parts.background,
             groups: parts.groups,
             processes: Box::new(processes),
             desktop: Box::new(desktop),

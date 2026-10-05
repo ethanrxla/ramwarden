@@ -164,6 +164,21 @@ impl Signals {
             )
     }
 
+    /// No evidence of use at all: not focused, silent, no CPU, no busy child,
+    /// and not freshly started.
+    ///
+    /// The activity half of the verdict without the protection half. A
+    /// process serving a socket can be quiet — its clients do not care whether
+    /// its idle pages are resident — which is why the Tidy rung asks this
+    /// rather than for an `Idle` verdict.
+    pub fn is_quiet(&self) -> bool {
+        !self.is_focused
+            && !self.playing_audio
+            && self.cpu_seconds_recent < CPU_BUSY_SECONDS
+            && self.active_descendant.is_none()
+            && self.age_minutes >= FRESH_MINUTES
+    }
+
     /// Assign a verdict from the collected signals.
     ///
     /// `warm` is whether at least two samples have been taken. It matters

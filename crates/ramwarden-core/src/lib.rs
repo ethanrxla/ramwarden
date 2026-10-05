@@ -15,6 +15,7 @@ pub mod ladder;
 pub mod pattern;
 pub mod roles;
 pub mod signals;
+pub mod tidy;
 pub mod workspaces;
 
 // These read `/proc` directly: terminal sessions and private-browsing

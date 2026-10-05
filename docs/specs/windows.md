@@ -41,42 +41,91 @@ DiagTrack was running and set to Automatic.
 | setcap helper over a Unix socket | `ramwarden-service` (LocalSystem) over a named pipe |
 
 ## Pressure estimate
-Windows has no PSI. The daemon computes a 0–100 estimate on the same scale, so the
-ladder thresholds in `ramwarden.toml` keep their meaning:
+Windows has no PSI. `ramwarden-nt::pressure` computes an estimate on the same
+0–100 scale, so the ladder thresholds in `ramwarden.toml` keep their meaning.
+Every reading carries `estimated: true`, and `/psi` reports it.
 
-- `some_avg10` is the 10-second exponential average of
-  `max(fault_term, standby_term, commit_term)`:
-  - `fault_term` = hard page faults per second (PDH `\Memory\Pages Input/sec`),
-    scaled so that 0 faults/s gives 0 and 1000 faults/s gives 100.
-  - `standby_term` rises as available memory drops below 10% of physical RAM.
-  - `commit_term` rises as commit charge goes past 90% of the commit limit.
-- `full_avg10` is the same average restricted to `fault_term` while available
-  memory is under 5%, approximating "everything is waiting".
-- The low-memory resource notification (`CreateMemoryResourceNotification`)
-  wakes the monitor immediately. Without it, the daemon keeps the existing
-  adaptive polling of 10 s / 2 s / 1 s.
+The estimate takes the largest of three terms:
 
-This is an estimate, labelled as one in `/psi`. It is not stall time.
+- **Scarcity**, from available memory (free + standby) as a fraction of RAM.
+  It is 0 at 20% available and rises linearly to 9.9 at 0%.
+- **Commit**, from commit charge against the commit limit. It is 0 at 85%
+  and rises to 9.9 at 98%.
+- **Faulting**, from hard page faults per second, where 2000/s maps to 100.
+  - This term is gated by scarcity: it counts not at all above 15% available,
+    and in full at 5%.
+  - Hard faults with RAM to spare are file I/O, not memory stall, which is why
+    the gate exists.
+
+The other parts of the reading:
+
+- **The 9.9 cap.** Scarcity and commit are capped at 9.9, just below the
+  default tab threshold of 10. Being low on memory can reach reclaim and
+  page-out, but never a visible action. Anything visible needs real faulting.
+- **`full`** is the faulting term, ramped in as available memory falls from
+  8% to 5%.
+- **Averaging.** Both values are averaged exponentially over 10, 60 and 300
+  seconds, starting from the first reading.
+- **Wakeup.** The low-memory resource notification
+  (`CreateMemoryResourceNotification`) wakes the monitor. The notification is
+  level-triggered, so wakeups are spaced at least 1 s apart. Without it, the
+  monitor keeps adaptive polling: 10 s quiet, 2 s watchful, 1 s acting.
+
+On the target machine (32 GB), these default thresholds work out as:
+
+| Rung | Triggered when |
+|---|---|
+| reclaim | under about 16% available (about 5 GB) |
+| page-out | under about 10% available |
+| tabs and above | only with sustained hard faulting while memory is scarce |
+| release | above 18% available |
 
 ## Policy
 
-### Tidy rung (Windows rung 0)
-Tidy runs at any pressure and costs only soft faults.
+### Tidy rung (runs below the ladder, on every tick)
+Tidy runs at any pressure and costs only soft faults. It is implemented in
+`ramwarden-core::tidy`, so the policy is the same on every OS. Only the
+background hint is Windows-only so far.
 
-1. A process is a Tidy candidate when **all** of these are true:
-   - it is not structurally protected
-   - it is in the interactive session
-   - it is not focused
-   - it has no audio session
-   - it has been idle (the detector's verdict) for `tidy_after_minutes`
-     (default 10)
-2. For each candidate:
-   - set `ProcessMemoryPriority = LOW` and EcoQoS
-   - trim its working set **once per idle period**, never every tick
-3. When a candidate becomes active again (focus, audio or CPU), clear its
-   memory priority and EcoQoS.
-4. Every Tidy action is recorded in `/actions`, with the bytes actually trimmed
-   (working set before minus after).
+**Who is a candidate.** A process qualifies only when all of these hold:
+- It is not structurally protected. Shell, system, games, anti-cheat, VMs,
+  agents, builds, installers and sync are never tidied.
+- It is quiet: no focus, no audio, under 0.5 CPU-seconds per sample, no busy
+  child, and at least 10 minutes old.
+- It is not suspended.
+- Its proportional size is at least 64 MB.
+
+A process that only *serves* a socket can still be tidied. Discord's RPC
+clients do not need its idle pages resident. Serving still protects against
+suspend and kill.
+
+**What Tidy does.** Once a candidate has been quiet for `after_minutes`
+(default 10):
+1. Set the background hint: `ProcessMemoryPriority = LOW` plus EcoQoS.
+2. Trim its working set **once per quiet period**.
+
+**Undo.** Activity (focus, audio or CPU) ends the quiet period and clears the
+hint. If the process goes quiet again, a new period starts and it can be
+trimmed once more.
+
+**Records.** Every change is recorded as a ladder step and in history. Trims
+report bytes measured as private working set before minus after. `/tidy`
+lists what is being tracked.
+
+**Shutdown.** On a clean shutdown (Ctrl-C, console close, logoff or system
+shutdown) every hint is restored. A daemon killed outright cannot do this;
+`cargo run -p ramwarden-nt --example hint -- off <pid>...` restores by hand.
+
+**Configuration** (`[tidy]` in `ramwarden.toml`):
+- `enabled` (default `true`)
+- `after_minutes` (default `10`)
+- `background_hints` (default `true`)
+- `trim` (default `true`)
+
+**Measured on the target machine** (one-minute setting, idle Discord and
+Brave): Discord's working set fell from 799 MB to 428 MB, Brave's from
+1,546 MB to 1,214 MB. A Brave renderer that became active again was restored
+to normal priority on the next tick.
 
 ### Ladder
 The ladder keeps the Linux thresholds, hysteresis and cumulative escalation:
@@ -97,7 +146,9 @@ The following are never acted on:
 - `System`, `Registry`, `smss`, `csrss`, `wininit`, `winlogon`, `services`,
   `lsass`, `dwm`, `fontdrvhost`, `explorer`
 - `MsMpEng`, `NisSrv`
-- `vgc`, `vgk`, EasyAntiCheat
+- games and anti-cheat (role `GAME`): names ending `-Shipping` (Unreal
+  titles, including Fortnite and its EOS overlay), a list of common titles,
+  `vgc`, EasyAntiCheat, BattlEye and FACEIT
 - `vmmem*`
 - `WindowsTerminal`, `conhost`, `OpenConsole`
 - any session 0 process
