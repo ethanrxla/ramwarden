@@ -22,6 +22,7 @@ cargo run -p ramwarden-kernel --example probe                              # liv
 - `ramwarden-daemon` — monitor loop, axum HTTP/WS API on :7823, browser tab control.
 - `extension/` — Chrome extension (tab discard).
 - `packaging/macos/` — launchd agent; `scripts/install-macos.sh`.
+- `macos/menubar/` — Swift menu-bar app over the daemon's HTTP API; `./build.sh` installs `~/Applications/RamWarden.app`. Read-only except resuming apps the daemon froze.
 
 ## Rules
 - Keep kernel-crate signatures identical across platforms so `core`/`daemon` need no `cfg`.

@@ -24,7 +24,7 @@ This branch (`macbook`) adapts RamWarden from Linux to the machine below. `main`
 | `process_madvise`, pidfd | Not available. Signals go through `kill(2)`; identity is guarded by re-checking process start time before every signal |
 | `/proc` tree behind `Root` | libproc (`proc_listallpids`, `proc_pidinfo`, `proc_pidpath`) and `sysctl` |
 | systemd user units | launchd agent (`packaging/macos/`) |
-| GTK4/libadwaita window | Not built; use the HTTP API (`localhost:7823`) and the browser extension |
+| GTK4/libadwaita window | Native menu-bar app (`macos/menubar/`, Swift/AppKit) polling the daemon's HTTP API; the GTK UI is not built |
 
 ## What is active on macOS
 
