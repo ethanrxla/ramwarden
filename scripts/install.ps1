@@ -24,10 +24,14 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Source = (Join-Path $PSScriptRoot '..\target\release'),
+  # Resolved below: Windows PowerShell 5.1 leaves $PSScriptRoot empty while
+  # parameter defaults are evaluated.
+  [string]$Source = '',
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $Source) { $Source = Join-Path $Root '..\target\release' }
 
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -81,7 +85,7 @@ $ConfigDir = Join-Path $env:APPDATA 'ramwarden'
 $Config    = Join-Path $ConfigDir 'config.toml'
 if (-not (Test-Path $Config)) {
   New-Item -ItemType Directory -Force $ConfigDir | Out-Null
-  Copy-Item (Join-Path $PSScriptRoot '..\ramwarden.toml') $Config
+  Copy-Item (Join-Path $Root '..\ramwarden.toml') $Config
   Write-Host "Wrote starter config to $Config"
 }
 
