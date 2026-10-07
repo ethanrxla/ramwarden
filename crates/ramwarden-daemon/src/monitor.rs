@@ -22,6 +22,7 @@
 //! is what resumes suspended applications and lifts soft caps.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Outcome;
@@ -66,19 +67,42 @@ fn next_interval(rung: Option<ladder::Rung>) -> Duration {
 
 /// Bridges the ladder's tab rung to the browsers.
 ///
-/// The ladder is synchronous; closing tabs means awaiting a browser. The monitor
-/// runs on its own OS thread rather than inside the runtime, so it can block on
-/// the async work — which would deadlock if this ran as a tokio task.
+/// The ladder is synchronous and runs while the monitor holds the ladder mutex
+/// and the detector read lock. Tab unloading is async and can wait seconds for
+/// a browser, so it is **spawned**, never awaited from here: blocking this thread
+/// on the runtime while holding those locks deadlocks as soon as an HTTP handler
+/// on a worker thread wants one of them. That worker then cannot drive the timers
+/// the unload is waiting on, the unload never finishes, and the locks are never
+/// released — the daemon stays alive, keeps its port open, and answers nothing.
 struct Tabs {
     state: AppState,
     handle: tokio::runtime::Handle,
 }
 
+/// One unload at a time: the ladder ticks every second while it sits on the tabs
+/// rung, and each tick would otherwise queue another wait for the same browser.
+static UNLOAD_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Clears [`UNLOAD_RUNNING`] when the task ends, including by panic.
+struct UnloadGuard;
+
+impl Drop for UnloadGuard {
+    fn drop(&mut self) {
+        UNLOAD_RUNNING.store(false, Ordering::Release);
+    }
+}
+
 impl TabCloser for Tabs {
-    fn close_stale(&mut self, goal: &str) -> Outcome {
+    fn close_stale(&mut self, _goal: &str) -> Outcome {
+        if UNLOAD_RUNNING.swap(true, Ordering::AcqRel) {
+            return Outcome {
+                notes: vec!["tab unload already in progress".into()],
+                ..Outcome::default()
+            };
+        }
         let state = self.state.clone();
-        let _ = goal;
-        self.handle.block_on(async move {
+        self.handle.spawn(async move {
+            let _guard = UnloadGuard;
             state.request_all_tabs().await;
             let targets = {
                 let hub = state.hub.lock().unwrap();
@@ -87,10 +111,13 @@ impl TabCloser for Tabs {
                     .map(|r|r.target).collect::<Vec<_>>()
             };
             let result = state.discard_tabs(&targets).await;
-            Outcome { affected: Vec::new(), bytes_freed: 0,
-                notes: vec![format!("{} tabs unloaded, {} queued, {} refused; tabs remain open",
-                    result.confirmed.len(), result.queued.len(), result.refused.len())] }
-        })
+            tracing::info!("{} tabs unloaded, {} queued, {} refused; tabs remain open",
+                result.confirmed.len(), result.queued.len(), result.refused.len());
+        });
+        Outcome {
+            notes: vec!["tab unload started in the background".into()],
+            ..Outcome::default()
+        }
     }
 }
 
