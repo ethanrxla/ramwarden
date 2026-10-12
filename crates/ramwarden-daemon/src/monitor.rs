@@ -22,6 +22,7 @@
 //! is what resumes suspended applications and lifts soft caps.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Outcome;
@@ -85,8 +86,46 @@ impl TabCloser for Tabs {
     }
 }
 
-/// Start the monitor on its own thread.
+/// Seconds since the Unix epoch when the monitor last finished a tick.
+static LAST_TICK: AtomicU64 = AtomicU64::new(0);
+
+/// How long the monitor may go without finishing a tick before the daemon is
+/// restarted. A tick is bounded by its slowest step (tab reports and closes
+/// time out in seconds, the service pipe in five), and the idle interval is ten
+/// seconds, so three minutes only passes when something is stuck for good.
+const STALL_LIMIT: Duration = Duration::from_secs(180);
+
+/// Exit code for a stalled monitor; the logon task restarts the daemon on failure.
+const STALL_EXIT: i32 = 70;
+
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Start the monitor on its own thread, and a watchdog that restarts the daemon
+/// if the monitor stops ticking.
+///
+/// A stuck monitor is worse than a dead one: it can hold the ladder lock or wait
+/// on the detector's write lock, and the HTTP handlers then queue behind it until
+/// every runtime worker is blocked, so the window shows "Waiting for the daemon"
+/// with no error anywhere (2026-10-11: hung for a day and a half after a pageout
+/// rung). Exiting lets the logon task's restart policy bring up a fresh daemon.
 pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::JoinHandle<()> {
+    LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
+    std::thread::Builder::new()
+        .name("ramwarden-watchdog".into())
+        .spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let quiet = epoch_secs().saturating_sub(LAST_TICK.load(Ordering::Relaxed));
+            if quiet > STALL_LIMIT.as_secs() {
+                tracing::error!("monitor has not finished a tick in {quiet}s; exiting so the daemon restarts");
+                std::process::exit(STALL_EXIT);
+            }
+        })
+        .expect("spawn watchdog thread");
     std::thread::Builder::new()
         .name("ramwarden-monitor".into())
         .spawn(move || run(state, handle))
@@ -128,6 +167,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut last_prune = Instant::now();
 
     loop {
+        LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
         let woken_by_pressure = match trigger.as_mut() {
             Some(t) => t.wait(interval).unwrap_or(false),
             None => {
