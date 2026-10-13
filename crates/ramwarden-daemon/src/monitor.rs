@@ -95,8 +95,36 @@ static LAST_TICK: AtomicU64 = AtomicU64::new(0);
 /// seconds, so three minutes only passes when something is stuck for good.
 const STALL_LIMIT: Duration = Duration::from_secs(180);
 
-/// Exit code for a stalled monitor; the logon task restarts the daemon on failure.
+/// Exit code for a stalled monitor.
 const STALL_EXIT: i32 = 70;
+
+/// How often the watchdog looks, and how much longer than that one look may take
+/// before the machine is taken to have been asleep.
+const WATCH_EVERY: Duration = Duration::from_secs(30);
+const SLEEP_GAP: Duration = Duration::from_secs(90);
+
+/// Start a fresh daemon a few seconds from now (once this one has released the
+/// port), through the same launcher, with the same arguments.
+///
+/// The logon task's restart-on-failure never fired: the daemon runs under
+/// `conhost --headless`, which reports success whatever the daemon's exit code
+/// (2026-10-12: task result 0x0 after an exit 70, and no daemon for the night).
+#[cfg(windows)]
+fn relaunch() {
+    use std::os::windows::process::CommandExt;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let launcher = exe.with_file_name("ramwarden-daemon.cmd");
+    let target = if launcher.exists() { launcher } else { exe };
+    let args: Vec<String> = std::env::args().skip(1).map(|a| format!("\"{a}\"")).collect();
+    let line = format!("timeout /t 3 /nobreak >nul & \"{}\" {}", target.display(), args.join(" "));
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", &line])
+        .creation_flags(0x0800_0000 | 0x0000_0008) // CREATE_NO_WINDOW | DETACHED_PROCESS
+        .spawn();
+}
+
+#[cfg(not(windows))]
+fn relaunch() {}
 
 fn epoch_secs() -> u64 {
     std::time::SystemTime::now()
@@ -112,17 +140,31 @@ fn epoch_secs() -> u64 {
 /// on the detector's write lock, and the HTTP handlers then queue behind it until
 /// every runtime worker is blocked, so the window shows "Waiting for the daemon"
 /// with no error anywhere (2026-10-11: hung for a day and a half after a pageout
-/// rung). Exiting lets the logon task's restart policy bring up a fresh daemon.
+/// rung). The daemon then starts its own replacement and exits.
 pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::JoinHandle<()> {
     LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
     std::thread::Builder::new()
         .name("ramwarden-watchdog".into())
-        .spawn(|| loop {
-            std::thread::sleep(Duration::from_secs(30));
-            let quiet = epoch_secs().saturating_sub(LAST_TICK.load(Ordering::Relaxed));
-            if quiet > STALL_LIMIT.as_secs() {
-                tracing::error!("monitor has not finished a tick in {quiet}s; exiting so the daemon restarts");
-                std::process::exit(STALL_EXIT);
+        .spawn(|| {
+            let mut looked = epoch_secs();
+            loop {
+                std::thread::sleep(WATCH_EVERY);
+                let now = epoch_secs();
+                // Sleep and hibernate stop every thread but not the wall clock: after
+                // a 9 minute sleep the monitor looked stalled and the daemon was shut
+                // down on wake (2026-10-12). A look that took far longer than asked
+                // means the machine was suspended, so the monitor gets a fresh start.
+                if now.saturating_sub(looked) > SLEEP_GAP.as_secs() {
+                    tracing::info!("machine was suspended for about {}s; watchdog reset", now - looked);
+                    LAST_TICK.store(now, Ordering::Relaxed);
+                }
+                looked = now;
+                let quiet = now.saturating_sub(LAST_TICK.load(Ordering::Relaxed));
+                if quiet > STALL_LIMIT.as_secs() {
+                    tracing::error!("monitor has not finished a tick in {quiet}s; restarting the daemon");
+                    relaunch();
+                    std::process::exit(STALL_EXIT);
+                }
             }
         })
         .expect("spawn watchdog thread");
