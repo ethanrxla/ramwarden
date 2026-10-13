@@ -1,8 +1,11 @@
 [Unit]
 Description=RamWarden — memory manager daemon
 Documentation=https://github.com/ethanrisden/ramwarden
+# Started from default.target, not graphical-session.target: COSMIC (and some
+# other sessions) never activate graphical-session.target, so a unit wanted only
+# by it is enabled but silently never starts after a reboot. Nothing here needs
+# a display — the desktop probes tolerate a missing one.
 After=graphical-session.target
-PartOf=graphical-session.target
 
 [Service]
 Type=simple
@@ -33,4 +36,4 @@ NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target
