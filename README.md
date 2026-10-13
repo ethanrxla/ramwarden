@@ -49,6 +49,15 @@ systemctl --user enable --now ramwarden-helper   # optional, see below
 
 Then launch **RamWarden** from your application menu, or run `ramwarden`.
 
+If the window says the daemon is unreachable after a reboot, the units were
+enabled by an older package that hooked them to `graphical-session.target`,
+which COSMIC never starts. Re-enable them so they move to `default.target`:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user reenable --now ramwarden ramwarden-helper
+```
+
 ### Build from source
 
 ```bash
