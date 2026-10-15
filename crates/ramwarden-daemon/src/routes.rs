@@ -61,6 +61,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/plan", get(ladder_plan))
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
+        .route("/outcomes", get(outcomes))
         .route("/tidy", get(tidy))
         .route("/predict/eval", get(predict_eval))
         .route("/predict/train", post(predict_train))
@@ -782,6 +783,30 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
 }
 
 // ── History ─────────────────────────────────────────────────────────────────
+
+/// How often unloaded tabs are returned to: the data that calibrates the model.
+async fn outcomes(State(st): State<AppState>) -> Json<Value> {
+    let h = st.history.lock().unwrap();
+    let now = ramwarden_core::history::unix_now() as i64;
+    let day = h.labelled_outcomes(86_400, now).unwrap_or_default();
+    let returned = day.iter().filter(|o| o.returned).count();
+    let (mut predicted, mut brier) = (0.0, 0.0);
+    for o in &day {
+        predicted += o.p_return;
+        brier += (o.p_return - if o.returned { 1.0 } else { 0.0 }).powi(2);
+    }
+    let n = day.len().max(1) as f64;
+    Json(json!({
+        "recorded": h.count_outcomes().unwrap_or(0),
+        "labelled_24h": day.len(),
+        "returned_24h": returned,
+        // Calibration: if the model is right, these two roughly agree.
+        "mean_predicted_return": if day.is_empty() { Value::Null } else { json!(predicted / n) },
+        "actual_return_rate": if day.is_empty() { Value::Null } else { json!(returned as f64 / n) },
+        // 0 is perfect; always answering 0.5 scores 0.25.
+        "brier": if day.is_empty() { Value::Null } else { json!(brier / n) },
+    }))
+}
 
 async fn history(State(st): State<AppState>) -> Json<Value> {
     let h = st.history.lock().unwrap();

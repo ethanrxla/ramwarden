@@ -211,11 +211,18 @@ impl AppState {
         let threshold = self.cfg.thresholds.inactivity_minutes as i64;
         let mut result = DiscardResult::default();
         let mut waiters = Vec::new();
+        let mut decided: HashMap<crate::browser::Target, crate::browser::Row> = HashMap::new();
         {
             let mut hub = self.hub.lock().unwrap();
             hub.discard_attempts.retain(|_, at| at.elapsed() < Duration::from_secs(90));
             let available: Vec<_> = requested.iter().filter(|t| !hub.discard_attempts.contains_key(t)).cloned().collect();
             let selected = crate::browser::select(&hub.reg, threshold, &available);
+            // The numbers behind each decision, kept to label its outcome later.
+            for row in crate::browser::snapshot(&hub.reg, threshold) {
+                if selected.contains(&row.target) {
+                    decided.insert(row.target.clone(), row);
+                }
+            }
             for target in &selected { hub.discard_attempts.insert(target.clone(), Instant::now()); }
             result.refused = requested.iter().filter(|t| !selected.contains(t)).cloned().collect();
             let mut groups: HashMap<String, Vec<crate::browser::Target>> = HashMap::new();
@@ -243,14 +250,24 @@ impl AppState {
             (browser,request,targets,ids)
         })).await;
         let mut hub = self.hub.lock().unwrap();
+        let mut to_record: Vec<crate::browser::Row> = Vec::new();
         for (browser,request,targets,ids) in replies {
             hub.discard_waiters.remove(&request);
             let confirmed: Vec<i64> = targets.iter().filter(|t|ids.contains(&t.id)).map(|t|t.id).collect();
             hub.reg.mark_discarded(&browser,&confirmed);
             for target in targets {
-                if confirmed.contains(&target.id) { result.confirmed.push(target); }
-                else { result.refused.push(target); }
+                if confirmed.contains(&target.id) {
+                    if let Some(row) = decided.remove(&target) { to_record.push(row); }
+                    result.confirmed.push(target);
+                } else { result.refused.push(target); }
             }
+        }
+        drop(hub);
+        // After the hub lock is released: history has its own lock, and nothing
+        // else takes the two in the opposite order.
+        if !to_record.is_empty() && let Ok(h) = self.history.lock() {
+            let refs: Vec<&crate::browser::Row> = to_record.iter().collect();
+            crate::outcomes::record(&h, &refs, ramwarden_core::history::unix_now() as i64);
         }
         result
     }

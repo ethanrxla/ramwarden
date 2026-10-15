@@ -120,6 +120,28 @@ pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::Jo
         .expect("spawn monitor thread")
 }
 
+/// Mark unloaded tabs the user has since returned to.
+fn reconcile_returns(state: &AppState) {
+    let now = ramwarden_core::history::unix_now() as i64;
+    let reports: Vec<(String, Vec<crate::tabs::Tab>)> = {
+        let hub = state.hub.lock().unwrap();
+        hub.reg
+            .socket_ids()
+            .into_iter()
+            .chain(hub.reg.poll_ids())
+            .map(|b| {
+                let tabs = hub.reg.tabs_for(&b).to_vec();
+                (b, tabs)
+            })
+            .collect()
+    };
+    if let Ok(h) = state.history.lock() {
+        for (browser, tabs) in &reports {
+            crate::outcomes::reconcile(&h, browser, tabs, now);
+        }
+    }
+}
+
 fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut probe = state.platform.desktop();
 
@@ -172,6 +194,10 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             continue;
         }
 
+        // 1b. Has the user come back to a tab we unloaded? Cheap: one query per
+        // browser, then a hash lookup per reported tab.
+        reconcile_returns(&state);
+
         // 2. Look.
         let pressure = match state.platform.pressure.read() {
             Ok(p) => p,
@@ -203,6 +229,20 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             ladder.step(&mut world)
         };
         drop(det);
+
+        // Keep the on-disk record of frozen apps current, so a crash cannot strand them.
+        if report.steps.iter().any(|(a, _, _)| matches!(*a, "suspend" | "resume")) {
+            let frozen: Vec<crate::freeze_journal::Frozen> = state
+                .ladder
+                .lock()
+                .unwrap()
+                .actuator()
+                .suspended()
+                .iter()
+                .flat_map(|e| e.live_pids().into_iter().map(|pid| crate::freeze_journal::Frozen { name: e.name.clone(), pid }))
+                .collect();
+            crate::freeze_journal::write(&cfg.db_path.with_file_name("suspended.json"), &frozen);
+        }
 
         if report.did_something() || woken_by_pressure {
             tracing::info!(

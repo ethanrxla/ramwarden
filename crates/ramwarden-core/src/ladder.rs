@@ -289,6 +289,12 @@ impl Ladder {
         self
     }
 
+    /// Wake everything RamWarden froze. For shutdown: a frozen app must never
+    /// outlive the daemon that froze it.
+    pub fn thaw_all(&mut self) -> Vec<(String, Outcome)> {
+        self.act.resume_all()
+    }
+
     pub fn actuator(&mut self) -> &mut Actuator {
         &mut self.act
     }

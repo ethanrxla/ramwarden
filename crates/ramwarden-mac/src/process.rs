@@ -1,4 +1,3 @@
-use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ramwarden_platform::{Error, Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource, Result};
@@ -31,14 +30,15 @@ impl Sockets {
         self.listening.clear();
         self.established.clear();
         for (state, listen) in [("LISTEN", true), ("ESTABLISHED", false)] {
-            let Ok(out) = Command::new("lsof")
-                .args(["-nP", "-iTCP", &format!("-sTCP:{state}"), "-F", "pn"])
-                .output()
-            else {
+            let Some(out) = sys::run_timeout(
+                "lsof",
+                &["-nP", "-iTCP", &format!("-sTCP:{state}"), "-F", "pn"],
+                Duration::from_secs(3),
+            ) else {
                 continue;
             };
             let mut pid = 0i32;
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
+            for line in out.lines() {
                 if let Some(p) = line.strip_prefix('p') {
                     pid = p.parse().unwrap_or(0);
                 } else if let Some(n) = line.strip_prefix('n') {
@@ -234,6 +234,7 @@ impl ProcessControl for MacControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn sees_ourselves() {

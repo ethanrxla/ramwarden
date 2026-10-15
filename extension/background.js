@@ -54,11 +54,15 @@ let tabActivity = {};
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab || isProtected(tab.url)) return;
+    // Keep the last 24 activations: the daemon turns them into a frecency score
+    // (how often, and how recently, this tab is actually visited).
+    const prior = tabActivity[tabId]?.activations ?? [];
     tabActivity[tabId] = {
       url: tab.url || "",
       title: tab.title || tab.url || "",
       lastActiveMs: Date.now(),
       incognito: tab.incognito || false,
+      activations: [...prior, Date.now()].slice(-24),
     };
     persistActivity();
   });
@@ -75,6 +79,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     title: tab.title || tab.url || "",
     lastActiveMs: tabActivity[tabId]?.lastActiveMs ?? (tab.lastAccessed || Date.now()),
     incognito: tab.incognito || false,
+    activations: tabActivity[tabId]?.activations ?? [],
   };
   persistActivity();
 });
@@ -168,6 +173,7 @@ function buildTabReport(activity) {
           autoDiscardable: tab.autoDiscardable ?? false,
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
+          activations: known?.activations ?? [],
         });
       }
       resolve(report);

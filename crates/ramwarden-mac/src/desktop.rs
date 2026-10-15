@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use ramwarden_platform::{Desktop, DesktopSource};
@@ -30,8 +29,11 @@ impl Default for MacDesktop {
     }
 }
 
-fn run(cmd: &str, args: &[&str]) -> String {
-    Command::new(cmd).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+/// A probe that answers within a couple of seconds or is treated as unavailable.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn run(cmd: &str, args: &[&str]) -> Option<String> {
+    crate::sys::run_timeout(cmd, args, PROBE_TIMEOUT)
 }
 
 /// pids of `type="Foreground"` apps in `lsappinfo list`.
@@ -73,21 +75,27 @@ pub fn audio_pids(assertions: &str) -> HashSet<i32> {
 }
 
 fn frontmost_pid() -> Option<i32> {
-    let front = run("lsappinfo", &["front"]);
-    run("lsappinfo", &["info", "-only", "pid", front.trim()]).split('=').nth(1)?.trim().parse().ok()
+    let front = run("lsappinfo", &["front"])?;
+    run("lsappinfo", &["info", "-only", "pid", front.trim()])?.split('=').nth(1)?.trim().parse().ok()
 }
 
 impl DesktopSource for MacDesktop {
     fn sample(&mut self) -> Desktop {
         if self.slow.as_ref().is_none_or(|(at, ..)| at.elapsed() >= Duration::from_secs(5)) {
-            self.slow = Some((
-                Instant::now(),
-                audio_pids(&run("pmset", &["-g", "assertions"])),
-                foreground_pids(&run("lsappinfo", &["list"])),
-            ));
+            // A probe that times out keeps the last good answer instead of
+            // reporting "nothing is playing / no windows".
+            let (old_audio, old_windows) = self
+                .slow
+                .take()
+                .map(|(_, a, w)| (a, w))
+                .unwrap_or_default();
+            let audio = run("pmset", &["-g", "assertions"]).map(|o| audio_pids(&o)).unwrap_or(old_audio);
+            let windows = run("lsappinfo", &["list"]).map(|o| foreground_pids(&o)).unwrap_or(old_windows);
+            self.slow = Some((Instant::now(), audio, windows));
         }
         if self.focus.as_ref().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(1)) {
-            self.focus = Some((Instant::now(), frontmost_pid()));
+            let last = self.focus.as_ref().and_then(|(_, p)| *p);
+            self.focus = Some((Instant::now(), frontmost_pid().or(last)));
         }
         let (_, audio, windows) = self.slow.as_ref().expect("set above");
         Desktop {

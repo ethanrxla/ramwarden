@@ -1,7 +1,11 @@
 //! Thin, safe wrappers over sysctl and libproc.
 
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::io::Read;
 use std::mem::{MaybeUninit, size_of};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 use std::sync::OnceLock;
 
 pub fn sysctl_raw(name: &str, buf: *mut c_void, len: &mut usize) -> bool {
@@ -139,4 +143,55 @@ pub fn parse_procargs(buf: &[u8]) -> String {
         .map(|s| String::from_utf8_lossy(s).into_owned())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Run a command and return its stdout, or `None` if it fails or exceeds `timeout`.
+///
+/// Never blocks past the timeout: `lsappinfo` and friends ask other processes
+/// questions, and a process RamWarden itself froze cannot answer. A hung probe
+/// would otherwise stall the whole daemon. The reader runs on its own thread so
+/// output larger than a pipe buffer cannot block the child, and a timed-out child
+/// is killed.
+pub fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Option<String> {
+    let mut child = Command::new(cmd).args(args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(String::from_utf8_lossy(&buf).into_owned())
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::warn!("{cmd} did not answer within {timeout:?}; killed it");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_output_and_enforces_the_timeout() {
+        assert_eq!(run_timeout("echo", &["hi"], Duration::from_secs(2)).as_deref(), Some("hi\n"));
+        let t = std::time::Instant::now();
+        assert_eq!(run_timeout("sleep", &["30"], Duration::from_millis(200)), None);
+        assert!(t.elapsed() < Duration::from_secs(2), "must not wait for the child");
+        assert_eq!(run_timeout("definitely-not-a-command", &[], Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn large_output_does_not_deadlock() {
+        // Far more than a 64 KiB pipe buffer.
+        let out = run_timeout("sh", &["-c", "head -c 500000 /dev/zero | tr '\\0' 'a'"], Duration::from_secs(5)).unwrap();
+        assert_eq!(out.len(), 500_000);
+    }
 }

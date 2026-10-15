@@ -8,10 +8,12 @@
 pub mod ai;
 pub mod embedder;
 pub mod extras;
+pub mod freeze_journal;
 pub mod gpu;
 pub mod guard;
 pub mod hub;
 pub mod monitor;
+pub mod outcomes;
 pub mod predict;
 pub mod routes;
 pub mod tabpolicy;

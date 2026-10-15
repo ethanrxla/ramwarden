@@ -70,6 +70,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("first sample failed: {e}");
     }
 
+    // Whatever a previous run froze and never woke (a crash, a hard kill, a
+    // restart) is thawed now: nothing else would ever wake it.
+    let journal = cfg.db_path.with_file_name("suspended.json");
+    for woke in ramwarden_daemon::freeze_journal::thaw_leftovers(&journal, &detector, platform.control.as_ref()) {
+        tracing::warn!("thawed {woke}, left frozen by a previous run");
+    }
+
     let predictor = Arc::new(ramwarden_daemon::predict::LivePredictor::new(
         cfg.db_path.with_file_name("predictor.safetensors"),
     ));
@@ -125,6 +132,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
+    // No frozen app outlives the daemon that froze it.
+    for (name, outcome) in state.ladder.lock().unwrap().thaw_all() {
+        tracing::info!("thawed {name} on shutdown ({} process(es))", outcome.affected.len());
+    }
+    ramwarden_daemon::freeze_journal::write(&journal, &[]);
+
     // No background hint outlives the daemon that set it.
     for (_, target, outcome) in state.ladder.lock().unwrap().release_tidy() {
         if !outcome.did_nothing() {
@@ -156,6 +169,19 @@ async fn shutdown_signal() {
     }
     #[cfg(not(windows))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        // launchd and systemd stop a service with SIGTERM, which would kill the
+        // process outright and skip the cleanup below.
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
     }
 }

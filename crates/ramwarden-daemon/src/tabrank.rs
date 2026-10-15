@@ -101,10 +101,53 @@ const DUPLICATE_FACTOR: f64 = 0.1;
 /// Keeps the score finite when `p_return` is vanishingly small.
 const EPSILON: f64 = 0.01;
 
-/// `exp(-(t/λ)^k)` with λ chosen so the curve passes through 0.5 at the half-life.
-pub fn p_return(idle_minutes: i64, c: Class, older_duplicate: bool) -> f64 {
+/// Frecency decay: an activation's weight halves roughly every 2 days
+/// (`exp(-age/τ)` with τ = 3 days).
+const FRECENCY_TAU_MS: f64 = 3.0 * 24.0 * 3_600_000.0;
+/// Frecency counts past this add nothing: five visits and fifty look alike.
+const FRECENCY_CAP: f64 = 8.0;
+/// Each unit of frecency stretches the half-life by this much.
+const FRECENCY_GAIN: f64 = 0.5;
+/// A tab on the same site as something the user is using right now.
+const RELATED_FACTOR: f64 = 2.0;
+
+/// Recency-weighted visit count: `Σ exp(-(now - t_k)/τ)` over activations.
+/// A tab opened once a minute ago scores about 1; one visited daily for a week
+/// scores about 4. Timestamps ahead of `now` (clock skew) count as just now.
+pub fn frecency(activations: &[f64], now_ms: f64) -> f64 {
+    activations.iter().map(|&t| (-((now_ms - t).max(0.0)) / FRECENCY_TAU_MS).exp()).sum()
+}
+
+/// How much longer than the site-class default this tab's return chance lasts:
+/// frequently visited tabs, and tabs related to what the user is doing now,
+/// are kept longer. `>= 1`, at most `(1 + 0.5*8) * 2 = 10`.
+pub fn half_life_multiplier(frecency: f64, related: bool) -> f64 {
+    (1.0 + FRECENCY_GAIN * frecency.min(FRECENCY_CAP)) * if related { RELATED_FACTOR } else { 1.0 }
+}
+
+/// A coarse "same site" key: the host without `www.`, reduced to its registered
+/// domain (last two labels, or three under `co.uk`-style suffixes).
+pub fn site_key(url: &str) -> Option<String> {
+    let host = Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Some(host.to_string());
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    let n = labels.len();
+    if n <= 2 {
+        return Some(host.to_string());
+    }
+    let second_level = matches!(labels[n - 2], "co" | "com" | "org" | "net" | "ac" | "gov" | "edu") && labels[n - 1].len() == 2;
+    let keep = if second_level { 3 } else { 2 };
+    Some(labels[n - keep..].join("."))
+}
+
+/// `exp(-(t/λ)^k)` with λ chosen so the curve passes through 0.5 at the half-life,
+/// stretched by `half_life_mult` (see [`half_life_multiplier`]; pass 1.0 for none).
+pub fn p_return(idle_minutes: i64, c: Class, older_duplicate: bool, half_life_mult: f64) -> f64 {
     let t = idle_minutes.max(0) as f64;
-    let lambda = half_life_minutes(c) / std::f64::consts::LN_2.powf(1.0 / SHAPE);
+    let lambda = half_life_minutes(c) * half_life_mult.max(1.0) / std::f64::consts::LN_2.powf(1.0 / SHAPE);
     let p = (-(t / lambda).powf(SHAPE)).exp();
     if older_duplicate { p * DUPLICATE_FACTOR } else { p }
 }
@@ -121,7 +164,7 @@ mod tests {
     #[test]
     fn the_half_life_is_exact() {
         for c in [Class::Feed, Class::App, Class::Reference, Class::Page] {
-            let p = p_return(half_life_minutes(c) as i64, c, false);
+            let p = p_return(half_life_minutes(c) as i64, c, false, 1.0);
             assert!((p - 0.5).abs() < 1e-3, "{c:?}: {p}");
         }
     }
@@ -130,26 +173,26 @@ mod tests {
     fn longer_idle_means_less_likely_to_return() {
         let mut last = 1.0;
         for t in [0, 10, 60, 600, 6_000, 60_000] {
-            let p = p_return(t, Class::Page, false);
+            let p = p_return(t, Class::Page, false, 1.0);
             assert!(p <= last && (0.0..=1.0).contains(&p));
             last = p;
         }
-        assert_eq!(p_return(0, Class::Page, false), 1.0);
-        assert_eq!(p_return(-5, Class::Page, false), 1.0, "clock skew cannot raise it above 1");
+        assert_eq!(p_return(0, Class::Page, false, 1.0), 1.0);
+        assert_eq!(p_return(-5, Class::Page, false, 1.0), 1.0, "clock skew cannot raise it above 1");
     }
 
     #[test]
     fn heavy_tail_keeps_a_long_idle_tab_possible() {
         // A shape of 0.6 decays far slower than an exponential at the same half-life.
-        let weibull = p_return(5_760, Class::Page, false); // 8 half-lives
+        let weibull = p_return(5_760, Class::Page, false, 1.0); // 8 half-lives
         let exponential = 0.5f64.powi(8);
         assert!(weibull > exponential * 2.0, "{weibull} vs {exponential}");
     }
 
     #[test]
     fn an_older_duplicate_is_cut_tenfold() {
-        let a = p_return(300, Class::Page, false);
-        let b = p_return(300, Class::Page, true);
+        let a = p_return(300, Class::Page, false, 1.0);
+        let b = p_return(300, Class::Page, true, 1.0);
         assert!((a / b - 10.0).abs() < 1e-9);
     }
 
@@ -165,8 +208,8 @@ mod tests {
 
     #[test]
     fn heavy_and_forgotten_beats_light_and_recent() {
-        let forgotten_video = score(est_mb(Class::Feed), p_return(600, Class::Feed, false));
-        let recent_reference = score(est_mb(Class::Reference), p_return(60, Class::Reference, false));
+        let forgotten_video = score(est_mb(Class::Feed), p_return(600, Class::Feed, false, 1.0));
+        let recent_reference = score(est_mb(Class::Reference), p_return(60, Class::Reference, false, 1.0));
         assert!(forgotten_video > recent_reference * 10.0);
     }
 
@@ -176,5 +219,53 @@ mod tests {
         assert!(score(400, p) > score(80, p));
         // And at equal size, the one least likely to return goes first.
         assert!(score(120, 0.05) > score(120, 0.5));
+    }
+
+    const DAY: f64 = 86_400_000.0;
+
+    #[test]
+    fn frecency_weighs_recent_and_repeated_visits() {
+        let now = 10.0 * DAY;
+        assert_eq!(frecency(&[], now), 0.0);
+        assert!((frecency(&[now], now) - 1.0).abs() < 1e-12);
+        // One visit three days ago counts e^-1.
+        assert!((frecency(&[now - 3.0 * DAY], now) - (-1.0f64).exp()).abs() < 1e-12);
+        // Daily for a week beats one visit a week ago, and beats one visit today's worth.
+        let daily: Vec<f64> = (0..7).map(|d| now - d as f64 * DAY).collect();
+        assert!(frecency(&daily, now) > 3.0);
+        assert!(frecency(&daily, now) > frecency(&[now - 7.0 * DAY], now) * 5.0);
+        // Clock skew cannot score above a visit right now.
+        assert!((frecency(&[now + DAY], now) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn multiplier_is_bounded_and_monotone() {
+        assert_eq!(half_life_multiplier(0.0, false), 1.0);
+        assert_eq!(half_life_multiplier(0.0, true), 2.0);
+        assert!(half_life_multiplier(2.0, false) > half_life_multiplier(1.0, false));
+        assert_eq!(half_life_multiplier(1_000.0, true), 10.0, "capped");
+    }
+
+    #[test]
+    fn a_frequently_visited_or_related_tab_is_likelier_to_be_kept() {
+        let base = p_return(600, Class::Page, false, 1.0);
+        let frequent = p_return(600, Class::Page, false, half_life_multiplier(4.0, false));
+        let related = p_return(600, Class::Page, false, half_life_multiplier(0.0, true));
+        assert!(frequent > base && related > base);
+        // The half-life really does stretch: p(2 * h) at multiplier 2 is 0.5.
+        let h = half_life_minutes(Class::Page);
+        assert!((p_return((2.0 * h) as i64, Class::Page, false, 2.0) - 0.5).abs() < 1e-3);
+        // A multiplier below 1 is ignored rather than shortening the half-life.
+        assert_eq!(p_return(600, Class::Page, false, 0.1), base);
+    }
+
+    #[test]
+    fn site_key_groups_a_registered_domain() {
+        assert_eq!(site_key("https://www.github.com/a/b").as_deref(), Some("github.com"));
+        assert_eq!(site_key("https://gist.github.com/x").as_deref(), Some("github.com"));
+        assert_eq!(site_key("https://docs.google.com/d/1").as_deref(), Some("google.com"));
+        assert_eq!(site_key("https://news.bbc.co.uk/x").as_deref(), Some("bbc.co.uk"));
+        assert_eq!(site_key("http://127.0.0.1:8765/x").as_deref(), Some("127.0.0.1"));
+        assert_eq!(site_key("not a url"), None);
     }
 }
