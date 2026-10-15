@@ -17,6 +17,7 @@ pub mod outcomes;
 pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
+pub mod tabintel;
 pub mod tabrank;
 pub mod tabs;
 pub mod worker;

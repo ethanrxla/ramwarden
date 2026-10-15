@@ -31,6 +31,14 @@ pub struct Row {
     pub frecency: f64,
     /// On the same site as a tab the user is using right now.
     pub related: bool,
+    /// Site class (`feed`, `app`, `reference`, `page`), for the feature description.
+    pub class: &'static str,
+    /// An older copy of a page that is open more recently elsewhere.
+    pub duplicate: bool,
+    /// The closed-form return chance, before any model adjustment.
+    pub p_rules: f64,
+    /// The model's own answer for this tab's features, when it has one.
+    pub p_model: Option<f64>,
 }
 
 pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
@@ -121,7 +129,23 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             let frec = tabrank::frecency(&t.activations, now_ms);
             let related = tabrank::site_key(&t.url).is_some_and(|k| active_sites.contains(&k));
             let mult = tabrank::half_life_multiplier(frec, related);
-            let p = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
+            let p_rules = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
+            let features = crate::tabintel::Features {
+                class: tabrank::class_name(class),
+                idle_minutes: t.inactive_minutes,
+                frecency: frec,
+                related,
+                duplicate,
+            };
+            // Advisory model tier: a cached answer adjusts the estimate or vetoes the
+            // unload. Absent (disabled, not asked yet, breaker open) means no change.
+            let adj = if eligible { crate::tabintel::adjust(p_rules, &features) } else { crate::tabintel::Adjusted::none(p_rules) };
+            let (status, reason, eligible) = if adj.veto {
+                ("protected", "model says this tab may hold unsaved work", false)
+            } else {
+                (status, reason, eligible)
+            };
+            let p = adj.p;
             let reason = if eligible {
                 format!("{reason} (return chance {:.0}%, ~{mb} MB)", p * 100.0)
             } else {
@@ -144,6 +168,10 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 est_mb: mb,
                 frecency: frec,
                 related,
+                class: features.class,
+                duplicate,
+                p_rules,
+                p_model: adj.p_model,
             }
         })
         .collect();

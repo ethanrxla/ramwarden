@@ -57,6 +57,15 @@ fn host_matches(host: &str, domain: &str) -> bool {
     host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
 }
 
+pub fn class_name(c: Class) -> &'static str {
+    match c {
+        Class::Feed => "feed",
+        Class::App => "app",
+        Class::Reference => "reference",
+        Class::Page => "page",
+    }
+}
+
 pub fn classify(url: &str) -> Class {
     let Some(host) = Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
         return Class::Page;

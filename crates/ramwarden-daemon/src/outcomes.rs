@@ -18,15 +18,6 @@ const SETTLE_SECONDS: i64 = 20;
 /// A tab reloaded by a user was activated within about this long ago.
 const RECENT_MINUTES: i64 = 1;
 
-fn class_name(url: &str) -> &'static str {
-    match tabrank::classify(url) {
-        tabrank::Class::Feed => "feed",
-        tabrank::Class::App => "app",
-        tabrank::Class::Reference => "reference",
-        tabrank::Class::Page => "page",
-    }
-}
-
 /// Record a confirmed unload. Tabs whose host cannot be read are skipped.
 pub fn record(h: &History, rows: &[&Row], now: i64) -> usize {
     rows.iter()
@@ -36,7 +27,7 @@ pub fn record(h: &History, rows: &[&Row], now: i64) -> usize {
                 browser: r.target.browser.clone(),
                 tab_id: r.target.id,
                 host,
-                class: class_name(&r.target.url).into(),
+                class: r.class.into(),
                 idle_minutes: r.inactive_minutes,
                 p_return: r.p_return,
                 est_mb: r.est_mb as i64,
@@ -92,6 +83,10 @@ mod tests {
             est_mb: 120,
             frecency: 0.0,
             related: false,
+            class: "page",
+            duplicate: false,
+            p_rules: 0.2,
+            p_model: None,
         }
     }
 

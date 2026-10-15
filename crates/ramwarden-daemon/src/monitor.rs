@@ -120,6 +120,36 @@ pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::Jo
         .expect("spawn monitor thread")
 }
 
+/// Ask the model tier about borderline tabs, in the background. The monitor
+/// never waits on it: answers land in a cache that ranking reads.
+fn refresh_intel(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Instant) {
+    static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else { return };
+    if last.elapsed() < Duration::from_secs(30) || IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    *last = Instant::now();
+    let rows = {
+        let hub = state.hub.lock().unwrap();
+        crate::browser::snapshot(&hub.reg, state.cfg.thresholds.inactivity_minutes as i64)
+    };
+    let states = crate::tabintel::borderline_states(&rows, intel.config());
+    let intel = intel.clone();
+    handle.spawn(async move {
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                IN_FLIGHT.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done;
+        let n = intel.refresh(&states, Instant::now()).await;
+        if n > 0 {
+            tracing::info!("jev answered {n} tab description(s)");
+        }
+    });
+}
+
 /// Mark unloaded tabs the user has since returned to.
 fn reconcile_returns(state: &AppState) {
     let now = ramwarden_core::history::unix_now() as i64;
@@ -175,6 +205,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
+    let mut last_intel = Instant::now() - Duration::from_secs(60);
 
     loop {
         let woken_by_pressure = match trigger.as_mut() {
@@ -197,6 +228,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         // 1b. Has the user come back to a tab we unloaded? Cheap: one query per
         // browser, then a hash lookup per reported tab.
         reconcile_returns(&state);
+        refresh_intel(&state, &handle, &mut last_intel);
 
         // 2. Look.
         let pressure = match state.platform.pressure.read() {

@@ -4,7 +4,7 @@
 //! working untouched, and drives the remediation ladder from PSI triggers.
 
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Actuator;
 use ramwarden_core::detector::Detector;
@@ -91,6 +91,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cfg.tidy.trim
         );
         ladder = ladder.with_tidy(cfg.tidy.clone());
+    }
+
+    // The Jev decision tier: advisory, opt-in, and a no-op unless enabled and keyed.
+    {
+        let j = &cfg.jev;
+        let asker: Option<Box<dyn ramwarden_daemon::tabintel::Asker>> = if j.enabled && !j.api_key.trim().is_empty() {
+            match ramwarden_ai::jev::Jev::new(
+                &j.base_url,
+                ramwarden_ai::secret::Secret::new(j.api_key.trim()),
+                &j.model,
+                Duration::from_secs(j.timeout_seconds),
+            ) {
+                Ok(c) => {
+                    tracing::info!("jev tier on: model {} key {} weight {} (feature descriptions only; no URLs or titles)", j.model, c.key_fingerprint(), j.weight);
+                    Some(Box::new(c))
+                }
+                Err(e) => {
+                    tracing::warn!("jev tier off: {e}");
+                    None
+                }
+            }
+        } else {
+            tracing::info!("jev tier off ({})", if !j.enabled { "set [jev] enabled = true to use it" } else { "no JEV_API_KEY" });
+            None
+        };
+        ramwarden_daemon::tabintel::install(Arc::new(ramwarden_daemon::tabintel::TabIntel::new(j.clone(), asker)));
     }
 
     let provider = ai::provider(&cfg);

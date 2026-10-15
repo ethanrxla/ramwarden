@@ -269,6 +269,56 @@ impl Default for Gpu {
     }
 }
 
+/// The decision tier: TypeSafe's Jev, which answers typed yes/no questions with
+/// calibrated probabilities. It is sent a short description of each borderline
+/// tab's *features* (site type, idle hours, visit count) and never a URL or a
+/// title, so it is far less exposing than the NIM tier. Still opt-in.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Jev {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    /// Read from `secrets.toml`, `.env` or `$JEV_API_KEY`. Never put it in
+    /// `ramwarden.toml`, which is tracked by git.
+    pub api_key: String,
+    pub timeout_seconds: u64,
+    /// How much Jev's answer counts against the closed-form estimate, 0-1, on the
+    /// log-odds scale. 0 ignores Jev, 1 trusts it alone.
+    pub weight: f64,
+    /// Spend cap: Jev calls per hour. Tabs with the same features share an answer,
+    /// so this is rarely reached.
+    pub max_calls_per_hour: u32,
+    /// Only tabs whose closed-form return chance is inside this band are asked
+    /// about; clearly-stale and clearly-active tabs never leave the machine.
+    pub band_low: f64,
+    pub band_high: f64,
+    pub max_candidates: usize,
+    /// How long an answer is reused.
+    pub cache_hours: u64,
+    /// "Could this tab hold unsaved work?" at or above this vetoes unloading.
+    pub unsaved_veto: f64,
+}
+
+impl Default for Jev {
+    fn default() -> Self {
+        Jev {
+            enabled: false,
+            base_url: "https://api.typesafe.ai".to_string(),
+            model: "jev-latest".to_string(),
+            api_key: String::new(),
+            timeout_seconds: 15,
+            weight: 0.4,
+            max_calls_per_hour: 60,
+            band_low: 0.15,
+            band_high: 0.6,
+            max_candidates: 20,
+            cache_hours: 6,
+            unsaved_veto: 0.6,
+        }
+    }
+}
+
 /// The cloud tier: NVIDIA NIM at build.nvidia.com.
 ///
 /// **Off by default, even with a key present.** The prompt carries the titles and
@@ -329,6 +379,7 @@ pub struct Config {
     pub ladder: Ladder,
     pub ollama: Ollama,
     pub nvidia: Nvidia,
+    pub jev: Jev,
     pub logging: Logging,
     pub tidy: Tidy,
     pub gpu: Gpu,
@@ -351,6 +402,7 @@ struct Raw {
     ladder: Ladder,
     ollama: Ollama,
     nvidia: Nvidia,
+    jev: Jev,
     logging: Logging,
     tidy: Tidy,
     gpu: Gpu,
@@ -414,6 +466,7 @@ impl Default for Config {
             ladder: Ladder::default(),
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
+            jev: Jev::default(),
             logging: Logging::default(),
             tidy: Tidy::default(),
             gpu: Gpu::default(),
@@ -504,6 +557,12 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if secrets.nvidia.enabled {
             cfg.nvidia.enabled = true;
         }
+        if !secrets.jev.api_key.is_empty() {
+            cfg.jev.api_key = secrets.jev.api_key;
+        }
+        if secrets.jev.enabled {
+            cfg.jev.enabled = true;
+        }
     }
 
     // The environment wins over both files, which is how a service unit or a
@@ -516,6 +575,15 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         && !k.trim().is_empty()
     {
         cfg.nvidia.api_key = k.trim().to_string();
+    }
+
+    for var in ["JEV_API_KEY", "TYPESAFE_API_KEY"] {
+        if let Ok(k) = std::env::var(var)
+            && !k.trim().is_empty()
+        {
+            cfg.jev.api_key = k.trim().to_string();
+            break;
+        }
     }
 
     // A `.env` beside the config (or in the per-user config dir) can supply the
@@ -537,6 +605,21 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         }
     }
 
+    if cfg.jev.api_key.is_empty() {
+        let env_files = [
+            path.parent().map(|d| d.join(".env")),
+            Some(config_dir().join("ramwarden").join(".env")),
+        ];
+        for f in env_files.into_iter().flatten() {
+            if let Ok(text) = std::fs::read_to_string(&f)
+                && let Some(k) = dotenv_value(&text, &["JEV_API_KEY", "TYPESAFE_API_KEY"])
+            {
+                cfg.jev.api_key = k;
+                break;
+            }
+        }
+    }
+
     if let Err(e) = cfg.ladder.validate() {
         return Err(format!("{}: {e}", path.display()));
     }
@@ -553,6 +636,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ladder: raw.ladder,
         ollama: raw.ollama,
         nvidia: raw.nvidia,
+        jev: raw.jev,
         logging: raw.logging,
         tidy: raw.tidy,
         gpu: raw.gpu,
@@ -896,5 +980,21 @@ port = 7823
         let p = dir.path().join("ramwarden.toml");
         std::fs::write(&p, "[ladder]\nreclaim_at = 50.0\npageout_at = 1.0\n").unwrap();
         assert!(load_from(&p).is_err());
+    }
+
+    #[test]
+    fn jev_is_off_by_default_and_reads_its_section() {
+        let c = Config::default();
+        assert!(!c.jev.enabled && c.jev.api_key.is_empty());
+        assert_eq!(c.jev.base_url, "https://api.typesafe.ai");
+        assert!((c.jev.band_low, c.jev.band_high) == (0.15, 0.6));
+        let c = parse("[jev]\nenabled = true\nweight = 0.25\nmax_calls_per_hour = 10\n").unwrap();
+        assert!(c.jev.enabled && c.jev.weight == 0.25 && c.jev.max_calls_per_hour == 10);
+        assert_eq!(c.jev.model, "jev-latest", "unset fields keep their defaults");
+    }
+
+    #[test]
+    fn dotenv_finds_the_jev_key() {
+        assert_eq!(dotenv_value("JEV_API_KEY=abc123\nNVIDIA_NIM_API_KEY=x", &["JEV_API_KEY", "TYPESAFE_API_KEY"]).as_deref(), Some("abc123"));
     }
 }

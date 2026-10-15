@@ -62,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/cancel-kill", post(cancel_kill))
         .route("/actions", get(actions))
         .route("/outcomes", get(outcomes))
+        .route("/intel", get(intel))
         .route("/tidy", get(tidy))
         .route("/predict/eval", get(predict_eval))
         .route("/predict/train", post(predict_train))
@@ -783,6 +784,14 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
 }
 
 // ── History ─────────────────────────────────────────────────────────────────
+
+/// The Jev decision tier: whether it is on, what it has cost, and whether it is paused.
+async fn intel() -> Json<Value> {
+    Json(match crate::tabintel::global() {
+        Some(i) => i.status(std::time::Instant::now()),
+        None => json!({"enabled": false, "configured": false}),
+    })
+}
 
 /// How often unloaded tabs are returned to: the data that calibrates the model.
 async fn outcomes(State(st): State<AppState>) -> Json<Value> {
