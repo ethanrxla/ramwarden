@@ -2,15 +2,15 @@
 //!
 //! # Kernel wakeups where possible, adaptive polling where not
 //!
-//! The intended design was a PSI trigger: tell the kernel "wake me if tasks
-//! stall more than N ms per second" and block on `poll()`. That is still
-//! attempted first, and on a kernel that permits it the loop reacts in under a
-//! second while costing nothing when idle.
+//! The intended design is an OS wakeup: on Linux a PSI trigger ("wake me if
+//! tasks stall more than N ms per second"), on Windows the low-memory resource
+//! notification. Either is attempted first through the platform's
+//! [`PressureWaker`](ramwarden_platform::PressureWaker), and where granted the
+//! loop reacts at once while costing nothing when idle.
 //!
-//! It does not work on the machine this was written for. Linux 7.1.5 opens
-//! `/proc/pressure/memory` `O_RDWR` and reads it happily, but rejects every
-//! trigger write with `EINVAL` — trigger creation is privileged there, and the
-//! cgroup `memory.pressure` files are not writable at all.
+//! It frequently is not granted. Linux 7.1.5 on the machine this was written
+//! for opens `/proc/pressure/memory` `O_RDWR` and reads it happily, but rejects
+//! every trigger write with `EINVAL` — trigger creation is privileged there.
 //!
 //! So the fallback is the normal path, and it is **adaptive** rather than the
 //! fixed ten-second sleep v1 used. The interval follows the rung: a quiet
@@ -28,18 +28,9 @@ use std::time::{Duration, Instant};
 use ramwarden_core::actuator::Outcome;
 use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::signals::Signals;
-use ramwarden_core::desktop::DesktopProbe;
 use ramwarden_core::ladder::{self, TabCloser, World};
-use ramwarden_kernel::{cgroup, psi};
 
 use crate::hub::AppState;
-
-/// How long the stall must last within the window to wake the thread.
-///
-/// 50 ms per second is roughly "5% pressure sustained" — comfortably below the
-/// first rung, so the ladder is awake and sampling before it needs to act.
-const STALL_BUDGET: Duration = Duration::from_millis(50);
-const STALL_WINDOW: Duration = Duration::from_secs(1);
 
 /// Sampling interval on a quiet machine. Also the de-escalation interval, since
 /// nothing wakes us when pressure passes.
@@ -130,23 +121,18 @@ pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::Jo
 }
 
 fn run(state: AppState, handle: tokio::runtime::Handle) {
-    let mut probe = DesktopProbe::new();
-    let uid = unsafe { getuid() };
+    let mut probe = state.platform.desktop();
 
-    // The trigger is a nicety, not a requirement: without CONFIG_PSI the loop
-    // falls back to the heartbeat alone, which is still better than v1's.
-    let mut trigger = match psi::Trigger::memory(&state.root, STALL_BUDGET, STALL_WINDOW) {
+    // The wakeup is a nicety, not a requirement: without it the loop falls
+    // back to the heartbeat alone, which is still better than v1's.
+    let mut trigger = match state.platform.pressure.waker() {
         Ok(t) => {
-            tracing::info!(
-                "PSI trigger armed: waking on {}ms of stall per {}s",
-                STALL_BUDGET.as_millis(),
-                STALL_WINDOW.as_secs()
-            );
+            tracing::info!("pressure wakeup armed — {}", t.describe());
             Some(t)
         }
         Err(e) => {
             tracing::warn!(
-                "PSI trigger unavailable ({e}) — using adaptive polling \
+                "pressure wakeup unavailable ({e}) — using adaptive polling \
                  ({}s idle / {}s watchful / {}s busy)",
                 IDLE_INTERVAL.as_secs(),
                 WATCHFUL_INTERVAL.as_secs(),
@@ -157,6 +143,13 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     };
 
     let cfg = Arc::clone(&state.cfg);
+    let mut gpu_policy = crate::gpu::GpuPolicy::default();
+    // Train soon after start when no model exists yet, then once a day.
+    let mut last_train = if state.predictor.model_path().exists() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
@@ -180,15 +173,14 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         }
 
         // 2. Look.
-        let pressure = match psi::system_memory(&state.root) {
+        let pressure = match state.platform.pressure.read() {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("pressure read failed: {e}");
                 continue;
             }
         };
-        let available = ladder::available_bytes(&state.root);
-        let hierarchy = cgroup::Hierarchy::user_session(&state.root, uid).ok();
+        let available = ladder::available_bytes(state.platform.memory.as_ref());
 
         // 3. Act.
         let mut closer = Tabs {
@@ -198,7 +190,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         let det = state.det.read().unwrap();
         let mut world = World {
             det: &det,
-            hierarchy: hierarchy.as_ref(),
+            groups: state.platform.ready_groups(),
             psi: pressure,
             available_bytes: available,
             watchlist: &cfg.watchlist,
@@ -216,8 +208,8 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             tracing::info!(
                 "rung {} (some={:.1}% full={:.1}% avail={} MB) — freed {} MB in {:?}",
                 report.rung.map(|r| r.as_str()).unwrap_or("?"),
-                pressure.some.avg10,
-                pressure.full.avg10,
+                pressure.some_avg10,
+                pressure.full_avg10,
                 available / 1_000_000,
                 report.total_freed / 1_000_000,
                 started.elapsed(),
@@ -235,6 +227,26 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                             format!(" ({})", outcome.notes.join("; "))
                         }
                     );
+                }
+            }
+        }
+
+        // ── VRAM: unload idle local models when a game needs the card ──────
+        if cfg.gpu.unload_models_for_games {
+            let game = crate::gpu::game_running(&state.det.read().unwrap());
+            let notes = handle.block_on(gpu_policy.tick(game, cfg.gpu.vram_percent, &state.models));
+            for n in notes {
+                tracing::info!("gpu: {n}");
+                if let Ok(h) = state.history.lock() {
+                    let _ = h.log(&ramwarden_core::history::NewAction {
+                        rung: -1,
+                        trigger: "vram".into(),
+                        action: "unload_model".into(),
+                        target: n.clone(),
+                        succeeded: n.starts_with("unloaded"),
+                        notes: n,
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -257,15 +269,27 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                     .collect()
             };
             let ctx = SampleContext {
-                psi_some: pressure.some.avg10,
-                psi_full: pressure.full.avg10,
+                psi_some: pressure.some_avg10,
+                psi_full: pressure.full_avg10,
                 available: available as i64,
             };
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            state.predictor.observe(&samples, epoch, pressure.some_avg10);
             if let Ok(h) = state.history.lock()
                 && let Err(e) = h.log_signals(&samples, ctx)
             {
                 tracing::debug!("behaviour log write failed: {e}");
             }
+        }
+
+        // Retrain the reuse predictor daily, off this thread: it reads the
+        // whole behaviour log and takes seconds to minutes.
+        if cfg.logging.enabled && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400)) {
+            last_train = Some(Instant::now());
+            crate::predict::train_in_background(&state);
         }
 
         // Pruning once a day is enough; it only deletes whole days.
@@ -323,11 +347,6 @@ fn to_sample(s: &Signals) -> SignalSample {
     }
 }
 
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn getuid() -> u32;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,22 +368,5 @@ mod tests {
     fn the_intervals_are_ordered_so_escalation_samples_faster() {
         assert!(BUSY_INTERVAL < WATCHFUL_INTERVAL);
         assert!(WATCHFUL_INTERVAL < IDLE_INTERVAL);
-    }
-
-    /// The trigger is optional. If this machine grants one, good; if not, the
-    /// loop must still be able to start.
-    #[test]
-    fn a_missing_trigger_does_not_prevent_the_loop_from_running() {
-        let root = ramwarden_kernel::Root::system();
-        match psi::Trigger::memory(&root, STALL_BUDGET, STALL_WINDOW) {
-            Ok(_) => {}
-            Err(e) => assert!(
-                matches!(
-                    e,
-                    ramwarden_kernel::Error::Unsupported(_) | ramwarden_kernel::Error::Denied { .. }
-                ),
-                "a trigger refusal must be a capability error, not {e:?}"
-            ),
-        }
     }
 }

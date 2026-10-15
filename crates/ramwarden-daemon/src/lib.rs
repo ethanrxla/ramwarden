@@ -6,11 +6,17 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod embedder;
+pub mod extras;
+pub mod gpu;
+pub mod guard;
 pub mod hub;
 pub mod monitor;
+pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
 pub mod tabs;
+pub mod worker;
 pub mod ws;
 
 pub mod browser;

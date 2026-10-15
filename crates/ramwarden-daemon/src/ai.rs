@@ -62,6 +62,7 @@ pub fn provider(cfg: &Config) -> Provider {
             Prefer::Local
         },
         respect_vram: cfg.ollama.respect_vram,
+        local_embedder: Default::default(),
     }
 }
 
@@ -179,7 +180,7 @@ pub async fn decide(
     let mut allowed_tabs: Vec<i64> = allowed.into_iter().collect();
     allowed_tabs.sort_unstable();
 
-    let terms = ramwarden_core::terminals::list(&ramwarden_kernel::Root::system()).unwrap_or_default();
+    let terms = crate::extras::terminals();
     let allowed_terminals: Vec<i32> =
         terms.iter().filter(|t| t.is_idle).map(|t| t.pid).collect();
 

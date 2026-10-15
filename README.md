@@ -5,6 +5,28 @@ you are actually using, and reclaims the rest — **asking the kernel to page co
 memory to zram before it will consider freezing or closing anything**, so most
 pressure is handled without you noticing.
 
+> **Windows** (the `windows` branch) runs the same policy on NT native APIs:
+> private working sets instead of PSS, working-set trims instead of
+> `memory.reclaim`, and a PSI-scale pressure estimate. It adds:
+>
+> * **Tidy:** quiet background apps are deprioritised and trimmed at any
+>   pressure, and restored the moment you use them.
+> * **Reversible privacy and background profiles**, snapshotted before every
+>   change.
+> * **VRAM per process**, and idle local models unloaded when a game needs
+>   the card.
+> * **A JEPA-style reuse predictor** that only acts once it beats LRU.
+> * **A 2 MB tray.**
+>
+> Games and anti-cheat are never touched. See
+> [the Windows spec](docs/specs/windows.md).
+>
+> ```powershell
+> cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat
+> cargo build --release -p ramwarden-ui --features tray --bin ramwarden-tray
+> powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # elevated
+> ```
+
 ---
 
 ## Why v2 exists

@@ -1,0 +1,23 @@
+[package]
+name    = "ramwarden-service"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's SYSTEM service: the few privileged operations the daemon may request, and nothing else."
+
+[[bin]]
+name = "ramwarden-service"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+ramwarden-nt       = { path = "../ramwarden-nt" }
+ramwarden-core     = { path = "../ramwarden-core" }
+ramwarden-debloat  = { path = "../ramwarden-debloat" }
+serde_json = { workspace = true }
+tokio      = { workspace = true, features = ["net", "io-util"] }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+windows    = { workspace = true }
+windows-service = { workspace = true }

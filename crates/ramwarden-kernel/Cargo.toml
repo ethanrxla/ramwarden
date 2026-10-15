@@ -6,11 +6,15 @@ license.workspace    = true
 repository.workspace = true
 description = "Linux kernel memory primitives for RamWarden: cgroup v2 reclaim, PSI, PSS, pidfd, zram."
 
-[dependencies]
-thiserror = { workspace = true }
-tracing   = { workspace = true }
-nix       = { workspace = true, features = ["process", "signal", "poll", "fs"] }
-libc      = { workspace = true }
+# Linux only. On any other target the crate compiles to nothing, so the
+# workspace still builds there.
+[target.'cfg(target_os = "linux")'.dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+serde_json = { workspace = true }
+nix        = { workspace = true, features = ["process", "signal", "poll", "fs"] }
+libc       = { workspace = true }
 
-[dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile = { workspace = true }

@@ -7,15 +7,16 @@ repository.workspace = true
 description = "RamWarden's model tier: local Nemotron, GPU goal re-ranking, and VRAM accounting."
 
 [dependencies]
-ramwarden-core   = { path = "../ramwarden-core" }
-ramwarden-kernel = { path = "../ramwarden-kernel" }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 reqwest    = { workspace = true }
-tokio      = { workspace = true }
+tokio      = { workspace = true, features = ["process"] }
 tracing    = { workspace = true }
 thiserror  = { workspace = true }
 nvml-wrapper = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+ramwarden-nt = { path = "../ramwarden-nt" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

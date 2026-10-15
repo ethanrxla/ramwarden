@@ -21,12 +21,11 @@
 //!
 //! # What changed from v1
 //!
-//! Size is now PSS rather than summed RSS (see [`ramwarden_kernel::smaps`]), and
-//! `scope` is new — it ties a process to the cgroup the ladder can reclaim from.
+//! Size is now proportional (PSS on Linux, private working set on Windows)
+//! rather than summed RSS, and `scope` is new — it ties a process to the group
+//! the ladder can reclaim from.
 //! The verdicts, the ordering, and the user-facing reason strings are unchanged,
 //! because they were right.
-
-use ramwarden_kernel::smaps::Rollup;
 
 use crate::roles::Role;
 
@@ -141,12 +140,6 @@ impl Signals {
         }
     }
 
-    pub fn with_memory(mut self, r: &Rollup) -> Self {
-        self.pss = r.pss;
-        self.rss = r.rss;
-        self
-    }
-
     pub fn is_serving(&self) -> bool {
         !self.listening_ports.is_empty()
     }
@@ -169,6 +162,21 @@ impl Signals {
                 self.role,
                 Role::Hypervisor | Role::Container | Role::Agent | Role::Build | Role::Sync | Role::Media
             )
+    }
+
+    /// No evidence of use at all: not focused, silent, no CPU, no busy child,
+    /// and not freshly started.
+    ///
+    /// The activity half of the verdict without the protection half. A
+    /// process serving a socket can be quiet — its clients do not care whether
+    /// its idle pages are resident — which is why the Tidy rung asks this
+    /// rather than for an `Idle` verdict.
+    pub fn is_quiet(&self) -> bool {
+        !self.is_focused
+            && !self.playing_audio
+            && self.cpu_seconds_recent < CPU_BUSY_SECONDS
+            && self.active_descendant.is_none()
+            && self.age_minutes >= FRESH_MINUTES
     }
 
     /// Assign a verdict from the collected signals.

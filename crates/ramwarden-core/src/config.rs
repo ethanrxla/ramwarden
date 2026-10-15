@@ -226,6 +226,49 @@ impl Default for Logging {
     }
 }
 
+/// The Tidy rung: free, reversible housekeeping for quiet background apps, at
+/// any pressure. See [`crate::tidy`].
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Tidy {
+    pub enabled: bool,
+    /// How long a process must stay quiet before it is tidied.
+    pub after_minutes: f64,
+    /// Lower memory priority and opt into EcoQoS (Windows).
+    pub background_hints: bool,
+    /// Trim the working set once per quiet period.
+    pub trim: bool,
+}
+
+impl Default for Tidy {
+    fn default() -> Self {
+        Tidy {
+            enabled: true,
+            after_minutes: 10.0,
+            background_hints: true,
+            trim: true,
+        }
+    }
+}
+
+/// VRAM policy: unload idle local models when a game needs the card.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Gpu {
+    pub unload_models_for_games: bool,
+    /// Act only when the card is at least this full.
+    pub vram_percent: f64,
+}
+
+impl Default for Gpu {
+    fn default() -> Self {
+        Gpu {
+            unload_models_for_games: true,
+            vram_percent: 85.0,
+        }
+    }
+}
+
 /// The cloud tier: NVIDIA NIM at build.nvidia.com.
 ///
 /// **Off by default, even with a key present.** The prompt carries the titles and
@@ -287,6 +330,8 @@ pub struct Config {
     pub ollama: Ollama,
     pub nvidia: Nvidia,
     pub logging: Logging,
+    pub tidy: Tidy,
+    pub gpu: Gpu,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -307,6 +352,8 @@ struct Raw {
     ollama: Ollama,
     nvidia: Nvidia,
     logging: Logging,
+    tidy: Tidy,
+    gpu: Gpu,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -332,17 +379,31 @@ fn default_watchlist() -> Vec<String> {
 }
 
 fn default_db_path() -> PathBuf {
-    home()
-        .join(".local")
-        .join("share")
-        .join("ramwarden")
-        .join("history.db")
+    data_dir().join("ramwarden").join("history.db")
 }
 
 fn home() -> PathBuf {
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Per-user config directory: `%APPDATA%` on Windows, `~/.config` elsewhere.
+/// Chosen by which variable exists rather than by `cfg`, so a Linux box is
+/// unaffected by a Windows convention it never sets.
+fn config_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".config"))
+}
+
+/// Per-user data directory: `%LOCALAPPDATA%` on Windows, `~/.local/share`
+/// elsewhere.
+fn data_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".local").join("share"))
 }
 
 impl Default for Config {
@@ -354,6 +415,8 @@ impl Default for Config {
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
             logging: Logging::default(),
+            tidy: Tidy::default(),
+            gpu: Gpu::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -371,8 +434,11 @@ pub fn search_paths() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         out.push(cwd.join("ramwarden.toml"));
     }
-    out.push(home().join(".config/ramwarden/config.toml"));
-    out.push(PathBuf::from("/etc/ramwarden/config.toml"));
+    out.push(config_dir().join("ramwarden").join("config.toml"));
+    match std::env::var_os("ProgramData") {
+        Some(pd) => out.push(PathBuf::from(pd).join("ramwarden").join("config.toml")),
+        None => out.push(PathBuf::from("/etc/ramwarden/config.toml")),
+    }
     out
 }
 
@@ -397,7 +463,7 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
     // beside a packaged config.
     let secret_paths = [
         path.parent().map(|d| d.join("secrets.toml")),
-        Some(home().join(".config/ramwarden/secrets.toml")),
+        Some(config_dir().join("ramwarden").join("secrets.toml")),
     ];
     for sp in secret_paths.into_iter().flatten() {
         if !sp.exists() {
@@ -443,6 +509,8 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ollama: raw.ollama,
         nvidia: raw.nvidia,
         logging: raw.logging,
+        tidy: raw.tidy,
+        gpu: raw.gpu,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
@@ -721,8 +789,28 @@ port = 7823
             strs.iter().any(|s| s.ends_with("ramwarden.toml")),
             "cwd config missing: {strs:?}"
         );
-        assert!(strs.iter().any(|s| s.ends_with(".config/ramwarden/config.toml")));
-        assert_eq!(strs.last().unwrap(), "/etc/ramwarden/config.toml");
+        assert!(paths.contains(&config_dir().join("ramwarden").join("config.toml")));
+        #[cfg(target_os = "linux")]
+        {
+            assert!(strs.iter().any(|s| s.ends_with(".config/ramwarden/config.toml")));
+            assert_eq!(strs.last().unwrap(), "/etc/ramwarden/config.toml");
+        }
+        #[cfg(windows)]
+        {
+            let appdata = std::env::var("APPDATA").unwrap();
+            assert!(strs.iter().any(|s| s.starts_with(&appdata)), "{strs:?}");
+            assert!(strs.last().unwrap().ends_with(r"ramwarden\config.toml"), "{strs:?}");
+        }
+    }
+
+    /// On Windows `HOME` is usually unset; the database must still land in
+    /// the user's profile rather than at the root of the drive.
+    #[test]
+    fn the_default_database_lives_in_the_users_data_directory() {
+        let db = default_db_path();
+        assert!(db.ends_with(std::path::Path::new("ramwarden").join("history.db")));
+        assert!(db.starts_with(data_dir()), "{}", db.display());
+        assert_ne!(data_dir(), PathBuf::from("/").join(".local").join("share"));
     }
 
     #[test]

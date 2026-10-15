@@ -13,9 +13,9 @@
 //! v1 stored PIDs and re-resolved them by name at resume time, and
 //! `process_manager.py` admits the hazard in a comment: after a frozen app is
 //! force-quit and relaunched, the same name matches a different process tree.
-//! This registry holds [`PidFd`] handles instead. A handle refers to one
-//! specific process forever; once that process exits it refuses to signal
-//! anything. With `SIGCONT` the old bug was harmless, but the v2 ladder sends
+//! This registry holds [`ProcessHandle`]s instead — a pidfd on Linux, a process
+//! `HANDLE` on Windows. A handle refers to one specific process forever; once
+//! that process exits it refuses to signal anything. With `SIGCONT` the old bug was harmless, but the v2 ladder sends
 //! `SIGKILL` on its own authority, where signalling a recycled PID means
 //! destroying something the user never agreed to lose.
 //!
@@ -27,10 +27,14 @@
 //! because nobody is watching to notice the difference.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ramwarden_kernel::procfd::PidFd;
-use ramwarden_kernel::{Root, cgroup, madvise, smaps};
+use ramwarden_platform::{
+    AppGroup, Background, GroupSource, Pager, Platform, ProcessControl, ProcessHandle,
+};
+
+pub use ramwarden_platform::Outcome;
 
 use crate::detector::{Decision, Detector};
 
@@ -41,7 +45,7 @@ pub const TERMINATE_GRACE: Duration = Duration::from_secs(3);
 pub struct SuspendedEntry {
     pub name: String,
     /// Handles to the exact processes that were stopped.
-    handles: Vec<PidFd>,
+    handles: Vec<Box<dyn ProcessHandle>>,
     pub since: Instant,
 }
 
@@ -52,8 +56,12 @@ impl SuspendedEntry {
 
     /// Handles whose processes are still alive. A process the user killed or
     /// continued themselves drops out.
-    pub fn live(&self) -> Vec<&PidFd> {
-        self.handles.iter().filter(|h| h.is_alive()).collect()
+    pub fn live(&self) -> Vec<&dyn ProcessHandle> {
+        self.handles
+            .iter()
+            .map(|h| h.as_ref())
+            .filter(|h| h.is_alive())
+            .collect()
     }
 
     pub fn pids(&self) -> Vec<i32> {
@@ -65,11 +73,10 @@ impl SuspendedEntry {
     }
 
     /// Memory still held by the frozen processes, in bytes.
-    pub fn pss(&self, root: &Root) -> u64 {
+    pub fn pss(&self, control: &dyn ProcessControl) -> u64 {
         self.live()
             .iter()
-            .filter_map(|h| smaps::rollup(root, h.pid()).ok())
-            .map(|r| r.pss)
+            .filter_map(|h| control.proportional(h.pid()))
             .sum()
     }
 
@@ -79,47 +86,46 @@ impl SuspendedEntry {
     }
 }
 
-/// What an action actually achieved.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Outcome {
-    /// Processes or scopes the action successfully touched.
-    pub affected: Vec<i32>,
-    /// Bytes of memory measurably returned, where measurable.
-    pub bytes_freed: u64,
-    /// Why the action did not happen, or did not fully happen. Empty on a clean
-    /// success.
-    pub notes: Vec<String>,
-}
-
-impl Outcome {
-    pub fn refused(reason: impl Into<String>) -> Self {
-        Outcome {
-            notes: vec![reason.into()],
-            ..Default::default()
-        }
-    }
-
-    pub fn did_nothing(&self) -> bool {
-        self.affected.is_empty() && self.bytes_freed == 0
-    }
-}
-
 /// Applies decisions and tracks what must be undone when pressure passes.
 pub struct Actuator {
-    root: Root,
+    control: Arc<dyn ProcessControl>,
+    pager: Arc<dyn Pager>,
+    background: Arc<dyn Background>,
     suspended: HashMap<String, SuspendedEntry>,
-    /// scope name -> the `memory.high` value before RamWarden capped it.
-    /// `None` means it was uncapped, which is the usual case.
+    /// group name -> the soft cap before RamWarden capped it. `None` means it
+    /// was uncapped, which is the usual case.
     capped: HashMap<String, Option<u64>>,
 }
 
 impl Actuator {
-    pub fn new(root: Root) -> Self {
+    pub fn new(
+        control: Arc<dyn ProcessControl>,
+        pager: Arc<dyn Pager>,
+        background: Arc<dyn Background>,
+    ) -> Self {
         Actuator {
-            root,
+            control,
+            pager,
+            background,
             suspended: HashMap::new(),
             capped: HashMap::new(),
         }
+    }
+
+    pub fn for_platform(p: &Platform) -> Self {
+        Actuator::new(p.control.clone(), p.pager.clone(), p.background.clone())
+    }
+
+    /// An actuator over the real Linux kernel (or a synthetic `/proc`).
+    #[cfg(target_os = "linux")]
+    pub fn linux(root: ramwarden_kernel::Root) -> Self {
+        Actuator::for_platform(&ramwarden_kernel::platform::platform(root))
+    }
+
+    /// The process-control half of the platform, for point queries such as
+    /// the memory still held by a suspended application.
+    pub fn control(&self) -> Arc<dyn ProcessControl> {
+        self.control.clone()
     }
 
     // ── Suspend / resume ────────────────────────────────────────────────────
@@ -156,7 +162,7 @@ impl Actuator {
             }
             // Open the handle before signalling: if the process is already gone,
             // this fails here rather than hitting whoever reused the number.
-            let Ok(fd) = PidFd::open(s.pid) else {
+            let Ok(fd) = self.control.open(s.pid) else {
                 out.notes.push(format!("pid {} vanished before it could be frozen", s.pid));
                 continue;
             };
@@ -272,7 +278,7 @@ impl Actuator {
         let mut pending = Vec::new();
 
         for s in det.matching(name) {
-            let Ok(fd) = PidFd::open(s.pid) else {
+            let Ok(fd) = self.control.open(s.pid) else {
                 out.notes.push(format!("pid {} had already exited", s.pid));
                 continue;
             };
@@ -294,7 +300,7 @@ impl Actuator {
                     out.notes.push(format!("pid {} would not die: {e}", fd.pid()));
                     continue;
                 }
-                out.notes.push(format!("pid {} needed SIGKILL", fd.pid()));
+                out.notes.push(format!("pid {} needed a forced kill", fd.pid()));
             }
             out.affected.push(fd.pid());
             out.bytes_freed += pss;
@@ -304,70 +310,49 @@ impl Actuator {
 
     // ── Targeted page-out ───────────────────────────────────────────────────
 
-    /// Page out the cold regions of one process.
+    /// Page out the cold memory of one process.
     ///
-    /// Finer than cgroup reclaim, which acts on a whole application: this can
-    /// take a browser's cold heap while leaving the tab the user is reading
-    /// fully resident. It needs `CAP_SYS_NICE`, which a systemd *user* service
-    /// cannot be granted, so without the setcap helper every call returns
-    /// `Denied` and the caller falls back to the cgroup path. That fallback is
-    /// the normal configuration, not a degraded one.
+    /// Finer than group reclaim, which acts on a whole application. Optional on
+    /// every platform: without a route each call is a clean refusal and the
+    /// ladder leans on group reclaim, which is the normal configuration.
     pub fn page_out(&self, pid: i32, referenced_ratio: f64, min_bytes: u64) -> Outcome {
-        let vmas = match smaps::cold_vmas(&self.root, pid, referenced_ratio, min_bytes) {
-            Ok(v) => v,
-            Err(e) => return Outcome::refused(format!("pid {pid}: {e}")),
-        };
-        if vmas.is_empty() {
-            return Outcome::refused(format!("pid {pid} has no cold regions worth paging out"));
-        }
-
-        // Try it directly first. That works without any privilege when the target
-        // is this process, and on an install where the daemon itself holds
-        // CAP_SYS_NICE.
-        if madvise::available()
-            && let Ok(fd) = PidFd::open(pid)
-            && let Ok(bytes) = madvise::page_out(&fd, &vmas)
-            && bytes > 0
-        {
-            return Outcome {
-                affected: vec![pid],
-                bytes_freed: bytes,
-                notes: Vec::new(),
-            };
-        }
-
-        // Otherwise ask the privileged helper, which exists precisely so the
-        // daemon does not have to hold the capability.
-        crate::helper::page_out(pid, &vmas)
+        self.pager.page_out(pid, referenced_ratio, min_bytes)
     }
 
     /// Whether targeted page-out can do anything on this install.
-    ///
-    /// True when either the daemon itself may call `process_madvise` on other
-    /// processes, or a helper is listening. False means rung 1 contributes
-    /// nothing and the ladder leans on cgroup reclaim — which is the normal
-    /// configuration, not a fault.
     pub fn can_page_out(&self) -> bool {
-        madvise::available() || crate::helper::present()
+        self.pager.available()
     }
 
     /// Where page-out would come from, for the status line.
     pub fn page_out_route(&self) -> &'static str {
-        if madvise::available() {
-            "direct (daemon holds CAP_SYS_NICE)"
-        } else if crate::helper::present() {
-            "ramwarden-helper"
-        } else {
-            "unavailable — cgroup reclaim only"
+        self.pager.route()
+    }
+
+    // ── Background hints ────────────────────────────────────────────────────
+
+    pub fn can_hint(&self) -> bool {
+        self.background.available()
+    }
+
+    /// Mark `pid` as background work (or restore it). Reports the pid as
+    /// affected on success; frees no bytes, because a hint frees none.
+    pub fn set_background(&self, pid: i32, background: bool) -> Outcome {
+        match self.background.set(pid, background) {
+            Ok(()) => Outcome {
+                affected: vec![pid],
+                ..Default::default()
+            },
+            Err(e) => Outcome::refused(format!("pid {pid}: {e}")),
         }
     }
 
-    // ── cgroup reclaim and soft caps ────────────────────────────────────────
+    // ── Group reclaim and soft caps ─────────────────────────────────────────
 
-    /// Ask the kernel to reclaim from a scope. Non-destructive and invisible to
-    /// the application, which is why the ladder reaches for it first.
-    pub fn reclaim_scope(&self, scope: &cgroup::Scope, bytes: u64) -> Outcome {
-        match scope.reclaim(bytes) {
+    /// Ask the OS to reclaim from a group. Non-destructive and invisible to the
+    /// application, which is why the ladder reaches for it first.
+    pub fn reclaim_scope(&self, group: &dyn AppGroup, bytes: u64) -> Outcome {
+        match group.reclaim(bytes) {
             Ok(freed) => {
                 let mut out = Outcome {
                     bytes_freed: freed,
@@ -375,55 +360,54 @@ impl Actuator {
                 };
                 if freed < bytes {
                     out.notes.push(format!(
-                        "asked for {} MB, kernel found {} MB",
+                        "asked for {} MB, the OS found {} MB",
                         bytes / 1_000_000,
                         freed / 1_000_000
                     ));
                 }
                 out
             }
-            Err(e) => Outcome::refused(format!("{}: {e}", scope.name())),
+            Err(e) => Outcome::refused(format!("{}: {e}", group.name())),
         }
     }
 
-    /// Soft-cap a scope, remembering the previous value so it can be restored.
+    /// Soft-cap a group, remembering the previous value so it can be restored.
     ///
-    /// `memory.high` throttles and reclaims continuously above the cap; it never
-    /// invokes the OOM killer, which is why RamWarden uses it and never writes
-    /// `memory.max`.
-    pub fn soft_cap(&mut self, scope: &cgroup::Scope, bytes: u64) -> Outcome {
-        let previous = scope.high().unwrap_or(None);
-        match scope.set_high(bytes) {
+    /// A soft cap throttles and reclaims above the limit; it never kills, which
+    /// is why RamWarden uses it and never a hard limit.
+    pub fn soft_cap(&mut self, group: &dyn AppGroup, bytes: u64) -> Outcome {
+        let previous = group.soft_cap().unwrap_or(None);
+        match group.set_soft_cap(bytes) {
             Ok(()) => {
                 // Record the value from before *our first* cap, so repeated
                 // tightening does not lose the original.
                 self.capped
-                    .entry(scope.name().to_string())
+                    .entry(group.name().to_string())
                     .or_insert(previous);
                 Outcome::default()
             }
-            Err(e) => Outcome::refused(format!("{}: {e}", scope.name())),
+            Err(e) => Outcome::refused(format!("{}: {e}", group.name())),
         }
     }
 
     /// Lift every cap RamWarden set, restoring whatever was there before.
-    pub fn release_caps(&mut self, h: &cgroup::Hierarchy) -> Vec<(String, Outcome)> {
+    pub fn release_caps(&mut self, groups: &dyn GroupSource) -> Vec<(String, Outcome)> {
         let entries: Vec<(String, Option<u64>)> = self.capped.drain().collect();
         entries
             .into_iter()
             .map(|(name, previous)| {
-                let outcome = match h.scope(&name) {
-                    Ok(scope) => {
+                let outcome = match groups.group(&name) {
+                    Ok(group) => {
                         let r = match previous {
-                            Some(v) => scope.set_high(v),
-                            None => scope.clear_high(),
+                            Some(v) => group.set_soft_cap(v),
+                            None => group.clear_soft_cap(),
                         };
                         match r {
                             Ok(()) => Outcome::default(),
                             Err(e) => Outcome::refused(format!("{name}: {e}")),
                         }
                     }
-                    // The application exited and took its scope with it; there
+                    // The application exited and took its group with it; there
                     // is nothing left to uncap.
                     Err(_) => Outcome::refused(format!("{name} no longer exists")),
                 };
@@ -445,16 +429,15 @@ impl Actuator {
         !self.suspended.is_empty() || !self.capped.is_empty()
     }
 
-    pub fn root(&self) -> &Root {
-        &self.root
-    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::roles::{Role, classify};
     use crate::signals::Signals;
+    use ramwarden_kernel::Root;
+    use ramwarden_kernel::procfd::PidFd;
     use std::process::{Child, Command};
 
     fn spawn() -> Child {
@@ -492,7 +475,7 @@ mod tests {
             s.state = state_of(*pid).unwrap_or('S');
             sigs.push(s);
         }
-        Detector::preloaded(Root::system(), warm, sigs)
+        Detector::preloaded(warm, sigs)
     }
 
     fn wl() -> Vec<String> {
@@ -504,7 +487,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         let out = act.suspend("sleep", &det, &wl(), false);
         assert_eq!(out.affected, vec![pid], "{:?}", out.notes);
@@ -526,7 +509,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         // Not on the watchlist.
         let out = act.suspend("sleep", &det, &[], false);
@@ -545,7 +528,7 @@ mod tests {
         let pid = child.id() as i32;
         // Present it as dockerd, which is structurally protected.
         let det = det_for(&[(pid, "dockerd")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         let out = act.suspend("dockerd", &det, &["dockerd".into()], true);
         assert!(out.did_nothing());
@@ -570,7 +553,7 @@ mod tests {
         assert!(await_state(their_pid, 'T'));
 
         let det = det_for(&[(our_pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         act.suspend("sleep", &det, &wl(), false);
 
         let results = act.resume_all();
@@ -596,7 +579,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         act.suspend("sleep", &det, &wl(), false);
 
         // The user force-quits the frozen app.
@@ -618,7 +601,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         act.suspend("sleep", &det, &wl(), false);
         assert_eq!(act.suspended().len(), 1);
 
@@ -630,7 +613,7 @@ mod tests {
 
     #[test]
     fn resuming_something_ramwarden_did_not_freeze_is_refused() {
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         let out = act.resume("never-suspended");
         assert!(out.did_nothing());
         assert!(out.notes[0].contains("not suspended by RamWarden"));
@@ -647,7 +630,7 @@ mod tests {
         assert!(await_state(pid, 'T'), "process never reached the stopped state");
 
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         let out = act.suspend("sleep", &det, &wl(), false);
         assert!(out.affected.is_empty());
         assert!(out.notes[0].contains("already stopped"), "{:?}", out.notes);
@@ -662,7 +645,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         let out = act.kill("sleep", &det, &wl(), false);
         assert_eq!(out.affected, vec![pid], "{:?}", out.notes);
@@ -676,7 +659,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "dockerd")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         let out = act.kill("dockerd", &det, &["dockerd".into()], true);
         assert!(out.did_nothing());
@@ -691,7 +674,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], false);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
 
         let out = act.suspend("sleep", &det, &wl(), false);
         assert!(out.did_nothing(), "{:?}", out.notes);
@@ -716,7 +699,7 @@ mod tests {
     fn page_out_of_another_process_degrades_cleanly_without_the_capability() {
         let mut child = spawn();
         let pid = child.id() as i32;
-        let act = Actuator::new(Root::system());
+        let act = Actuator::linux(Root::system());
 
         let out = act.page_out(pid, 0.2, 0);
         if out.did_nothing() {
@@ -737,20 +720,20 @@ mod tests {
         let pid = child.id() as i32;
         child.kill().unwrap();
         child.wait().unwrap();
-        let act = Actuator::new(Root::system());
+        let act = Actuator::linux(Root::system());
         assert!(act.page_out(pid, 0.2, 0).did_nothing());
     }
 
     #[test]
     fn capability_availability_is_reportable() {
-        let act = Actuator::new(Root::system());
+        let act = Actuator::linux(Root::system());
         // Either answer is valid; what matters is that asking is safe.
         let _ = act.can_page_out();
     }
 
     #[test]
     fn a_fresh_actuator_owes_nothing() {
-        let act = Actuator::new(Root::system());
+        let act = Actuator::linux(Root::system());
         assert!(!act.owes_release());
         assert!(!act.has_caps());
         assert!(act.capped_scopes().is_empty());
@@ -761,7 +744,7 @@ mod tests {
         let mut child = spawn();
         let pid = child.id() as i32;
         let det = det_for(&[(pid, "sleep")], true);
-        let mut act = Actuator::new(Root::system());
+        let mut act = Actuator::linux(Root::system());
         act.suspend("sleep", &det, &wl(), false);
 
         let entries = act.suspended();

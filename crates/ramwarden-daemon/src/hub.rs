@@ -9,8 +9,9 @@ use ramwarden_core::config::Config;
 use ramwarden_core::detector::Detector;
 use ramwarden_core::history::History;
 use ramwarden_core::ladder::Ladder;
+use ramwarden_ai::models::ModelHosts;
 use ramwarden_ai::provider::Provider;
-use ramwarden_kernel::Root;
+use ramwarden_platform::{MemoryStatus, Platform, Pressure};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::tabs::{Command, Registry, Tab, Transport};
@@ -123,7 +124,9 @@ impl Hub {
 #[derive(Clone)]
 pub struct AppState {
     pub cfg: Arc<Config>,
-    pub root: Root,
+    /// The operating system underneath: Linux or Windows mechanisms behind
+    /// one set of traits.
+    pub platform: Arc<Platform>,
     pub det: Arc<RwLock<Detector>>,
     pub ladder: Arc<Mutex<Ladder>>,
     pub hub: Arc<Mutex<Hub>>,
@@ -133,10 +136,24 @@ pub struct AppState {
     /// The model tier. Shared and immutable — the clients are cheap to clone and
     /// hold no mutable state.
     pub ai: Arc<Provider>,
+    /// LM Studio and Ollama, for VRAM reporting and unloading.
+    pub models: Arc<ModelHosts>,
+    /// The JEPA reuse predictor; silent until a model passes its gate.
+    pub predictor: Arc<crate::predict::LivePredictor>,
     pub started: Instant,
 }
 
 impl AppState {
+    /// System memory now, or zeros if it cannot be read.
+    pub fn memory(&self) -> MemoryStatus {
+        self.platform.memory.status().unwrap_or_default()
+    }
+
+    /// Pressure now, or quiet if it cannot be read.
+    pub fn pressure(&self) -> Pressure {
+        self.platform.pressure.read().unwrap_or_default()
+    }
+
     /// How long to wait for a polling browser to check in before giving up.
     pub fn browser_grace(&self) -> Duration {
         if self.started.elapsed() < STARTUP_WINDOW {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ramwarden-kernel", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
+members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-mac", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-ml", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
 
 [workspace.package]
 version = "0.2.1"
@@ -28,6 +28,35 @@ reqwest    = { version = "0.12", default-features = false, features = ["json", "
 nvml-wrapper = "0.13"
 gtk4       = { version = "0.11", features = ["v4_10"] }
 tracing    = "0.1"
+winreg     = "0.56"
+windows-service = "0.8"
+windows    = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Media_Audio",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Services",
+  "Win32_System_SystemInformation",
+  "Win32_System_TaskScheduler",
+  "Win32_System_Ole",
+  "Win32_System_Performance",
+  "Win32_System_Pipes",
+  "Win32_Security_Authorization",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Dependencies optimised even in dev builds: candle's matmuls are ~20x slower
+# unoptimised, which turns the predictor's tests from seconds into minutes.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto       = "thin"

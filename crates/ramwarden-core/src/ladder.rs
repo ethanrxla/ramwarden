@@ -6,7 +6,7 @@
 //!
 //! | Rung | Action | Cost of being wrong |
 //! |---|---|---|
-//! | `Reclaim` | kernel pages cold memory to zram | a few page faults |
+//! | `Reclaim` | the OS pages cold memory out (zram, compression store) | a few page faults |
 //! | `PageOut` | targeted page-out, soft cap | a few page faults |
 //! | `Tabs` | unload idle browser tabs in bounded batches | reload on activation |
 //! | `Suspend` | `SIGSTOP` idle watchlisted apps | app looks frozen until resumed |
@@ -24,6 +24,12 @@
 //! *and* page-out *and* tabs *and* suspend on this tick. Pressure high enough to
 //! warrant freezing an application is also high enough to want the free wins.
 //!
+//! # Tidy runs first, at every pressure
+//!
+//! Below the rungs, [`crate::tidy::Tidy`] hints and trims quiet background apps
+//! on every tick — free, reversible housekeeping that does not wait for
+//! pressure. It is attached with [`Ladder::with_tidy`].
+//!
 //! # Hysteresis
 //!
 //! Between `release_below` and `reclaim_at` the ladder holds: it neither acts nor
@@ -32,14 +38,15 @@
 
 use std::time::{Duration, Instant};
 
-use ramwarden_kernel::psi::Psi;
-use ramwarden_kernel::{cgroup, smaps};
+use ramwarden_platform::{AppGroup, GroupSource, MemorySource, Pressure};
 
 use crate::actuator::{Actuator, Outcome};
 use crate::config;
 use crate::detector::Detector;
 use crate::history::{History, NewAction};
 use crate::signals::Verdict;
+use crate::rank::ReuseRanker;
+use crate::tidy::{self, Tidy};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
 ///
@@ -55,15 +62,19 @@ const SCOPE_FLOOR: u64 = 64 * 1024 * 1024;
 const SOFT_CAP_FRACTION: f64 = 0.8;
 
 /// How much recent touching still counts as cold, for targeted page-out.
-const COLD_RATIO: f64 = 0.2;
+pub(crate) const COLD_RATIO: f64 = 0.2;
 
 /// Ignore mappings smaller than this — not worth an iovec entry.
-const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
+pub(crate) const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
 
 /// At most this many processes get targeted page-out per tick, largest first.
 /// Walking full `smaps` is expensive, and the cgroup rung has already taken the
 /// cheap bulk of the memory.
 const PAGEOUT_LIMIT: usize = 3;
+
+/// Why the reclaim rungs refuse when the platform offers no group reclaim.
+const GROUPS_UNAVAILABLE: &str =
+    "group reclaim unavailable (on Linux: no delegated cgroup memory controller)";
 
 /// Which rung the current pressure calls for.
 ///
@@ -110,11 +121,11 @@ impl Rung {
 
 /// Decide the rung from pressure alone.
 ///
-/// Pure, so the whole escalation policy can be driven by a synthetic PSI series
-/// rather than by putting a real machine into swap.
-pub fn rung_for(cfg: &config::Ladder, psi: &Psi, available_bytes: u64) -> Rung {
-    let some = psi.some.avg10;
-    let full = psi.full.avg10;
+/// Pure, so the whole escalation policy can be driven by a synthetic pressure
+/// series rather than by putting a real machine into swap.
+pub fn rung_for(cfg: &config::Ladder, psi: &Pressure, available_bytes: u64) -> Rung {
+    let some = psi.some_avg10;
+    let full = psi.full_avg10;
     let available_mb = available_bytes / 1_000_000;
 
     // `full` means nothing is getting useful work done, and low available memory
@@ -151,10 +162,10 @@ pub trait TabCloser {
 /// Everything the ladder needs to look at, assembled by the caller.
 pub struct World<'a> {
     pub det: &'a Detector,
-    /// `None` when the memory controller is not delegated — the kernel rungs are
-    /// then unavailable and the ladder skips straight to signals.
-    pub hierarchy: Option<&'a cgroup::Hierarchy>,
-    pub psi: Psi,
+    /// `None` when group reclaim is unavailable (on Linux: no delegated memory
+    /// controller) — the reclaim rungs then refuse and the ladder moves on.
+    pub groups: Option<&'a dyn GroupSource>,
+    pub psi: Pressure,
     pub available_bytes: u64,
     pub watchlist: &'a [String],
     pub goal: String,
@@ -223,6 +234,8 @@ pub struct Ladder {
     history: Option<History>,
     pending_kill: Option<PendingKill>,
     last_tabs: Option<Instant>,
+    tidy: Option<Tidy>,
+    ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
 }
 
 impl Ladder {
@@ -233,6 +246,37 @@ impl Ladder {
             history: None,
             pending_kill: None,
             last_tabs: None,
+            tidy: None,
+            ranker: None,
+        }
+    }
+
+    /// Let a reuse ranker reorder suspend candidates and defer Tidy trims.
+    /// It never widens what may be touched; see [`crate::rank`].
+    pub fn with_ranker(mut self, ranker: std::sync::Arc<dyn ReuseRanker>) -> Self {
+        self.ranker = Some(ranker);
+        self
+    }
+
+    /// Run the Tidy rung on every tick, below the pressure rungs.
+    pub fn with_tidy(mut self, cfg: config::Tidy) -> Self {
+        self.tidy = Some(Tidy::new(cfg));
+        self
+    }
+
+    /// What Tidy is tracking right now.
+    pub fn tidy_entries(&self, det: &Detector) -> Vec<tidy::Entry> {
+        self.tidy
+            .as_ref()
+            .map(|t| t.entries(det, Instant::now()))
+            .unwrap_or_default()
+    }
+
+    /// Undo every Tidy hint. Called on shutdown.
+    pub fn release_tidy(&mut self) -> Vec<tidy::Step> {
+        match self.tidy.as_mut() {
+            Some(t) => t.release_all(&self.act),
+            None => Vec::new(),
         }
     }
 
@@ -286,32 +330,24 @@ impl Ladder {
             return plan;
         }
 
-        if let Some(h) = w.hierarchy {
-            let targets = self.reclaim_targets(w, h);
+        if let Some(groups) = w.groups {
+            let targets = self.reclaim_targets(w, groups);
             if rung >= Rung::PageOut
-                && let Some((scope, _)) = targets.first()
-                && let Ok(current) = scope.current()
+                && let Some((group, _)) = targets.first()
+                && let Ok(current) = group.current()
             {
                 let cap = (current as f64 * SOFT_CAP_FRACTION) as u64;
                 if cap >= SCOPE_FLOOR {
-                    let label = scope
-                        .label(self.act.root())
-                        .unwrap_or_else(|_| scope.name().to_string());
-                    plan.soft_cap = Some((label, cap));
+                    plan.soft_cap = Some((group.label(), cap));
                 }
             }
             plan.reclaim = targets
                 .into_iter()
                 .take(4)
-                .map(|(scope, ask)| {
-                    let label = scope
-                        .label(self.act.root())
-                        .unwrap_or_else(|_| scope.name().to_string());
-                    (label, ask)
-                })
+                .map(|(group, ask)| (group.label(), ask))
                 .collect();
         } else {
-            plan.blocked = Some("no delegated cgroup memory controller".into());
+            plan.blocked = Some(GROUPS_UNAVAILABLE.into());
         }
 
         if rung >= Rung::Suspend {
@@ -328,8 +364,19 @@ impl Ladder {
     /// `reclaimable` has already applied the gate and the watchlist ceiling, so
     /// this only deduplicates.
     fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
+        let mut candidates = w.det.reclaimable(w.watchlist);
+        // With a ranker, suspend what the user is least likely to want back
+        // first; without one, the detector's largest-first order stands.
+        if let Some(r) = &self.ranker {
+            let back = |pid: i32| r.reuse(pid).unwrap_or(0.5);
+            candidates.sort_by(|a, b| {
+                let ka = a.pss as f64 * (1.0 - back(a.pid));
+                let kb = b.pss as f64 * (1.0 - back(b.pid));
+                kb.total_cmp(&ka)
+            });
+        }
         let mut seen: Vec<String> = Vec::new();
-        for s in w.det.reclaimable(w.watchlist) {
+        for s in candidates {
             if !seen.contains(&s.name) {
                 seen.push(s.name.clone());
             }
@@ -357,14 +404,24 @@ impl Ladder {
             return report;
         }
 
+        // Tidy first, at every rung: it waits on quiet, not on pressure.
+        if let Some(t) = self.tidy.as_mut() {
+            for step in t.step(w.det, &self.act, self.ranker.as_deref(), Instant::now()) {
+                report.total_freed += step.2.bytes_freed;
+                report.steps.push(step);
+            }
+        }
+
         match rung {
             Rung::Release => {
                 self.pending_kill = None;
                 self.release(w, &mut report);
+                self.log(&report, w, rung);
                 return report;
             }
             Rung::Hold => {
                 self.pending_kill = None;
+                self.log(&report, w, rung);
                 return report;
             }
             _ => {}
@@ -396,27 +453,27 @@ impl Ladder {
         report
     }
 
-    // ── Rung 0: kernel reclaim ──────────────────────────────────────────────
+    // ── Rung 0: group reclaim ───────────────────────────────────────────────
 
-    /// Scopes worth reclaiming from, largest reclaimable share first.
+    /// Groups worth reclaiming from, largest reclaimable share first.
     ///
-    /// A scope is skipped entirely if *any* process in it is structurally
-    /// protected. Reclaim is non-destructive, but asking the kernel to page out
-    /// the compositor's cold memory still buys a stutter in exchange for very
+    /// A group is skipped entirely if *any* process in it is structurally
+    /// protected. Reclaim is non-destructive, but asking the OS to page out the
+    /// compositor's cold memory still buys a stutter in exchange for very
     /// little, and the compositor shares a session with nothing else worth
     /// reclaiming anyway.
     fn reclaim_targets(
         &self,
         w: &World<'_>,
-        h: &cgroup::Hierarchy,
-    ) -> Vec<(cgroup::Scope, u64)> {
-        let Ok(scopes) = h.scopes() else {
+        groups: &dyn GroupSource,
+    ) -> Vec<(Box<dyn AppGroup>, u64)> {
+        let Ok(all) = groups.groups() else {
             return Vec::new();
         };
         let mut out = Vec::new();
 
-        for scope in scopes {
-            let Ok(pids) = scope.pids() else { continue };
+        for group in all {
+            let Ok(pids) = group.pids() else { continue };
             if pids.is_empty() {
                 continue;
             }
@@ -437,12 +494,11 @@ impl Ladder {
                 continue;
             }
 
-            let Ok(stat) = scope.stat() else { continue };
-            let reclaimable = stat.reclaimable();
+            let Ok(reclaimable) = group.reclaimable() else { continue };
             if reclaimable < SCOPE_FLOOR {
                 continue;
             }
-            out.push((scope, (reclaimable as f64 * RECLAIM_FRACTION) as u64));
+            out.push((group, (reclaimable as f64 * RECLAIM_FRACTION) as u64));
         }
 
         out.sort_by_key(|(_, ask)| std::cmp::Reverse(*ask));
@@ -450,18 +506,14 @@ impl Ladder {
     }
 
     fn do_reclaim(&mut self, w: &World<'_>, report: &mut Report) {
-        let Some(h) = w.hierarchy else {
-            report.steps.push((
-                "reclaim",
-                String::new(),
-                Outcome::refused("no delegated cgroup memory controller"),
-            ));
+        let Some(groups) = w.groups else {
+            report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
             return;
         };
 
-        for (scope, ask) in self.reclaim_targets(w, h).into_iter().take(4) {
-            let label = scope.label(self.act.root()).unwrap_or_else(|_| scope.name().to_string());
-            let outcome = self.act.reclaim_scope(&scope, ask);
+        for (group, ask) in self.reclaim_targets(w, groups).into_iter().take(4) {
+            let label = group.label();
+            let outcome = self.act.reclaim_scope(group.as_ref(), ask);
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("reclaim", label, outcome));
         }
@@ -471,16 +523,17 @@ impl Ladder {
 
     /// Page out the cold regions of the largest idle processes.
     ///
-    /// Runs after cgroup reclaim has taken the bulk, and only reaches the
-    /// biggest few — walking full `smaps` costs a syscall per mapping, and a
-    /// browser has thousands. Without `CAP_SYS_NICE` every call is refused and
-    /// the rung contributes nothing, which is the expected configuration.
+    /// Runs after group reclaim has taken the bulk, and only reaches the
+    /// biggest few — on Linux, walking full `smaps` costs a syscall per mapping,
+    /// and a browser has thousands. Without a page-out route every call is
+    /// refused and the rung contributes nothing, which is a normal configuration.
     fn do_page_out(&mut self, w: &World<'_>, report: &mut Report) {
         if !self.act.can_page_out() {
+            let route = self.act.page_out_route();
             report.steps.push((
                 "pageout",
                 String::new(),
-                Outcome::refused("needs CAP_SYS_NICE (ramwarden-helper not installed)"),
+                Outcome::refused(format!("no page-out route: {route}")),
             ));
             return;
         }
@@ -502,18 +555,18 @@ impl Ladder {
     }
 
     fn do_soft_cap(&mut self, w: &World<'_>, report: &mut Report) {
-        let Some(h) = w.hierarchy else { return };
-        let targets = self.reclaim_targets(w, h);
-        let Some((scope, _)) = targets.into_iter().next() else {
+        let Some(groups) = w.groups else { return };
+        let targets = self.reclaim_targets(w, groups);
+        let Some((group, _)) = targets.into_iter().next() else {
             return;
         };
-        let Ok(current) = scope.current() else { return };
+        let Ok(current) = group.current() else { return };
         let cap = (current as f64 * SOFT_CAP_FRACTION) as u64;
         if cap < SCOPE_FLOOR {
             return;
         }
-        let label = scope.label(self.act.root()).unwrap_or_else(|_| scope.name().to_string());
-        let outcome = self.act.soft_cap(&scope, cap);
+        let label = group.label();
+        let outcome = self.act.soft_cap(group.as_ref(), cap);
         report.steps.push(("soft_cap", label, outcome));
     }
 
@@ -628,11 +681,11 @@ impl Ladder {
     /// exists. Neither should outlive the pressure that caused it.
     fn release(&mut self, w: &World<'_>, report: &mut Report) {
         for (name, outcome) in self.act.resume_all() {
-            tracing::info!("resumed {name} — pressure back to {:.1}%", w.psi.some.avg10);
+            tracing::info!("resumed {name} — pressure back to {:.1}%", w.psi.some_avg10);
             report.steps.push(("resume", name, outcome));
         }
-        if let Some(h) = w.hierarchy {
-            for (name, outcome) in self.act.release_caps(h) {
+        if let Some(groups) = w.groups {
+            for (name, outcome) in self.act.release_caps(groups) {
                 report.steps.push(("release", name, outcome));
             }
         }
@@ -643,9 +696,9 @@ impl Ladder {
         for (action, target, outcome) in &report.steps {
             let _ = h.log(&NewAction {
                 rung: rung.index(),
-                trigger: "psi".into(),
-                psi_some: w.psi.some.avg10,
-                psi_full: w.psi.full.avg10,
+                trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
+                psi_some: w.psi.some_avg10,
+                psi_full: w.psi.full_avg10,
                 action: (*action).to_string(),
                 target: target.clone(),
                 bytes_freed: outcome.bytes_freed as i64,
@@ -656,21 +709,17 @@ impl Ladder {
     }
 }
 
-/// Available memory in bytes, from `/proc/meminfo`.
+/// Available memory in bytes.
 ///
-/// `MemAvailable` rather than `MemFree`: the kernel's own estimate of what can
-/// be allocated without swapping, which is the figure the last rung cares about.
-pub fn available_bytes(root: &ramwarden_kernel::Root) -> u64 {
-    let Ok(text) = std::fs::read_to_string(root.join("proc/meminfo")) else {
-        return u64::MAX; // unknown: do not let a bad read trigger a kill
-    };
-    text.lines()
-        .find_map(|l| {
-            let rest = l.strip_prefix("MemAvailable:")?;
-            rest.split_whitespace().next()?.parse::<u64>().ok()
-        })
-        .map(|kb| kb * 1024)
-        .unwrap_or(u64::MAX)
+/// `MemAvailable` on Linux, free + standby on Windows: what can be allocated
+/// without paging, which is the figure the last rung cares about. An unreadable
+/// or zero reading is reported as unlimited, so a bad read can never look like
+/// an out-of-memory condition and trigger the kill rung.
+pub fn available_bytes(mem: &dyn MemorySource) -> u64 {
+    match mem.status() {
+        Ok(m) if m.available > 0 => m.available,
+        _ => u64::MAX,
+    }
 }
 
 /// Total PSS of every process the detector considers idle.
@@ -682,39 +731,30 @@ pub fn idle_bytes(det: &Detector) -> u64 {
         .sum()
 }
 
-/// Bytes of cold memory in a process, for the targeted page-out rung.
-pub fn cold_bytes(root: &ramwarden_kernel::Root, pid: i32) -> u64 {
-    smaps::rollup(root, pid).map(|r| r.cold_bytes()).unwrap_or(0)
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
-    use crate::roles::classify;
-    use crate::signals::Signals;
-    use ramwarden_kernel::Root;
-    use ramwarden_kernel::psi::Window;
-    use std::fs;
 
-    fn cfg() -> config::Ladder {
+    pub fn cfg() -> config::Ladder {
         config::Ladder::default()
     }
 
-    /// PSI with the given `some` and `full` ten-second averages.
-    fn psi(some: f64, full: f64) -> Psi {
-        Psi {
-            some: Window {
-                avg10: some,
-                ..Default::default()
-            },
-            full: Window {
-                avg10: full,
-                ..Default::default()
-            },
+    /// Pressure with the given `some` and `full` ten-second averages.
+    pub fn psi(some: f64, full: f64) -> Pressure {
+        Pressure {
+            some_avg10: some,
+            full_avg10: full,
+            ..Default::default()
         }
     }
 
-    const PLENTY: u64 = 8_000_000_000;
+    pub const PLENTY: u64 = 8_000_000_000;
+}
+
+#[cfg(test)]
+mod rung_tests {
+    use super::test_support::*;
+    use super::*;
 
     // ── Rung selection, driven by a synthetic pressure series ───────────────
 
@@ -794,6 +834,19 @@ mod tests {
         assert!(Rung::Tabs < Rung::Suspend);
         assert!(Rung::Suspend < Rung::Kill);
     }
+
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::test_support::*;
+    use super::*;
+    use crate::roles::classify;
+    use crate::signals::Signals;
+    use ramwarden_kernel::Root;
+    use ramwarden_kernel::cgroup;
+    use ramwarden_kernel::platform::{CgroupGroups, LinuxMemory};
+    use std::fs;
 
     // ── A synthetic session to act on ───────────────────────────────────────
 
@@ -883,7 +936,12 @@ mod tests {
             Fixture { _dir: dir, root }
         }
 
-        fn hierarchy(&self) -> cgroup::Hierarchy {
+        fn hierarchy(&self) -> CgroupGroups {
+            CgroupGroups::new(self.root.clone(), 1000)
+        }
+
+        /// The raw cgroup view, for asserting on what was written.
+        fn cgroups(&self) -> cgroup::Hierarchy {
             cgroup::Hierarchy::user_session(&self.root, 1000).unwrap()
         }
 
@@ -907,7 +965,7 @@ mod tests {
             c.age_minutes = 600.0;
             sigs.push(c);
 
-            Detector::preloaded(self.root.clone(), warm, sigs)
+            Detector::preloaded(warm, sigs)
         }
 
         /// What was written to each scope's `memory.reclaim`.
@@ -941,7 +999,7 @@ mod tests {
     }
 
     fn ladder(cfg: config::Ladder, root: &Root) -> Ladder {
-        Ladder::new(cfg, Actuator::new(root.clone()))
+        Ladder::new(cfg, Actuator::linux(root.clone()))
             .with_history(History::in_memory().unwrap())
     }
 
@@ -962,7 +1020,7 @@ mod tests {
 
     fn world<'a>(
         f: &'a Fixture,
-        h: &'a cgroup::Hierarchy,
+        h: &'a CgroupGroups,
         det: &'a Detector,
         pressure: f64,
         full: f64,
@@ -970,9 +1028,9 @@ mod tests {
     ) -> World<'a> {
         World {
             det,
-            hierarchy: Some(h),
+            groups: Some(h),
             psi: psi(pressure, full),
-            available_bytes: available_bytes(&f.root),
+            available_bytes: available_bytes(&LinuxMemory::new(f.root.clone())),
             watchlist,
             goal: String::new(),
             tabs: None,
@@ -1166,7 +1224,7 @@ mod tests {
         let det = f.detector(true);
         let mut l = ladder(cfg(), &f.root);
         let mut w = World {
-            hierarchy: None,
+            groups: None,
             ..world(&f, &h, &det, 3.0, 0.0, &[])
         };
         let report = l.step(&mut w);
@@ -1357,7 +1415,7 @@ mod tests {
         let mut l = ladder(cfg(), &f.root);
         l.step(&mut world(&f, &h, &det, 6.0, 0.0, &[]));
 
-        let scope = h.scope("app-brave.scope").unwrap();
+        let scope = f.cgroups().scope("app-brave.scope").unwrap();
         let cap = scope.high().unwrap().expect("capped");
         assert_eq!(cap, (4_000_000_000f64 * SOFT_CAP_FRACTION) as u64);
         assert!(cap < scope.current().unwrap());
@@ -1424,7 +1482,7 @@ mod tests {
         let f = Fixture::new();
         let h = f.hierarchy();
         let det = f.detector(true);
-        let mut l = Ladder::new(cfg(), Actuator::new(f.root.clone()));
+        let mut l = Ladder::new(cfg(), Actuator::linux(f.root.clone()));
         let report = l.step(&mut world(&f, &h, &det, 3.0, 0.0, &[]));
         assert_eq!(report.rung, Some(Rung::Reclaim));
     }
@@ -1543,7 +1601,7 @@ mod tests {
     #[test]
     fn available_memory_is_read_from_meminfo() {
         let f = Fixture::new();
-        assert_eq!(available_bytes(&f.root), 7_000_000 * 1024);
+        assert_eq!(available_bytes(&LinuxMemory::new(f.root.clone())), 7_000_000 * 1024);
     }
 
     /// An unreadable meminfo must not look like an out-of-memory condition and
@@ -1552,9 +1610,10 @@ mod tests {
     fn unreadable_meminfo_reports_unlimited_rather_than_zero() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::at(dir.path());
-        assert_eq!(available_bytes(&root), u64::MAX);
+        let mem = LinuxMemory::new(root);
+        assert_eq!(available_bytes(&mem), u64::MAX);
         assert_eq!(
-            rung_for(&cfg(), &psi(0.0, 0.0), available_bytes(&root)),
+            rung_for(&cfg(), &psi(0.0, 0.0), available_bytes(&mem)),
             Rung::Release
         );
     }
@@ -1565,7 +1624,7 @@ mod tests {
         let root = Root::at(dir.path());
         fs::create_dir_all(root.join("proc")).unwrap();
         fs::write(root.join("proc/meminfo"), "MemTotal: 32000000 kB\n").unwrap();
-        assert_eq!(available_bytes(&root), u64::MAX);
+        assert_eq!(available_bytes(&LinuxMemory::new(root)), u64::MAX);
     }
 
     #[test]
