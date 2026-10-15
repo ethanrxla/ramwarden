@@ -60,6 +60,10 @@ pub struct Detector {
     cpu_prev: HashMap<i32, f64>,
     ticks: u32,
     our_pid: i32,
+    /// pid -> parent pid and the focused pid at the last sample, so "is this
+    /// process part of the app the user is looking at?" needs no new syscalls.
+    parents: HashMap<i32, i32>,
+    focused: Option<i32>,
 }
 
 /// A source with nothing in it, for detectors that are only ever preloaded.
@@ -79,6 +83,8 @@ impl Detector {
             cpu_prev: HashMap::new(),
             ticks: 0,
             our_pid: std::process::id() as i32,
+            parents: HashMap::new(),
+            focused: None,
         }
     }
 
@@ -166,10 +172,29 @@ impl Detector {
 
         self.cpu_prev = cpu_now;
         self.signals = fresh;
+        self.parents = parents;
+        self.focused = desktop.focused_pid;
         Ok(())
     }
 
     // ── Queries ─────────────────────────────────────────────────────────────
+
+    /// Whether `pid` is the focused application or one of its descendants: a
+    /// helper, renderer or child the user is, in effect, looking at. Walks the
+    /// ancestor chain, which is a handful of steps; the `seen` guard stops a
+    /// malformed parent map from looping.
+    pub fn in_focused_app(&self, pid: i32) -> bool {
+        let Some(focused) = self.focused else { return false };
+        let mut seen: HashSet<i32> = HashSet::new();
+        let mut cur = pid;
+        while cur > 1 && seen.insert(cur) {
+            if cur == focused {
+                return true;
+            }
+            cur = self.parents.get(&cur).copied().unwrap_or(0);
+        }
+        false
+    }
 
     pub fn snapshot(&self) -> &HashMap<i32, Signals> {
         &self.signals
@@ -664,5 +689,46 @@ mod tests {
         let d = detector(true, vec![sig(5, "Discord"), sig(3, "discord")]);
         let pids: Vec<i32> = d.matching("DISCORD").iter().map(|s| s.pid).collect();
         assert_eq!(pids, vec![3, 5]);
+    }
+
+    // ── Focus ancestry ──────────────────────────────────────────────────────
+
+    struct Table(Vec<ProcessSample>);
+
+    impl ProcessSource for Table {
+        fn sample(&mut self) -> ramwarden_platform::Result<Vec<ProcessSample>> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn proc(pid: i32, ppid: i32, name: &str) -> ProcessSample {
+        ProcessSample { pid, ppid, name: name.into(), proportional: 1 << 20, ..Default::default() }
+    }
+
+    #[test]
+    fn a_helper_belongs_to_the_focused_app_and_a_stranger_does_not() {
+        let table = vec![
+            proc(100, 1, "Cursor"),
+            proc(101, 100, "Cursor Helper (Renderer)"),
+            proc(102, 101, "Cursor Helper (Plugin)"),
+            proc(200, 1, "Arabesque"),
+        ];
+        let mut d = Detector::new(Box::new(Table(table)));
+        d.sample(&Desktop { focused_pid: Some(100), ..Default::default() }).unwrap();
+        for pid in [100, 101, 102] {
+            assert!(d.in_focused_app(pid), "{pid}");
+        }
+        assert!(!d.in_focused_app(200));
+
+        d.sample(&Desktop { focused_pid: None, ..Default::default() }).unwrap();
+        assert!(!d.in_focused_app(101), "no focus known: nothing is thawed");
+    }
+
+    #[test]
+    fn a_cyclic_parent_map_terminates() {
+        let table = vec![proc(300, 301, "a"), proc(301, 300, "b"), proc(400, 1, "focused")];
+        let mut d = Detector::new(Box::new(Table(table)));
+        d.sample(&Desktop { focused_pid: Some(400), ..Default::default() }).unwrap();
+        assert!(!d.in_focused_app(300));
     }
 }

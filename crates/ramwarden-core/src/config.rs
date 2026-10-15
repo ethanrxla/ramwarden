@@ -453,6 +453,28 @@ pub fn load() -> Result<Config, String> {
     }
 }
 
+/// The first non-empty value among `keys` in dotenv text: `KEY=value`, an
+/// optional `export `, optional quotes, `#` comments and blank lines ignored.
+fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        for line in text.lines() {
+            let line = line.trim().trim_start_matches("export ").trim_start();
+            if line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=')
+                && k.trim() == *key
+            {
+                let v = v.trim().trim_matches(['"', '\'']);
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Load one specific file, merging any adjacent `secrets.toml`.
 pub fn load_from(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -490,6 +512,29 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         && !k.trim().is_empty()
     {
         cfg.nvidia.api_key = k.trim().to_string();
+    } else if let Ok(k) = std::env::var("NVIDIA_NIM_API_KEY")
+        && !k.trim().is_empty()
+    {
+        cfg.nvidia.api_key = k.trim().to_string();
+    }
+
+    // A `.env` beside the config (or in the per-user config dir) can supply the
+    // key too, under either name. A key does not enable the cloud tier: that
+    // stays an explicit `[nvidia] enabled = true`, because it sends tab titles
+    // and URLs off the machine.
+    if cfg.nvidia.api_key.is_empty() {
+        let env_files = [
+            path.parent().map(|d| d.join(".env")),
+            Some(config_dir().join("ramwarden").join(".env")),
+        ];
+        for f in env_files.into_iter().flatten() {
+            if let Ok(text) = std::fs::read_to_string(&f)
+                && let Some(k) = dotenv_value(&text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"])
+            {
+                cfg.nvidia.api_key = k;
+                break;
+            }
+        }
     }
 
     if let Err(e) = cfg.ladder.validate() {
@@ -520,6 +565,14 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dotenv_accepts_either_key_name_and_ignores_noise() {
+        let text = "# comment\nJEV_API_KEY=abc\nexport NVIDIA_NIM_API_KEY=\"nvapi-xyz\"\n";
+        assert_eq!(dotenv_value(text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]).as_deref(), Some("nvapi-xyz"));
+        assert_eq!(dotenv_value("NVIDIA_API_KEY=\nOTHER=1", &["NVIDIA_API_KEY"]), None);
+        assert_eq!(dotenv_value("# NVIDIA_API_KEY=nope", &["NVIDIA_API_KEY"]), None);
+    }
+
     use super::*;
 
     /// The config this machine actually runs, verbatim from `ramwarden.toml`.

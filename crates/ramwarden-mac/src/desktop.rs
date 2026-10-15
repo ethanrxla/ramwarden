@@ -11,12 +11,16 @@ use ramwarden_platform::{Desktop, DesktopSource};
 /// in the Dock", a superset of apps with a visible window, so it errs toward
 /// protecting an app, never toward unloading one.
 pub struct MacDesktop {
-    cached: Option<(Instant, Desktop)>,
+    /// Audio and Dock-app sets: two heavier subprocesses, refreshed every 5 s.
+    slow: Option<(Instant, HashSet<i32>, HashSet<i32>)>,
+    /// The frontmost app, refreshed every second so an app the user clicks is
+    /// thawed within about a second.
+    focus: Option<(Instant, Option<i32>)>,
 }
 
 impl MacDesktop {
     pub fn new() -> Self {
-        MacDesktop { cached: None }
+        MacDesktop { slow: None, focus: None }
     }
 }
 
@@ -68,25 +72,29 @@ pub fn audio_pids(assertions: &str) -> HashSet<i32> {
     out
 }
 
+fn frontmost_pid() -> Option<i32> {
+    let front = run("lsappinfo", &["front"]);
+    run("lsappinfo", &["info", "-only", "pid", front.trim()]).split('=').nth(1)?.trim().parse().ok()
+}
+
 impl DesktopSource for MacDesktop {
     fn sample(&mut self) -> Desktop {
-        if let Some((at, d)) = &self.cached {
-            if at.elapsed() < Duration::from_secs(5) {
-                return d.clone();
-            }
+        if self.slow.as_ref().is_none_or(|(at, ..)| at.elapsed() >= Duration::from_secs(5)) {
+            self.slow = Some((
+                Instant::now(),
+                audio_pids(&run("pmset", &["-g", "assertions"])),
+                foreground_pids(&run("lsappinfo", &["list"])),
+            ));
         }
-        let front = run("lsappinfo", &["front"]);
-        let focused_pid = run("lsappinfo", &["info", "-only", "pid", front.trim()])
-            .split('=')
-            .nth(1)
-            .and_then(|p| p.trim().parse().ok());
-        let d = Desktop {
-            audio_pids: audio_pids(&run("pmset", &["-g", "assertions"])),
-            window_pids: foreground_pids(&run("lsappinfo", &["list"])),
-            focused_pid,
-        };
-        self.cached = Some((Instant::now(), d.clone()));
-        d
+        if self.focus.as_ref().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(1)) {
+            self.focus = Some((Instant::now(), frontmost_pid()));
+        }
+        let (_, audio, windows) = self.slow.as_ref().expect("set above");
+        Desktop {
+            audio_pids: audio.clone(),
+            window_pids: windows.clone(),
+            focused_pid: self.focus.as_ref().and_then(|(_, p)| *p),
+        }
     }
 }
 

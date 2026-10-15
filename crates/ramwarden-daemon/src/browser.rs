@@ -1,5 +1,5 @@
 //! Browser-scoped, model-independent memory policy.
-use crate::{tabpolicy, tabs::Tab};
+use crate::{tabpolicy, tabrank, tabs::Tab};
 use serde::{Deserialize, Serialize};
 
 pub const BATCH_LIMIT: usize = 5;
@@ -21,7 +21,12 @@ pub struct Row {
     pub closeable: bool,
     pub status: &'static str,
     pub reason: String,
+    /// Release order: higher goes first. `est_mb / (p_return + ε)`, see `tabrank`.
     pub priority: i64,
+    /// Estimated chance the user returns to this tab (0-1).
+    pub p_return: f64,
+    /// Estimated RAM the tab holds while loaded. A prior by site type, not a measurement.
+    pub est_mb: u32,
 }
 
 pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
@@ -57,7 +62,7 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 ("protected", "playing audio")
             } else if t.incognito {
                 ("protected", "private tab")
-            } else if tabpolicy::is_protected(&t.url) {
+            } else if tabpolicy::is_protected_for(&t.url, t.inactive_minutes) {
                 ("protected", "editor, internal page or protected URL")
             } else if t.discard_supported != Some(true)
                 || t.active.is_none()
@@ -88,6 +93,14 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 ("candidate", "idle background tab; reloads when selected")
             };
             let eligible = status == "candidate";
+            let class = tabrank::classify(&t.url);
+            let mb = tabrank::est_mb(class);
+            let p = tabrank::p_return(t.inactive_minutes, class, duplicate);
+            let reason = if eligible {
+                format!("{reason} (return chance {:.0}%, ~{mb} MB)", p * 100.0)
+            } else {
+                reason.to_string()
+            };
             Row {
                 target: Target {
                     browser: browser.into(),
@@ -99,12 +112,10 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 eligible,
                 closeable: can_close(t),
                 status,
-                reason: reason.into(),
-                priority: if eligible {
-                    t.inactive_minutes.clamp(0, 10080) + if duplicate { 10080 } else { 0 }
-                } else {
-                    0
-                },
+                reason,
+                priority: if eligible { tabrank::score(mb, p).round() as i64 } else { 0 },
+                p_return: p,
+                est_mb: mb,
             }
         })
         .collect();

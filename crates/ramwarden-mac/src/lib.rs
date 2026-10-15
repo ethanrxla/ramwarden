@@ -1,8 +1,10 @@
 //! The macOS implementation of `ramwarden-platform`.
 //!
 //! * **Memory** — `host_statistics64` and `sysctl`; the compressor stands in for zram.
-//! * **Pressure** — the kernel's own level (`kern.memorystatus_vm_pressure_level`),
-//!   mapped onto the PSI scale and flagged `estimated`. macOS has no stall accounting.
+//! * **Pressure** — stall time estimated from swap-in, decompression and swap-out
+//!   rates (smoothed at 10/60/300 s), floored by the kernel's pressure level and
+//!   lifted early by a least-squares forecast of available memory. Flagged
+//!   `estimated`: macOS has no stall accounting. See `pressure.rs`.
 //! * **Processes** — `libproc`. "Proportional" is `ri_phys_footprint`, the figure
 //!   Activity Monitor shows as *Memory*; it counts compressed pages and does not
 //!   double-count shared mappings the way summed RSS does.
@@ -14,6 +16,7 @@
 #![allow(deprecated)] // libc points at mach2 for the few mach calls used here
 
 mod desktop;
+mod forecast;
 mod memory;
 mod pressure;
 mod process;
@@ -34,7 +37,7 @@ pub fn platform() -> Platform {
         Parts {
             name: "macos",
             memory: Arc::new(MacMemory),
-            pressure: Arc::new(MacPressure),
+            pressure: Arc::new(MacPressure::new()),
             control: Arc::new(MacControl),
             pager: Arc::new(NoPager),
             background: Arc::new(NoBackground),

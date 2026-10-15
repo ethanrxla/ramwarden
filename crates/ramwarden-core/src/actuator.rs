@@ -227,6 +227,22 @@ impl Actuator {
             .collect()
     }
 
+    /// Wake every frozen application for which `wanted(pid)` holds for any of its
+    /// live processes. Used to thaw what the user has just switched to: they
+    /// should never find an app frozen because RamWarden thought it was idle.
+    pub fn resume_where(&mut self, wanted: impl Fn(i32) -> bool) -> Vec<(String, Outcome)> {
+        let names: Vec<String> = self
+            .suspended
+            .iter()
+            .filter(|(_, e)| e.live().iter().any(|h| wanted(h.pid())))
+            .map(|(n, _)| n.clone())
+            .collect();
+        names
+            .into_iter()
+            .filter_map(|n| self.suspended.remove(&n).map(|e| (n, Self::resume_entry(&e))))
+            .collect()
+    }
+
     /// Currently frozen applications, pruned of anything that died or woke.
     pub fn suspended(&mut self) -> Vec<&SuspendedEntry> {
         self.suspended.retain(|name, e| {
@@ -763,5 +779,72 @@ mod tests {
         // Guards against anyone reintroducing name checks in the actuator.
         assert!(classify("dockerd", "", None).is_structural());
         assert_eq!(classify("sleep", "", None), Role::App);
+    }
+}
+
+/// Real-process checks for macOS, where the Linux-only suite above is compiled out.
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+    use crate::detector::Detector;
+    use crate::signals::Signals;
+    use crate::roles::classify;
+    use ramwarden_platform::{NoBackground, NoPager};
+    use std::process::{Child, Command};
+
+    fn spawn() -> Child {
+        Command::new("sleep").arg("60").spawn().expect("spawn sleep")
+    }
+
+    /// BSD `STAT` letter, e.g. `S` sleeping, `T` stopped.
+    fn stat(pid: i32) -> char {
+        let out = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().chars().next().unwrap_or('?')
+    }
+
+    fn await_stat(pid: i32, want: char) -> bool {
+        (0..100).any(|_| {
+            if stat(pid) == want {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            false
+        })
+    }
+
+    fn actuator() -> Actuator {
+        Actuator::new(Arc::new(ramwarden_mac::MacControl), Arc::new(NoPager), Arc::new(NoBackground))
+    }
+
+    fn idle_detector(pid: i32) -> Detector {
+        let mut s = Signals::new(pid, "sleep", classify("sleep", "", Some(501)));
+        s.pss = 500 * 1024 * 1024;
+        s.age_minutes = 600.0;
+        Detector::preloaded(true, vec![s])
+    }
+
+    #[test]
+    fn switching_to_a_frozen_app_thaws_it_and_unrelated_focus_does_not() {
+        let mut child = spawn();
+        let pid = child.id() as i32;
+        let mut act = actuator();
+        let out = act.suspend("sleep", &idle_detector(pid), &["sleep".to_string()], false);
+        assert_eq!(out.affected, vec![pid], "{:?}", out.notes);
+        assert!(await_stat(pid, 'T'));
+
+        // Focus is on something else: nothing thaws.
+        assert!(act.resume_where(|p| p == pid + 1_000_000).is_empty());
+        assert!(act.is_suspended("sleep"));
+        assert_eq!(stat(pid), 'T');
+
+        // The user switches to it: it thaws, and leaves the registry.
+        let woke = act.resume_where(|p| p == pid);
+        assert_eq!(woke.len(), 1);
+        assert_eq!(woke[0].1.affected, vec![pid]);
+        assert!(await_stat(pid, 'S'));
+        assert!(!act.is_suspended("sleep"));
+
+        child.kill().ok();
+        child.wait().ok();
     }
 }

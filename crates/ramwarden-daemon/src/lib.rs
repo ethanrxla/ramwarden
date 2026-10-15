@@ -15,6 +15,7 @@ pub mod monitor;
 pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
+pub mod tabrank;
 pub mod tabs;
 pub mod worker;
 pub mod ws;

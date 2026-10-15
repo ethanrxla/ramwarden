@@ -392,6 +392,14 @@ impl Ladder {
             ..Default::default()
         };
 
+        // Thaw anything the user has just switched to, at every rung and before
+        // any gate: a frozen app they are looking at is indistinguishable from a
+        // crashed one, so this never waits for pressure to pass.
+        for (name, outcome) in self.act.resume_where(|pid| w.det.in_focused_app(pid)) {
+            tracing::info!("resumed {name} — you switched to it");
+            report.steps.push(("resume", name, outcome));
+        }
+
         // A detector with no CPU delta yet cannot honestly call anything idle,
         // so there is nothing safe to act on. Release is still allowed: undoing
         // is safe regardless of what we can measure.

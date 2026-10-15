@@ -154,6 +154,8 @@ const TERMINAL_EMULATORS: &[&str] = &[
     "cosmic-term", "gnome-terminal", "gnome-terminal-server", "tilix", "xterm",
     "alacritty", "kitty", "konsole", "xfce4-terminal", "lxterminal",
     "mate-terminal", "terminator", "wezterm", "wezterm-gui", "foot", "ptyxis",
+    // macOS: they hold the user's shells.
+    "terminal", "iterm2", "warp", "ghostty",
 ];
 
 const BROWSERS: &[&str] = &[
@@ -184,6 +186,14 @@ const SYNC: &[&str] = &[
 ];
 
 const SYSTEM_NAMES: &[&str] = &[
+    // macOS. Tailscale is the user's VPN and network extension: suspending it drops
+    // the connection, so it is never touched even if a watchlist names it.
+    "tailscale", "ipnextension", "io.tailscale.ipn.macsys.network-extension", "tailscale-ipn",
+    "kernel_task", "launchd", "windowserver", "loginwindow", "dock", "finder",
+    "systemuiserver", "controlcenter", "notificationcenter", "coreaudiod", "coreservicesd",
+    "configd", "mds", "mds_stores", "trustd", "securityd", "cfprefsd", "distnoted", "logd",
+    "powerd", "usereventagent", "airportd", "sharingd", "universalaccessd", "wifiagent",
+    "networkserviceproxy", "nsurlsessiond", "lsd", "diskarbitrationd", "fseventsd",
     "systemd", "init", "kthreadd", "pipewire", "pipewire-pulse", "wireplumber",
     "pulseaudio", "dbus-daemon", "dbus-broker", "networkmanager",
     "wpa_supplicant", "avahi-daemon", "polkitd", "udisksd", "upowerd",
@@ -523,5 +533,19 @@ mod tests {
     fn role_names_round_trip_as_the_api_strings_v1_emitted() {
         assert_eq!(Role::Hypervisor.to_string(), "HYPERVISOR");
         assert_eq!(Role::App.as_str(), "APP");
+    }
+
+    #[test]
+    fn macos_system_processes_tailscale_and_terminals_are_protected() {
+        for name in ["Tailscale", "IPNExtension", "WindowServer", "kernel_task", "launchd", "Finder", "Dock"] {
+            assert_eq!(classify(name, "", Some(501)), Role::System, "{name}");
+        }
+        for name in ["Terminal", "iTerm2", "Warp"] {
+            assert_eq!(classify(name, "", Some(501)), Role::Terminal, "{name}");
+        }
+        // The apps the user opted in stay ordinary apps.
+        for name in ["node", "python3.13", "Arabesque", "Codex (Renderer)", "Cursor Helper (Renderer)"] {
+            assert_eq!(classify(name, "", Some(501)), Role::App, "{name}");
+        }
     }
 }
