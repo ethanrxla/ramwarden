@@ -35,15 +35,31 @@ const PROTECTED_PATTERNS = [
   /^https?:\/\/127\./,
   /^https?:\/\/192\.168\./,
   /^https?:\/\/10\.\d/,
-  /\/login|\/signin|\/auth|\/oauth|\/callback|\/session/i,
   /accounts?\.(google|microsoft|apple|github)\./i,
   /console\.|dashboard\.|admin\./i,
 ];
+
+// Sign-in flows are protected only when the path *starts* with one of these, the
+// same rule the daemon applies (tabpolicy.rs). Matching anywhere in the path
+// protected finished OAuth callbacks and any page with "/login" deep in its URL,
+// so the daemon listed them as candidates and this guard refused every one: no
+// tab was ever unloaded.
+const AUTH_PATH_PREFIXES = ["/login", "/signin", "/auth", "/oauth", "/callback", "/session"];
+
+function hasAuthPath(url) {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return AUTH_PATH_PREFIXES.some(p => path.startsWith(p));
+  } catch {
+    return true; // an unparseable URL is not ours to touch
+  }
+}
 
 function isProtected(url) {
   if (!url) return true;
   if (PROTECTED_PREFIXES.some(p => url.startsWith(p))) return true;
   if (PROTECTED_PATTERNS.some(r => r.test(url))) return true;
+  if (hasAuthPath(url)) return true;
   return false;
 }
 
