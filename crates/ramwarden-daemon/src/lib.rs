@@ -17,6 +17,8 @@ pub mod outcomes;
 pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
+pub mod appintel;
+pub mod appquit;
 pub mod tabintel;
 pub mod tabrank;
 pub mod tabs;

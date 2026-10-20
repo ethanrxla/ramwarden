@@ -141,9 +141,23 @@ pub struct AppState {
     /// The JEPA reuse predictor; silent until a model passes its gate.
     pub predictor: Arc<crate::predict::LivePredictor>,
     pub started: Instant,
+    /// While set and in the future, RamWarden freezes nothing and has thawed what
+    /// it froze: for window arrangers and scripts, which cannot talk to a frozen app.
+    pub hold_until: Arc<Mutex<Option<Instant>>>,
 }
 
 impl AppState {
+    /// Whether freezing is on hold right now.
+    pub fn on_hold(&self) -> bool {
+        self.hold_until.lock().unwrap().is_some_and(|t| Instant::now() < t)
+    }
+
+    /// Hold for `secs` (clamped to 1-600), or release with 0.
+    pub fn set_hold(&self, secs: u64) {
+        *self.hold_until.lock().unwrap() =
+            (secs > 0).then(|| Instant::now() + Duration::from_secs(secs.min(600)));
+    }
+
     /// System memory now, or zeros if it cannot be read.
     pub fn memory(&self) -> MemoryStatus {
         self.platform.memory.status().unwrap_or_default()

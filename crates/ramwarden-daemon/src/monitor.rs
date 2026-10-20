@@ -206,6 +206,8 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
     let mut last_intel = Instant::now() - Duration::from_secs(60);
+    let mut quitter = crate::appquit::Quitter::new();
+    let mut held = false;
 
     loop {
         let woken_by_pressure = match trigger.as_mut() {
@@ -218,6 +220,21 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
         let started = Instant::now();
 
+        // A hold (a window arranger at work) means: nothing frozen, nothing new
+        // frozen. Thaw once at the start; skip the ladder until it expires.
+        if state.on_hold() {
+            if !held {
+                held = true;
+                for (name, _) in state.ladder.lock().unwrap().thaw_all() {
+                    tracing::info!("thawed {name}: on hold");
+                }
+                crate::freeze_journal::write(&cfg.db_path.with_file_name("suspended.json"), &[]);
+            }
+            interval = WATCHFUL_INTERVAL;
+            continue;
+        }
+        held = false;
+
         // 1. Sample. The desktop probe caches its subprocesses internally.
         let desktop = probe.sample();
         if let Err(e) = state.det.write().unwrap().sample(&desktop) {
@@ -229,6 +246,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         // browser, then a hash lookup per reported tab.
         reconcile_returns(&state);
         refresh_intel(&state, &handle, &mut last_intel);
+        crate::appquit::consider(&state, &handle, &mut quitter);
 
         // 2. Look.
         let pressure = match state.platform.pressure.read() {

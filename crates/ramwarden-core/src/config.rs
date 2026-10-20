@@ -269,6 +269,47 @@ impl Default for Gpu {
     }
 }
 
+/// Graceful app quits, the one macOS lever that really frees an app's memory.
+///
+/// Freezing an app frees nothing; asking it to quit does. Three guards keep it
+/// safe: only apps named in `allow` may ever be asked (activity never widens that
+/// list), a hard floor in `appintel` refuses anything focused, playing audio,
+/// working or structurally protected, and Jev must say yes. The quit is the app's
+/// own "quit" request, never a signal, so an app with unsaved work shows its save
+/// prompt and stays up.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Quit {
+    /// `off`, `dry-run` (log what would be quit) or `live`.
+    pub mode: String,
+    /// Display names of apps that may be asked to quit.
+    pub allow: Vec<String>,
+    /// Act only while memory used is above this percent of RAM.
+    pub target_used_percent: f64,
+    /// An app must have been quiet at least this long.
+    pub min_quiet_minutes: f64,
+    /// Blended quit probability needed to act.
+    pub threshold: f64,
+    /// "Is this needed right now?" at or above this vetoes the quit.
+    pub needed_veto: f64,
+    /// At most this many quits per hour.
+    pub max_per_hour: u32,
+}
+
+impl Default for Quit {
+    fn default() -> Self {
+        Quit {
+            mode: "off".into(),
+            allow: Vec::new(),
+            target_used_percent: 65.0,
+            min_quiet_minutes: 30.0,
+            threshold: 0.7,
+            needed_veto: 0.5,
+            max_per_hour: 6,
+        }
+    }
+}
+
 /// The decision tier: TypeSafe's Jev, which answers typed yes/no questions with
 /// calibrated probabilities. It is sent a short description of each borderline
 /// tab's *features* (site type, idle hours, visit count) and never a URL or a
@@ -380,6 +421,7 @@ pub struct Config {
     pub ollama: Ollama,
     pub nvidia: Nvidia,
     pub jev: Jev,
+    pub quit: Quit,
     pub logging: Logging,
     pub tidy: Tidy,
     pub gpu: Gpu,
@@ -403,6 +445,7 @@ struct Raw {
     ollama: Ollama,
     nvidia: Nvidia,
     jev: Jev,
+    quit: Quit,
     logging: Logging,
     tidy: Tidy,
     gpu: Gpu,
@@ -467,6 +510,7 @@ impl Default for Config {
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
             jev: Jev::default(),
+            quit: Quit::default(),
             logging: Logging::default(),
             tidy: Tidy::default(),
             gpu: Gpu::default(),
@@ -637,6 +681,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ollama: raw.ollama,
         nvidia: raw.nvidia,
         jev: raw.jev,
+        quit: raw.quit,
         logging: raw.logging,
         tidy: raw.tidy,
         gpu: raw.gpu,

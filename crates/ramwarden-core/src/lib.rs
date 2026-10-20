@@ -6,7 +6,9 @@
 //! user's unsaved work.
 
 pub mod actuator;
+pub mod apps;
 pub mod config;
+pub mod describe;
 pub mod detector;
 pub mod exec;
 pub mod history;

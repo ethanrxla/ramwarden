@@ -132,6 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         predictor,
         ai: Arc::new(provider),
         started: Instant::now(),
+        hold_until: Arc::new(Mutex::new(None)),
     };
 
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());

@@ -181,8 +181,10 @@ const MAX_CACHE: usize = 256;
 
 pub struct TabIntel {
     cfg: config::Jev,
-    asker: Option<Box<dyn Asker>>,
+    pub(crate) asker: Option<Box<dyn Asker>>,
     cache: Mutex<HashMap<String, (Judgement, Instant)>>,
+    /// Answers about whole apps, kept apart from tab answers (see `appintel`).
+    pub(crate) app_cache: Mutex<HashMap<String, (crate::appintel::AppJudgement, Instant)>>,
     calls: Mutex<VecDeque<Instant>>,
     breaker: Mutex<Breaker>,
     input_tokens: AtomicU64,
@@ -195,6 +197,7 @@ impl TabIntel {
             cfg,
             asker,
             cache: Mutex::new(HashMap::new()),
+            app_cache: Mutex::new(HashMap::new()),
             calls: Mutex::new(VecDeque::new()),
             breaker: Mutex::new(Breaker::default()),
             input_tokens: AtomicU64::new(0),
@@ -235,17 +238,7 @@ impl TabIntel {
     /// Which of `states` to ask about now: distinct, not cached, within the
     /// hourly budget, and only while the breaker is closed.
     pub fn plan(&self, states: &[String], now: Instant) -> Vec<String> {
-        if !self.active() {
-            return Vec::new();
-        }
-        if self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t) {
-            return Vec::new();
-        }
-        let mut calls = self.calls.lock().unwrap();
-        while calls.front().is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(3600)) {
-            calls.pop_front();
-        }
-        let room = (self.cfg.max_calls_per_hour as usize).saturating_sub(calls.len());
+        let room = self.call_room(now);
         let mut seen = HashSet::new();
         states
             .iter()
@@ -255,7 +248,35 @@ impl TabIntel {
             .collect()
     }
 
-    fn record_failure(&self, e: &AiError, now: Instant) {
+    /// How many more calls the hourly budget allows right now: zero while the tier
+    /// is off or the breaker is open. Shared by the tab and app questions, which
+    /// draw on one budget.
+    pub(crate) fn call_room(&self, now: Instant) -> usize {
+        if !self.active() || self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t) {
+            return 0;
+        }
+        let mut calls = self.calls.lock().unwrap();
+        while calls.front().is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(3600)) {
+            calls.pop_front();
+        }
+        (self.cfg.max_calls_per_hour as usize).saturating_sub(calls.len())
+    }
+
+    pub(crate) fn note_call(&self, now: Instant) {
+        self.calls.lock().unwrap().push_back(now);
+    }
+
+    pub(crate) fn note_ok(&self, a: &Answers) {
+        self.breaker.lock().unwrap().consecutive = 0;
+        self.input_tokens.fetch_add(a.input_tokens, Ordering::Relaxed);
+        self.output_tokens.fetch_add(a.output_tokens, Ordering::Relaxed);
+    }
+
+    pub(crate) fn breaker_open(&self, now: Instant) -> bool {
+        self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t)
+    }
+
+    pub(crate) fn record_failure(&self, e: &AiError, now: Instant) {
         let mut b = self.breaker.lock().unwrap();
         b.consecutive += 1;
         let auth = matches!(e, AiError::Status { status: 401 | 403, .. });

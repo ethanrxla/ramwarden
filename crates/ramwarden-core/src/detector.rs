@@ -16,6 +16,7 @@
 //!   nothing can honestly be called idle and everything is refused.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use ramwarden_platform::{Owner, ProcessSample, ProcessSource};
 
@@ -64,6 +65,10 @@ pub struct Detector {
     /// process part of the app the user is looking at?" needs no new syscalls.
     parents: HashMap<i32, i32>,
     focused: Option<i32>,
+    /// When any process of an app last showed real activity (focus, audio, CPU or
+    /// a working child). An app first seen is dated from that sighting, so idle
+    /// time is only known since the daemon started.
+    app_active: HashMap<String, Instant>,
 }
 
 /// A source with nothing in it, for detectors that are only ever preloaded.
@@ -85,6 +90,7 @@ impl Detector {
             our_pid: std::process::id() as i32,
             parents: HashMap::new(),
             focused: None,
+            app_active: HashMap::new(),
         }
     }
 
@@ -150,6 +156,9 @@ impl Detector {
             s.rss = p.resident;
             s.state = p.state;
             s.scope = p.group;
+            s.ppid = p.ppid;
+            s.app = crate::describe::app_of(&p.name, &p.cmdline);
+            s.part = crate::describe::part_of(&p.name, &p.cmdline);
             s.listening_ports = p.listening_ports;
             s.established = p.established;
             s.is_focused = desktop.focused_pid == Some(p.pid);
@@ -169,6 +178,18 @@ impl Detector {
         for s in fresh.values_mut() {
             s.score(warm);
         }
+
+        let now = Instant::now();
+        for s in fresh.values() {
+            let busy = s.is_focused
+                || s.playing_audio
+                || s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS
+                || s.active_descendant.is_some();
+            if busy || !self.app_active.contains_key(&s.app) {
+                self.app_active.insert(s.app.clone(), now);
+            }
+        }
+        self.app_active.retain(|app, _| fresh.values().any(|s| &s.app == app));
 
         self.cpu_prev = cpu_now;
         self.signals = fresh;
@@ -198,6 +219,11 @@ impl Detector {
 
     pub fn snapshot(&self) -> &HashMap<i32, Signals> {
         &self.signals
+    }
+
+    /// Minutes since any process of `app` last did anything, as of `now`.
+    pub fn quiet_minutes(&self, app: &str, now: Instant) -> Option<f64> {
+        self.app_active.get(app).map(|t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
     }
 
     pub fn get(&self, pid: i32) -> Option<&Signals> {

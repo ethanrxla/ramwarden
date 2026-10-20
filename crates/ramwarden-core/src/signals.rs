@@ -95,6 +95,12 @@ pub struct Signals {
     /// `None` for processes outside the user's session, which the ladder may
     /// never touch anyway.
     pub scope: Option<String>,
+    /// Parent process, so a helper can be traced to the app that owns it.
+    pub ppid: i32,
+    /// The application this process belongs to (`Claude`, `Google Chrome`).
+    pub app: String,
+    /// Which part of that application it is (`page renderer`, `graphics process`).
+    pub part: &'static str,
 
     pub listening_ports: Vec<u16>,
     pub established: u32,
@@ -125,6 +131,9 @@ impl Signals {
             state: 'S',
             role,
             scope: None,
+            ppid: 0,
+            app: String::new(),
+            part: "main process",
             listening_ports: Vec::new(),
             established: 0,
             is_focused: false,

@@ -36,6 +36,7 @@ fn state() -> AppState {
             std::env::temp_dir().join("ramwarden-test-no-predictor.safetensors"),
         )),
         started: std::time::Instant::now(),
+        hold_until: Default::default(),
     }
 }
 fn tab(id: i64) -> Tab {
@@ -262,4 +263,21 @@ async fn a_web_page_cannot_kill_anything_but_an_extension_can_talk() {
     assert_eq!(send(Some("null")).await, 403);
     assert_ne!(send(Some("chrome-extension://abc")).await, 403);
     assert_ne!(send(None).await, 403);
+}
+
+#[tokio::test]
+async fn a_hold_pauses_freezing_until_it_expires_or_is_released() {
+    let st = state();
+    assert!(!st.on_hold());
+    let r = call(st.clone(), "/hold/120", "POST", json!({})).await;
+    assert_eq!(r["hold_seconds"], 120);
+    assert!(st.on_hold());
+    // Capped at ten minutes, so a forgotten hold cannot disable the ladder for long.
+    assert_eq!(call(st.clone(), "/hold/99999", "POST", json!({})).await["hold_seconds"], 600);
+    call(st.clone(), "/hold", "DELETE", json!({})).await;
+    assert!(!st.on_hold());
+    st.set_hold(1);
+    assert!(st.on_hold());
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert!(!st.on_hold(), "expires on its own");
 }

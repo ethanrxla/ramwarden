@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/stats", get(stats))
         .route("/ram-report", get(ram_report))
+        .route("/apps", get(apps))
         .route("/activity", get(activity))
         .route("/activity/{name}", get(activity_one))
         .route("/suspend/{name}", post(suspend))
@@ -63,6 +64,8 @@ pub fn router(state: AppState) -> Router {
         .route("/actions", get(actions))
         .route("/outcomes", get(outcomes))
         .route("/intel", get(intel))
+        .route("/hold/{secs}", post(hold))
+        .route("/hold", delete(release_hold))
         .route("/tidy", get(tidy))
         .route("/predict/eval", get(predict_eval))
         .route("/predict/train", post(predict_train))
@@ -237,7 +240,25 @@ async fn ram_report(State(st): State<AppState>) -> Json<Value> {
             "name": s.name, "pid": s.pid, "pss_mb": mb(s.pss), "rss_mb": mb(s.rss),
             "verdict": s.verdict.as_str(), "role": s.role.as_str(),
             "scope": s.scope, "reasons": s.reasons,
+            "app": s.app, "part": s.part,
+            "label": ramwarden_core::describe::label(
+                s, det.quiet_minutes(&s.app, std::time::Instant::now())),
         })).collect::<Vec<_>>(),
+    }))
+}
+
+/// Memory by application: how much of each app is in use, idle or protected, what
+/// parts it is made of, and how long it has been quiet. This is the view for
+/// "what is taking RAM that nobody is using".
+async fn apps(State(st): State<AppState>) -> Json<Value> {
+    let det = st.det.read().unwrap();
+    let all = ramwarden_core::apps::from_detector(&det, std::time::Instant::now());
+    let idle: f64 = all.iter().map(|a| a.idle_mb).sum();
+    let in_use: f64 = all.iter().map(|a| a.in_use_mb).sum();
+    let prot: f64 = all.iter().map(|a| a.protected_mb).sum();
+    Json(json!({
+        "totals_mb": { "in_use": in_use.round(), "idle": idle.round(), "protected": prot.round() },
+        "apps": all.into_iter().take(30).collect::<Vec<_>>(),
     }))
 }
 
@@ -784,6 +805,21 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
 }
 
 // ── History ─────────────────────────────────────────────────────────────────
+
+/// Pause freezing for `secs` seconds (max 600) and thaw what is frozen, so a
+/// window arranger can talk to every app. `DELETE /hold` ends it early.
+async fn hold(State(st): State<AppState>, Path(secs): Path<u64>) -> Json<Value> {
+    st.set_hold(secs);
+    // Thaw now rather than waiting for the monitor's next tick.
+    let thawed: Vec<String> = st.ladder.lock().unwrap().thaw_all().into_iter().map(|(n, _)| n).collect();
+    tracing::info!("hold {secs}s; thawed {} group(s)", thawed.len());
+    Json(json!({"hold_seconds": secs.min(600), "thawed": thawed}))
+}
+
+async fn release_hold(State(st): State<AppState>) -> Json<Value> {
+    st.set_hold(0);
+    Json(json!({"hold_seconds": 0}))
+}
 
 /// The Jev decision tier: whether it is on, what it has cost, and whether it is paused.
 async fn intel() -> Json<Value> {
