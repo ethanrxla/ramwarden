@@ -49,6 +49,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("config loaded from {}", src.display());
     }
 
+    // Bind before anything slow, so a taken port is reported at once and in the
+    // log, instead of after the first sample — or, as it looked from the
+    // window, as a daemon that never came up.
+    let bind = format!("{}:{}", cfg.server.host, cfg.server.port);
+    if !ramwarden_daemon::guard::is_loopback(&cfg.server.host) {
+        tracing::warn!(
+            "listening on {} — reachable from other machines with NO authentication. \
+             Web pages are still refused, but anything on the network can freeze or \
+             kill your apps. Use host = \"127.0.0.1\" unless you mean this.",
+            cfg.server.host
+        );
+    }
+    let listener = match tokio::net::TcpListener::bind(&bind).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::error!(
+                "cannot listen on {bind}: something else already holds that port — another \
+                 ramwarden-daemon, the v1 daemon, or a port WSL forwards from a Linux \
+                 RamWarden (wslrelay.exe). Find it with `netstat -ano | findstr :{}`.",
+                cfg.server.port
+            );
+            return Err(e.into());
+        }
+        Err(e) => {
+            tracing::error!("cannot listen on {bind}: {e}");
+            return Err(e.into());
+        }
+    };
+
     let platform = Arc::new(host::platform());
     tracing::info!("platform: {}", platform.name);
 
@@ -103,19 +132,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());
 
-    let bind = format!("{}:{}", state.cfg.server.host, state.cfg.server.port);
     // CORS and the origin guard are part of the router; see `guard`.
     let app = routes::router(state.clone());
-    if !ramwarden_daemon::guard::is_loopback(&state.cfg.server.host) {
-        tracing::warn!(
-            "listening on {} — reachable from other machines with NO authentication. \
-             Web pages are still refused, but anything on the network can freeze or \
-             kill your apps. Use host = \"127.0.0.1\" unless you mean this.",
-            state.cfg.server.host
-        );
-    }
-
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("RamWarden listening on http://{bind}");
 
     axum::serve(listener, app)
