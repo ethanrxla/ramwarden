@@ -190,6 +190,9 @@ The following are never acted on:
   restores from as SYSTEM therefore cannot be edited by the user.
 - **Without the service** the daemon uses only user-level levers, and
   per-user tweaks still work. This is a normal configuration.
+- **A service call never blocks the daemon indefinitely.** Each call has a
+  deadline (15 s; 120 s for a tweak). A service that does not answer in time
+  is treated like an absent one for that call, so the monitor keeps ticking.
 
 ### Debloat (`ramwarden-debloat`)
 - **The `Tweak` trait.** Each tweak (`detect`, `snapshot`, `apply`, `revert`)
