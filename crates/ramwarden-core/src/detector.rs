@@ -69,6 +69,10 @@ pub struct Detector {
     /// a working child). An app first seen is dated from that sighting, so idle
     /// time is only known since the daemon started.
     app_active: HashMap<String, Instant>,
+    /// Since when an app has been using CPU while nobody is using it: not in
+    /// front, silent, no working child. A runaway viewer looks like this, and so
+    /// does a long legitimate job, so this only measures; Jev judges.
+    app_busy_since: HashMap<String, Instant>,
 }
 
 /// A source with nothing in it, for detectors that are only ever preloaded.
@@ -91,6 +95,7 @@ impl Detector {
             parents: HashMap::new(),
             focused: None,
             app_active: HashMap::new(),
+            app_busy_since: HashMap::new(),
         }
     }
 
@@ -191,6 +196,31 @@ impl Detector {
         }
         self.app_active.retain(|app, _| fresh.values().any(|s| &s.app == app));
 
+        let mut cpu_only: HashMap<&str, bool> = HashMap::new();
+        for s in fresh.values() {
+            let cpu = s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS;
+            let used = s.is_focused || s.playing_audio || s.active_descendant.is_some();
+            let e = cpu_only.entry(s.app.as_str()).or_insert(false);
+            *e |= cpu && !used;
+            if used {
+                // Anything in the app being used clears the whole app.
+                *e = false;
+            }
+        }
+        let used_apps: HashSet<&str> = fresh
+            .values()
+            .filter(|s| s.is_focused || s.playing_audio || s.active_descendant.is_some())
+            .map(|s| s.app.as_str())
+            .collect();
+        for (app, cpu) in &cpu_only {
+            if *cpu && !used_apps.contains(app) {
+                self.app_busy_since.entry(app.to_string()).or_insert(now);
+            } else {
+                self.app_busy_since.remove(*app);
+            }
+        }
+        self.app_busy_since.retain(|app, _| fresh.values().any(|s| &s.app == app));
+
         self.cpu_prev = cpu_now;
         self.signals = fresh;
         self.parents = parents;
@@ -224,6 +254,11 @@ impl Detector {
     /// Minutes since any process of `app` last did anything, as of `now`.
     pub fn quiet_minutes(&self, app: &str, now: Instant) -> Option<f64> {
         self.app_active.get(app).map(|t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
+    }
+
+    /// Minutes `app` has been using CPU while nobody is using it, or 0.
+    pub fn runaway_minutes(&self, app: &str, now: Instant) -> f64 {
+        self.app_busy_since.get(app).map_or(0.0, |t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
     }
 
     pub fn get(&self, pid: i32) -> Option<&Signals> {

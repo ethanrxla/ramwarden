@@ -294,6 +294,9 @@ pub struct Quit {
     pub needed_veto: f64,
     /// At most this many quits per hour.
     pub max_per_hour: u32,
+    /// An app burning CPU for this long while you are not using it is treated as
+    /// runaway rather than "working", and goes to Jev instead of being refused.
+    pub runaway_minutes: f64,
 }
 
 impl Default for Quit {
@@ -306,6 +309,7 @@ impl Default for Quit {
             threshold: 0.7,
             needed_veto: 0.5,
             max_per_hour: 6,
+            runaway_minutes: 10.0,
         }
     }
 }

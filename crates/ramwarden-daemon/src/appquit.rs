@@ -22,6 +22,12 @@ use crate::appintel::{self, Decision};
 use crate::hub::AppState;
 
 pub struct Quitter {
+    /// The last reason each allow-listed app was kept, so a refusal is logged
+    /// when it changes rather than every minute.
+    kept: std::collections::HashMap<String, String>,
+    /// When a dry-run "would quit" was last announced per app: nothing is acted
+    /// on in dry-run, so the same line every minute is noise.
+    announced: std::collections::HashMap<String, Instant>,
     last: Instant,
     quits: VecDeque<Instant>,
     in_flight: Arc<AtomicBool>,
@@ -29,13 +35,21 @@ pub struct Quitter {
 
 impl Quitter {
     pub fn new() -> Self {
-        Quitter { last: Instant::now() - Duration::from_secs(3600), quits: VecDeque::new(), in_flight: Arc::new(AtomicBool::new(false)) }
+        Quitter { kept: Default::default(), announced: Default::default(), last: Instant::now() - Duration::from_secs(3600), quits: VecDeque::new(), in_flight: Arc::new(AtomicBool::new(false)) }
     }
 }
 
 impl Default for Quitter {
     fn default() -> Self {
         Quitter::new()
+    }
+}
+
+/// Log why an allow-listed app was kept, once per change of reason.
+fn note_kept(kept: &mut std::collections::HashMap<String, String>, app: &str, why: &str) {
+    if kept.get(app).map(String::as_str) != Some(why) {
+        tracing::info!("quit: kept {app}: {why}");
+        kept.insert(app.to_string(), why.to_string());
     }
 }
 
@@ -75,11 +89,16 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
         }
         for (app, procs) in by_app {
             let quiet = det.quiet_minutes(app, now).unwrap_or(0.0);
-            if let Some(why) = appintel::floor(app, &procs, quiet, cfg) {
-                tracing::debug!("quit: keep {app}: {why}");
+            let runaway = det.runaway_minutes(app, now);
+            if let Some(why) = appintel::floor(app, &procs, quiet, runaway, cfg) {
+                // Only apps the user listed are worth a line; the rest are not candidates.
+                if cfg.allow.iter().any(|a| a.eq_ignore_ascii_case(app)) {
+                    note_kept(&mut q.kept, app, &why);
+                }
                 continue;
             }
-            let f = appintel::features(app, &procs, quiet);
+            q.kept.remove(app);
+            let f = appintel::features(app, &procs, quiet, runaway);
             let text = appintel::describe(&f);
             cands.push((app.to_string(), f, text));
         }
@@ -111,9 +130,15 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
     for (app, f, text) in &cands {
         let j = intel.lookup_app(text, now);
         match appintel::judge(f, j.as_ref(), cfg, jev) {
-            Decision::Keep(why) => tracing::debug!("quit: keep {app}: {why}"),
+            Decision::Keep(why) => tracing::info!("quit: keep {app}: {why}"),
             Decision::Quit { p } => {
                 let live = cfg.mode == "live";
+                if !live && q.announced.get(app).is_some_and(|t| t.elapsed() < Duration::from_secs(30 * 60)) {
+                    break;
+                }
+                if !live {
+                    q.announced.insert(app.clone(), Instant::now());
+                }
                 let ok = live && ramwarden_core::exec::run("osascript", &["-e", &format!("tell application {} to quit", script_quote(app))]).is_some();
                 tracing::info!(
                     "{} {app} ({:.0} MB, quiet {:.0} min, p={:.2}, memory {:.0}% used)",
@@ -145,6 +170,16 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_remembered_so_it_is_logged_once_per_change() {
+        let mut kept = Default::default();
+        note_kept(&mut kept, "Console", "working right now");
+        note_kept(&mut kept, "Console", "working right now");
+        assert_eq!(kept.get("Console").map(String::as_str), Some("working right now"));
+        note_kept(&mut kept, "Console", "only quiet for 3 min");
+        assert_eq!(kept.get("Console").map(String::as_str), Some("only quiet for 3 min"));
+    }
 
     #[test]
     fn app_names_are_quoted_for_applescript() {

@@ -67,6 +67,8 @@ pub struct AppFeatures {
     pub ports: usize,
     pub has_tty: bool,
     pub established: u32,
+    /// Minutes of CPU use while nobody was using the app; 0 if none.
+    pub runaway_minutes: f64,
     /// The two biggest parts, e.g. "page renderer x6".
     pub parts: Vec<String>,
 }
@@ -103,11 +105,23 @@ pub fn describe(f: &AppFeatures) -> String {
         },
         if f.has_tty { "It is attached to a terminal." } else if f.established > 0 { "It holds open network connections." } else { "It has no open connections." },
         if f.parts.is_empty() { "one process".to_string() } else { f.parts.join(", ") },
-    )
+    ) + &if f.runaway_minutes > 0.0 {
+        format!(" It has been using CPU continuously for {} while the user was not using it.", runaway_bucket(f.runaway_minutes))
+    } else {
+        String::new()
+    }
+}
+
+fn runaway_bucket(m: f64) -> &'static str {
+    match m {
+        m if m < 30.0 => "10 to 30 minutes",
+        m if m < 120.0 => "30 minutes to 2 hours",
+        _ => "over 2 hours",
+    }
 }
 
 /// Pure: build the features of one app from its processes.
-pub fn features(app: &str, procs: &[&Signals], quiet_minutes: f64) -> AppFeatures {
+pub fn features(app: &str, procs: &[&Signals], quiet_minutes: f64, runaway_minutes: f64) -> AppFeatures {
     let mut by_part: std::collections::BTreeMap<&str, (usize, f64)> = Default::default();
     for s in procs {
         let e = by_part.entry(s.part).or_default();
@@ -124,6 +138,7 @@ pub fn features(app: &str, procs: &[&Signals], quiet_minutes: f64) -> AppFeature
         ports: procs.iter().map(|s| s.listening_ports.len()).sum(),
         has_tty: procs.iter().any(|s| s.has_tty),
         established: procs.iter().map(|s| s.established).sum(),
+        runaway_minutes,
         parts: parts.iter().take(2).map(|(p, n, _)| format!("{p} x{n}")).collect(),
     }
 }
@@ -131,7 +146,10 @@ pub fn features(app: &str, procs: &[&Signals], quiet_minutes: f64) -> AppFeature
 /// Rules-only estimate that the app is safe to quit: rises with quiet time and
 /// falls when a window is open. Deliberately modest, since Jev must still agree.
 pub fn rules_p(f: &AppFeatures) -> f64 {
-    let quiet = 1.0 / (1.0 + (-(f.quiet_minutes - 60.0) / 30.0).exp());
+    // Sustained unattended CPU is evidence the app is not wanted, at double weight:
+    // ten minutes of it counts as twenty minutes of quiet.
+    let evidence = f.quiet_minutes.max(f.runaway_minutes * 2.0);
+    let quiet = 1.0 / (1.0 + (-(evidence - 60.0) / 30.0).exp());
     let window = if f.has_window { 0.7 } else { 1.0 };
     (quiet * window).clamp(0.02, 0.98)
 }
@@ -139,7 +157,7 @@ pub fn rules_p(f: &AppFeatures) -> f64 {
 /// Why this app must stay, decided without any model; `None` means it may go on
 /// to Jev. The order is the order of the user's trust: first the explicit list,
 /// then things a person is plainly using, then what the app *is*.
-pub fn floor(app: &str, procs: &[&Signals], quiet_minutes: f64, cfg: &config::Quit) -> Option<String> {
+pub fn floor(app: &str, procs: &[&Signals], quiet_minutes: f64, runaway_minutes: f64, cfg: &config::Quit) -> Option<String> {
     if !cfg.allow.iter().any(|a| a.eq_ignore_ascii_case(app)) {
         return Some("not on the quit list".into());
     }
@@ -155,13 +173,14 @@ pub fn floor(app: &str, procs: &[&Signals], quiet_minutes: f64, cfg: &config::Qu
     if let Some(d) = procs.iter().find_map(|s| s.active_descendant.as_ref()) {
         return Some(format!("a child process is working ({d})"));
     }
-    if procs.iter().any(|s| s.cpu_seconds_recent >= CPU_BUSY_SECONDS) {
+    let runaway = runaway_minutes >= cfg.runaway_minutes;
+    if !runaway && procs.iter().any(|s| s.cpu_seconds_recent >= CPU_BUSY_SECONDS) {
         return Some("working right now".into());
     }
     if let Some(s) = procs.iter().find(|s| s.protection == Protection::Structural || s.role.is_structural() || s.role == Role::Compositor) {
         return Some(s.role.protection_reason().to_string());
     }
-    if quiet_minutes < cfg.min_quiet_minutes {
+    if !runaway && quiet_minutes < cfg.min_quiet_minutes {
         return Some(format!("only quiet for {quiet_minutes:.0} min"));
     }
     None
@@ -262,7 +281,7 @@ mod tests {
     #[test]
     fn the_description_has_the_app_and_coarse_features_but_no_titles_or_numbers_that_identify() {
         let s = proc("zoom.us");
-        let d = describe(&features("zoom.us", &[&s], 95.0));
+        let d = describe(&features("zoom.us", &[&s], 95.0, 0.0));
         assert!(d.contains("\"zoom.us\"") && d.contains("30 minutes to 2 hours") && d.contains("medium (150 to 500 MB)"));
         assert!(!d.contains("280"), "exact sizes stay on the machine");
     }
@@ -270,7 +289,7 @@ mod tests {
     #[test]
     fn an_app_off_the_list_is_never_a_candidate() {
         let s = proc("Safari");
-        assert_eq!(floor("Safari", &[&s], 999.0, &quit_cfg()).as_deref(), Some("not on the quit list"));
+        assert_eq!(floor("Safari", &[&s], 999.0, 0.0, &quit_cfg()).as_deref(), Some("not on the quit list"));
     }
 
     #[test]
@@ -278,43 +297,43 @@ mod tests {
         let cfg = quit_cfg();
         let mut s = proc("zoom.us");
         s.is_focused = true;
-        assert!(floor("zoom.us", &[&s], 999.0, &cfg).unwrap().contains("using it now"));
+        assert!(floor("zoom.us", &[&s], 999.0, 0.0, &cfg).unwrap().contains("using it now"));
         let mut a = proc("Music");
         a.playing_audio = true;
-        assert!(floor("Music", &[&a], 999.0, &cfg).unwrap().contains("audio"));
+        assert!(floor("Music", &[&a], 999.0, 0.0, &cfg).unwrap().contains("audio"));
         let mut w = proc("zoom.us");
         w.active_descendant = Some("ffmpeg".into());
-        assert!(floor("zoom.us", &[&w], 999.0, &cfg).unwrap().contains("ffmpeg"));
+        assert!(floor("zoom.us", &[&w], 999.0, 0.0, &cfg).unwrap().contains("ffmpeg"));
         let mut b = proc("zoom.us");
         b.cpu_seconds_recent = 5.0;
-        assert!(floor("zoom.us", &[&b], 999.0, &cfg).unwrap().contains("working"));
+        assert!(floor("zoom.us", &[&b], 999.0, 0.0, &cfg).unwrap().contains("working"));
     }
 
     #[test]
     fn terminals_and_tailscale_stay_even_when_listed() {
         let cfg = quit_cfg();
         let t = proc("Terminal");
-        assert!(floor("Terminal", &[&t], 999.0, &cfg).is_some(), "structural role holds");
+        assert!(floor("Terminal", &[&t], 999.0, 0.0, &cfg).is_some(), "structural role holds");
         let ts = proc("Tailscale");
-        assert_eq!(floor("Tailscale", &[&ts], 999.0, &cfg).as_deref(), Some("Tailscale is never touched"));
+        assert_eq!(floor("Tailscale", &[&ts], 999.0, 0.0, &cfg).as_deref(), Some("Tailscale is never touched"));
     }
 
     #[test]
     fn an_app_must_have_been_quiet_long_enough() {
         let s = proc("zoom.us");
-        assert!(floor("zoom.us", &[&s], 5.0, &quit_cfg()).unwrap().contains("only quiet for 5 min"));
-        assert_eq!(floor("zoom.us", &[&s], 45.0, &quit_cfg()), None);
+        assert!(floor("zoom.us", &[&s], 5.0, 0.0, &quit_cfg()).unwrap().contains("only quiet for 5 min"));
+        assert_eq!(floor("zoom.us", &[&s], 45.0, 0.0, &quit_cfg()), None);
     }
 
     #[test]
     fn without_a_jev_answer_the_app_stays() {
-        let f = features("zoom.us", &[&proc("zoom.us")], 300.0);
+        let f = features("zoom.us", &[&proc("zoom.us")], 300.0, 0.0);
         assert_eq!(judge(&f, None, &quit_cfg(), &config::Jev::default()), Decision::Keep("waiting for Jev".into()));
     }
 
     #[test]
     fn jev_can_veto_for_need_or_unsaved_work_and_can_approve() {
-        let f = features("zoom.us", &[&proc("zoom.us")], 300.0);
+        let f = features("zoom.us", &[&proc("zoom.us")], 300.0, 0.0);
         let (q, jev) = (quit_cfg(), config::Jev { weight: 0.7, ..config::Jev::default() });
         assert!(matches!(judge(&f, Some(&judgement(0.9, 0.99, 0.0)), &q, &jev), Decision::Keep(r) if r.contains("needed")));
         assert!(matches!(judge(&f, Some(&judgement(0.1, 0.99, 0.9)), &q, &jev), Decision::Keep(r) if r.contains("unsaved")));
@@ -323,12 +342,42 @@ mod tests {
     }
 
     #[test]
+    fn sustained_unattended_cpu_is_a_runaway_that_goes_to_jev_not_a_refusal() {
+        let cfg = quit_cfg();
+        let mut c = proc("Console");
+        c.cpu_seconds_recent = 5.0;
+        let mut cfg = cfg;
+        cfg.allow.push("Console".into());
+        // Busy for 2 minutes: still "working".
+        assert!(floor("Console", &[&c], 0.0, 2.0, &cfg).unwrap().contains("working"));
+        // Busy for 12 minutes with nobody using it: past the floor, even though not quiet.
+        assert_eq!(floor("Console", &[&c], 0.0, 12.0, &cfg), None);
+        // The runaway evidence is described to Jev and raises the rules estimate.
+        let f = features("Console", &[&c], 0.0, 40.0);
+        assert!(describe(&f).contains("using CPU continuously for 30 minutes to 2 hours"));
+        assert!(rules_p(&f) > rules_p(&features("Console", &[&c], 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_runaway_never_bypasses_the_hard_floor() {
+        let mut cfg = quit_cfg();
+        cfg.allow.push("Console".into());
+        let mut c = proc("Console");
+        c.cpu_seconds_recent = 5.0;
+        c.is_focused = true;
+        assert!(floor("Console", &[&c], 0.0, 99.0, &cfg).unwrap().contains("using it now"));
+        let mut t = proc("Terminal");
+        t.cpu_seconds_recent = 5.0;
+        assert!(floor("Terminal", &[&t], 0.0, 99.0, &cfg).is_some(), "structural role still holds");
+    }
+
+    #[test]
     fn longer_quiet_and_no_window_raise_the_rules_estimate() {
-        let a = features("x", &[&proc("x")], 20.0);
-        let b = features("x", &[&proc("x")], 240.0);
+        let a = features("x", &[&proc("x")], 20.0, 0.0);
+        let b = features("x", &[&proc("x")], 240.0, 0.0);
         assert!(rules_p(&b) > rules_p(&a));
         let mut windowed = proc("x");
         windowed.has_window = true;
-        assert!(rules_p(&features("x", &[&windowed], 240.0)) < rules_p(&b));
+        assert!(rules_p(&features("x", &[&windowed], 240.0, 0.0)) < rules_p(&b));
     }
 }

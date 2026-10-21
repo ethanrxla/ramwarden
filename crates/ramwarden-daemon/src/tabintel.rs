@@ -336,6 +336,11 @@ impl TabIntel {
             "configured": self.asker.is_some(),
             "weight": self.cfg.weight,
             "cached_answers": cache.len(),
+            "app_answers": self.app_cache.lock().unwrap().iter().map(|(state, (j, _))| serde_json::json!({
+                "about": state.split(" It has shown").next().unwrap_or(state),
+                "needed": j.needed, "safe_quit": j.safe_quit, "relaunch_24h": j.relaunch,
+                "unsaved": j.unsaved, "model": j.model,
+            })).collect::<Vec<_>>(),
             "model": cache.values().map(|(j, _)| j.model.clone()).next(),
             "calls_last_hour": calls,
             "max_calls_per_hour": self.cfg.max_calls_per_hour,
