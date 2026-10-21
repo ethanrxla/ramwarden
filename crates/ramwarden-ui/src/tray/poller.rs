@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::client::{Client, DebloatState, GpuReport, State, TidyState};
+use super::launch::DaemonLauncher;
+use crate::client::{Client, DebloatState, Error, GpuReport, State, TidyState};
 
 /// Everything the window shows, as last fetched.
 #[derive(Clone, Debug, Default)]
@@ -21,6 +22,8 @@ pub struct Snapshot {
     pub debloat: Option<DebloatState>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
+    /// What is being done about it: starting the daemon, or where to look.
+    pub daemon: Option<String>,
     /// The outcome of the last user action, shown until the next one.
     pub message: Option<String>,
     /// An action is in flight.
@@ -59,6 +62,9 @@ impl Poller {
         {
             let (shared, client, repaint) = (shared.clone(), client.clone(), repaint.clone());
             runtime.spawn(async move {
+                // The tray is first in line to start the daemon; the window
+                // only does it when it runs without a tray.
+                let mut launcher = DaemonLauncher::new(Duration::from_secs(if full { 20 } else { 6 }));
                 loop {
                     let (state, tidy) = if full {
                         tokio::join!(client.state(), client.tidy())
@@ -71,8 +77,24 @@ impl Poller {
                             Ok(st) => {
                                 s.state = Some(st);
                                 s.error = None;
+                                s.daemon = None;
+                                launcher.connected();
                             }
-                            Err(e) => s.error = Some(format!("daemon at {}: {e}", client.base())),
+                            Err(e) => {
+                                s.daemon = Some(match &e {
+                                    // Nothing listening, or it did not answer in time.
+                                    Error::Transport(_) => launcher.unreachable(),
+                                    // Something answered, but not with RamWarden's /state.
+                                    _ => format!(
+                                        "Something other than ramwarden-daemon is answering on {} \
+                                         (an old v1 daemon, or a port forwarded from WSL). Find it with \
+                                         `netstat -ano | findstr :{}` and stop it.",
+                                        client.base(),
+                                        client.base().rsplit(':').next().unwrap_or("7823"),
+                                    ),
+                                });
+                                s.error = Some(format!("daemon at {}: {e}", client.base()));
+                            }
                         }
                         if let Ok(t) = tidy {
                             s.tidy = Some(t);

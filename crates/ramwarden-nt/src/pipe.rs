@@ -65,7 +65,43 @@ impl Response {
 ///
 /// An absent service is `Unsupported`, not an error to report loudly: it is
 /// the normal state of an install where the user never added the service.
+///
+/// Bounded in time. A synchronous pipe read has no timeout of its own, and the
+/// daemon's monitor thread calls this from inside a ladder step: a service that
+/// accepted the connection and then never answered stalled the monitor until
+/// its watchdog ended the daemon. The call runs on a worker thread instead; on
+/// timeout that thread is abandoned (it is blocked in a read, holding nothing
+/// else) and the caller gets an error it already knows how to degrade from.
 pub fn call(request: &Request) -> Result<Response> {
+    let timeout = request.timeout();
+    let request = request.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("ramwarden-pipe".into())
+        .spawn(move || {
+            let _ = tx.send(call_blocking(&request));
+        })
+        .map_err(|e| Error::os(format!("pipe thread: {e}")))?;
+    rx.recv_timeout(timeout).unwrap_or_else(|_| {
+        Err(Error::os(format!(
+            "ramwarden-service did not answer within {}s",
+            timeout.as_secs()
+        )))
+    })
+}
+
+impl Request {
+    /// How long a reply may take. Tweaks can restart services or rewrite
+    /// policy; everything else is a single syscall in the service.
+    fn timeout(&self) -> Duration {
+        match self {
+            Request::TweakApply { .. } | Request::TweakRevert { .. } => Duration::from_secs(120),
+            _ => Duration::from_secs(15),
+        }
+    }
+}
+
+fn call_blocking(request: &Request) -> Result<Response> {
     let pipe = open_with_retry()?;
     let mut writer = pipe
         .try_clone()

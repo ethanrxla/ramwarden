@@ -190,6 +190,9 @@ The following are never acted on:
   restores from as SYSTEM therefore cannot be edited by the user.
 - **Without the service** the daemon uses only user-level levers, and
   per-user tweaks still work. This is a normal configuration.
+- **A service call never blocks the daemon indefinitely.** Each call has a
+  deadline (15 s; 120 s for a tweak). A service that does not answer in time
+  is treated like an absent one for that call, so the monitor keeps ticking.
 
 ### Debloat (`ramwarden-debloat`)
 - **The `Tweak` trait.** Each tweak (`detect`, `snapshot`, `apply`, `revert`)
@@ -302,6 +305,19 @@ The following are never acted on:
   while the tray runs opens the window; it never starts a second tray.
 - **The daemon's address** (`http://127.0.0.1:7823/`) shows a page saying it
   is the background service, and where the app is.
+- **A daemon that is not running is started, not waited for.** When nothing
+  answers on `:7823`, the tray starts `ramwarden-daemon.exe` from beside
+  itself after 6 s (the window after 20 s, for when it runs without a tray),
+  under `conhost --headless` exactly as the logon task does, and at most once
+  every 30 s. This covers a logon task that was never registered or that Task
+  Scheduler gave up restarting.
+  - Two launches cannot make two daemons: the daemon binds its port before
+    anything else, and a second copy logs that the port is taken and exits.
+  - Instead of an open-ended "Waiting for the daemon…", the window says what
+    it is doing: starting it, that it exited (and where its log is), that it
+    is not installed beside the app, or that something other than RamWarden
+    holds the port (the v1 daemon, or a port forwarded from WSL).
+  - The client never goes through a proxy: the daemon is always on loopback.
 - **Panels:** Overview, Processes (right-click actions through `menu_for`,
   with confirmation for destructive ones), Privacy & startup, and GPU.
 - **Two processes**, because the UI must not cost memory while closed:

@@ -20,8 +20,9 @@
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 .EXAMPLE
-  # With the GPU predictor and in-process embeddings (needs the CUDA toolkit):
-  scripts\cargo-cuda.cmd build --release -p ramwarden-daemon --features embed,cuda
+  # With the GPU worker (needs the CUDA toolkit). The daemon itself has no CUDA
+  # feature; it starts ramwarden-gpu when there is GPU work.
+  scripts\cargo-cuda.cmd build --release -p ramwarden-ml --features cuda,embed --bin ramwarden-gpu
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 .EXAMPLE
