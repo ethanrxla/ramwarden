@@ -263,3 +263,42 @@ async fn a_web_page_cannot_kill_anything_but_an_extension_can_talk() {
     assert_ne!(send(Some("chrome-extension://abc")).await, 403);
     assert_ne!(send(None).await, 403);
 }
+
+/// The monitor closes tabs while it holds the ladder lock, and `/state` (which
+/// the tray and window poll) waits for that lock on a runtime worker. With every
+/// worker blocked, tokio's timers stop, so the close's own timeouts never fire.
+/// Before 2026-10-20 that held the lock for good and the window sat at "Waiting
+/// for the daemon". The close must give up by the monitor thread's clock.
+#[test]
+fn a_tab_close_under_the_ladder_lock_survives_every_worker_blocking_on_it() {
+    use ramwarden_core::ladder::TabCloser;
+    use std::time::{Duration, Instant};
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut st = state();
+    // Past the startup window, so the wait for a browser is the short one.
+    st.started = Instant::now() - Duration::from_secs(120);
+
+    let ladder = Arc::clone(&st.ladder);
+    let held = ladder.lock().unwrap();
+    for _ in 0..2 {
+        let st = st.clone();
+        rt.spawn(async move { call(st, "/state", "GET", Value::Null).await });
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    let outcome = ramwarden_daemon::monitor::Tabs::new(st.clone(), rt.handle().clone())
+        .with_limit(Duration::from_secs(1))
+        .close_stale("");
+    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    assert!(outcome.did_nothing());
+    assert!(outcome.notes.iter().any(|n| n.contains("did not answer")), "{:?}", outcome.notes);
+
+    drop(held);
+    rt.shutdown_timeout(Duration::from_secs(5));
+}

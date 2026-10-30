@@ -164,6 +164,33 @@ The following are never acted on:
   - On a loopback bind, `Host` must be a loopback name. This blocks DNS
     rebinding.
 
+### The daemon restarts itself when the monitor stalls
+- A watchdog thread checks every 30 s that the monitor has finished a tick. After
+  180 s without one, it logs which phase the monitor is in and since when, starts
+  a replacement daemon, and exits with code 70.
+  - A stuck monitor can hold the ladder or detector lock, which leaves every HTTP
+    handler queued behind it. The window then shows "Waiting for the daemon" and
+    no error is logged anywhere, so a fresh process is the only recovery.
+  - A gap of more than 90 s between two looks means the machine was asleep. It
+    resets the clock instead of counting as a stall.
+- **The monitor never waits on the server runtime without its own deadline while
+  it holds the ladder lock.** The tab rung closes tabs under that lock. Handlers
+  such as `/state` wait for the lock on a runtime worker, and each poll a client
+  abandons keeps its worker. Once every worker is blocked, nothing drives tokio's
+  timers, so a tokio timeout inside the step never fires. The tab close therefore
+  runs as a task that the monitor thread waits for by its own clock, for at most
+  40 s. On expiry the outcome is `refused`.
+- **The replacement starts the way logon starts it:** through
+  `ramwarden-daemon.cmd` when installed, otherwise the executable, with the same
+  arguments. It is spawned directly, never through `cmd /c` with a hand-built
+  command line, and with a hidden console rather than none.
+  - The first version did both of those, and no replacement ever ran (2026-10-13,
+    -19 and -20). Rust escapes inner quotes as `\"`, which cmd.exe does not
+    understand. `timeout` also exits at once without a console.
+- **The replacement waits for the port.** If `:7823` is still held, it retries the
+  bind for up to 15 s before it gives up, and logs the failure to its log file.
+  This also covers a logon start that races a daemon that is still exiting.
+
 ### `ramwarden-service`
 - Runs as LocalSystem and listens on `\\.\pipe\ramwarden`.
 - **Access:** the pipe DACL (`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`)
@@ -191,8 +218,8 @@ The following are never acted on:
 - **Without the service** the daemon uses only user-level levers, and
   per-user tweaks still work. This is a normal configuration.
 - **A service call never blocks the daemon indefinitely.** Each call has a
-  deadline (15 s; 120 s for a tweak). A service that does not answer in time
-  is treated like an absent one for that call, so the monitor keeps ticking.
+  5 s deadline. A service that does not answer in time is treated like an
+  absent one for that call, so the monitor keeps ticking.
 
 ### Debloat (`ramwarden-debloat`)
 - **The `Tweak` trait.** Each tweak (`detect`, `snapshot`, `apply`, `revert`)
@@ -311,8 +338,8 @@ The following are never acted on:
   under `conhost --headless` exactly as the logon task does, and at most once
   every 30 s. This covers a logon task that was never registered or that Task
   Scheduler gave up restarting.
-  - Two launches cannot make two daemons: the daemon binds its port before
-    anything else, and a second copy logs that the port is taken and exits.
+  - Two launches cannot make two daemons: a second copy fails to bind the
+    port within its 15 s retry, logs it, and exits.
   - Instead of an open-ended "Waiting for the daemon…", the window says what
     it is doing: starting it, that it exited (and where its log is), that it
     is not installed beside the app, or that something other than RamWarden
