@@ -1,7 +1,7 @@
 # Branches
 
-> Proposed layout, pending the owner's sign-off. Nothing has been renamed or
-> deleted yet.
+> Layout agreed on 2026-10-30. `mac`, `windows` and `linux` are cut from
+> `main` once the macos-sync reconcile (PR #3) merges.
 
 | Branch    | Role |
 |-----------|------|
@@ -21,7 +21,7 @@ day so the lines do not drift.
 |-------|---------|
 | `macos-sync` (Windows + macOS + Linux, 27 commits ahead of main) | reconciled with PR #3, then merged into `main`; `mac` is cut from it |
 | `windows` | kept as the `windows` line after PR #2 merges; then reset to follow `main` |
-| `rust-rewrite` | identical to `main`, deleted |
+| `rust-rewrite` | was identical to `main`; deleted 2026-10-30 |
 | PR #1 (systemd units) | merged into `main`, reaches `linux` |
 | PR #2 (start the daemon) | merged into `windows`, then `main` |
 | PR #3 (LRU + Jev) | reconciled with `macos-sync`, merged into `main` |
