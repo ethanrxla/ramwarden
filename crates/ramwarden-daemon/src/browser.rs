@@ -348,6 +348,22 @@ mod selection_tests {
 }
 
 /// Manual close does not require automatic eviction eligibility.
+/// Tabs the sweep may close outright: idle at least `close_after_hours`, and
+/// unlikely to be wanted back (`p_return`, Jev-adjusted where Jev has answered,
+/// below `close_below_return`). Only rows that already passed every unload guard
+/// (`candidate`) or were unloaded earlier qualify, so a protected, recent,
+/// loading or model-vetoed tab is never closed. Most-redundant first.
+pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
+    let min_idle = (cfg.close_after_hours.max(1.0) * 60.0) as i64;
+    let mut picked: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.closeable && matches!(r.status, "candidate" | "unloaded"))
+        .filter(|r| r.inactive_minutes >= min_idle && r.p_return < cfg.close_below_return)
+        .collect();
+    picked.sort_by(|a, b| a.p_return.total_cmp(&b.p_return).then(b.inactive_minutes.cmp(&a.inactive_minutes)));
+    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+}
+
 pub fn can_close(tab: &Tab) -> bool {
     !tabpolicy::is_protected(&tab.url)
         && !tab.incognito
@@ -360,6 +376,38 @@ pub fn can_close(tab: &Tab) -> bool {
 #[cfg(test)]
 mod manual_close_tests {
     use super::*;
+
+    fn idle(id: i64, url: &str, minutes: i64, discarded: bool) -> Tab {
+        serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":minutes,
+            "active":false,"pinned":false,"audible":false,"discarded":discarded,"autoDiscardable":true,
+            "status":"complete","discardSupported":true})).unwrap()
+    }
+
+    #[test]
+    fn the_sweep_closes_long_idle_tabs_and_keeps_recent_or_protected_ones() {
+        let cfg = ramwarden_core::config::Tabs::default();
+        let mut pinned = idle(4, "https://example.org/pinned", 10_000, false);
+        pinned.pinned = Some(true);
+        let tabs = vec![
+            idle(1, "https://example.org/old", 10_000, false),
+            idle(2, "https://example.org/unloaded-long-ago", 10_000, true),
+            idle(3, "https://example.org/yesterday-morning", 120, false),
+            pinned,
+            idle(5, "https://accounts.google.com/x", 10_000, false),
+        ];
+        let rows = rank("b", &tabs, 30);
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn the_sweep_respects_its_per_sweep_cap() {
+        let cfg = ramwarden_core::config::Tabs { max_close_per_sweep: 2, ..Default::default() };
+        let tabs: Vec<Tab> = (1..=6).map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false)).collect();
+        assert_eq!(close_candidates(&rank("b", &tabs, 30), &cfg).len(), 2);
+    }
+
     #[test]
     fn legacy_and_recent_tabs_can_be_selected_for_explicit_closing() {
         let mut tab: Tab = serde_json::from_value(

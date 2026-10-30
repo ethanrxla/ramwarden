@@ -62,3 +62,19 @@ test('a sign-in word deep in the path no longer blocks an unload, but a sign-in 
     assert.equal(f.discards.length,0, url);
   }
 });
+test('Firefox tabs without autoDiscardable are still unloadable', async()=>{
+  const f=fixture({autoDiscardable:undefined});
+  assert.deepEqual(Array.from(await f.context.discardTabs(command)),[7]);
+  f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+  assert.equal((await f.context.buildTabReport({}))[0].autoDiscardable,true);
+});
+test('closing answers every command, skips guarded tabs and saves what closed', async()=>{
+  for (const [override, expected] of [[{}, [7]], [{pinned:true}, []], [{url:'https://accounts.google.com/x'}, []]]) {
+    const f=fixture(override); let saved=null; const removed=[];
+    f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>{if (v.releasedTabs) saved=v.releasedTabs; cb?.();};
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    assert.deepEqual(Array.from(await f.context.closeTabs([7])), expected);
+    assert.deepEqual(removed, expected);
+    assert.equal(saved?.[0]?.url, expected.length ? f.tab.url : undefined);
+  }
+});

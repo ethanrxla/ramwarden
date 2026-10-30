@@ -29,3 +29,11 @@ release_below = 1.0
 # application. Add names here (as `ps -o comm` shows them) to opt an app in, e.g.
 #   watchlist = ["Discord", "Slack"]
 watchlist = []
+
+[tabs]
+# Housekeeping that runs at any memory pressure, not only when RAM is short.
+sweep_minutes = 5          # unload idle tabs this often; 0 turns the sweep off
+close = "dry-run"          # off | dry-run (log what would close) | live
+close_after_hours = 24     # a tab must be idle this long before it can be closed
+close_below_return = 0.2   # and its return chance (Jev-adjusted) below this
+max_close_per_sweep = 10   # closed tabs are listed in the extension popup for reopening
