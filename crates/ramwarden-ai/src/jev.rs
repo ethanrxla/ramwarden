@@ -303,6 +303,26 @@ mod tests {
         }
     }
 
+    /// A real reply from jev-1.14.0 (2026-10-30) to the request
+    /// `request("jev-latest", Intent::Kill, ...)` builds for Preview, Discord
+    /// and KeePassXC, so the parsing is pinned to what the API actually sends.
+    #[test]
+    fn a_live_reply_parses_into_the_expected_verdicts() {
+        let r: Value = serde_json::from_str(r#"{"model":"jev-1.14.0","answers":{"kind_0":{"type":"choice","choice":"routine","confidence":0.89,"probabilities":{"important":0.08,"protected":0.0,"routine":0.92,"sensitive":0.0}},"kind_1":{"type":"choice","choice":"routine","confidence":0.71,"probabilities":{"important":0.01,"protected":0.0,"routine":0.78,"sensitive":0.21}},"kind_2":{"type":"choice","choice":"sensitive","confidence":0.99,"probabilities":{"important":0.0,"protected":0.01,"routine":0.0,"sensitive":0.99}},"return_0":{"type":"noul","noul":0.16},"return_1":{"type":"noul","noul":0.48},"return_2":{"type":"noul","noul":0.44}},"usage":{"input_tokens":939,"output_tokens":194}}"#).unwrap();
+        let cands = [cand("Preview", 0), cand("Discord", 1), cand("KeePassXC", 2)];
+
+        // Kill bar (85%): Preview at 84% just misses; nothing is killed.
+        let kill = decide(&r, Intent::Kill, &cands, 0.85);
+        assert_eq!(kill[0].reason, "Jev is not convinced (84%)");
+        assert!(kill.iter().all(|j| !j.close));
+
+        // Suspend bar (70%): Preview goes, Discord (52%) stays, KeePassXC is sensitive.
+        let suspend = decide(&r, Intent::Suspend, &cands, 0.7);
+        assert!(suspend[0].close);
+        assert!(!suspend[1].close);
+        assert_eq!(suspend[2].reason, "Jev says it is sensitive");
+    }
+
     #[test]
     fn a_missing_answer_is_a_veto() {
         let r = reply(json!({

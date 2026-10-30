@@ -24,6 +24,7 @@ use crate::pattern;
 use crate::roles::classify;
 use crate::signals::{Protection, Signals, Verdict};
 use crate::structures::Lru;
+use crate::structures::circular::has_cycle;
 
 /// Resident size below which PSS is approximated rather than measured.
 ///
@@ -452,13 +453,19 @@ fn propagate(sigs: &mut HashMap<i32, Signals>, parents: &HashMap<i32, i32>) {
         .map(|s| (s.pid, s.name.clone(), s.pid))
         .collect();
 
+    let parent = |p: i32| parents.get(&p).copied().filter(|&pp| pp != 0);
+
     for (pid, name, from_pid) in seeds {
-        let mut seen: HashSet<i32> = HashSet::from([pid]);
+        // A parent map read from /proc mid-churn can contain a cycle (a pid
+        // reused while we were reading). Floyd's check costs no allocation, so
+        // the visited set is only built for the rare chain that needs it.
+        let cyclic = has_cycle(pid, parent);
+        let mut seen: HashSet<i32> = if cyclic { HashSet::from([pid]) } else { HashSet::new() };
         let mut cur = parents.get(&pid).copied().unwrap_or(0);
-        // The `seen` set guards against a cycle in a malformed parent map,
-        // which would otherwise spin forever.
         while cur != 0 && !seen.contains(&cur) && sigs.contains_key(&cur) {
-            seen.insert(cur);
+            if cyclic {
+                seen.insert(cur);
+            }
             if let Some(anc) = sigs.get_mut(&cur)
                 && anc.active_descendant.is_none()
             {

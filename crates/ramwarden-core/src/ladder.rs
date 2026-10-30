@@ -41,7 +41,7 @@ use crate::detector::Detector;
 use crate::history::{History, NewAction};
 use crate::judge::{Candidate, Intent, Judge};
 use crate::signals::{Signals, Verdict};
-use crate::structures::{LinkedQueue, LinkedStack};
+use crate::structures::{CircularList, LinkedQueue, LinkedStack};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
 ///
@@ -239,6 +239,10 @@ pub struct Ladder {
     /// What the ladder suspended, newest on top, so "undo" resumes the most
     /// recent first.
     undo: LinkedStack<String>,
+    /// Idle processes taking turns at targeted page-out. Always picking the
+    /// largest three meant paging out the same already-cold processes every
+    /// tick; going round the circle reaches every idle process in turn.
+    pageout_turns: CircularList<i32>,
     last_tabs: Option<Instant>,
 }
 
@@ -251,6 +255,7 @@ impl Ladder {
             pending_kill: None,
             kill_queue: LinkedQueue::new(),
             undo: LinkedStack::new(),
+            pageout_turns: CircularList::new(),
             last_tabs: None,
         }
     }
@@ -589,11 +594,12 @@ impl Ladder {
 
     // ── Rung 1: targeted page-out, then a soft cap ──────────────────────────
 
-    /// Page out the cold regions of the largest idle processes.
+    /// Page out the cold regions of idle processes, a few per tick, taking turns.
     ///
-    /// Runs after cgroup reclaim has taken the bulk, and only reaches the
-    /// biggest few — walking full `smaps` costs a syscall per mapping, and a
-    /// browser has thousands. Without `CAP_SYS_NICE` every call is refused and
+    /// Runs after cgroup reclaim has taken the bulk, and only reaches a few per
+    /// tick — walking full `smaps` costs a syscall per mapping, and a browser has
+    /// thousands. Which few comes from a circular list, so successive ticks work
+    /// round every idle process instead of re-paging the same largest three. Without `CAP_SYS_NICE` every call is refused and
     /// the rung contributes nothing, which is the expected configuration.
     fn do_page_out(&mut self, w: &World<'_>, report: &mut Report) {
         if !self.act.can_page_out() {
@@ -614,7 +620,21 @@ impl Ladder {
             .collect();
         idle.sort_by_key(|(_, _, pss)| std::cmp::Reverse(*pss));
 
-        for (pid, name, _) in idle.into_iter().take(PAGEOUT_LIMIT) {
+        // Keep the circle in step with what is idle now; newcomers join at the
+        // back, largest first.
+        self.pageout_turns.retain(|pid| idle.iter().any(|(p, _, _)| p == pid));
+        for (pid, _, _) in &idle {
+            if !self.pageout_turns.iter().any(|p| p == pid) {
+                self.pageout_turns.insert_last(*pid);
+            }
+        }
+        let turns = PAGEOUT_LIMIT.min(self.pageout_turns.len());
+        let picked: Vec<i32> = (0..turns).filter_map(|_| self.pageout_turns.turn().copied()).collect();
+
+        for pid in picked {
+            let Some((_, name, _)) = idle.iter().find(|(p, _, _)| *p == pid).cloned() else {
+                continue;
+            };
             let outcome = self.act.page_out(pid, COLD_RATIO, COLD_VMA_FLOOR);
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("pageout", format!("{name} (pid {pid})"), outcome));
