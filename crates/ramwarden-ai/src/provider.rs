@@ -16,7 +16,10 @@
 
 use std::collections::HashSet;
 
+use std::sync::{Arc, OnceLock};
+
 use crate::client::{Nim, Ollama};
+use crate::embedder::TextEmbedder;
 use crate::prompt::{self, Context, Dropped, Recommendation};
 use crate::rerank;
 use crate::vram;
@@ -78,6 +81,8 @@ pub struct Provider {
     pub prefer: Prefer,
     /// Skip the local model when the GPU is already full of the user's work.
     pub respect_vram: bool,
+    /// An in-process embedder, preferred over Ollama when attached.
+    pub local_embedder: OnceLock<Arc<dyn TextEmbedder>>,
 }
 
 impl Provider {
@@ -197,14 +202,34 @@ impl Provider {
         if goal.trim().is_empty() || tabs.is_empty() {
             return None;
         }
-        let o = self.ollama.as_ref()?;
 
         let docs: Vec<String> = tabs
             .iter()
             .map(|(_, title, url)| rerank::tab_text(title, url))
             .collect();
-        let goal_vector = o.embed_query(goal).await.ok()?;
-        let doc_vectors = o.embed(&docs).await.ok()?;
+        let (goal_vector, doc_vectors) = match self.local_embedder.get() {
+            Some(local) => {
+                let local = local.clone();
+                let query = rerank::prefix_query(local.model(), goal);
+                let docs = rerank::prefix_documents(local.model(), &docs);
+                let mut all = vec![query];
+                all.extend(docs);
+                let mut vectors = tokio::task::spawn_blocking(move || local.embed(&all))
+                    .await
+                    .ok()?
+                    .inspect_err(|e| tracing::warn!("local embedder failed: {e}"))
+                    .ok()?;
+                if vectors.is_empty() {
+                    return None;
+                }
+                let goal_vector = vectors.remove(0);
+                (goal_vector, vectors)
+            }
+            None => {
+                let o = self.ollama.as_ref()?;
+                (o.embed_query(goal).await.ok()?, o.embed(&docs).await.ok()?)
+            }
+        };
         if goal_vector.is_empty() || doc_vectors.len() != docs.len() {
             tracing::debug!("embedding count mismatch — skipping relevance");
             return None;
@@ -322,6 +347,7 @@ mod tests {
             cloud_enabled: cloud,
             prefer: Prefer::Local,
             respect_vram: true,
+            local_embedder: Default::default(),
         }
     }
 
@@ -383,6 +409,7 @@ mod tests {
             cloud_enabled: false,
             prefer: Prefer::Cloud,
             respect_vram: true,
+            local_embedder: Default::default(),
         };
         let ctx = Context {
             psi_some: 10.0,

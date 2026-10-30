@@ -68,9 +68,26 @@ pub struct Tab {
     pub status: Option<String>,
     #[serde(default, rename = "discardSupported")]
     pub discard_supported: Option<bool>,
+    /// JavaScript millisecond timestamps of the last activations of this tab,
+    /// oldest first. Absent from older extensions.
+    #[serde(default, deserialize_with = "lenient_f64_list")]
+    pub activations: Vec<f64>,
 }
 
 /// Accept an integer or a float where an integer is wanted, rounding.
+/// A list of numbers where `null` or a malformed value means "none": one odd
+/// field must not discard a whole tab report.
+fn lenient_f64_list<'de, D>(d: D) -> std::result::Result<Vec<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_f64()).collect(),
+        _ => Vec::new(),
+    })
+}
+
 fn lenient_i64<'de, D>(d: D) -> std::result::Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,

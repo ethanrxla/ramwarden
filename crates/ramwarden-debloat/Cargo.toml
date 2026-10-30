@@ -1,0 +1,27 @@
+[package]
+name    = "ramwarden-debloat"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Reversible Windows privacy and background tweaks: every change snapshotted first, every change revertible."
+
+[[bin]]
+name = "ramwarden-debloat"
+path = "src/main.rs"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+toml       = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+ramwarden-nt = { path = "../ramwarden-nt" }
+rusqlite = { workspace = true }
+winreg   = { workspace = true }
+windows  = { workspace = true }
+tracing  = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

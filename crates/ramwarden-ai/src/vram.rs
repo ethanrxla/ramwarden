@@ -140,6 +140,15 @@ pub fn processes(index: u32) -> Vec<GpuProcess> {
         }
     }
 
+    // Under WDDM the driver reports every process as "unavailable", so NVML
+    // attributes nothing; Windows' own counters do.
+    #[cfg(windows)]
+    if by_pid.is_empty()
+        && let Ok(m) = ramwarden_nt::gpu::dedicated_by_pid()
+    {
+        by_pid = m;
+    }
+
     let mut out: Vec<GpuProcess> = by_pid
         .into_iter()
         .map(|(pid, used)| GpuProcess { pid, used })

@@ -89,6 +89,20 @@ struct OllamaEmbed {
 }
 
 #[derive(Deserialize)]
+struct OllamaPs {
+    #[serde(default)]
+    models: Vec<OllamaRunning>,
+}
+
+#[derive(Deserialize)]
+struct OllamaRunning {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    size_vram: u64,
+}
+
+#[derive(Deserialize)]
 struct OllamaTags {
     #[serde(default)]
     models: Vec<OllamaTag>,
@@ -133,6 +147,47 @@ impl Ollama {
         }
         let tags: OllamaTags = serde_json::from_str(&body).map_err(|e| Error::Reply(e.to_string()))?;
         Ok(tags.models.into_iter().map(|m| m.name).collect())
+    }
+
+    /// Models currently loaded, with the VRAM each holds.
+    pub async fn loaded(&self) -> Result<Vec<crate::models::LoadedModel>> {
+        let r = self
+            .http
+            .get(format!("{}/api/ps", self.host))
+            .send()
+            .await
+            .map_err(transport)?;
+        let ps: OllamaPs = r.json().await.map_err(|e| Error::Reply(e.to_string()))?;
+        Ok(ps
+            .models
+            .into_iter()
+            .map(|m| crate::models::LoadedModel {
+                host: "ollama",
+                name: m.name,
+                bytes: Some(m.size_vram),
+            })
+            .collect())
+    }
+
+    /// Unload a model now: a generate request with `keep_alive: 0` and no
+    /// prompt is Ollama's documented way to evict it.
+    pub async fn unload(&self, model: &str) -> Result<()> {
+        let r = self
+            .http
+            .post(format!("{}/api/generate", self.host))
+            .json(&serde_json::json!({"model": model, "keep_alive": 0}))
+            .send()
+            .await
+            .map_err(transport)?;
+        if r.status().is_success() {
+            Ok(())
+        } else {
+            Err(Error::Status {
+                service: "ollama",
+                status: r.status().as_u16(),
+                body: String::new(),
+            })
+        }
     }
 
     /// Whether both configured models are actually present.

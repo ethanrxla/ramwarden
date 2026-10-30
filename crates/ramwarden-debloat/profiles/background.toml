@@ -1,0 +1,74 @@
+name = "background"
+description = "Apps and services that sit in memory from boot without being asked for."
+
+# ── Edge, even when it is not your browser ───────────────────────────────────
+
+[[tweak]]
+id = "background.edge-startup-boost"
+description = "Edge preloads itself at sign-in to open faster"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Edge'
+value = "StartupBoostEnabled"
+dword = 0
+
+[[tweak]]
+id = "background.edge-background-mode"
+description = "Edge keeps running after its last window closes"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Edge'
+value = "BackgroundModeEnabled"
+dword = 0
+
+# ── Launchers that start with Windows ────────────────────────────────────────
+# Only the launch-at-sign-in entry is switched off, exactly as Task Manager's
+# Startup tab does. The apps, their updates and anti-cheat are untouched:
+# Riot Vanguard's own entry is on the forbidden list.
+
+[[tweak]]
+id = "background.epic-startup"
+description = "Epic Games Launcher at sign-in (start it when you play)"
+kind = "startup"
+run = "EpicGamesLauncher"
+
+[[tweak]]
+id = "background.riot-startup"
+description = "Riot Client at sign-in (Vanguard itself is untouched)"
+kind = "startup"
+run = "RiotClient"
+
+[[tweak]]
+id = "background.lmstudio-startup"
+description = "LM Studio running as a background service from sign-in"
+kind = "startup"
+run = "electron.app.LM Studio"
+optional = true
+
+[[tweak]]
+id = "background.discord-startup"
+description = "Discord at sign-in"
+kind = "startup"
+run = "Discord"
+optional = true
+
+[[tweak]]
+id = "background.onedrive-startup"
+description = "OneDrive at sign-in (files stop syncing until you open it)"
+kind = "startup"
+run = "OneDrive"
+optional = true
+
+# ── Services nobody on a desktop asked for ───────────────────────────────────
+
+[[tweak]]
+id = "background.geolocation"
+description = "Geolocation service: start only when an app asks"
+kind = "service"
+service = "lfsvc"
+start = "manual"
+
+[[tweak]]
+id = "background.maps-broker"
+description = "Downloaded Maps Manager: start only when Maps is used"
+kind = "service"
+service = "MapsBroker"
+start = "manual"

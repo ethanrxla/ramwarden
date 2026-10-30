@@ -6,16 +6,26 @@
 //! user's unsaved work.
 
 pub mod actuator;
+pub mod apps;
 pub mod config;
-pub mod desktop;
-pub mod exec;
-pub mod helper;
-pub mod history;
-pub mod ladder;
-pub mod terminals;
-pub mod workspaces;
+pub mod describe;
 pub mod detector;
+pub mod exec;
+pub mod history;
+pub mod host;
+pub mod judge;
+pub mod ladder;
 pub mod pattern;
-pub mod private;
+pub mod rank;
 pub mod roles;
 pub mod signals;
+pub mod structures;
+pub mod tidy;
+pub mod workspaces;
+
+// These read `/proc` directly: terminal sessions and private-browsing
+// launchers have no platform-neutral shape yet.
+#[cfg(target_os = "linux")]
+pub mod private;
+#[cfg(target_os = "linux")]
+pub mod terminals;

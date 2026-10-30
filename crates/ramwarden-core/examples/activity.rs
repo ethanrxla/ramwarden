@@ -5,8 +5,7 @@
 //!
 //! Run with: cargo run -p ramwarden-core --example activity
 
-use ramwarden_core::{desktop::DesktopProbe, detector::Detector, signals::Verdict};
-use ramwarden_kernel::Root;
+use ramwarden_core::{detector::Detector, host, signals::Verdict};
 
 fn mb(b: u64) -> String {
     format!("{:.0}", b as f64 / 1e6)
@@ -18,8 +17,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.to_string())
         .collect();
 
-    let mut det = Detector::new(Root::system());
-    let mut probe = DesktopProbe::new();
+    let platform = host::platform();
+    let mut det = Detector::new(platform.processes());
+    let mut probe = platform.desktop();
 
     let d = probe.sample();
     det.sample(&d)?;
@@ -30,14 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let t = det.totals();
     println!(
-        "totals (PSS)   protected {} MB   in use {} MB   idle {} MB   across {} processes\n",
+        "totals (proportional)   protected {} MB   in use {} MB   idle {} MB   across {} processes\n",
         mb(t["PROTECTED"]), mb(t["IN_USE"]), mb(t["IDLE"]), det.snapshot().len()
     );
 
     let mut all: Vec<_> = det.snapshot().values().collect();
     all.sort_by_key(|s| std::cmp::Reverse(s.pss));
 
-    println!("{:<22} {:>7} {:>7} {:<10} {:<11} WHY", "NAME", "PSS", "RSS", "VERDICT", "ROLE");
+    println!("{:<22} {:>7} {:>7} {:<10} {:<11} WHY", "NAME", "OWNED", "RESID", "VERDICT", "ROLE");
     println!("{}", "-".repeat(118));
     for s in all.iter().filter(|s| s.pss > 150_000_000) {
         println!(
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nGATE CHECKS:");
-    for name in ["cosmic-comp", "dockerd", "brave", "Discord", "ollama", "not-running"] {
+    for name in ["cosmic-comp", "dwm", "dockerd", "brave", "Discord", "ollama", "not-running"] {
         let d = det.may_suspend(name, &watchlist);
         println!(
             "  {:<14} {:<7} {}",

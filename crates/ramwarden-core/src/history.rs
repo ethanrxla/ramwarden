@@ -25,6 +25,35 @@ use rusqlite::{Connection, params};
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
+/// A tab RamWarden unloaded, as it looked when that decision was made.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewUnload {
+    pub browser: String,
+    pub tab_id: i64,
+    pub host: String,
+    pub class: String,
+    pub idle_minutes: i64,
+    pub p_return: f64,
+    pub est_mb: i64,
+    pub frecency: f64,
+}
+
+/// One unload with its eventual outcome: the training example for any model of
+/// "will the user come back?".
+#[derive(Clone, Debug, PartialEq)]
+pub struct Outcome {
+    pub host: String,
+    pub class: String,
+    pub idle_minutes: i64,
+    pub p_return: f64,
+    pub est_mb: i64,
+    pub frecency: f64,
+    /// Whether the user returned within the horizon.
+    pub returned: bool,
+    /// Seconds from unload to return, when they did.
+    pub after_seconds: Option<i64>,
+}
+
 /// A tab RamWarden closed. Column names match v1's table exactly.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClosedTab {
@@ -193,6 +222,24 @@ impl History {
                  notes       TEXT NOT NULL DEFAULT ''
              );
              CREATE INDEX IF NOT EXISTS actions_at ON actions(at DESC);
+             -- What happened after RamWarden unloaded a tab: did the user come back?
+             -- Only the host is kept, never the URL or title, so these rows are safe
+             -- to feed to a model later. Times are Unix seconds.
+             CREATE TABLE IF NOT EXISTS tab_outcomes (
+                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                 browser       TEXT    NOT NULL,
+                 tab_id        INTEGER NOT NULL,
+                 host          TEXT    NOT NULL,
+                 class         TEXT    NOT NULL,
+                 idle_minutes  INTEGER NOT NULL,
+                 p_return      REAL    NOT NULL,
+                 est_mb        INTEGER NOT NULL,
+                 frecency      REAL    NOT NULL DEFAULT 0,
+                 unloaded_at   INTEGER NOT NULL,
+                 returned_at   INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS tab_outcomes_pending
+                 ON tab_outcomes(browser, returned_at);
              CREATE TABLE IF NOT EXISTS signals (
                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
                  at          TEXT    NOT NULL,
@@ -266,6 +313,91 @@ impl History {
         }
         tx.commit()?;
         Ok(tabs.len())
+    }
+
+    // ── Unload outcomes ─────────────────────────────────────────────────────
+
+    pub fn record_unload(&self, u: &NewUnload, now: i64) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO tab_outcomes
+               (browser, tab_id, host, class, idle_minutes, p_return, est_mb, frecency, unloaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![u.browser, u.tab_id, u.host, u.class, u.idle_minutes, u.p_return, u.est_mb, u.frecency, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Unloads in `browser` whose outcome is not known yet: `(tab_id, host, unloaded_at)`.
+    pub fn pending_unloads(&self, browser: &str) -> Result<Vec<(i64, String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tab_id, host, unloaded_at FROM tab_outcomes
+              WHERE browser = ?1 AND returned_at IS NULL",
+        )?;
+        let rows = stmt.query_map([browser], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// The user came back to this tab. Marks the newest pending unload of that tab id.
+    pub fn mark_returned(&self, browser: &str, tab_id: i64, now: i64) -> Result<usize> {
+        self.conn.execute(
+            "UPDATE tab_outcomes SET returned_at = ?3
+              WHERE id = (SELECT id FROM tab_outcomes
+                           WHERE browser = ?1 AND tab_id = ?2 AND returned_at IS NULL
+                           ORDER BY unloaded_at DESC LIMIT 1)",
+            params![browser, tab_id, now],
+        )
+    }
+
+    /// Unloads whose answer is known: returned within `horizon_secs` (label 1), or
+    /// not returned and the horizon has passed (label 0). Still-open questions are
+    /// left out.
+    pub fn labelled_outcomes(&self, horizon_secs: i64, now: i64) -> Result<Vec<Outcome>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT host, class, idle_minutes, p_return, est_mb, frecency, unloaded_at, returned_at
+               FROM tab_outcomes ORDER BY unloaded_at",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let unloaded: i64 = r.get(6)?;
+            let returned: Option<i64> = r.get(7)?;
+            Ok((
+                Outcome {
+                    host: r.get(0)?,
+                    class: r.get(1)?,
+                    idle_minutes: r.get(2)?,
+                    p_return: r.get(3)?,
+                    est_mb: r.get(4)?,
+                    frecency: r.get(5)?,
+                    returned: false,
+                    after_seconds: None,
+                },
+                unloaded,
+                returned,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (mut o, unloaded, returned) = row?;
+            match returned {
+                Some(t) if t - unloaded <= horizon_secs => {
+                    o.returned = true;
+                    o.after_seconds = Some(t - unloaded);
+                }
+                // Came back, but after the horizon: a "no" for this horizon.
+                Some(_) => {}
+                None if now - unloaded >= horizon_secs => {}
+                None => continue,
+            }
+            out.push(o);
+        }
+        Ok(out)
+    }
+
+    pub fn count_outcomes(&self) -> Result<i64> {
+        self.conn.query_row("SELECT COUNT(*) FROM tab_outcomes", [], |r| r.get(0))
+    }
+
+    pub fn prune_outcomes(&self, days: i64, now: i64) -> Result<usize> {
+        self.conn.execute("DELETE FROM tab_outcomes WHERE unloaded_at < ?1", [now - days * 86_400])
     }
 
     pub fn recent_tabs(&self, limit: u32) -> Result<Vec<ClosedTab>> {
@@ -483,7 +615,7 @@ impl History {
 }
 
 /// Seconds since the Unix epoch.
-fn unix_now() -> u64 {
+pub fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1013,5 +1145,51 @@ mod tests {
         let a = "2026-09-30T23:59:59.000000";
         let b = "2026-10-01T00:00:00.000000";
         assert!(a < b);
+    }
+
+    #[test]
+    fn outcomes_are_labelled_by_whether_the_user_came_back_within_the_horizon() {
+        let h = History::in_memory().unwrap();
+        let u = |tab: i64, host: &str| NewUnload {
+            browser: "b".into(),
+            tab_id: tab,
+            host: host.into(),
+            class: "page".into(),
+            idle_minutes: 300,
+            p_return: 0.2,
+            est_mb: 120,
+            frecency: 0.0,
+        };
+        let day = 86_400;
+        h.record_unload(&u(1, "a.com"), 1_000).unwrap(); // returns after an hour
+        h.record_unload(&u(2, "b.com"), 1_000).unwrap(); // never returns
+        h.record_unload(&u(3, "c.com"), 1_000).unwrap(); // returns after 3 days
+        h.record_unload(&u(4, "d.com"), 1_000 + 2 * day).unwrap(); // still open
+        assert_eq!(h.pending_unloads("b").unwrap().len(), 4);
+        assert_eq!(h.mark_returned("b", 1, 1_000 + 3_600).unwrap(), 1);
+        assert_eq!(h.mark_returned("b", 3, 1_000 + 3 * day).unwrap(), 1);
+        assert_eq!(h.mark_returned("b", 99, 5_000).unwrap(), 0, "unknown tab: nothing changes");
+        assert_eq!(h.pending_unloads("other").unwrap().len(), 0, "scoped by browser");
+
+        let now = 1_000 + 2 * day + 600;
+        let labelled = h.labelled_outcomes(day, now).unwrap();
+        let by_host = |host: &str| labelled.iter().find(|o| o.host == host);
+        assert_eq!(by_host("a.com").map(|o| (o.returned, o.after_seconds)), Some((true, Some(3_600))));
+        assert_eq!(by_host("b.com").map(|o| o.returned), Some(false), "horizon passed without a return");
+        assert_eq!(by_host("c.com").map(|o| o.returned), Some(false), "came back, but after the horizon");
+        assert!(by_host("d.com").is_none(), "its answer is not known yet");
+        assert_eq!(h.count_outcomes().unwrap(), 4);
+    }
+
+    #[test]
+    fn a_return_marks_only_the_newest_pending_unload_of_that_tab() {
+        let h = History::in_memory().unwrap();
+        let u = NewUnload { browser: "b".into(), tab_id: 7, host: "x.com".into(), class: "feed".into(),
+            idle_minutes: 90, p_return: 0.4, est_mb: 250, frecency: 1.0 };
+        h.record_unload(&u, 100).unwrap();
+        h.record_unload(&u, 200).unwrap();
+        h.mark_returned("b", 7, 300).unwrap();
+        let pending = h.pending_unloads("b").unwrap();
+        assert_eq!(pending, vec![(7, "x.com".to_string(), 100)]);
     }
 }
