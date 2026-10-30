@@ -28,6 +28,7 @@ ramwarden-helper     Linux setcap page-out shim
 ramwarden-service    Windows SYSTEM service (privileged ops over a named pipe)
 ramwarden-debloat    reversible Windows tweaks and profiles
 ramwarden-ui         client + model shared; GTK view (Linux), egui + tray (Windows)
+ramwarden-cloud      hosted tier's MongoDB Atlas storage (accounts, passes, usage); no daemon deps
 ```
 
 The rules:
