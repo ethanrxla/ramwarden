@@ -74,8 +74,8 @@ wrong loses work.
 
 - The PR does one thing and its title says what changes for the user.
 - Behaviour changes are reflected in `README.md` and `ramwarden.toml`.
-- Memory or CPU cost of RamWarden itself is not worse (the daemon targets
-  under 30 MB RSS and under 1% CPU at idle).
+- Memory or CPU cost of RamWarden itself is not worse; note the daemon's
+  idle RSS and CPU in the PR when touching the monitor loop.
 - The browser extension and the daemon agree on protocol changes; both sides
   ship in the same PR.
 - Logs are useful and not noisy: one line per decision, refusals logged once
