@@ -53,7 +53,7 @@ pub fn sockets() -> Sockets {
         // state, local addr, local port, remote addr, remote port, pid.
         let words: &[u32] = &buf;
         let n = words.first().copied().unwrap_or(0) as usize;
-        for row in words[1..].chunks_exact(6).take(n) {
+        for row in words[1..].as_chunks::<6>().0.iter().take(n) {
             out.add(row[0], row[2], row[5]);
         }
     }
@@ -63,7 +63,7 @@ pub fn sockets() -> Sockets {
         // remote port, state, pid.
         let words: &[u32] = &buf;
         let n = words.first().copied().unwrap_or(0) as usize;
-        for row in words[1..].chunks_exact(14).take(n) {
+        for row in words[1..].as_chunks::<14>().0.iter().take(n) {
             out.add(row[12], row[5], row[13]);
         }
     }

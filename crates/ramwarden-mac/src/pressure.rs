@@ -115,9 +115,9 @@ impl Estimator {
                 return self.latest;
             }
             let (some, full) = stall_percent(&prev, &c, dt);
-            for i in 0..3 {
+            for (i, &tau) in TAUS.iter().enumerate() {
                 if self.seeded {
-                    let a = alpha(dt, TAUS[i]);
+                    let a = alpha(dt, tau);
                     self.some[i] += a * (some - self.some[i]);
                     self.full[i] += a * (full - self.full[i]);
                 } else {

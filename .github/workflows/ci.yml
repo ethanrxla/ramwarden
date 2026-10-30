@@ -37,9 +37,12 @@ jobs:
             echo "::notice::${{ matrix.platform_crate }} is not on this branch; skipping ${{ matrix.os }}."
             echo "supported=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned so a new Rust release can't turn main red with new lints.
+      # Bump it on purpose, in its own PR, and fix what clippy finds.
+      - uses: dtolnay/rust-toolchain@master
         if: steps.platform.outputs.supported == 'true'
         with:
+          toolchain: "1.99.1"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         if: steps.platform.outputs.supported == 'true'
