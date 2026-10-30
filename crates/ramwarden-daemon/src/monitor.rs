@@ -2,15 +2,15 @@
 //!
 //! # Kernel wakeups where possible, adaptive polling where not
 //!
-//! The intended design was a PSI trigger: tell the kernel "wake me if tasks
-//! stall more than N ms per second" and block on `poll()`. That is still
-//! attempted first, and on a kernel that permits it the loop reacts in under a
-//! second while costing nothing when idle.
+//! The intended design is an OS wakeup: on Linux a PSI trigger ("wake me if
+//! tasks stall more than N ms per second"), on Windows the low-memory resource
+//! notification. Either is attempted first through the platform's
+//! [`PressureWaker`](ramwarden_platform::PressureWaker), and where granted the
+//! loop reacts at once while costing nothing when idle.
 //!
-//! It does not work on the machine this was written for. Linux 7.1.5 opens
-//! `/proc/pressure/memory` `O_RDWR` and reads it happily, but rejects every
-//! trigger write with `EINVAL` — trigger creation is privileged there, and the
-//! cgroup `memory.pressure` files are not writable at all.
+//! It frequently is not granted. Linux 7.1.5 on the machine this was written
+//! for opens `/proc/pressure/memory` `O_RDWR` and reads it happily, but rejects
+//! every trigger write with `EINVAL` — trigger creation is privileged there.
 //!
 //! So the fallback is the normal path, and it is **adaptive** rather than the
 //! fixed ten-second sleep v1 used. The interval follows the rung: a quiet
@@ -22,23 +22,18 @@
 //! is what resumes suspended applications and lifts soft caps.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Outcome;
 use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::signals::Signals;
-use ramwarden_core::desktop::DesktopProbe;
+use ramwarden_ai::jev::Jev;
+use ramwarden_ai::secret::Secret;
+use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement};
 use ramwarden_core::ladder::{self, TabCloser, World};
-use ramwarden_kernel::{cgroup, psi};
 
 use crate::hub::AppState;
-
-/// How long the stall must last within the window to wake the thread.
-///
-/// 50 ms per second is roughly "5% pressure sustained" — comfortably below the
-/// first rung, so the ladder is awake and sampling before it needs to act.
-const STALL_BUDGET: Duration = Duration::from_millis(50);
-const STALL_WINDOW: Duration = Duration::from_secs(1);
 
 /// Sampling interval on a quiet machine. Also the de-escalation interval, since
 /// nothing wakes us when pressure passes.
@@ -66,19 +61,42 @@ fn next_interval(rung: Option<ladder::Rung>) -> Duration {
 
 /// Bridges the ladder's tab rung to the browsers.
 ///
-/// The ladder is synchronous; closing tabs means awaiting a browser. The monitor
-/// runs on its own OS thread rather than inside the runtime, so it can block on
-/// the async work — which would deadlock if this ran as a tokio task.
+/// The ladder is synchronous and runs while the monitor holds the ladder mutex
+/// and the detector read lock. Tab unloading is async and can wait seconds for
+/// a browser, so it is **spawned**, never awaited from here: blocking this thread
+/// on the runtime while holding those locks deadlocks as soon as an HTTP handler
+/// on a worker thread wants one of them. That worker then cannot drive the timers
+/// the unload is waiting on, the unload never finishes, and the locks are never
+/// released — the daemon stays alive, keeps its port open, and answers nothing.
 struct Tabs {
     state: AppState,
     handle: tokio::runtime::Handle,
 }
 
+/// One unload at a time: the ladder ticks every second while it sits on the tabs
+/// rung, and each tick would otherwise queue another wait for the same browser.
+static UNLOAD_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Clears [`UNLOAD_RUNNING`] when the task ends, including by panic.
+struct UnloadGuard;
+
+impl Drop for UnloadGuard {
+    fn drop(&mut self) {
+        UNLOAD_RUNNING.store(false, Ordering::Release);
+    }
+}
+
 impl TabCloser for Tabs {
-    fn close_stale(&mut self, goal: &str) -> Outcome {
+    fn close_stale(&mut self, _goal: &str) -> Outcome {
+        if UNLOAD_RUNNING.swap(true, Ordering::AcqRel) {
+            return Outcome {
+                notes: vec!["tab unload already in progress".into()],
+                ..Outcome::default()
+            };
+        }
         let state = self.state.clone();
-        let _ = goal;
-        self.handle.block_on(async move {
+        self.handle.spawn(async move {
+            let _guard = UnloadGuard;
             state.request_all_tabs().await;
             let targets = {
                 let hub = state.hub.lock().unwrap();
@@ -87,11 +105,81 @@ impl TabCloser for Tabs {
                     .map(|r|r.target).collect::<Vec<_>>()
             };
             let result = state.discard_tabs(&targets).await;
-            Outcome { affected: Vec::new(), bytes_freed: 0,
-                notes: vec![format!("{} tabs unloaded, {} queued, {} refused; tabs remain open",
-                    result.confirmed.len(), result.queued.len(), result.refused.len())] }
-        })
+            tracing::info!("{} tabs unloaded, {} queued, {} refused; tabs remain open",
+                result.confirmed.len(), result.queued.len(), result.refused.len());
+        });
+        Outcome {
+            notes: vec!["tab unload started in the background".into()],
+            ..Outcome::default()
+        }
     }
+}
+
+/// Bridges the ladder's judge to Jev, the same way [`Tabs`] bridges to the
+/// browsers: the ladder is synchronous, so block on the request here.
+struct JevJudge {
+    jev: Jev,
+    suspend_threshold: f64,
+    kill_threshold: f64,
+    handle: tokio::runtime::Handle,
+}
+
+impl Judge for JevJudge {
+    fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String> {
+        let started = Instant::now();
+        let threshold = match intent {
+            Intent::Suspend => self.suspend_threshold,
+            Intent::Kill => self.kill_threshold,
+        };
+        let out = self
+            .handle
+            .block_on(crate::ladderjudge::judge(&self.jev, intent, candidates, threshold))
+            .map_err(|e| e.to_string())?;
+        for j in &out {
+            tracing::info!(
+                "jev: {} {}: {} ({:?})",
+                if j.close { "approve" } else { "keep" },
+                j.name,
+                j.reason,
+                started.elapsed()
+            );
+        }
+        Ok(out)
+    }
+}
+
+/// Jev, if it is enabled and has a key.
+///
+/// Its own client rather than the tab tier's: the ladder cannot wait 15
+/// seconds mid-pressure, so it gets `ladder_timeout_ms`.
+fn jev_judge(cfg: &ramwarden_core::config::Config, handle: &tokio::runtime::Handle) -> Option<JevJudge> {
+    let j = &cfg.jev;
+    if !j.enabled {
+        return None;
+    }
+    let jev = Jev::new(
+        &j.base_url,
+        Secret::new(j.api_key.trim()),
+        &j.model,
+        Duration::from_millis(j.ladder_timeout_ms),
+    )
+    .inspect(|c| {
+        tracing::info!(
+            "Jev judging suspends (>= {:.0}%) and kills (>= {:.0}%) with {} key {}",
+            j.suspend_threshold * 100.0,
+            j.kill_threshold * 100.0,
+            j.model,
+            c.key_fingerprint()
+        )
+    })
+    .inspect_err(|e| tracing::warn!("Jev unavailable to the ladder: {e} — the gate alone decides"))
+    .ok()?;
+    Some(JevJudge {
+        jev,
+        suspend_threshold: j.suspend_threshold,
+        kill_threshold: j.kill_threshold,
+        handle: handle.clone(),
+    })
 }
 
 /// Start the monitor on its own thread.
@@ -102,24 +190,71 @@ pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::Jo
         .expect("spawn monitor thread")
 }
 
-fn run(state: AppState, handle: tokio::runtime::Handle) {
-    let mut probe = DesktopProbe::new();
-    let uid = unsafe { getuid() };
+/// Ask the model tier about borderline tabs, in the background. The monitor
+/// never waits on it: answers land in a cache that ranking reads.
+fn refresh_intel(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Instant) {
+    static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else { return };
+    if last.elapsed() < Duration::from_secs(30) || IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    *last = Instant::now();
+    let rows = {
+        let hub = state.hub.lock().unwrap();
+        crate::browser::snapshot(&hub.reg, state.cfg.thresholds.inactivity_minutes as i64)
+    };
+    let states = crate::tabintel::borderline_states(&rows, intel.config());
+    let intel = intel.clone();
+    handle.spawn(async move {
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                IN_FLIGHT.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done;
+        let n = intel.refresh(&states, Instant::now()).await;
+        if n > 0 {
+            tracing::info!("jev answered {n} tab description(s)");
+        }
+    });
+}
 
-    // The trigger is a nicety, not a requirement: without CONFIG_PSI the loop
-    // falls back to the heartbeat alone, which is still better than v1's.
-    let mut trigger = match psi::Trigger::memory(&state.root, STALL_BUDGET, STALL_WINDOW) {
+/// Mark unloaded tabs the user has since returned to.
+fn reconcile_returns(state: &AppState) {
+    let now = ramwarden_core::history::unix_now() as i64;
+    let reports: Vec<(String, Vec<crate::tabs::Tab>)> = {
+        let hub = state.hub.lock().unwrap();
+        hub.reg
+            .socket_ids()
+            .into_iter()
+            .chain(hub.reg.poll_ids())
+            .map(|b| {
+                let tabs = hub.reg.tabs_for(&b).to_vec();
+                (b, tabs)
+            })
+            .collect()
+    };
+    if let Ok(h) = state.history.lock() {
+        for (browser, tabs) in &reports {
+            crate::outcomes::reconcile(&h, browser, tabs, now);
+        }
+    }
+}
+
+fn run(state: AppState, handle: tokio::runtime::Handle) {
+    let mut probe = state.platform.desktop();
+
+    // The wakeup is a nicety, not a requirement: without it the loop falls
+    // back to the heartbeat alone, which is still better than v1's.
+    let mut trigger = match state.platform.pressure.waker() {
         Ok(t) => {
-            tracing::info!(
-                "PSI trigger armed: waking on {}ms of stall per {}s",
-                STALL_BUDGET.as_millis(),
-                STALL_WINDOW.as_secs()
-            );
+            tracing::info!("pressure wakeup armed — {}", t.describe());
             Some(t)
         }
         Err(e) => {
             tracing::warn!(
-                "PSI trigger unavailable ({e}) — using adaptive polling \
+                "pressure wakeup unavailable ({e}) — using adaptive polling \
                  ({}s idle / {}s watchful / {}s busy)",
                 IDLE_INTERVAL.as_secs(),
                 WATCHFUL_INTERVAL.as_secs(),
@@ -130,9 +265,20 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     };
 
     let cfg = Arc::clone(&state.cfg);
+    let mut judge = jev_judge(&cfg, &handle);
+    let mut gpu_policy = crate::gpu::GpuPolicy::default();
+    // Train soon after start when no model exists yet, then once a day.
+    let mut last_train = if state.predictor.model_path().exists() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
+    let mut last_intel = Instant::now() - Duration::from_secs(60);
+    let mut quitter = crate::appquit::Quitter::new();
+    let mut held = false;
 
     loop {
         let woken_by_pressure = match trigger.as_mut() {
@@ -145,6 +291,21 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
         let started = Instant::now();
 
+        // A hold (a window arranger at work) means: nothing frozen, nothing new
+        // frozen. Thaw once at the start; skip the ladder until it expires.
+        if state.on_hold() {
+            if !held {
+                held = true;
+                for (name, _) in state.ladder.lock().unwrap().thaw_all() {
+                    tracing::info!("thawed {name}: on hold");
+                }
+                crate::freeze_journal::write(&cfg.db_path.with_file_name("suspended.json"), &[]);
+            }
+            interval = WATCHFUL_INTERVAL;
+            continue;
+        }
+        held = false;
+
         // 1. Sample. The desktop probe caches its subprocesses internally.
         let desktop = probe.sample();
         if let Err(e) = state.det.write().unwrap().sample(&desktop) {
@@ -152,16 +313,21 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             continue;
         }
 
+        // 1b. Has the user come back to a tab we unloaded? Cheap: one query per
+        // browser, then a hash lookup per reported tab.
+        reconcile_returns(&state);
+        refresh_intel(&state, &handle, &mut last_intel);
+        crate::appquit::consider(&state, &handle, &mut quitter);
+
         // 2. Look.
-        let pressure = match psi::system_memory(&state.root) {
+        let pressure = match state.platform.pressure.read() {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("pressure read failed: {e}");
                 continue;
             }
         };
-        let available = ladder::available_bytes(&state.root);
-        let hierarchy = cgroup::Hierarchy::user_session(&state.root, uid).ok();
+        let available = ladder::available_bytes(state.platform.memory.as_ref());
 
         // 3. Act.
         let mut closer = Tabs {
@@ -171,12 +337,13 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         let det = state.det.read().unwrap();
         let mut world = World {
             det: &det,
-            hierarchy: hierarchy.as_ref(),
+            groups: state.platform.ready_groups(),
             psi: pressure,
             available_bytes: available,
             watchlist: &cfg.watchlist,
             goal: String::new(),
             tabs: Some(&mut closer),
+            judge: judge.as_mut().map(|j| j as &mut dyn Judge),
         };
 
         let report = {
@@ -185,12 +352,26 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         };
         drop(det);
 
+        // Keep the on-disk record of frozen apps current, so a crash cannot strand them.
+        if report.steps.iter().any(|(a, _, _)| matches!(*a, "suspend" | "resume")) {
+            let frozen: Vec<crate::freeze_journal::Frozen> = state
+                .ladder
+                .lock()
+                .unwrap()
+                .actuator()
+                .suspended()
+                .iter()
+                .flat_map(|e| e.live_pids().into_iter().map(|pid| crate::freeze_journal::Frozen { name: e.name.clone(), pid }))
+                .collect();
+            crate::freeze_journal::write(&cfg.db_path.with_file_name("suspended.json"), &frozen);
+        }
+
         if report.did_something() || woken_by_pressure {
             tracing::info!(
                 "rung {} (some={:.1}% full={:.1}% avail={} MB) — freed {} MB in {:?}",
                 report.rung.map(|r| r.as_str()).unwrap_or("?"),
-                pressure.some.avg10,
-                pressure.full.avg10,
+                pressure.some_avg10,
+                pressure.full_avg10,
                 available / 1_000_000,
                 report.total_freed / 1_000_000,
                 started.elapsed(),
@@ -208,6 +389,26 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                             format!(" ({})", outcome.notes.join("; "))
                         }
                     );
+                }
+            }
+        }
+
+        // ── VRAM: unload idle local models when a game needs the card ──────
+        if cfg.gpu.unload_models_for_games {
+            let game = crate::gpu::game_running(&state.det.read().unwrap());
+            let notes = handle.block_on(gpu_policy.tick(game, cfg.gpu.vram_percent, &state.models));
+            for n in notes {
+                tracing::info!("gpu: {n}");
+                if let Ok(h) = state.history.lock() {
+                    let _ = h.log(&ramwarden_core::history::NewAction {
+                        rung: -1,
+                        trigger: "vram".into(),
+                        action: "unload_model".into(),
+                        target: n.clone(),
+                        succeeded: n.starts_with("unloaded"),
+                        notes: n,
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -230,15 +431,27 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                     .collect()
             };
             let ctx = SampleContext {
-                psi_some: pressure.some.avg10,
-                psi_full: pressure.full.avg10,
+                psi_some: pressure.some_avg10,
+                psi_full: pressure.full_avg10,
                 available: available as i64,
             };
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            state.predictor.observe(&samples, epoch, pressure.some_avg10);
             if let Ok(h) = state.history.lock()
                 && let Err(e) = h.log_signals(&samples, ctx)
             {
                 tracing::debug!("behaviour log write failed: {e}");
             }
+        }
+
+        // Retrain the reuse predictor daily, off this thread: it reads the
+        // whole behaviour log and takes seconds to minutes.
+        if cfg.logging.enabled && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400)) {
+            last_train = Some(Instant::now());
+            crate::predict::train_in_background(&state);
         }
 
         // Pruning once a day is enough; it only deletes whole days.
@@ -296,11 +509,6 @@ fn to_sample(s: &Signals) -> SignalSample {
     }
 }
 
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn getuid() -> u32;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,22 +530,5 @@ mod tests {
     fn the_intervals_are_ordered_so_escalation_samples_faster() {
         assert!(BUSY_INTERVAL < WATCHFUL_INTERVAL);
         assert!(WATCHFUL_INTERVAL < IDLE_INTERVAL);
-    }
-
-    /// The trigger is optional. If this machine grants one, good; if not, the
-    /// loop must still be able to start.
-    #[test]
-    fn a_missing_trigger_does_not_prevent_the_loop_from_running() {
-        let root = ramwarden_kernel::Root::system();
-        match psi::Trigger::memory(&root, STALL_BUDGET, STALL_WINDOW) {
-            Ok(_) => {}
-            Err(e) => assert!(
-                matches!(
-                    e,
-                    ramwarden_kernel::Error::Unsupported(_) | ramwarden_kernel::Error::Denied { .. }
-                ),
-                "a trigger refusal must be a capability error, not {e:?}"
-            ),
-        }
     }
 }

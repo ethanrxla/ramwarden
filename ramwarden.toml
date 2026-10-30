@@ -5,7 +5,10 @@ inactivity_minutes = 45   # Tab must be inactive this long to qualify
 debounce_minutes = 120    # Only auto-trigger once every 2 hours maximum
 
 [server]
-host = "0.0.0.0"   # accepts connections from Tailscale devices
+# Loopback only. The API has no authentication and can freeze and kill apps,
+# so "0.0.0.0" (e.g. for Tailscale) exposes that to everything on the network.
+# Web pages are refused either way; see crates/ramwarden-daemon/src/guard.rs.
+host = "127.0.0.1"
 port = 7823
 
 [processes]
@@ -21,6 +24,16 @@ watchlist = [
 # Do NOT put your key here — this file is tracked by git.
 # [api]
 # key = "sk-ant-..."
+
+# Jev (TypeSafe's System One model) judges the coldest apps on the LRU before
+# the ladder suspends or kills them. Put the key in secrets.toml under [jev]
+# api_key, in a .env beside this file as JEV_API_KEY, or in $JEV_API_KEY /
+# $TYPESAFE_API_KEY — never here.
+# [jev]
+# enabled = true
+# model = "jev-latest"
+# suspend_threshold = 0.7   # chance the user is not coming back, to suspend
+# kill_threshold = 0.85     # and to kill
 
 # db_path = "/home/you/.local/share/ramwarden/history.db"
 

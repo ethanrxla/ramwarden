@@ -16,7 +16,7 @@ function fixture(overrides = {}, fail = false) {
     tabs:{onActivated:event,onUpdated:event,onRemoved:event,query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
-  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,setInterval:noop,setTimeout:noop});
+  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,URL,setInterval:noop,setTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
   return {context,chrome,tab,discards};
 }
@@ -45,4 +45,20 @@ test('batches are capped at five and partial results contain only confirmed IDs'
   f.chrome.tabs.discard=(id,cb)=>{f.discards.push(id);if(id%2)tabs.get(id).discarded=true;cb();};
   const result=await f.context.discardTabs({...command,tabs:Array.from(tabs.values(),t=>({id:t.id,url:t.url}))});
   assert.deepEqual(f.discards,[1,2,3,4,5]);assert.deepEqual(Array.from(result),[1,3,5]);
+});
+
+test('a sign-in word deep in the path no longer blocks an unload, but a sign-in path still does', async()=>{
+  // These two used to be refused by the browser-side guard while the daemon listed
+  // them as candidates, so nothing was ever unloaded.
+  for (const url of ['https://claude.ai/design/v1/design/github/callback', 'https://sites.google.com/view/notebook-lm/login?authuser=0']) {
+    const f=fixture({url});
+    const cmd={requestId:'r',minInactiveMinutes:45,tabs:[{id:7,url}]};
+    assert.deepEqual(Array.from(await f.context.discardTabs(cmd)),[7], url);
+  }
+  for (const url of ['https://example.org/login', 'https://example.org/oauth/authorize', 'https://example.org/session/new', 'chrome://extensions']) {
+    const f=fixture({url});
+    const cmd={requestId:'r',minInactiveMinutes:45,tabs:[{id:7,url}]};
+    assert.equal((await f.context.discardTabs(cmd)).length,0, url);
+    assert.equal(f.discards.length,0, url);
+  }
 });

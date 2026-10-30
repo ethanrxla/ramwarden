@@ -10,14 +10,14 @@
 //! On COSMIC — a Wayland compositor — `wmctrl` sees XWayland clients and nothing
 //! else. A native app therefore reports no window at all. So window presence is
 //! evidence of use, while window *absence* is evidence of nothing, and
-//! [`crate::signals::Signals::score`] is careful never to read it the other way.
+//! the scorer in `ramwarden-core` is careful never to read it the other way.
 //! The same caution applies to focus: on COSMIC there is frequently no answer.
 
 use std::collections::HashSet;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::detector::Desktop;
+use ramwarden_platform::{Desktop, DesktopSource};
 
 /// How long audio stream data stays fresh. `pactl` is a subprocess; running it
 /// every tick would cost more than the signal is worth.
@@ -54,8 +54,11 @@ impl DesktopProbe {
         }
     }
 
+}
+
+impl DesktopSource for DesktopProbe {
     /// Current desktop signals, refreshing whichever caches have gone stale.
-    pub fn sample(&mut self) -> Desktop {
+    fn sample(&mut self) -> Desktop {
         let stale = |at: Option<Instant>, ttl: Duration| at.is_none_or(|t| t.elapsed() > ttl);
 
         if stale(self.audio_at, AUDIO_REFRESH) {

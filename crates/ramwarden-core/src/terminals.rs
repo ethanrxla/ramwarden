@@ -440,6 +440,13 @@ mod tests {
 
         // Wait for the trap to be installed, or SIGHUP lands on a shell still
         // using the default disposition and the escalation path is never taken.
+        // macOS exposes no per-process ignored-signal mask, so give the shell a
+        // moment to run its `trap` line instead of polling for it.
+        #[cfg(target_os = "macos")]
+        std::thread::sleep(Duration::from_millis(400));
+        #[cfg(target_os = "macos")]
+        let installed = true;
+        #[cfg(not(target_os = "macos"))]
         let installed = (0..200).any(|_| {
             let ignored = std::fs::read_to_string(format!("/proc/{pid}/status"))
                 .ok()

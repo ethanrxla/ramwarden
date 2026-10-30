@@ -1,0 +1,160 @@
+name = "privacy"
+description = "Telemetry, advertising, Copilot/Recall and suggestions — off, reversibly."
+
+# ── Telemetry ────────────────────────────────────────────────────────────────
+
+[[tweak]]
+id = "privacy.diagtrack"
+description = "Connected User Experiences and Telemetry: the service that uploads diagnostic data"
+kind = "service"
+service = "DiagTrack"
+start = "disabled"
+
+[[tweak]]
+id = "privacy.dmwappush"
+description = "WAP push routing for diagnostics; only consumer is telemetry"
+kind = "service"
+service = "dmwappushservice"
+start = "disabled"
+
+[[tweak]]
+id = "privacy.telemetry-level"
+description = "Diagnostic data to Required, the minimum Windows Pro honours (0 is treated as 1)"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+value = "AllowTelemetry"
+dword = 1
+
+[[tweak]]
+id = "privacy.compat-appraiser"
+description = "Compatibility Appraiser: scans installed software and uploads the inventory"
+kind = "task"
+task = '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser'
+
+[[tweak]]
+id = "privacy.program-data-updater"
+description = "Program inventory collection for CEIP (absent on newer builds)"
+kind = "task"
+task = '\Microsoft\Windows\Application Experience\ProgramDataUpdater'
+
+[[tweak]]
+id = "privacy.ceip-consolidator"
+description = "Customer Experience Improvement Program upload"
+kind = "task"
+task = '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator'
+
+[[tweak]]
+id = "privacy.ceip-usb"
+description = "CEIP USB usage collection"
+kind = "task"
+task = '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip'
+
+# ── Advertising and tailoring ────────────────────────────────────────────────
+
+[[tweak]]
+id = "privacy.advertising-id"
+description = "Per-user advertising ID shared with apps"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'
+value = "Enabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.tailored-experiences"
+description = "Tips and ads tailored from diagnostic data"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\Privacy'
+value = "TailoredExperiencesWithDiagnosticDataEnabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.activity-history"
+description = "Activity history (timeline) collection"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\System'
+value = "PublishUserActivities"
+dword = 0
+
+[[tweak]]
+id = "privacy.activity-upload"
+description = "Activity history upload to Microsoft"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\System'
+value = "UploadUserActivities"
+dword = 0
+
+[[tweak]]
+id = "privacy.start-web-search"
+description = "Bing web results and suggestions in Start search"
+kind = "registry"
+key = 'HKCU\Software\Policies\Microsoft\Windows\Explorer'
+value = "DisableSearchBoxSuggestions"
+dword = 1
+
+# ── AI features ──────────────────────────────────────────────────────────────
+
+[[tweak]]
+id = "privacy.copilot"
+description = "Windows Copilot"
+kind = "registry"
+key = 'HKCU\Software\Policies\Microsoft\Windows\WindowsCopilot'
+value = "TurnOffWindowsCopilot"
+dword = 1
+
+[[tweak]]
+id = "privacy.recall"
+description = "Recall snapshots (Copilot+ PCs; harmless elsewhere)"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+value = "DisableAIDataAnalysis"
+dword = 1
+
+[[tweak]]
+id = "privacy.widgets"
+description = "Widgets board and its news feed (also stops its WebView process)"
+kind = "registry"
+key = 'HKLM\SOFTWARE\Policies\Microsoft\Dsh'
+value = "AllowNewsAndInterests"
+dword = 0
+
+# ── Suggestions and silent installs ──────────────────────────────────────────
+
+[[tweak]]
+id = "privacy.suggested-apps-installs"
+description = "Silent installation of promoted apps"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+value = "SilentInstalledAppsEnabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.start-suggestions"
+description = "App suggestions in Start"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+value = "SystemPaneSuggestionsEnabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.tips"
+description = "Tips, tricks and suggestions notifications"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+value = "SoftLandingEnabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.settings-suggestions"
+description = "Suggested content in Settings"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+value = "SubscribedContent-338393Enabled"
+dword = 0
+
+[[tweak]]
+id = "privacy.lockscreen-tips"
+description = "Fun facts and tips on the lock screen"
+kind = "registry"
+key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+value = "RotatingLockScreenOverlayEnabled"
+dword = 0

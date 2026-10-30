@@ -9,8 +9,9 @@ use ramwarden_core::config::Config;
 use ramwarden_core::detector::Detector;
 use ramwarden_core::history::History;
 use ramwarden_core::ladder::Ladder;
+use ramwarden_ai::models::ModelHosts;
 use ramwarden_ai::provider::Provider;
-use ramwarden_kernel::Root;
+use ramwarden_platform::{MemoryStatus, Platform, Pressure};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::tabs::{Command, Registry, Tab, Transport};
@@ -123,7 +124,9 @@ impl Hub {
 #[derive(Clone)]
 pub struct AppState {
     pub cfg: Arc<Config>,
-    pub root: Root,
+    /// The operating system underneath: Linux or Windows mechanisms behind
+    /// one set of traits.
+    pub platform: Arc<Platform>,
     pub det: Arc<RwLock<Detector>>,
     pub ladder: Arc<Mutex<Ladder>>,
     pub hub: Arc<Mutex<Hub>>,
@@ -133,10 +136,38 @@ pub struct AppState {
     /// The model tier. Shared and immutable — the clients are cheap to clone and
     /// hold no mutable state.
     pub ai: Arc<Provider>,
+    /// LM Studio and Ollama, for VRAM reporting and unloading.
+    pub models: Arc<ModelHosts>,
+    /// The JEPA reuse predictor; silent until a model passes its gate.
+    pub predictor: Arc<crate::predict::LivePredictor>,
     pub started: Instant,
+    /// While set and in the future, RamWarden freezes nothing and has thawed what
+    /// it froze: for window arrangers and scripts, which cannot talk to a frozen app.
+    pub hold_until: Arc<Mutex<Option<Instant>>>,
 }
 
 impl AppState {
+    /// Whether freezing is on hold right now.
+    pub fn on_hold(&self) -> bool {
+        self.hold_until.lock().unwrap().is_some_and(|t| Instant::now() < t)
+    }
+
+    /// Hold for `secs` (clamped to 1-600), or release with 0.
+    pub fn set_hold(&self, secs: u64) {
+        *self.hold_until.lock().unwrap() =
+            (secs > 0).then(|| Instant::now() + Duration::from_secs(secs.min(600)));
+    }
+
+    /// System memory now, or zeros if it cannot be read.
+    pub fn memory(&self) -> MemoryStatus {
+        self.platform.memory.status().unwrap_or_default()
+    }
+
+    /// Pressure now, or quiet if it cannot be read.
+    pub fn pressure(&self) -> Pressure {
+        self.platform.pressure.read().unwrap_or_default()
+    }
+
     /// How long to wait for a polling browser to check in before giving up.
     pub fn browser_grace(&self) -> Duration {
         if self.started.elapsed() < STARTUP_WINDOW {
@@ -194,11 +225,18 @@ impl AppState {
         let threshold = self.cfg.thresholds.inactivity_minutes as i64;
         let mut result = DiscardResult::default();
         let mut waiters = Vec::new();
+        let mut decided: HashMap<crate::browser::Target, crate::browser::Row> = HashMap::new();
         {
             let mut hub = self.hub.lock().unwrap();
             hub.discard_attempts.retain(|_, at| at.elapsed() < Duration::from_secs(90));
             let available: Vec<_> = requested.iter().filter(|t| !hub.discard_attempts.contains_key(t)).cloned().collect();
             let selected = crate::browser::select(&hub.reg, threshold, &available);
+            // The numbers behind each decision, kept to label its outcome later.
+            for row in crate::browser::snapshot(&hub.reg, threshold) {
+                if selected.contains(&row.target) {
+                    decided.insert(row.target.clone(), row);
+                }
+            }
             for target in &selected { hub.discard_attempts.insert(target.clone(), Instant::now()); }
             result.refused = requested.iter().filter(|t| !selected.contains(t)).cloned().collect();
             let mut groups: HashMap<String, Vec<crate::browser::Target>> = HashMap::new();
@@ -226,14 +264,24 @@ impl AppState {
             (browser,request,targets,ids)
         })).await;
         let mut hub = self.hub.lock().unwrap();
+        let mut to_record: Vec<crate::browser::Row> = Vec::new();
         for (browser,request,targets,ids) in replies {
             hub.discard_waiters.remove(&request);
             let confirmed: Vec<i64> = targets.iter().filter(|t|ids.contains(&t.id)).map(|t|t.id).collect();
             hub.reg.mark_discarded(&browser,&confirmed);
             for target in targets {
-                if confirmed.contains(&target.id) { result.confirmed.push(target); }
-                else { result.refused.push(target); }
+                if confirmed.contains(&target.id) {
+                    if let Some(row) = decided.remove(&target) { to_record.push(row); }
+                    result.confirmed.push(target);
+                } else { result.refused.push(target); }
             }
+        }
+        drop(hub);
+        // After the hub lock is released: history has its own lock, and nothing
+        // else takes the two in the opposite order.
+        if !to_record.is_empty() && let Ok(h) = self.history.lock() {
+            let refs: Vec<&crate::browser::Row> = to_record.iter().collect();
+            crate::outcomes::record(&h, &refs, ramwarden_core::history::unix_now() as i64);
         }
         result
     }

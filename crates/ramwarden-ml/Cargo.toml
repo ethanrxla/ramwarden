@@ -1,0 +1,36 @@
+[package]
+name    = "ramwarden-ml"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's learned parts: a JEPA-style reuse predictor and in-process embeddings, on CPU or CUDA."
+
+[features]
+default = []
+# In-process sentence embeddings (mxbai-embed-large via candle).
+embed = ["dep:candle-transformers", "dep:tokenizers", "dep:hf-hub"]
+# Run everything on an NVIDIA GPU. Needs the CUDA toolkit (nvcc) at build time;
+# CUDA 12.8+ for Blackwell (RTX 50xx, sm_120).
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers?/cuda"]
+
+# The GPU worker: built with `--features cuda,embed`; see src/bin/ramwarden-gpu.rs.
+[[bin]]
+name = "ramwarden-gpu"
+path = "src/bin/ramwarden-gpu.rs"
+required-features = ["embed"]
+
+[dependencies]
+ramwarden-core = { path = "../ramwarden-core" }
+candle-core = "0.11"
+candle-nn   = "0.11"
+candle-transformers = { version = "0.11", optional = true }
+tokenizers  = { version = "0.22", optional = true }
+hf-hub      = { version = "0.4", optional = true, default-features = false, features = ["ureq", "rustls-tls"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

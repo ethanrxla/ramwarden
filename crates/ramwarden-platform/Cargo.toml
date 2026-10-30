@@ -1,0 +1,11 @@
+[package]
+name    = "ramwarden-platform"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "The seam between RamWarden's policy and each operating system's memory mechanisms."
+
+[dependencies]
+thiserror = { workspace = true }
+serde     = { workspace = true }

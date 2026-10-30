@@ -1,0 +1,14 @@
+[package]
+name    = "ramwarden-mac"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "macOS memory primitives for RamWarden: libproc, sysctl and mach in place of /proc and cgroups."
+
+# macOS only. On any other target the crate compiles to nothing, so the
+# workspace still builds there.
+[target.'cfg(target_os = "macos")'.dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+libc    = { workspace = true }
+tracing = { workspace = true }

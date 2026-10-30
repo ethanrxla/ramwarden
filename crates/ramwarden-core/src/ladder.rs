@@ -6,7 +6,7 @@
 //!
 //! | Rung | Action | Cost of being wrong |
 //! |---|---|---|
-//! | `Reclaim` | kernel pages cold memory to zram | a few page faults |
+//! | `Reclaim` | the OS pages cold memory out (zram, compression store) | a few page faults |
 //! | `PageOut` | targeted page-out, soft cap | a few page faults |
 //! | `Tabs` | unload idle browser tabs in bounded batches | reload on activation |
 //! | `Suspend` | `SIGSTOP` idle watchlisted apps | app looks frozen until resumed |
@@ -24,6 +24,12 @@
 //! *and* page-out *and* tabs *and* suspend on this tick. Pressure high enough to
 //! warrant freezing an application is also high enough to want the free wins.
 //!
+//! # Tidy runs first, at every pressure
+//!
+//! Below the rungs, [`crate::tidy::Tidy`] hints and trims quiet background apps
+//! on every tick — free, reversible housekeeping that does not wait for
+//! pressure. It is attached with [`Ladder::with_tidy`].
+//!
 //! # Hysteresis
 //!
 //! Between `release_below` and `reclaim_at` the ladder holds: it neither acts nor
@@ -32,14 +38,17 @@
 
 use std::time::{Duration, Instant};
 
-use ramwarden_kernel::psi::Psi;
-use ramwarden_kernel::{cgroup, smaps};
+use ramwarden_platform::{AppGroup, GroupSource, MemorySource, Pressure};
 
 use crate::actuator::{Actuator, Outcome};
 use crate::config;
 use crate::detector::Detector;
 use crate::history::{History, NewAction};
-use crate::signals::Verdict;
+use crate::judge::{Candidate, Intent, Judge};
+use crate::rank::ReuseRanker;
+use crate::signals::{Signals, Verdict};
+use crate::structures::{CircularList, LinkedQueue, LinkedStack};
+use crate::tidy::{self, Tidy};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
 ///
@@ -55,15 +64,25 @@ const SCOPE_FLOOR: u64 = 64 * 1024 * 1024;
 const SOFT_CAP_FRACTION: f64 = 0.8;
 
 /// How much recent touching still counts as cold, for targeted page-out.
-const COLD_RATIO: f64 = 0.2;
+pub(crate) const COLD_RATIO: f64 = 0.2;
 
 /// Ignore mappings smaller than this — not worth an iovec entry.
-const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
+pub(crate) const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
 
 /// At most this many processes get targeted page-out per tick, largest first.
 /// Walking full `smaps` is expensive, and the cgroup rung has already taken the
 /// cheap bulk of the memory.
 const PAGEOUT_LIMIT: usize = 3;
+
+/// How many candidates from the LRU tail to put in front of the judge per tick.
+///
+/// The coldest few are where the decision is; asking about everything would
+/// make the request larger without changing what gets closed first.
+const JUDGE_LIMIT: usize = 8;
+
+/// Why the reclaim rungs refuse when the platform offers no group reclaim.
+const GROUPS_UNAVAILABLE: &str =
+    "group reclaim unavailable (on Linux: no delegated cgroup memory controller)";
 
 /// Which rung the current pressure calls for.
 ///
@@ -110,11 +129,11 @@ impl Rung {
 
 /// Decide the rung from pressure alone.
 ///
-/// Pure, so the whole escalation policy can be driven by a synthetic PSI series
-/// rather than by putting a real machine into swap.
-pub fn rung_for(cfg: &config::Ladder, psi: &Psi, available_bytes: u64) -> Rung {
-    let some = psi.some.avg10;
-    let full = psi.full.avg10;
+/// Pure, so the whole escalation policy can be driven by a synthetic pressure
+/// series rather than by putting a real machine into swap.
+pub fn rung_for(cfg: &config::Ladder, psi: &Pressure, available_bytes: u64) -> Rung {
+    let some = psi.some_avg10;
+    let full = psi.full_avg10;
     let available_mb = available_bytes / 1_000_000;
 
     // `full` means nothing is getting useful work done, and low available memory
@@ -151,14 +170,16 @@ pub trait TabCloser {
 /// Everything the ladder needs to look at, assembled by the caller.
 pub struct World<'a> {
     pub det: &'a Detector,
-    /// `None` when the memory controller is not delegated — the kernel rungs are
-    /// then unavailable and the ladder skips straight to signals.
-    pub hierarchy: Option<&'a cgroup::Hierarchy>,
-    pub psi: Psi,
+    /// `None` when group reclaim is unavailable (on Linux: no delegated memory
+    /// controller) — the reclaim rungs then refuse and the ladder moves on.
+    pub groups: Option<&'a dyn GroupSource>,
+    pub psi: Pressure,
     pub available_bytes: u64,
     pub watchlist: &'a [String],
     pub goal: String,
     pub tabs: Option<&'a mut dyn TabCloser>,
+    /// Asked before suspending or killing. `None` means the gate alone decides.
+    pub judge: Option<&'a mut dyn Judge>,
 }
 
 /// A kill the ladder intends to carry out, once its grace period expires.
@@ -222,7 +243,20 @@ pub struct Ladder {
     act: Actuator,
     history: Option<History>,
     pending_kill: Option<PendingKill>,
+    /// Kills whose grace period is over, coldest first. One leaves per tick, so
+    /// pressure is re-read between kills and the rest are spared the moment it
+    /// drops below the kill rung.
+    kill_queue: LinkedQueue<(String, Instant)>,
+    /// What the ladder suspended, newest on top, so "undo" resumes the most
+    /// recent first.
+    undo: LinkedStack<String>,
+    /// Idle processes taking turns at targeted page-out. Always picking the
+    /// largest three meant paging out the same already-cold processes every
+    /// tick; going round the circle reaches every idle process in turn.
+    pageout_turns: CircularList<i32>,
     last_tabs: Option<Instant>,
+    tidy: Option<Tidy>,
+    ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
 }
 
 impl Ladder {
@@ -232,7 +266,41 @@ impl Ladder {
             act,
             history: None,
             pending_kill: None,
+            kill_queue: LinkedQueue::new(),
+            undo: LinkedStack::new(),
+            pageout_turns: CircularList::new(),
             last_tabs: None,
+            tidy: None,
+            ranker: None,
+        }
+    }
+
+    /// Let a reuse ranker reorder suspend candidates and defer Tidy trims.
+    /// It never widens what may be touched; see [`crate::rank`].
+    pub fn with_ranker(mut self, ranker: std::sync::Arc<dyn ReuseRanker>) -> Self {
+        self.ranker = Some(ranker);
+        self
+    }
+
+    /// Run the Tidy rung on every tick, below the pressure rungs.
+    pub fn with_tidy(mut self, cfg: config::Tidy) -> Self {
+        self.tidy = Some(Tidy::new(cfg));
+        self
+    }
+
+    /// What Tidy is tracking right now.
+    pub fn tidy_entries(&self, det: &Detector) -> Vec<tidy::Entry> {
+        self.tidy
+            .as_ref()
+            .map(|t| t.entries(det, Instant::now()))
+            .unwrap_or_default()
+    }
+
+    /// Undo every Tidy hint. Called on shutdown.
+    pub fn release_tidy(&mut self) -> Vec<tidy::Step> {
+        match self.tidy.as_mut() {
+            Some(t) => t.release_all(&self.act),
+            None => Vec::new(),
         }
     }
 
@@ -243,6 +311,12 @@ impl Ladder {
     pub fn with_history(mut self, h: History) -> Self {
         self.history = Some(h);
         self
+    }
+
+    /// Wake everything RamWarden froze. For shutdown: a frozen app must never
+    /// outlive the daemon that froze it.
+    pub fn thaw_all(&mut self) -> Vec<(String, Outcome)> {
+        self.act.resume_all()
     }
 
     pub fn actuator(&mut self) -> &mut Actuator {
@@ -265,9 +339,35 @@ impl Ladder {
         self.pending_kill.as_ref()
     }
 
-    /// Call off an armed kill. The UI's cancel button.
+    /// Kills past their grace period that have not happened yet, next first.
+    pub fn queued_kills(&self) -> Vec<String> {
+        self.kill_queue.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    /// Call off an armed kill, and any still queued. The UI's cancel button.
     pub fn cancel_kill(&mut self) -> bool {
-        self.pending_kill.take().is_some()
+        let queued = !self.kill_queue.is_empty();
+        self.kill_queue.clear();
+        self.pending_kill.take().is_some() || queued
+    }
+
+    /// Applications the ladder suspended, most recent first.
+    pub fn undo_stack(&self) -> Vec<String> {
+        self.undo.iter().cloned().collect()
+    }
+
+    /// Resume the most recently suspended application that is still suspended.
+    ///
+    /// Entries already resumed by other means (the release rung, the UI's
+    /// resume button) are discarded on the way down.
+    pub fn undo_last(&mut self) -> Option<(String, Outcome)> {
+        while let Some(name) = self.undo.pop() {
+            if self.act.is_suspended(&name) {
+                let outcome = self.act.resume(&name);
+                return Some((name, outcome));
+            }
+        }
+        None
     }
 
     /// Work out what this tick would do, changing nothing.
@@ -286,32 +386,24 @@ impl Ladder {
             return plan;
         }
 
-        if let Some(h) = w.hierarchy {
-            let targets = self.reclaim_targets(w, h);
+        if let Some(groups) = w.groups {
+            let targets = self.reclaim_targets(w, groups);
             if rung >= Rung::PageOut
-                && let Some((scope, _)) = targets.first()
-                && let Ok(current) = scope.current()
+                && let Some((group, _)) = targets.first()
+                && let Ok(current) = group.current()
             {
                 let cap = (current as f64 * SOFT_CAP_FRACTION) as u64;
                 if cap >= SCOPE_FLOOR {
-                    let label = scope
-                        .label(self.act.root())
-                        .unwrap_or_else(|_| scope.name().to_string());
-                    plan.soft_cap = Some((label, cap));
+                    plan.soft_cap = Some((group.label(), cap));
                 }
             }
             plan.reclaim = targets
                 .into_iter()
                 .take(4)
-                .map(|(scope, ask)| {
-                    let label = scope
-                        .label(self.act.root())
-                        .unwrap_or_else(|_| scope.name().to_string());
-                    (label, ask)
-                })
+                .map(|(group, ask)| (group.label(), ask))
                 .collect();
         } else {
-            plan.blocked = Some("no delegated cgroup memory controller".into());
+            plan.blocked = Some(GROUPS_UNAVAILABLE.into());
         }
 
         if rung >= Rung::Suspend {
@@ -323,18 +415,101 @@ impl Ladder {
         plan
     }
 
-    /// Distinct process names that are both idle and on the watchlist.
+    /// Distinct process names that are both idle and on the watchlist, least
+    /// recently used first.
     ///
     /// `reclaimable` has already applied the gate and the watchlist ceiling, so
-    /// this only deduplicates.
+    /// this only deduplicates and orders. The order comes from the detector's
+    /// LRU: walking it from the tail means the app the user has gone longest
+    /// without touching is the first considered, rather than simply the largest.
     fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
+        let mut candidates = w.det.reclaimable(w.watchlist);
+        // With a ranker, suspend what the user is least likely to want back
+        // first; without one, the detector's largest-first order stands.
+        if let Some(r) = &self.ranker {
+            let back = |pid: i32| r.reuse(pid).unwrap_or(0.5);
+            candidates.sort_by(|a, b| {
+                let ka = a.pss as f64 * (1.0 - back(a.pid));
+                let kb = b.pss as f64 * (1.0 - back(b.pid));
+                kb.total_cmp(&ka)
+            });
+        }
         let mut seen: Vec<String> = Vec::new();
-        for s in w.det.reclaimable(w.watchlist) {
+        for s in candidates {
             if !seen.contains(&s.name) {
                 seen.push(s.name.clone());
             }
         }
-        seen
+        let mut ordered: Vec<String> = w
+            .det
+            .coldest()
+            .filter(|(name, _)| seen.iter().any(|s| s == name))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        // Anything the LRU has not seen yet keeps its largest-first place.
+        for name in seen {
+            if !ordered.contains(&name) {
+                ordered.push(name);
+            }
+        }
+        ordered
+    }
+
+    /// The eligible names a judge agrees to act on, in LRU order, plus the
+    /// steps to report for each one it vetoed.
+    ///
+    /// `Err` when a judge is attached but could not be reached.
+    fn judged_names(
+        &self,
+        w: &mut World<'_>,
+        intent: Intent,
+    ) -> (Vec<String>, Vec<(String, Outcome)>, Option<String>) {
+        let names = self.eligible_names(w);
+        let Some(judge) = w.judge.as_mut() else {
+            return (names, Vec::new(), None);
+        };
+        if names.is_empty() {
+            return (names, Vec::new(), None);
+        }
+
+        let candidates: Vec<Candidate> = names
+            .iter()
+            .take(JUDGE_LIMIT)
+            .enumerate()
+            .map(|(rank, name)| {
+                let procs: Vec<&Signals> = w
+                    .det
+                    .reclaimable(w.watchlist)
+                    .into_iter()
+                    .filter(|s| &s.name == name)
+                    .collect();
+                let idle = w
+                    .det
+                    .recency(name)
+                    .map(|r| r.idle().as_secs_f64() / 60.0)
+                    .unwrap_or(0.0);
+                Candidate::from_signals(name, rank, idle, &procs)
+            })
+            .collect();
+
+        match judge.judge(intent, &candidates) {
+            Ok(verdicts) => {
+                let mut keep = Vec::new();
+                let mut vetoed = Vec::new();
+                for c in &candidates {
+                    match verdicts.iter().find(|j| j.name == c.name) {
+                        Some(j) if j.close => keep.push(c.name.clone()),
+                        Some(j) => vetoed.push((c.name.clone(), Outcome::refused(j.reason.clone()))),
+                        None => vetoed.push((
+                            c.name.clone(),
+                            Outcome::refused("the judge gave no verdict"),
+                        )),
+                    }
+                }
+                (keep, vetoed, None)
+            }
+            Err(e) => (names, Vec::new(), Some(e)),
+        }
     }
 
     /// Run one tick.
@@ -344,6 +519,14 @@ impl Ladder {
             rung: Some(rung),
             ..Default::default()
         };
+
+        // Thaw anything the user has just switched to, at every rung and before
+        // any gate: a frozen app they are looking at is indistinguishable from a
+        // crashed one, so this never waits for pressure to pass.
+        for (name, outcome) in self.act.resume_where(|pid| w.det.in_focused_app(pid)) {
+            tracing::info!("resumed {name} — you switched to it");
+            report.steps.push(("resume", name, outcome));
+        }
 
         // A detector with no CPU delta yet cannot honestly call anything idle,
         // so there is nothing safe to act on. Release is still allowed: undoing
@@ -357,14 +540,26 @@ impl Ladder {
             return report;
         }
 
+        // Tidy first, at every rung: it waits on quiet, not on pressure.
+        if let Some(t) = self.tidy.as_mut() {
+            for step in t.step(w.det, &self.act, self.ranker.as_deref(), Instant::now()) {
+                report.total_freed += step.2.bytes_freed;
+                report.steps.push(step);
+            }
+        }
+
         match rung {
             Rung::Release => {
                 self.pending_kill = None;
+                self.kill_queue.clear();
                 self.release(w, &mut report);
+                self.log(&report, w, rung);
                 return report;
             }
             Rung::Hold => {
                 self.pending_kill = None;
+                self.kill_queue.clear();
+                self.log(&report, w, rung);
                 return report;
             }
             _ => {}
@@ -389,6 +584,7 @@ impl Ladder {
         } else {
             // Dropped back below the kill threshold: stand the kill down.
             self.pending_kill = None;
+            self.kill_queue.clear();
         }
 
         report.kill_pending = self.pending_kill.clone();
@@ -396,27 +592,27 @@ impl Ladder {
         report
     }
 
-    // ── Rung 0: kernel reclaim ──────────────────────────────────────────────
+    // ── Rung 0: group reclaim ───────────────────────────────────────────────
 
-    /// Scopes worth reclaiming from, largest reclaimable share first.
+    /// Groups worth reclaiming from, largest reclaimable share first.
     ///
-    /// A scope is skipped entirely if *any* process in it is structurally
-    /// protected. Reclaim is non-destructive, but asking the kernel to page out
-    /// the compositor's cold memory still buys a stutter in exchange for very
+    /// A group is skipped entirely if *any* process in it is structurally
+    /// protected. Reclaim is non-destructive, but asking the OS to page out the
+    /// compositor's cold memory still buys a stutter in exchange for very
     /// little, and the compositor shares a session with nothing else worth
     /// reclaiming anyway.
     fn reclaim_targets(
         &self,
         w: &World<'_>,
-        h: &cgroup::Hierarchy,
-    ) -> Vec<(cgroup::Scope, u64)> {
-        let Ok(scopes) = h.scopes() else {
+        groups: &dyn GroupSource,
+    ) -> Vec<(Box<dyn AppGroup>, u64)> {
+        let Ok(all) = groups.groups() else {
             return Vec::new();
         };
         let mut out = Vec::new();
 
-        for scope in scopes {
-            let Ok(pids) = scope.pids() else { continue };
+        for group in all {
+            let Ok(pids) = group.pids() else { continue };
             if pids.is_empty() {
                 continue;
             }
@@ -437,12 +633,11 @@ impl Ladder {
                 continue;
             }
 
-            let Ok(stat) = scope.stat() else { continue };
-            let reclaimable = stat.reclaimable();
+            let Ok(reclaimable) = group.reclaimable() else { continue };
             if reclaimable < SCOPE_FLOOR {
                 continue;
             }
-            out.push((scope, (reclaimable as f64 * RECLAIM_FRACTION) as u64));
+            out.push((group, (reclaimable as f64 * RECLAIM_FRACTION) as u64));
         }
 
         out.sort_by_key(|(_, ask)| std::cmp::Reverse(*ask));
@@ -450,18 +645,14 @@ impl Ladder {
     }
 
     fn do_reclaim(&mut self, w: &World<'_>, report: &mut Report) {
-        let Some(h) = w.hierarchy else {
-            report.steps.push((
-                "reclaim",
-                String::new(),
-                Outcome::refused("no delegated cgroup memory controller"),
-            ));
+        let Some(groups) = w.groups else {
+            report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
             return;
         };
 
-        for (scope, ask) in self.reclaim_targets(w, h).into_iter().take(4) {
-            let label = scope.label(self.act.root()).unwrap_or_else(|_| scope.name().to_string());
-            let outcome = self.act.reclaim_scope(&scope, ask);
+        for (group, ask) in self.reclaim_targets(w, groups).into_iter().take(4) {
+            let label = group.label();
+            let outcome = self.act.reclaim_scope(group.as_ref(), ask);
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("reclaim", label, outcome));
         }
@@ -469,18 +660,21 @@ impl Ladder {
 
     // ── Rung 1: targeted page-out, then a soft cap ──────────────────────────
 
-    /// Page out the cold regions of the largest idle processes.
+    /// Page out the cold regions of idle processes, a few per tick, taking turns.
     ///
-    /// Runs after cgroup reclaim has taken the bulk, and only reaches the
-    /// biggest few — walking full `smaps` costs a syscall per mapping, and a
-    /// browser has thousands. Without `CAP_SYS_NICE` every call is refused and
-    /// the rung contributes nothing, which is the expected configuration.
+    /// Runs after group reclaim has taken the bulk, and only reaches a few per
+    /// tick — on Linux, walking full `smaps` costs a syscall per mapping, and a
+    /// browser has thousands. Which few comes from a circular list, so
+    /// successive ticks work round every idle process instead of re-paging the
+    /// same largest three. Without a page-out route every call is refused and
+    /// the rung contributes nothing, which is a normal configuration.
     fn do_page_out(&mut self, w: &World<'_>, report: &mut Report) {
         if !self.act.can_page_out() {
+            let route = self.act.page_out_route();
             report.steps.push((
                 "pageout",
                 String::new(),
-                Outcome::refused("needs CAP_SYS_NICE (ramwarden-helper not installed)"),
+                Outcome::refused(format!("no page-out route: {route}")),
             ));
             return;
         }
@@ -494,7 +688,21 @@ impl Ladder {
             .collect();
         idle.sort_by_key(|(_, _, pss)| std::cmp::Reverse(*pss));
 
-        for (pid, name, _) in idle.into_iter().take(PAGEOUT_LIMIT) {
+        // Keep the circle in step with what is idle now; newcomers join at the
+        // back, largest first.
+        self.pageout_turns.retain(|pid| idle.iter().any(|(p, _, _)| p == pid));
+        for (pid, _, _) in &idle {
+            if !self.pageout_turns.iter().any(|p| p == pid) {
+                self.pageout_turns.insert_last(*pid);
+            }
+        }
+        let turns = PAGEOUT_LIMIT.min(self.pageout_turns.len());
+        let picked: Vec<i32> = (0..turns).filter_map(|_| self.pageout_turns.turn().copied()).collect();
+
+        for pid in picked {
+            let Some((_, name, _)) = idle.iter().find(|(p, _, _)| *p == pid).cloned() else {
+                continue;
+            };
             let outcome = self.act.page_out(pid, COLD_RATIO, COLD_VMA_FLOOR);
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("pageout", format!("{name} (pid {pid})"), outcome));
@@ -502,18 +710,18 @@ impl Ladder {
     }
 
     fn do_soft_cap(&mut self, w: &World<'_>, report: &mut Report) {
-        let Some(h) = w.hierarchy else { return };
-        let targets = self.reclaim_targets(w, h);
-        let Some((scope, _)) = targets.into_iter().next() else {
+        let Some(groups) = w.groups else { return };
+        let targets = self.reclaim_targets(w, groups);
+        let Some((group, _)) = targets.into_iter().next() else {
             return;
         };
-        let Ok(current) = scope.current() else { return };
+        let Ok(current) = group.current() else { return };
         let cap = (current as f64 * SOFT_CAP_FRACTION) as u64;
         if cap < SCOPE_FLOOR {
             return;
         }
-        let label = scope.label(self.act.root()).unwrap_or_else(|_| scope.name().to_string());
-        let outcome = self.act.soft_cap(&scope, cap);
+        let label = group.label();
+        let outcome = self.act.soft_cap(group.as_ref(), cap);
         report.steps.push(("soft_cap", label, outcome));
     }
 
@@ -539,12 +747,24 @@ impl Ladder {
 
     // ── Rung 3: suspend ─────────────────────────────────────────────────────
 
-    fn do_suspend(&mut self, w: &World<'_>, report: &mut Report) {
-        for name in self.eligible_names(w) {
+    /// Suspending is reversible, so a judge that cannot be reached does not
+    /// block it: the gate alone decides, as it did before judges existed.
+    fn do_suspend(&mut self, w: &mut World<'_>, report: &mut Report) {
+        let (names, vetoed, unreachable) = self.judged_names(w, Intent::Suspend);
+        if let Some(e) = unreachable {
+            tracing::warn!("judge unavailable for suspend ({e}) — using the gate alone");
+        }
+        for (name, outcome) in vetoed {
+            report.steps.push(("suspend", name, outcome));
+        }
+        for name in names {
             if self.act.is_suspended(&name) {
                 continue;
             }
             let outcome = self.act.suspend(&name, w.det, w.watchlist, false);
+            if !outcome.did_nothing() {
+                self.undo.push(name.clone());
+            }
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("suspend", name, outcome));
         }
@@ -552,8 +772,55 @@ impl Ladder {
 
     // ── Rung 4: kill ────────────────────────────────────────────────────────
 
-    fn do_kill(&mut self, w: &World<'_>, report: &mut Report) {
-        let targets = self.eligible_names(w);
+    /// Kill whatever is next in the queue, if it is still eligible.
+    ///
+    /// Re-checked at the last moment against the LRU: an app the user came back
+    /// to after it was armed must not be killed for having been idle a minute
+    /// ago. (Not against the gate: by now the suspend rung has usually stopped
+    /// it, and a stopped process no longer counts as reclaimable.)
+    fn kill_next(&mut self, w: &World<'_>, report: &mut Report) {
+        let Some((name, armed_at)) = self.kill_queue.dequeue() else {
+            return;
+        };
+        if w.det.recency(&name).is_some_and(|r| r.touched && r.since > armed_at) {
+            report.steps.push((
+                "kill",
+                name,
+                Outcome::refused("used again since it was armed — spared"),
+            ));
+            return;
+        }
+        let outcome = self.act.kill(&name, w.det, w.watchlist, false);
+        report.total_freed += outcome.bytes_freed;
+        report.steps.push(("kill", name, outcome));
+    }
+
+    /// Killing is not reversible, so a judge that cannot be reached blocks it.
+    fn do_kill(&mut self, w: &mut World<'_>, report: &mut Report) {
+        // Already past the grace period: work through the queue, one per tick.
+        if !self.kill_queue.is_empty() {
+            self.kill_next(w, report);
+            return;
+        }
+
+        let armed = self.pending_kill.is_some();
+        let (targets, vetoed, unreachable) = if armed {
+            (self.eligible_names(w), Vec::new(), None)
+        } else {
+            self.judged_names(w, Intent::Kill)
+        };
+        if let Some(e) = unreachable {
+            self.pending_kill = None;
+            report.steps.push((
+                "kill",
+                targets.join(", "),
+                Outcome::refused(format!("judge unavailable ({e}) — not killing without it")),
+            ));
+            return;
+        }
+        for (name, outcome) in vetoed {
+            report.steps.push(("kill", name, outcome));
+        }
 
         if targets.is_empty() {
             self.pending_kill = None;
@@ -570,13 +837,10 @@ impl Ladder {
         match &self.pending_kill {
             // Already armed and the window has closed: proceed.
             Some(p) if p.due() => {
-                let armed = p.targets.clone();
+                let at = p.armed_at;
+                self.kill_queue = p.targets.iter().map(|t| (t.clone(), at)).collect();
                 self.pending_kill = None;
-                for name in armed {
-                    let outcome = self.act.kill(&name, w.det, w.watchlist, false);
-                    report.total_freed += outcome.bytes_freed;
-                    report.steps.push(("kill", name, outcome));
-                }
+                self.kill_next(w, report);
             }
             // Armed, still inside the window.
             Some(p) => {
@@ -594,11 +858,8 @@ impl Ladder {
                 };
                 if pending.due() {
                     // grace of zero: no window, act now.
-                    for name in targets {
-                        let outcome = self.act.kill(&name, w.det, w.watchlist, false);
-                        report.total_freed += outcome.bytes_freed;
-                        report.steps.push(("kill", name, outcome));
-                    }
+                    self.kill_queue = targets.into_iter().map(|t| (t, pending.armed_at)).collect();
+                    self.kill_next(w, report);
                 } else {
                     tracing::warn!(
                         "arming kill of {} in {}s — cancel to stop it",
@@ -628,11 +889,13 @@ impl Ladder {
     /// exists. Neither should outlive the pressure that caused it.
     fn release(&mut self, w: &World<'_>, report: &mut Report) {
         for (name, outcome) in self.act.resume_all() {
-            tracing::info!("resumed {name} — pressure back to {:.1}%", w.psi.some.avg10);
+            tracing::info!("resumed {name} — pressure back to {:.1}%", w.psi.some_avg10);
             report.steps.push(("resume", name, outcome));
         }
-        if let Some(h) = w.hierarchy {
-            for (name, outcome) in self.act.release_caps(h) {
+        // Everything on it was just resumed.
+        self.undo.clear();
+        if let Some(groups) = w.groups {
+            for (name, outcome) in self.act.release_caps(groups) {
                 report.steps.push(("release", name, outcome));
             }
         }
@@ -643,9 +906,9 @@ impl Ladder {
         for (action, target, outcome) in &report.steps {
             let _ = h.log(&NewAction {
                 rung: rung.index(),
-                trigger: "psi".into(),
-                psi_some: w.psi.some.avg10,
-                psi_full: w.psi.full.avg10,
+                trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
+                psi_some: w.psi.some_avg10,
+                psi_full: w.psi.full_avg10,
                 action: (*action).to_string(),
                 target: target.clone(),
                 bytes_freed: outcome.bytes_freed as i64,
@@ -656,21 +919,17 @@ impl Ladder {
     }
 }
 
-/// Available memory in bytes, from `/proc/meminfo`.
+/// Available memory in bytes.
 ///
-/// `MemAvailable` rather than `MemFree`: the kernel's own estimate of what can
-/// be allocated without swapping, which is the figure the last rung cares about.
-pub fn available_bytes(root: &ramwarden_kernel::Root) -> u64 {
-    let Ok(text) = std::fs::read_to_string(root.join("proc/meminfo")) else {
-        return u64::MAX; // unknown: do not let a bad read trigger a kill
-    };
-    text.lines()
-        .find_map(|l| {
-            let rest = l.strip_prefix("MemAvailable:")?;
-            rest.split_whitespace().next()?.parse::<u64>().ok()
-        })
-        .map(|kb| kb * 1024)
-        .unwrap_or(u64::MAX)
+/// `MemAvailable` on Linux, free + standby on Windows: what can be allocated
+/// without paging, which is the figure the last rung cares about. An unreadable
+/// or zero reading is reported as unlimited, so a bad read can never look like
+/// an out-of-memory condition and trigger the kill rung.
+pub fn available_bytes(mem: &dyn MemorySource) -> u64 {
+    match mem.status() {
+        Ok(m) if m.available > 0 => m.available,
+        _ => u64::MAX,
+    }
 }
 
 /// Total PSS of every process the detector considers idle.
@@ -682,39 +941,30 @@ pub fn idle_bytes(det: &Detector) -> u64 {
         .sum()
 }
 
-/// Bytes of cold memory in a process, for the targeted page-out rung.
-pub fn cold_bytes(root: &ramwarden_kernel::Root, pid: i32) -> u64 {
-    smaps::rollup(root, pid).map(|r| r.cold_bytes()).unwrap_or(0)
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
-    use crate::roles::classify;
-    use crate::signals::Signals;
-    use ramwarden_kernel::Root;
-    use ramwarden_kernel::psi::Window;
-    use std::fs;
 
-    fn cfg() -> config::Ladder {
+    pub fn cfg() -> config::Ladder {
         config::Ladder::default()
     }
 
-    /// PSI with the given `some` and `full` ten-second averages.
-    fn psi(some: f64, full: f64) -> Psi {
-        Psi {
-            some: Window {
-                avg10: some,
-                ..Default::default()
-            },
-            full: Window {
-                avg10: full,
-                ..Default::default()
-            },
+    /// Pressure with the given `some` and `full` ten-second averages.
+    pub fn psi(some: f64, full: f64) -> Pressure {
+        Pressure {
+            some_avg10: some,
+            full_avg10: full,
+            ..Default::default()
         }
     }
 
-    const PLENTY: u64 = 8_000_000_000;
+    pub const PLENTY: u64 = 8_000_000_000;
+}
+
+#[cfg(test)]
+mod rung_tests {
+    use super::test_support::*;
+    use super::*;
 
     // ── Rung selection, driven by a synthetic pressure series ───────────────
 
@@ -794,6 +1044,19 @@ mod tests {
         assert!(Rung::Tabs < Rung::Suspend);
         assert!(Rung::Suspend < Rung::Kill);
     }
+
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::test_support::*;
+    use super::*;
+    use crate::roles::classify;
+    use crate::signals::Signals;
+    use ramwarden_kernel::Root;
+    use ramwarden_kernel::cgroup;
+    use ramwarden_kernel::platform::{CgroupGroups, LinuxMemory};
+    use std::fs;
 
     // ── A synthetic session to act on ───────────────────────────────────────
 
@@ -883,7 +1146,12 @@ mod tests {
             Fixture { _dir: dir, root }
         }
 
-        fn hierarchy(&self) -> cgroup::Hierarchy {
+        fn hierarchy(&self) -> CgroupGroups {
+            CgroupGroups::new(self.root.clone(), 1000)
+        }
+
+        /// The raw cgroup view, for asserting on what was written.
+        fn cgroups(&self) -> cgroup::Hierarchy {
             cgroup::Hierarchy::user_session(&self.root, 1000).unwrap()
         }
 
@@ -907,7 +1175,7 @@ mod tests {
             c.age_minutes = 600.0;
             sigs.push(c);
 
-            Detector::preloaded(self.root.clone(), warm, sigs)
+            Detector::preloaded(warm, sigs)
         }
 
         /// What was written to each scope's `memory.reclaim`.
@@ -941,7 +1209,7 @@ mod tests {
     }
 
     fn ladder(cfg: config::Ladder, root: &Root) -> Ladder {
-        Ladder::new(cfg, Actuator::new(root.clone()))
+        Ladder::new(cfg, Actuator::linux(root.clone()))
             .with_history(History::in_memory().unwrap())
     }
 
@@ -962,7 +1230,7 @@ mod tests {
 
     fn world<'a>(
         f: &'a Fixture,
-        h: &'a cgroup::Hierarchy,
+        h: &'a CgroupGroups,
         det: &'a Detector,
         pressure: f64,
         full: f64,
@@ -970,12 +1238,13 @@ mod tests {
     ) -> World<'a> {
         World {
             det,
-            hierarchy: Some(h),
+            groups: Some(h),
             psi: psi(pressure, full),
-            available_bytes: available_bytes(&f.root),
+            available_bytes: available_bytes(&LinuxMemory::new(f.root.clone())),
             watchlist,
             goal: String::new(),
             tabs: None,
+            judge: None,
         }
     }
 
@@ -1086,6 +1355,7 @@ mod tests {
 
         let mut w = World {
             tabs: Some(&mut tabs),
+            judge: None,
             ..world(&f, &h, &det, 16.0, 0.0, &wl)
         };
         let report = l.step(&mut w);
@@ -1166,7 +1436,7 @@ mod tests {
         let det = f.detector(true);
         let mut l = ladder(cfg(), &f.root);
         let mut w = World {
-            hierarchy: None,
+            groups: None,
             ..world(&f, &h, &det, 3.0, 0.0, &[])
         };
         let report = l.step(&mut w);
@@ -1357,7 +1627,7 @@ mod tests {
         let mut l = ladder(cfg(), &f.root);
         l.step(&mut world(&f, &h, &det, 6.0, 0.0, &[]));
 
-        let scope = h.scope("app-brave.scope").unwrap();
+        let scope = f.cgroups().scope("app-brave.scope").unwrap();
         let cap = scope.high().unwrap().expect("capped");
         assert_eq!(cap, (4_000_000_000f64 * SOFT_CAP_FRACTION) as u64);
         assert!(cap < scope.current().unwrap());
@@ -1424,7 +1694,7 @@ mod tests {
         let f = Fixture::new();
         let h = f.hierarchy();
         let det = f.detector(true);
-        let mut l = Ladder::new(cfg(), Actuator::new(f.root.clone()));
+        let mut l = Ladder::new(cfg(), Actuator::linux(f.root.clone()));
         let report = l.step(&mut world(&f, &h, &det, 3.0, 0.0, &[]));
         assert_eq!(report.rung, Some(Rung::Reclaim));
     }
@@ -1543,7 +1813,7 @@ mod tests {
     #[test]
     fn available_memory_is_read_from_meminfo() {
         let f = Fixture::new();
-        assert_eq!(available_bytes(&f.root), 7_000_000 * 1024);
+        assert_eq!(available_bytes(&LinuxMemory::new(f.root.clone())), 7_000_000 * 1024);
     }
 
     /// An unreadable meminfo must not look like an out-of-memory condition and
@@ -1552,9 +1822,10 @@ mod tests {
     fn unreadable_meminfo_reports_unlimited_rather_than_zero() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::at(dir.path());
-        assert_eq!(available_bytes(&root), u64::MAX);
+        let mem = LinuxMemory::new(root);
+        assert_eq!(available_bytes(&mem), u64::MAX);
         assert_eq!(
-            rung_for(&cfg(), &psi(0.0, 0.0), available_bytes(&root)),
+            rung_for(&cfg(), &psi(0.0, 0.0), available_bytes(&mem)),
             Rung::Release
         );
     }
@@ -1565,7 +1836,7 @@ mod tests {
         let root = Root::at(dir.path());
         fs::create_dir_all(root.join("proc")).unwrap();
         fs::write(root.join("proc/meminfo"), "MemTotal: 32000000 kB\n").unwrap();
-        assert_eq!(available_bytes(&root), u64::MAX);
+        assert_eq!(available_bytes(&LinuxMemory::new(root)), u64::MAX);
     }
 
     #[test]
@@ -1574,5 +1845,164 @@ mod tests {
         let det = f.detector(true);
         // Three idle processes at 500 MB each; the compositor is excluded.
         assert_eq!(idle_bytes(&det), 4 * 500 * 1024 * 1024);
+    }
+
+    // ── LRU order, the judge, and the kill queue ────────────────────────────
+
+    /// Two idle watchlisted apps; `hot` was focused at some point, the other never.
+    fn lru_detector(_f: &Fixture, hot: &str) -> Detector {
+        let mut sigs = Vec::new();
+        for (pid, name) in [(30, "Discord"), (31, "Slack")] {
+            let mut s = Signals::new(pid, name, classify(name, "", None));
+            s.pss = 500 * 1024 * 1024;
+            s.age_minutes = 600.0;
+            s.is_focused = name == hot;
+            sigs.push(s);
+        }
+        Detector::preloaded(true, sigs)
+    }
+
+    struct FakeJudge {
+        calls: Vec<(Intent, Vec<String>)>,
+        allow: Vec<&'static str>,
+        fail: bool,
+    }
+
+    impl Judge for FakeJudge {
+        fn judge(&mut self, intent: Intent, c: &[Candidate]) -> Result<Vec<crate::judge::Judgement>, String> {
+            self.calls.push((intent, c.iter().map(|c| c.name.clone()).collect()));
+            if self.fail {
+                return Err("timed out".into());
+            }
+            Ok(c.iter()
+                .map(|c| crate::judge::Judgement {
+                    name: c.name.clone(),
+                    close: self.allow.contains(&c.name.as_str()),
+                    confidence: 0.61,
+                    reason: "Jev is not convinced (61%)".into(),
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn candidates_come_from_the_lru_tail_first() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let l = ladder(cfg(), &f.root);
+
+        // The focused flag makes an app ineligible this tick, so check order on
+        // a detector where both are idle but one was touched earlier.
+        let mut det = lru_detector(&f, "Slack");
+        let w = world(&f, &h, &det, 1.0, 30.0, &wl);
+        assert_eq!(l.eligible_names(&w), vec!["Discord".to_string()]);
+
+        det = lru_detector(&f, "none");
+        let w = world(&f, &h, &det, 1.0, 30.0, &wl);
+        let names = l.eligible_names(&w);
+        assert_eq!(names.len(), 2);
+        // Both cold and untouched: order follows the LRU, which is stable.
+        let lru: Vec<String> = det.coldest().map(|(n, _)| n.to_string()).collect();
+        assert_eq!(names, lru);
+    }
+
+    #[test]
+    fn the_judge_sees_lru_candidates_and_its_veto_is_reported() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: false };
+
+        let mut w = World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) };
+        let report = l.step(&mut w);
+
+        assert_eq!(j.calls[0].0, Intent::Suspend);
+        assert_eq!(j.calls[1].0, Intent::Kill);
+        assert_eq!(j.calls[0].1.len(), 2);
+        let vetoes: Vec<_> = report
+            .steps
+            .iter()
+            .filter(|(_, _, o)| o.notes.iter().any(|n| n.contains("Jev is not convinced")))
+            .collect();
+        assert_eq!(vetoes.len(), 4, "{:?}", report.steps); // 2 apps x suspend + kill
+        assert!(l.pending_kill().is_none(), "nothing approved, nothing armed");
+    }
+
+    #[test]
+    fn only_what_the_judge_approves_is_armed() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec!["Slack"], fail: false };
+
+        l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        assert_eq!(l.pending_kill().unwrap().targets, vec!["Slack".to_string()]);
+    }
+
+    #[test]
+    fn an_unreachable_judge_blocks_kills_but_not_suspends() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: true };
+
+        let report = l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        let suspends = report.steps.iter().filter(|(a, _, _)| *a == "suspend").count();
+        assert_eq!(suspends, 2, "suspend falls back to the gate: {:?}", report.steps);
+        let (_, _, kill) = report.steps.iter().find(|(a, _, _)| *a == "kill").unwrap();
+        assert!(kill.notes[0].contains("not killing without it"), "{kill:?}");
+        assert!(l.pending_kill().is_none());
+    }
+
+    #[test]
+    fn due_kills_leave_the_queue_one_per_tick_and_stop_when_pressure_drops() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut c = cfg();
+        c.kill_grace_seconds = 0;
+        let mut l = ladder(c, &f.root);
+
+        let report = l.step(&mut world(&f, &h, &det, 1.0, 30.0, &wl));
+        let kills = report.steps.iter().filter(|(a, _, _)| *a == "kill").count();
+        assert_eq!(kills, 1, "{:?}", report.steps);
+        assert_eq!(l.queued_kills().len(), 1);
+
+        // Pressure eases below the kill rung: the rest of the queue is spared.
+        l.step(&mut world(&f, &h, &det, 16.0, 0.0, &wl));
+        assert!(l.queued_kills().is_empty());
+    }
+
+    #[test]
+    fn cancel_also_empties_the_kill_queue() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut c = cfg();
+        c.kill_grace_seconds = 0;
+        let mut l = ladder(c, &f.root);
+        l.step(&mut world(&f, &h, &det, 1.0, 30.0, &wl));
+        assert!(l.cancel_kill());
+        assert!(l.queued_kills().is_empty());
+    }
+
+    #[test]
+    fn undo_skips_entries_that_are_no_longer_suspended() {
+        let f = Fixture::new();
+        let mut l = ladder(cfg(), &f.root);
+        l.undo.push("Discord".into());
+        l.undo.push("Slack".into());
+        // Neither is actually suspended in the fixture.
+        assert!(l.undo_last().is_none());
+        assert!(l.undo_stack().is_empty());
     }
 }
