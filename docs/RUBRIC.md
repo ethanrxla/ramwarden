@@ -47,6 +47,8 @@ wrong loses work.
   and the browser extension are the only exceptions.
 - `cargo fmt --all` is clean.
 - `cargo clippy --workspace --all-targets -- -D warnings` is clean.
+  CI pins the Rust version in `.github/workflows/ci.yml`; bumping it is its
+  own PR that also fixes any new lints on all three platforms.
 - Errors: `thiserror` in library crates, `anyhow` only in binaries and tests.
   No `unwrap()`/`expect()` outside tests unless the invariant is written in
   the message.

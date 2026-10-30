@@ -140,8 +140,10 @@ fn the_game_is_never_a_target_at_any_rung_even_when_watchlisted() {
     let shared = world();
     let p = fake::platform(shared.clone());
     let det = warm_detector(&p, &shared);
-    let mut cfg = config::Ladder::default();
-    cfg.kill_grace_seconds = 0;
+    let cfg = config::Ladder {
+        kill_grace_seconds: 0,
+        ..Default::default()
+    };
     let mut l = Ladder::new(cfg, Actuator::for_platform(&p));
     let wl = vec!["FortniteClient-Win64-Shipping".to_string(), "Discord".to_string()];
 
