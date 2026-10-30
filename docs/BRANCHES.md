@@ -20,7 +20,8 @@ day so the lines do not drift.
 | Today | Becomes |
 |-------|---------|
 | `macos-sync` (Windows + macOS + Linux, 27 commits ahead of main) | reconciled with PR #3, then merged into `main`; `mac` is cut from it |
-| `windows` | kept as the `windows` line after PR #2 merges; then reset to follow `main` |
+| `macbook` | old local Mac branch; every commit is already in `macos-sync`, to delete |
+| `windows` | kept as the `windows` line after PR #2 merges; then its last 4 commits (watchdog, game handle guard) are merged into `main`; the one conflict is the tab-unload wait in `ramwarden-daemon/src/monitor.rs` |
 | `rust-rewrite` | identical to `main`; to delete (owner does it in GitHub, Branches page) |
 | PR #1 (systemd units) | merged into `main`, reaches `linux` |
 | PR #2 (start the daemon) | merged into `windows`, then `main` |
