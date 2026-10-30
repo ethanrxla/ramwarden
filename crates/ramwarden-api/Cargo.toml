@@ -1,0 +1,30 @@
+[package]
+name    = "ramwarden-api"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's hosted API: answers the daemon's Jev questions with the operator's key, behind tokens and quotas."
+
+[lib]
+name = "ramwarden_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ramwarden-api"
+path = "src/main.rs"
+
+[dependencies]
+ramwarden-ai = { path = "../ramwarden-ai" }
+axum       = { workspace = true }
+tokio      = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+reqwest    = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true, features = ["net"] }
