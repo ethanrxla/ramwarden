@@ -6,11 +6,24 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod embedder;
+pub mod extras;
+pub mod freeze_journal;
+pub mod gpu;
+pub mod guard;
 pub mod hub;
+pub mod ladderjudge;
 pub mod monitor;
+pub mod outcomes;
+pub mod predict;
 pub mod routes;
 pub mod tabpolicy;
+pub mod appintel;
+pub mod appquit;
+pub mod tabintel;
+pub mod tabrank;
 pub mod tabs;
+pub mod worker;
 pub mod ws;
 
 pub mod browser;

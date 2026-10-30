@@ -1,0 +1,31 @@
+# RamWarden config for the MacBook Air M3 (16 GB). See MACBOOK_SPEC.md.
+# Installed to ~/.config/ramwarden/config.toml by scripts/install-macos.sh.
+
+[server]
+host = "127.0.0.1"   # laptop on shared wifi: never bind every interface
+port = 7823
+
+[thresholds]
+inactivity_minutes = 30   # tab must be idle this long to be unloaded
+debounce_minutes   = 15
+
+# Rungs are on the proxy pressure scale (see MACBOOK_SPEC.md):
+#   normal -> 0-3, warn -> 11, critical -> 16 (full 10)
+# so warn unloads tabs, critical also suspends watchlisted apps, and the kill
+# rung is only reachable through available memory dropping below the floor.
+[ladder]
+reclaim_at   = 2.0    # advisory on macOS (no userspace reclaim)
+pageout_at   = 5.0    # advisory on macOS
+tabs_at      = 10.0
+suspend_at   = 15.0
+kill_at_full = 25.0   # unreachable by the proxy on purpose
+kill_below_available_mb = 400
+kill_grace_seconds = 30
+release_below = 1.0
+
+[processes]
+# EMPTY ON PURPOSE. The watchlist is the ceiling for SIGSTOP/SIGTERM/SIGKILL, so
+# with it empty the daemon can unload browser tabs but cannot freeze or kill any
+# application. Add names here (as `ps -o comm` shows them) to opt an app in, e.g.
+#   watchlist = ["Discord", "Slack"]
+watchlist = []

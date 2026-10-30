@@ -17,6 +17,10 @@
 //! hard-won knowledge about this specific desktop. The one thing worth knowing
 //! when editing them: the kernel truncates `comm` to 15 characters, so some
 //! entries are deliberately spelled short — `power-profiles-`, `gnome-keyring-d`.
+//!
+//! Windows names live in their own tables below the Linux ones. They are
+//! consulted on every platform — a name that never occurs on Linux costs a
+//! comparison and nothing else — so classification has no `cfg` in it.
 
 use std::fmt;
 
@@ -46,6 +50,10 @@ pub enum Role {
     Build,
     /// Background file sync or transfer.
     Sync,
+    /// A game or its anti-cheat. Trimming a game's working set causes stutter,
+    /// and anti-cheat services may treat a foreign process opening the game
+    /// with memory rights as tampering.
+    Game,
     /// An ordinary application. The only role, with [`Role::Browser`], that the
     /// ladder may reclaim from.
     App,
@@ -60,7 +68,16 @@ impl Role {
         use Role::*;
         matches!(
             self,
-            Compositor | Hypervisor | Container | Agent | Terminal | System | Media | Build | Sync
+            Compositor
+                | Hypervisor
+                | Container
+                | Agent
+                | Terminal
+                | System
+                | Media
+                | Build
+                | Sync
+                | Game
         )
     }
 
@@ -77,6 +94,7 @@ impl Role {
             Media => "playing or recording media",
             Build => "build or long computation in flight",
             Sync => "file sync or transfer in progress",
+            Game => "game or anti-cheat in progress — touching it causes stutter and may be flagged",
             Browser => "browser",
             App => "application",
         }
@@ -95,6 +113,7 @@ impl Role {
             Media => "MEDIA",
             Build => "BUILD",
             Sync => "SYNC",
+            Game => "GAME",
             App => "APP",
         }
     }
@@ -135,6 +154,8 @@ const TERMINAL_EMULATORS: &[&str] = &[
     "cosmic-term", "gnome-terminal", "gnome-terminal-server", "tilix", "xterm",
     "alacritty", "kitty", "konsole", "xfce4-terminal", "lxterminal",
     "mate-terminal", "terminator", "wezterm", "wezterm-gui", "foot", "ptyxis",
+    // macOS: they hold the user's shells.
+    "terminal", "iterm2", "warp", "ghostty",
 ];
 
 const BROWSERS: &[&str] = &[
@@ -165,6 +186,14 @@ const SYNC: &[&str] = &[
 ];
 
 const SYSTEM_NAMES: &[&str] = &[
+    // macOS. Tailscale is the user's VPN and network extension: suspending it drops
+    // the connection, so it is never touched even if a watchlist names it.
+    "tailscale", "ipnextension", "io.tailscale.ipn.macsys.network-extension", "tailscale-ipn",
+    "kernel_task", "launchd", "windowserver", "loginwindow", "dock", "finder",
+    "systemuiserver", "controlcenter", "notificationcenter", "coreaudiod", "coreservicesd",
+    "configd", "mds", "mds_stores", "trustd", "securityd", "cfprefsd", "distnoted", "logd",
+    "powerd", "usereventagent", "airportd", "sharingd", "universalaccessd", "wifiagent",
+    "networkserviceproxy", "nsurlsessiond", "lsd", "diskarbitrationd", "fseventsd",
     "systemd", "init", "kthreadd", "pipewire", "pipewire-pulse", "wireplumber",
     "pulseaudio", "dbus-daemon", "dbus-broker", "networkmanager",
     "wpa_supplicant", "avahi-daemon", "polkitd", "udisksd", "upowerd",
@@ -173,6 +202,67 @@ const SYSTEM_NAMES: &[&str] = &[
     "tailscaled", "wireguard", "openvpn", "sshd", "cron", "crond", "atd",
     "accounts-daemon", "rtkit-daemon", "irqbalance", "thermald", "power-profiles-",
 ];
+
+// ── Windows ─────────────────────────────────────────────────────────────────
+// Image names without `.exe`, compared lowercased.
+
+/// The desktop shell and the pieces of it that freeze the session if stopped.
+const WIN_SHELL: &[&str] = &[
+    "dwm", "explorer", "sihost", "shellexperiencehost", "startmenuexperiencehost",
+    "searchhost", "textinputhost", "applicationframehost", "lockapp", "ctfmon",
+    "fontdrvhost", "logonui",
+];
+
+/// Core system processes and the security stack. Most run in session 0 and are
+/// already classified as system by owner; these are the ones that also run in
+/// the user's session, or must never depend on owner lookup succeeding.
+const WIN_SYSTEM: &[&str] = &[
+    "system", "idle", "registry", "secure system", "memory compression", "smss", "csrss",
+    "wininit", "winlogon", "services", "lsass", "lsaiso", "svchost", "taskhostw",
+    "runtimebroker", "dllhost", "audiodg", "spoolsv", "wudfhost", "wmiprvse",
+    "msmpeng", "nissrv", "mpdefendercoreservice", "securityhealthservice",
+    "securityhealthsystray", "smartscreen", "nvcontainer", "nvdisplay.container",
+];
+
+/// Hyper-V and WSL2 guests live in these.
+const WIN_HYPERVISOR_PREFIXES: &[&str] = &["vmmem", "vmwp", "vmcompute", "virtualboxvm"];
+
+/// Docker Desktop and the WSL plumbing a running distro depends on.
+const WIN_CONTAINER_PREFIXES: &[&str] = &["com.docker", "docker desktop", "wslservice", "wslhost", "wslrelay"];
+
+const WIN_TERMINALS: &[&str] = &["windowsterminal", "openconsole", "conhost"];
+
+const WIN_BROWSERS: &[&str] = &["msedge", "opera", "operagx"];
+
+const WIN_MEDIA: &[&str] = &["obs64", "obs32", "mpc-hc64", "potplayermini64"];
+
+/// Compilers, and installers mid-flight: interrupting Windows Update or an MSI
+/// can leave the system half-patched.
+const WIN_BUILD: &[&str] = &[
+    "cl", "link", "msbuild", "mspdbsrv", "vctip", "nvcc", "msiexec", "trustedinstaller",
+    "tiworker", "wuauclt", "wuaucltcore", "mousocoreworker", "usoclient",
+];
+
+const WIN_SYNC: &[&str] = &["googledrivefs", "icloudservices"];
+
+/// Anti-cheat services and clients. Never opened, never trimmed.
+const ANTI_CHEAT: &[&str] = &[
+    "vgc", "vgtray", "easyanticheat", "easyanticheat_eos", "beservice",
+    "eaanticheat.gameservice", "faceit", "faceitservice", "gameguard",
+];
+
+/// Games recognised by name. Most Unreal titles are also caught by the
+/// `-shipping` suffix their builds carry.
+const GAMES: &[&str] = &[
+    "league of legends", "valorant", "cs2", "dota2", "rocketleague", "r5apex",
+    "overwatch", "eldenring", "gta5", "gtav", "minecraft", "javaw",
+];
+
+fn is_game(lower: &str) -> bool {
+    lower.ends_with("-shipping")
+        || GAMES.contains(&lower)
+        || ANTI_CHEAT.contains(&lower)
+}
 
 fn starts_with_any(s: &str, prefixes: &[&str]) -> bool {
     prefixes.iter().any(|p| s.starts_with(p))
@@ -188,34 +278,43 @@ pub fn classify(name: &str, cmdline: &str, uid: Option<u32>) -> Role {
 
     // Exact names beat prefixes, so `cosmic-term` is a terminal rather than
     // being swallowed by the `cosmic-` compositor prefix. Order is load-bearing.
-    if TERMINAL_EMULATORS.contains(&lower.as_str()) {
+    let name = lower.as_str();
+    if TERMINAL_EMULATORS.contains(&name) || WIN_TERMINALS.contains(&name) {
         return Role::Terminal;
     }
-    if COMPOSITOR.contains(&lower.as_str()) || starts_with_any(&lower, COMPOSITOR_PREFIXES) {
+    if COMPOSITOR.contains(&name)
+        || starts_with_any(&lower, COMPOSITOR_PREFIXES)
+        || WIN_SHELL.contains(&name)
+    {
         return Role::Compositor;
     }
-    if starts_with_any(&lower, HYPERVISOR_PREFIXES) {
+    if starts_with_any(&lower, HYPERVISOR_PREFIXES) || starts_with_any(&lower, WIN_HYPERVISOR_PREFIXES) {
         return Role::Hypervisor;
     }
-    if starts_with_any(&lower, CONTAINER_PREFIXES) {
+    if starts_with_any(&lower, CONTAINER_PREFIXES) || starts_with_any(&lower, WIN_CONTAINER_PREFIXES) {
         return Role::Container;
+    }
+    // Before agents and browsers: a game is never something to reclaim from,
+    // whatever else its name resembles.
+    if is_game(name) {
+        return Role::Game;
     }
     if AGENT_NAMES.contains(&lower.as_str()) || AGENT_CMDLINE.iter().any(|a| cmd.contains(a)) {
         return Role::Agent;
     }
-    if BROWSERS.contains(&lower.as_str()) || starts_with_any(&lower, BROWSER_PREFIXES) {
+    if BROWSERS.contains(&name) || starts_with_any(&lower, BROWSER_PREFIXES) || WIN_BROWSERS.contains(&name) {
         return Role::Browser;
     }
-    if MEDIA.contains(&lower.as_str()) {
+    if MEDIA.contains(&name) || WIN_MEDIA.contains(&name) {
         return Role::Media;
     }
-    if BUILD.contains(&lower.as_str()) {
+    if BUILD.contains(&name) || WIN_BUILD.contains(&name) {
         return Role::Build;
     }
-    if SYNC.contains(&lower.as_str()) {
+    if SYNC.contains(&name) || WIN_SYNC.contains(&name) {
         return Role::Sync;
     }
-    if SYSTEM_NAMES.contains(&lower.as_str()) || uid == Some(0) {
+    if SYSTEM_NAMES.contains(&name) || WIN_SYSTEM.contains(&name) || uid == Some(0) {
         return Role::System;
     }
     Role::App
@@ -330,7 +429,7 @@ mod tests {
         for r in [
             Role::Compositor, Role::Hypervisor, Role::Container, Role::Agent,
             Role::Terminal, Role::System, Role::Browser, Role::Media,
-            Role::Build, Role::Sync, Role::App,
+            Role::Build, Role::Sync, Role::Game, Role::App,
         ] {
             let reason = r.protection_reason();
             assert!(reason.len() > 5, "{r}: {reason:?} is too terse to be useful");
@@ -342,7 +441,7 @@ mod tests {
     /// "compositor". This is what stops the UI reading as an arbitrary refusal.
     #[test]
     fn structural_reasons_name_a_consequence() {
-        for r in [Role::Compositor, Role::Hypervisor, Role::Container, Role::Terminal] {
+        for r in [Role::Compositor, Role::Hypervisor, Role::Container, Role::Terminal, Role::Game] {
             let reason = r.protection_reason();
             assert!(
                 reason.contains('—') || reason.contains("in progress"),
@@ -357,9 +456,76 @@ mod tests {
         assert!(!Role::Browser.is_structural());
         for r in [
             Role::Compositor, Role::Hypervisor, Role::Container, Role::Agent,
-            Role::Terminal, Role::System, Role::Media, Role::Build, Role::Sync,
+            Role::Terminal, Role::System, Role::Media, Role::Build, Role::Sync, Role::Game,
         ] {
             assert!(r.is_structural(), "{r}");
+        }
+    }
+
+    // ── Windows ─────────────────────────────────────────────────────────────
+
+    /// Image names exactly as `ramwarden-nt` reports them: without `.exe`,
+    /// case preserved.
+    #[test]
+    fn windows_structural_processes_are_recognised() {
+        for (name, expected) in [
+            ("dwm", Role::Compositor),
+            ("explorer", Role::Compositor),
+            ("StartMenuExperienceHost", Role::Compositor),
+            ("csrss", Role::System),
+            ("lsass", Role::System),
+            ("MsMpEng", Role::System),
+            ("svchost", Role::System),
+            ("Memory Compression", Role::System),
+            ("vmmemWSL", Role::Hypervisor),
+            ("vmmem", Role::Hypervisor),
+            ("com.docker.backend", Role::Container),
+            ("wslservice", Role::Container),
+            ("WindowsTerminal", Role::Terminal),
+            ("OpenConsole", Role::Terminal),
+            ("wuaucltcore", Role::Build),
+            ("TiWorker", Role::Build),
+            ("OneDrive", Role::Sync),
+            ("obs64", Role::Media),
+        ] {
+            assert_eq!(role_of(name), expected, "{name}");
+            assert!(expected.is_structural(), "{name} must be protected");
+        }
+    }
+
+    /// Measured on the target machine with Fortnite running: the game, its
+    /// overlay and its anti-cheat must all be untouchable.
+    #[test]
+    fn games_and_anti_cheat_are_never_reclaimable() {
+        for name in [
+            "FortniteClient-Win64-Shipping",
+            "EOSOverlayRenderer-Win64-Shipping",
+            "VALORANT-Win64-Shipping",
+            "EasyAntiCheat_EOS",
+            "vgc",
+            "League of Legends",
+            "cs2",
+        ] {
+            assert_eq!(role_of(name), Role::Game, "{name}");
+        }
+        assert!(Role::Game.is_structural());
+    }
+
+    /// The apps RamWarden exists to reclaim from on Windows stay reclaimable.
+    #[test]
+    fn windows_apps_and_browsers_stay_reclaimable() {
+        for (name, expected) in [
+            ("brave", Role::Browser),
+            ("msedge", Role::Browser),
+            ("chrome", Role::Browser),
+            ("Discord", Role::App),
+            ("LM Studio", Role::App),
+            ("EpicGamesLauncher", Role::App),
+            ("RiotClientServices", Role::App),
+            ("msedgewebview2", Role::App),
+        ] {
+            assert_eq!(role_of(name), expected, "{name}");
+            assert!(!expected.is_structural(), "{name}");
         }
     }
 
@@ -367,5 +533,19 @@ mod tests {
     fn role_names_round_trip_as_the_api_strings_v1_emitted() {
         assert_eq!(Role::Hypervisor.to_string(), "HYPERVISOR");
         assert_eq!(Role::App.as_str(), "APP");
+    }
+
+    #[test]
+    fn macos_system_processes_tailscale_and_terminals_are_protected() {
+        for name in ["Tailscale", "IPNExtension", "WindowServer", "kernel_task", "launchd", "Finder", "Dock"] {
+            assert_eq!(classify(name, "", Some(501)), Role::System, "{name}");
+        }
+        for name in ["Terminal", "iTerm2", "Warp"] {
+            assert_eq!(classify(name, "", Some(501)), Role::Terminal, "{name}");
+        }
+        // The apps the user opted in stay ordinary apps.
+        for name in ["node", "python3.13", "Arabesque", "Codex (Renderer)", "Cursor Helper (Renderer)"] {
+            assert_eq!(classify(name, "", Some(501)), Role::App, "{name}");
+        }
     }
 }

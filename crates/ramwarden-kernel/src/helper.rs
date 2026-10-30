@@ -15,9 +15,9 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ramwarden_kernel::smaps::Vma;
+use ramwarden_platform::Outcome;
 
-use crate::actuator::Outcome;
+use crate::smaps::Vma;
 
 /// How long to wait for the helper. Paging out is quick; a slow answer means
 /// something is wrong and the ladder should move on rather than stall its tick.

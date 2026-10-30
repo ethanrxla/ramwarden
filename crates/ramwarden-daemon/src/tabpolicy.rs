@@ -61,6 +61,22 @@ const EDITOR_HOSTS: &[&str] = &[
     "canvas.instructure.com",
 ];
 
+/// Editors that autosave to the cloud. Idle here is not a sign of unsaved work,
+/// so these may unload once they have been untouched for [`CLOUD_DOC_IDLE_MINUTES`].
+/// Local-state editors (vscode.dev, replit, colab, ...) are deliberately absent.
+const CLOUD_DOC_HOSTS: &[&str] = &[
+    "docs.google.com",
+    "sheets.google.com",
+    "slides.google.com",
+    "sharepoint.com",
+    "office.com",
+    "office365.com",
+    "onedrive.live.com",
+];
+
+/// A cloud document untouched this long (24 h) is safe to unload.
+pub const CLOUD_DOC_IDLE_MINUTES: i64 = 1_440;
+
 /// Domains where an old tab is almost certainly forgotten rather than pending.
 const STALE_DOMAINS: &[&str] = &[
     "youtube.com",
@@ -92,6 +108,21 @@ pub fn is_protected(url: &str) -> bool {
     if ["/login", "/signin", "/auth", "/oauth", "/callback", "/session"].iter().any(|p|path.starts_with(p)) { return true; }
     (domain_matches(&host,"github.com") || domain_matches(&host,"gitlab.com"))
         && NEVER_CLOSE_PATHS.iter().any(|p|path.contains(p))
+}
+
+/// [`is_protected`], except that an autosaving cloud document idle for
+/// [`CLOUD_DOC_IDLE_MINUTES`] or more is released from the editor protection.
+/// Every other protection (login flows, private hosts, open PRs) still applies.
+pub fn is_protected_for(url: &str, idle_minutes: i64) -> bool {
+    if !is_protected(url) {
+        return false;
+    }
+    let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_lowercase)) else {
+        return true;
+    };
+    let cloud_doc = CLOUD_DOC_HOSTS.iter().any(|d| domain_matches(&host, d));
+    let only_editor_rule = !NEVER_CLOSE.iter().any(|p| host.contains(p));
+    !(cloud_doc && only_editor_rule && idle_minutes >= CLOUD_DOC_IDLE_MINUTES)
 }
 
 /// Whether an old tab on this domain is likely forgotten.
@@ -342,5 +373,30 @@ mod tests {
     fn the_summary_reads_the_way_v1_phrased_it() {
         assert!(summary(3, 72.5).contains("3 stale tab(s)"));
         assert!(summary(0, 72.5).contains("no stale tabs qualify"));
+    }
+
+    #[test]
+    fn an_idle_cloud_document_may_unload_but_a_recent_one_may_not() {
+        let doc = "https://docs.google.com/document/d/abc/edit";
+        assert!(is_protected_for(doc, 60));
+        assert!(is_protected_for(doc, CLOUD_DOC_IDLE_MINUTES - 1));
+        assert!(!is_protected_for(doc, CLOUD_DOC_IDLE_MINUTES));
+        assert!(!is_protected_for("https://contoso.sharepoint.com/sites/x/Doc.docx", 3_000));
+        assert!(!is_protected_for("https://onedrive.live.com/edit?id=1", 2_000));
+    }
+
+    #[test]
+    fn local_state_editors_and_other_protections_never_release() {
+        for url in [
+            "https://vscode.dev/",
+            "https://replit.com/@me/x",
+            "https://colab.research.google.com/drive/1",
+            "http://localhost:3000/",
+            "https://accounts.google.com/signin",
+            "chrome://extensions",
+            "https://github.com/me/p/pull/3",
+        ] {
+            assert!(is_protected_for(url, 100_000), "{url}");
+        }
     }
 }

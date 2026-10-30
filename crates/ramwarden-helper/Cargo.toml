@@ -10,7 +10,7 @@ description = "Minimal setcap'd helper granting RamWarden process_madvise, and n
 name = "ramwarden-helper"
 path = "src/main.rs"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 ramwarden-kernel = { path = "../ramwarden-kernel" }
 serde      = { workspace = true }
 serde_json = { workspace = true }
@@ -18,5 +18,5 @@ nix        = { workspace = true, features = ["socket", "uio", "user"] }
 tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-[dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile = { workspace = true }

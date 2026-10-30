@@ -226,6 +226,156 @@ impl Default for Logging {
     }
 }
 
+/// The Tidy rung: free, reversible housekeeping for quiet background apps, at
+/// any pressure. See [`crate::tidy`].
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Tidy {
+    pub enabled: bool,
+    /// How long a process must stay quiet before it is tidied.
+    pub after_minutes: f64,
+    /// Lower memory priority and opt into EcoQoS (Windows).
+    pub background_hints: bool,
+    /// Trim the working set once per quiet period.
+    pub trim: bool,
+}
+
+impl Default for Tidy {
+    fn default() -> Self {
+        Tidy {
+            enabled: true,
+            after_minutes: 10.0,
+            background_hints: true,
+            trim: true,
+        }
+    }
+}
+
+/// VRAM policy: unload idle local models when a game needs the card.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Gpu {
+    pub unload_models_for_games: bool,
+    /// Act only when the card is at least this full.
+    pub vram_percent: f64,
+}
+
+impl Default for Gpu {
+    fn default() -> Self {
+        Gpu {
+            unload_models_for_games: true,
+            vram_percent: 85.0,
+        }
+    }
+}
+
+/// Graceful app quits, the one macOS lever that really frees an app's memory.
+///
+/// Freezing an app frees nothing; asking it to quit does. Three guards keep it
+/// safe: only apps named in `allow` may ever be asked (activity never widens that
+/// list), a hard floor in `appintel` refuses anything focused, playing audio,
+/// working or structurally protected, and Jev must say yes. The quit is the app's
+/// own "quit" request, never a signal, so an app with unsaved work shows its save
+/// prompt and stays up.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Quit {
+    /// `off`, `dry-run` (log what would be quit) or `live`.
+    pub mode: String,
+    /// Display names of apps that may be asked to quit.
+    pub allow: Vec<String>,
+    /// Act only while memory used is above this percent of RAM.
+    pub target_used_percent: f64,
+    /// An app must have been quiet at least this long.
+    pub min_quiet_minutes: f64,
+    /// Blended quit probability needed to act.
+    pub threshold: f64,
+    /// "Is this needed right now?" at or above this vetoes the quit.
+    pub needed_veto: f64,
+    /// At most this many quits per hour.
+    pub max_per_hour: u32,
+    /// An app burning CPU for this long while you are not using it is treated as
+    /// runaway rather than "working", and goes to Jev instead of being refused.
+    pub runaway_minutes: f64,
+}
+
+impl Default for Quit {
+    fn default() -> Self {
+        Quit {
+            mode: "off".into(),
+            allow: Vec::new(),
+            target_used_percent: 65.0,
+            min_quiet_minutes: 30.0,
+            threshold: 0.7,
+            needed_veto: 0.5,
+            max_per_hour: 6,
+            runaway_minutes: 10.0,
+        }
+    }
+}
+
+/// The decision tier: TypeSafe's Jev, which answers typed yes/no questions with
+/// calibrated probabilities. It is sent a short description of each borderline
+/// tab's *features* (site type, idle hours, visit count) and never a URL or a
+/// title, so it is far less exposing than the NIM tier. Still opt-in.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Jev {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    /// Read from `secrets.toml`, `.env` or `$JEV_API_KEY`. Never put it in
+    /// `ramwarden.toml`, which is tracked by git.
+    pub api_key: String,
+    pub timeout_seconds: u64,
+    /// How much Jev's answer counts against the closed-form estimate, 0-1, on the
+    /// log-odds scale. 0 ignores Jev, 1 trusts it alone.
+    pub weight: f64,
+    /// Spend cap: Jev calls per hour. Tabs with the same features share an answer,
+    /// so this is rarely reached.
+    pub max_calls_per_hour: u32,
+    /// Only tabs whose closed-form return chance is inside this band are asked
+    /// about; clearly-stale and clearly-active tabs never leave the machine.
+    pub band_low: f64,
+    pub band_high: f64,
+    pub max_candidates: usize,
+    /// How long an answer is reused.
+    pub cache_hours: u64,
+    /// "Could this tab hold unsaved work?" at or above this vetoes unloading.
+    pub unsaved_veto: f64,
+    /// The ladder's judge: the chance the user is not coming back to an app
+    /// that allows a suspend. See `ramwarden_ai::jev::judge`.
+    pub suspend_threshold: f64,
+    /// The same for a kill. Higher, because a kill loses unsaved work.
+    pub kill_threshold: f64,
+    /// How long the ladder waits for Jev mid-pressure. Jev answers in
+    /// 70-500 ms; the 15 s `timeout_seconds` suits the unhurried tab tier, not
+    /// a ladder tick.
+    pub ladder_timeout_ms: u64,
+}
+
+impl Default for Jev {
+    fn default() -> Self {
+        Jev {
+            enabled: false,
+            base_url: "https://api.typesafe.ai".to_string(),
+            model: "jev-latest".to_string(),
+            api_key: String::new(),
+            timeout_seconds: 15,
+            weight: 0.4,
+            max_calls_per_hour: 60,
+            band_low: 0.15,
+            band_high: 0.6,
+            max_candidates: 20,
+            cache_hours: 6,
+            unsaved_veto: 0.6,
+            suspend_threshold: 0.7,
+            kill_threshold: 0.85,
+            ladder_timeout_ms: 2_000,
+        }
+    }
+}
+
 /// The cloud tier: NVIDIA NIM at build.nvidia.com.
 ///
 /// **Off by default, even with a key present.** The prompt carries the titles and
@@ -266,41 +416,6 @@ impl Default for Nvidia {
     }
 }
 
-/// Jev, TypeSafe's System One model, as the ladder's judge.
-///
-/// Off unless enabled *and* given a key. Without it the ladder decides on the
-/// activity gate alone, as it always has.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
-pub struct Jev {
-    pub enabled: bool,
-    pub base_url: String,
-    pub model: String,
-    /// Read from `secrets.toml` or `$TYPESAFE_API_KEY`. Never put it in
-    /// `ramwarden.toml`, which is tracked by git.
-    pub api_key: String,
-    /// Jev answers in 70-500 ms; past this the ladder stops waiting.
-    pub timeout_ms: u64,
-    /// Probability the user is not coming back that allows a suspend.
-    pub suspend_threshold: f64,
-    /// The same for a kill. Higher, because a kill loses unsaved work.
-    pub kill_threshold: f64,
-}
-
-impl Default for Jev {
-    fn default() -> Self {
-        Jev {
-            enabled: false,
-            base_url: "https://api.typesafe.ai".to_string(),
-            model: "jev-latest".to_string(),
-            api_key: String::new(),
-            timeout_ms: 2_000,
-            suspend_threshold: 0.7,
-            kill_threshold: 0.85,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct WorkspaceRule {
     #[serde(rename = "match")]
@@ -322,7 +437,10 @@ pub struct Config {
     pub ollama: Ollama,
     pub nvidia: Nvidia,
     pub jev: Jev,
+    pub quit: Quit,
     pub logging: Logging,
+    pub tidy: Tidy,
+    pub gpu: Gpu,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -343,7 +461,10 @@ struct Raw {
     ollama: Ollama,
     nvidia: Nvidia,
     jev: Jev,
+    quit: Quit,
     logging: Logging,
+    tidy: Tidy,
+    gpu: Gpu,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -369,17 +490,31 @@ fn default_watchlist() -> Vec<String> {
 }
 
 fn default_db_path() -> PathBuf {
-    home()
-        .join(".local")
-        .join("share")
-        .join("ramwarden")
-        .join("history.db")
+    data_dir().join("ramwarden").join("history.db")
 }
 
 fn home() -> PathBuf {
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Per-user config directory: `%APPDATA%` on Windows, `~/.config` elsewhere.
+/// Chosen by which variable exists rather than by `cfg`, so a Linux box is
+/// unaffected by a Windows convention it never sets.
+fn config_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".config"))
+}
+
+/// Per-user data directory: `%LOCALAPPDATA%` on Windows, `~/.local/share`
+/// elsewhere.
+fn data_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".local").join("share"))
 }
 
 impl Default for Config {
@@ -391,7 +526,10 @@ impl Default for Config {
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
             jev: Jev::default(),
+            quit: Quit::default(),
             logging: Logging::default(),
+            tidy: Tidy::default(),
+            gpu: Gpu::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -409,8 +547,11 @@ pub fn search_paths() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         out.push(cwd.join("ramwarden.toml"));
     }
-    out.push(home().join(".config/ramwarden/config.toml"));
-    out.push(PathBuf::from("/etc/ramwarden/config.toml"));
+    out.push(config_dir().join("ramwarden").join("config.toml"));
+    match std::env::var_os("ProgramData") {
+        Some(pd) => out.push(PathBuf::from(pd).join("ramwarden").join("config.toml")),
+        None => out.push(PathBuf::from("/etc/ramwarden/config.toml")),
+    }
     out
 }
 
@@ -425,6 +566,28 @@ pub fn load() -> Result<Config, String> {
     }
 }
 
+/// The first non-empty value among `keys` in dotenv text: `KEY=value`, an
+/// optional `export `, optional quotes, `#` comments and blank lines ignored.
+fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        for line in text.lines() {
+            let line = line.trim().trim_start_matches("export ").trim_start();
+            if line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=')
+                && k.trim() == *key
+            {
+                let v = v.trim().trim_matches(['"', '\'']);
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Load one specific file, merging any adjacent `secrets.toml`.
 pub fn load_from(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -435,7 +598,7 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
     // beside a packaged config.
     let secret_paths = [
         path.parent().map(|d| d.join("secrets.toml")),
-        Some(home().join(".config/ramwarden/secrets.toml")),
+        Some(config_dir().join("ramwarden").join("secrets.toml")),
     ];
     for sp in secret_paths.into_iter().flatten() {
         if !sp.exists() {
@@ -468,13 +631,54 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         && !k.trim().is_empty()
     {
         cfg.nvidia.api_key = k.trim().to_string();
-    }
-    if let Ok(k) = std::env::var("TYPESAFE_API_KEY")
+    } else if let Ok(k) = std::env::var("NVIDIA_NIM_API_KEY")
         && !k.trim().is_empty()
     {
-        cfg.jev.api_key = k.trim().to_string();
+        cfg.nvidia.api_key = k.trim().to_string();
     }
 
+    for var in ["JEV_API_KEY", "TYPESAFE_API_KEY"] {
+        if let Ok(k) = std::env::var(var)
+            && !k.trim().is_empty()
+        {
+            cfg.jev.api_key = k.trim().to_string();
+            break;
+        }
+    }
+
+    // A `.env` beside the config (or in the per-user config dir) can supply the
+    // key too, under either name. A key does not enable the cloud tier: that
+    // stays an explicit `[nvidia] enabled = true`, because it sends tab titles
+    // and URLs off the machine.
+    if cfg.nvidia.api_key.is_empty() {
+        let env_files = [
+            path.parent().map(|d| d.join(".env")),
+            Some(config_dir().join("ramwarden").join(".env")),
+        ];
+        for f in env_files.into_iter().flatten() {
+            if let Ok(text) = std::fs::read_to_string(&f)
+                && let Some(k) = dotenv_value(&text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"])
+            {
+                cfg.nvidia.api_key = k;
+                break;
+            }
+        }
+    }
+
+    if cfg.jev.api_key.is_empty() {
+        let env_files = [
+            path.parent().map(|d| d.join(".env")),
+            Some(config_dir().join("ramwarden").join(".env")),
+        ];
+        for f in env_files.into_iter().flatten() {
+            if let Ok(text) = std::fs::read_to_string(&f)
+                && let Some(k) = dotenv_value(&text, &["JEV_API_KEY", "TYPESAFE_API_KEY"])
+            {
+                cfg.jev.api_key = k;
+                break;
+            }
+        }
+    }
     if let Err(e) = cfg.ladder.validate() {
         return Err(format!("{}: {e}", path.display()));
     }
@@ -492,7 +696,10 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ollama: raw.ollama,
         nvidia: raw.nvidia,
         jev: raw.jev,
+        quit: raw.quit,
         logging: raw.logging,
+        tidy: raw.tidy,
+        gpu: raw.gpu,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
@@ -502,6 +709,14 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dotenv_accepts_either_key_name_and_ignores_noise() {
+        let text = "# comment\nJEV_API_KEY=abc\nexport NVIDIA_NIM_API_KEY=\"nvapi-xyz\"\n";
+        assert_eq!(dotenv_value(text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]).as_deref(), Some("nvapi-xyz"));
+        assert_eq!(dotenv_value("NVIDIA_API_KEY=\nOTHER=1", &["NVIDIA_API_KEY"]), None);
+        assert_eq!(dotenv_value("# NVIDIA_API_KEY=nope", &["NVIDIA_API_KEY"]), None);
+    }
+
     use super::*;
 
     /// The config this machine actually runs, verbatim from `ramwarden.toml`.
@@ -771,8 +986,28 @@ port = 7823
             strs.iter().any(|s| s.ends_with("ramwarden.toml")),
             "cwd config missing: {strs:?}"
         );
-        assert!(strs.iter().any(|s| s.ends_with(".config/ramwarden/config.toml")));
-        assert_eq!(strs.last().unwrap(), "/etc/ramwarden/config.toml");
+        assert!(paths.contains(&config_dir().join("ramwarden").join("config.toml")));
+        #[cfg(target_os = "linux")]
+        {
+            assert!(strs.iter().any(|s| s.ends_with(".config/ramwarden/config.toml")));
+            assert_eq!(strs.last().unwrap(), "/etc/ramwarden/config.toml");
+        }
+        #[cfg(windows)]
+        {
+            let appdata = std::env::var("APPDATA").unwrap();
+            assert!(strs.iter().any(|s| s.starts_with(&appdata)), "{strs:?}");
+            assert!(strs.last().unwrap().ends_with(r"ramwarden\config.toml"), "{strs:?}");
+        }
+    }
+
+    /// On Windows `HOME` is usually unset; the database must still land in
+    /// the user's profile rather than at the root of the drive.
+    #[test]
+    fn the_default_database_lives_in_the_users_data_directory() {
+        let db = default_db_path();
+        assert!(db.ends_with(std::path::Path::new("ramwarden").join("history.db")));
+        assert!(db.starts_with(data_dir()), "{}", db.display());
+        assert_ne!(data_dir(), PathBuf::from("/").join(".local").join("share"));
     }
 
     #[test]
@@ -805,5 +1040,21 @@ port = 7823
         let p = dir.path().join("ramwarden.toml");
         std::fs::write(&p, "[ladder]\nreclaim_at = 50.0\npageout_at = 1.0\n").unwrap();
         assert!(load_from(&p).is_err());
+    }
+
+    #[test]
+    fn jev_is_off_by_default_and_reads_its_section() {
+        let c = Config::default();
+        assert!(!c.jev.enabled && c.jev.api_key.is_empty());
+        assert_eq!(c.jev.base_url, "https://api.typesafe.ai");
+        assert!((c.jev.band_low, c.jev.band_high) == (0.15, 0.6));
+        let c = parse("[jev]\nenabled = true\nweight = 0.25\nmax_calls_per_hour = 10\n").unwrap();
+        assert!(c.jev.enabled && c.jev.weight == 0.25 && c.jev.max_calls_per_hour == 10);
+        assert_eq!(c.jev.model, "jev-latest", "unset fields keep their defaults");
+    }
+
+    #[test]
+    fn dotenv_finds_the_jev_key() {
+        assert_eq!(dotenv_value("JEV_API_KEY=abc123\nNVIDIA_NIM_API_KEY=x", &["JEV_API_KEY", "TYPESAFE_API_KEY"]).as_deref(), Some("abc123"));
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name    = "ramwarden-nt"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Windows NT memory primitives for RamWarden: process table, working sets, memory priority, compression store."
+
+# Windows only. On any other target the crate compiles to nothing, so the
+# workspace still builds there.
+[target.'cfg(windows)'.dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+tracing   = { workspace = true }
+serde     = { workspace = true }
+serde_json = { workspace = true }
+windows   = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+tempfile = { workspace = true }

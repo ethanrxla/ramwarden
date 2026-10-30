@@ -17,24 +17,27 @@ use axum::routing::{delete, get, post};
 use axum::{Router, response::IntoResponse};
 
 use ramwarden_core::signals::Verdict;
-use ramwarden_core::{ladder, private, terminals, workspaces};
+use ramwarden_core::{ladder, workspaces};
 use ramwarden_ai::vram;
-use ramwarden_kernel::{meminfo, psi, zram};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::extras;
 use crate::hub::AppState;
 use crate::tabs::{Tab, Transport};
 
 pub fn router(state: AppState) -> Router {
+    let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     Router::new()
         // ── Contracts the shipped extensions depend on ──────────────────────
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))
         // ── v1 endpoints ────────────────────────────────────────────────────
+        .route("/", get(index))
         .route("/health", get(health))
         .route("/stats", get(stats))
         .route("/ram-report", get(ram_report))
+        .route("/apps", get(apps))
         .route("/activity", get(activity))
         .route("/activity/{name}", get(activity_one))
         .route("/suspend/{name}", post(suspend))
@@ -61,15 +64,31 @@ pub fn router(state: AppState) -> Router {
         .route("/ladder/undo", post(undo_last))
         .route("/lru", get(lru))
         .route("/actions", get(actions))
+        .route("/outcomes", get(outcomes))
+        .route("/intel", get(intel))
+        .route("/hold/{secs}", post(hold))
+        .route("/hold", delete(release_hold))
+        .route("/tidy", get(tidy))
+        .route("/predict/eval", get(predict_eval))
+        .route("/predict/train", post(predict_train))
+        .route("/gpu", get(gpu_report))
+        .route("/gpu/unload", post(gpu_unload))
+        .route("/debloat", get(debloat_status))
+        .route("/debloat/apply", post(debloat_apply))
+        .route("/debloat/revert", post(debloat_revert))
         .route("/ai", get(ai_status))
         .route("/signals", get(signals))
         .route("/reclaim/{scope}", post(reclaim_scope))
         .route("/tabs/close", post(close_tabs_route))
         .route("/history/clear", delete(clear_history))
         .with_state(state)
+        // Outermost last: CORS answers allowed preflights, the guard refuses
+        // everything a web page might send. See `guard` for why both.
+        .layer(axum::middleware::from_fn_with_state(policy.clone(), crate::guard::enforce))
+        .layer(policy.cors())
 }
 
-fn mb(bytes: u64) -> f64 {
+pub(crate) fn mb(bytes: u64) -> f64 {
     (bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
 }
 
@@ -96,6 +115,26 @@ async fn poll_tabs(State(st): State<AppState>, Json(body): Json<TabPollBody>) ->
         );
     }
     Json(json!({"commands": commands, "browser_id": body.browser_id}))
+}
+
+/// What a person sees if they open the daemon's address in a browser: this
+/// is the background service, and the app is elsewhere.
+async fn index(State(st): State<AppState>) -> axum::response::Html<String> {
+    let m = st.memory();
+    axum::response::Html(format!(
+        r#"<!doctype html><meta charset="utf-8"><title>RamWarden</title>
+<style>body{{font:15px system-ui;max-width:36em;margin:3em auto;padding:0 1em;color:#222}}
+code{{background:#eee;padding:.1em .3em;border-radius:3px}}</style>
+<h1>RamWarden is running</h1>
+<p>This address is RamWarden's background service. It has no window of its own.</p>
+<p><b>To open the app:</b> Start menu &rarr; <b>RamWarden</b>, or click the ring icon
+in the system tray (it may be under the <code>^</code> arrow by the clock).</p>
+<p>Memory now: {used:.1} GB of {total:.1} GB in use.</p>
+<p>Status for tools and scripts: <a href="/state">/state</a>, <a href="/psi">/psi</a>,
+<a href="/tidy">/tidy</a>, <a href="/gpu">/gpu</a>, <a href="/predict/eval">/predict/eval</a>.</p>"#,
+        used = m.used() as f64 / 1e9,
+        total = m.total as f64 / 1e9,
+    ))
 }
 
 async fn health(State(st): State<AppState>) -> Json<Value> {
@@ -134,10 +173,10 @@ async fn debug_tabs(State(st): State<AppState>) -> Json<Value> {
 // ── Memory and activity ─────────────────────────────────────────────────────
 
 async fn stats(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
+    let m = st.memory();
     let det = st.det.read().unwrap();
     let hub = st.hub.lock().unwrap();
-    let terms = terminals::list(&st.root).unwrap_or_default();
+    let terms = extras::terminals();
 
     let mut procs: Vec<_> = det.snapshot().values().collect();
     procs.sort_by_key(|s| std::cmp::Reverse(s.pss));
@@ -152,25 +191,15 @@ async fn stats(State(st): State<AppState>) -> Json<Value> {
         "browsers_connected": hub.reg.browsers_connected(),
         "ws_browsers": hub.reg.socket_count(),
         "poll_browsers": hub.reg.poll_count(),
-        "private_windows": private::detect(&st.root, false).iter().map(|c| json!({
-            "type": c.kind.as_str(), "title": c.title,
-            "rss_mb": mb(c.pss), "closeable": c.closeable,
-        })).collect::<Vec<_>>(),
-        "terminals": {
-            "idle": terms.iter().filter(|t| t.is_idle)
-                .map(|t| json!({"pid": t.pid, "shell": t.shell})).collect::<Vec<_>>(),
-            "busy": terms.iter().filter(|t| !t.is_idle)
-                .map(|t| json!({"pid": t.pid, "shell": t.shell,
-                                "children": t.children.iter().take(5).collect::<Vec<_>>()}))
-                .collect::<Vec<_>>(),
-        },
+        "private_windows": extras::private_windows(),
+        "terminals": extras::terminals_json(&terms),
     }))
 }
 
 /// A breakdown of what memory is doing, and how far v1 would have been wrong.
 async fn ram_report(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let z = zram::total(&st.root).unwrap_or_default();
+    let m = st.memory();
+    let z = st.platform.memory.compression().unwrap_or_default();
     let det = st.det.read().unwrap();
     let totals = det.totals();
 
@@ -184,9 +213,11 @@ async fn ram_report(State(st): State<AppState>) -> Json<Value> {
         "used_mb": mb(m.used()),
         "available_mb": mb(m.available),
         "swap_used_mb": mb(m.swap_used()),
+        // In-RAM compression: zram on Linux, the compression store on Windows.
+        // The key keeps its v1 name because the window reads it.
         "zram": {
-            "stored_mb": mb(z.orig_data_size),
-            "ram_cost_mb": mb(z.mem_used_total),
+            "stored_mb": mb(z.original),
+            "ram_cost_mb": mb(z.resident),
             "ratio": (z.ratio() * 100.0).round() / 100.0,
             // What a naive "used memory" reading overstates by.
             "saved_mb": mb(z.saved()),
@@ -211,7 +242,25 @@ async fn ram_report(State(st): State<AppState>) -> Json<Value> {
             "name": s.name, "pid": s.pid, "pss_mb": mb(s.pss), "rss_mb": mb(s.rss),
             "verdict": s.verdict.as_str(), "role": s.role.as_str(),
             "scope": s.scope, "reasons": s.reasons,
+            "app": s.app, "part": s.part,
+            "label": ramwarden_core::describe::label(
+                s, det.quiet_minutes(&s.app, std::time::Instant::now())),
         })).collect::<Vec<_>>(),
+    }))
+}
+
+/// Memory by application: how much of each app is in use, idle or protected, what
+/// parts it is made of, and how long it has been quiet. This is the view for
+/// "what is taking RAM that nobody is using".
+async fn apps(State(st): State<AppState>) -> Json<Value> {
+    let det = st.det.read().unwrap();
+    let all = ramwarden_core::apps::from_detector(&det, std::time::Instant::now());
+    let idle: f64 = all.iter().map(|a| a.idle_mb).sum();
+    let in_use: f64 = all.iter().map(|a| a.in_use_mb).sum();
+    let prot: f64 = all.iter().map(|a| a.protected_mb).sum();
+    Json(json!({
+        "totals_mb": { "in_use": in_use.round(), "idle": idle.round(), "protected": prot.round() },
+        "apps": all.into_iter().take(30).collect::<Vec<_>>(),
     }))
 }
 
@@ -297,13 +346,16 @@ async fn activity_one(State(st): State<AppState>, Path(name): Path<String>) -> J
 }
 
 async fn pressure(State(st): State<AppState>) -> Json<Value> {
-    let p = psi::system_memory(&st.root).unwrap_or_default();
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let rung = ladder::rung_for(&st.cfg.ladder, &p, m.available);
+    let p = st.pressure();
+    let available = ladder::available_bytes(st.platform.memory.as_ref());
+    let rung = ladder::rung_for(&st.cfg.ladder, &p, available);
     Json(json!({
-        "some": {"avg10": p.some.avg10, "avg60": p.some.avg60, "avg300": p.some.avg300},
-        "full": {"avg10": p.full.avg10, "avg60": p.full.avg60, "avg300": p.full.avg300},
-        "available_mb": mb(m.available),
+        "some": {"avg10": p.some_avg10, "avg60": p.some_avg60, "avg300": p.some_avg300},
+        "full": {"avg10": p.full_avg10, "avg60": p.full_avg60, "avg300": p.full_avg300},
+        // True on Windows, where there is no PSI and this is a fault/commit
+        // estimate on the same scale.
+        "estimated": p.estimated,
+        "available_mb": mb(st.memory().available),
         "rung": rung.as_str(),
     }))
 }
@@ -380,21 +432,7 @@ async fn resume(State(st): State<AppState>, Path(name): Path<String>) -> Json<Va
 
 async fn suspended(State(st): State<AppState>) -> Json<Value> {
     let mut ladder = st.ladder.lock().unwrap();
-    let root = ladder.actuator().root().clone();
-    let entries: Vec<Value> = ladder
-        .actuator()
-        .suspended()
-        .iter()
-        .map(|e| {
-            json!({
-                "name": e.name,
-                "pids": e.live_pids(),
-                "rss_mb": mb(e.pss(&root)),
-                "minutes": (e.minutes() * 10.0).round() / 10.0,
-            })
-        })
-        .collect();
-    Json(json!(entries))
+    Json(json!(suspended_json(ladder.actuator())))
 }
 
 async fn watchlist(State(st): State<AppState>) -> Json<Value> {
@@ -411,10 +449,10 @@ async fn watchlist(State(st): State<AppState>) -> Json<Value> {
     Json(json!({"patterns": st.cfg.watchlist, "processes": out}))
 }
 
-async fn list_terminals(State(st): State<AppState>) -> Json<Value> {
-    let terms = terminals::list(&st.root).unwrap_or_default();
+async fn list_terminals() -> Json<Value> {
+    let terms = extras::terminals();
     Json(json!({
-        "summary": terminals::summary(&terms),
+        "summary": extras::terminal_summary(&terms),
         "idle": terms.iter().filter(|t| t.is_idle)
             .map(|t| json!({"pid": t.pid, "shell": t.shell, "reason": t.reason()}))
             .collect::<Vec<_>>(),
@@ -425,9 +463,9 @@ async fn list_terminals(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn close_idle_terminals(State(st): State<AppState>) -> Json<Value> {
-    let terms = terminals::list(&st.root).unwrap_or_default();
-    let closed = terminals::close_idle(&terms);
+async fn close_idle_terminals() -> Json<Value> {
+    let terms = extras::terminals();
+    let closed = extras::close_idle_terminals(&terms);
     Json(json!({"closed": closed, "requested": terms.iter().filter(|t| t.is_idle).count()}))
 }
 
@@ -476,8 +514,8 @@ struct AnalyzeBody {
 /// failure. The reply names the tier so the user can see which answered.
 async fn analyze(State(st): State<AppState>, Json(body): Json<AnalyzeBody>) -> Json<Value> {
     let tabs = st.request_all_tabs().await;
-    let p = psi::system_memory(&st.root).unwrap_or_default();
-    let m = meminfo::read(&st.root).unwrap_or_default();
+    let p = st.pressure();
+    let m = st.memory();
 
     // Take what the model tier needs and release the lock before awaiting: the
     // guard is not Send, and holding it over a network round trip would block
@@ -492,7 +530,7 @@ async fn analyze(State(st): State<AppState>, Json(body): Json<AnalyzeBody>) -> J
         &snap,
         &tabs,
         crate::ai::MemoryState {
-            psi_some: p.some.avg10,
+            psi_some: p.some_avg10,
             used_mb: mb(m.used()),
             total_mb: mb(m.total),
         },
@@ -553,12 +591,14 @@ async fn ai_status(State(st): State<AppState>) -> Json<Value> {
 
     let page_out = {
         let mut ladder = st.ladder.lock().unwrap();
-        json!({
+        let mut out = json!({
             "available": ladder.actuator().can_page_out(),
             "route": ladder.actuator().page_out_route(),
-            "helper_socket": ramwarden_core::helper::socket_path(),
-            "helper_present": ramwarden_core::helper::present(),
-        })
+        });
+        if let (Some(o), Value::Object(extra)) = (out.as_object_mut(), extras::helper()) {
+            o.extend(extra);
+        }
+        out
     };
 
     Json(json!({
@@ -571,6 +611,7 @@ async fn ai_status(State(st): State<AppState>) -> Json<Value> {
             "key": n.key_fingerprint(),
         })).unwrap_or(json!({"configured": false})),
         "prefer": st.cfg.nvidia.prefer,
+        "platform": st.platform.name,
         "gpu": gpu,
         "page_out": page_out,
     }))
@@ -595,22 +636,22 @@ async fn close_tabs_route(
 }
 
 async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) -> impl IntoResponse {
-    let uid = unsafe { getuid() };
-    let Ok(h) = ramwarden_kernel::cgroup::Hierarchy::user_session(&st.root, uid) else {
+    let Some(groups) = st.platform.ready_groups() else {
+        let why = st.platform.groups.ready().err().map(|e| e.to_string()).unwrap_or_default();
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": "no delegated cgroup memory controller"})),
+            Json(json!({"error": format!("group reclaim unavailable: {why}")})),
         );
     };
-    let Ok(s) = h.scope(&scope) else {
+    let Ok(group) = groups.group(&scope) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": format!("no scope named {scope}")})),
         );
     };
-    let ask = s.stat().map(|st| st.reclaimable()).unwrap_or(0);
+    let ask = group.reclaimable().unwrap_or(0);
     let mut ladder = st.ladder.lock().unwrap();
-    let outcome = ladder.actuator().reclaim_scope(&s, ask);
+    let outcome = ladder.actuator().reclaim_scope(group.as_ref(), ask);
     (
         StatusCode::OK,
         Json(json!({
@@ -624,17 +665,117 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
 
 // ── Ladder ──────────────────────────────────────────────────────────────────
 
-async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
-    let uid = unsafe { getuid() };
-    let h = ramwarden_kernel::cgroup::Hierarchy::user_session(&st.root, uid).ok();
+/// How the reuse predictor did on held-out data, against the LRU baseline,
+/// and whether it is allowed to influence anything.
+async fn predict_eval(State(st): State<AppState>) -> Json<Value> {
+    let samples = st.history.lock().ok().and_then(|h| h.count_signals().ok());
+    Json(json!({
+        "metrics": st.predictor.metrics(),
+        "behaviour_samples": samples,
+        "min_train_examples": ramwarden_ml::jepa::MIN_TRAIN,
+        "margin_over_lru": ramwarden_ml::jepa::MARGIN,
+        // Scoring is always on the CPU; training goes to the GPU worker when
+        // one is installed. Asking for a CUDA device here would create a
+        // context in the daemon, which is exactly what the worker avoids.
+        "scoring": "cpu",
+        "training": if crate::worker::gpu_worker().is_some() { "gpu (ramwarden-gpu)" } else { "cpu" },
+    }))
+}
+
+async fn predict_train(State(st): State<AppState>) -> Json<Value> {
+    crate::predict::train_in_background(&st);
+    Json(json!({"started": true, "see": "/predict/eval"}))
+}
+
+/// The card, who holds its memory, and which local models are loaded.
+async fn gpu_report(State(st): State<AppState>) -> Json<Value> {
+    let det = {
+        // Clone the names out so the lock is not held across the awaits.
+        let det = st.det.read().unwrap();
+        ramwarden_core::detector::Detector::preloaded(det.is_warm(), det.snapshot().values().cloned().collect())
+    };
+    Json(crate::gpu::report(&det, &st.models).await)
+}
+
+#[derive(Deserialize, Default)]
+struct UnloadBody {
+    /// One model by name; every loaded model when absent.
+    #[serde(default)]
+    name: Option<String>,
+}
+
+async fn gpu_unload(State(st): State<AppState>, body: Option<Json<UnloadBody>>) -> Json<Value> {
+    let want = body.and_then(|b| b.0.name);
+    let mut results = Vec::new();
+    for m in st.models.loaded().await {
+        if want.as_ref().is_some_and(|w| *w != m.name) {
+            continue;
+        }
+        let r = st.models.unload(&m).await;
+        results.push(json!({"host": m.host, "name": m.name, "ok": r.is_ok(),
+                            "error": r.err().map(|e| e.to_string())}));
+    }
+    Json(json!({"results": results}))
+}
+
+#[derive(Deserialize)]
+struct DebloatBody {
+    /// A profile name, a tweak id, or (for revert) `all`.
+    name: String,
+    #[serde(default)]
+    include_optional: bool,
+}
+
+/// Every shipped tweak and its state on this machine.
+async fn debloat_status() -> Json<Value> {
+    Json(tokio::task::spawn_blocking(extras::debloat::status).await.unwrap_or_default())
+}
+
+async fn debloat_apply(Json(body): Json<DebloatBody>) -> Json<Value> {
+    Json(
+        tokio::task::spawn_blocking(move || extras::debloat::apply(&body.name, body.include_optional))
+            .await
+            .unwrap_or_default(),
+    )
+}
+
+async fn debloat_revert(Json(body): Json<DebloatBody>) -> Json<Value> {
+    Json(
+        tokio::task::spawn_blocking(move || extras::debloat::revert(&body.name))
+            .await
+            .unwrap_or_default(),
+    )
+}
+
+/// What the Tidy rung is tracking: quiet apps, and whether each has been
+/// hinted as background and trimmed in its current quiet period.
+async fn tidy(State(st): State<AppState>) -> Json<Value> {
     let det = st.det.read().unwrap();
-    let p = psi::system_memory(&st.root).unwrap_or_default();
+    let ladder = st.ladder.lock().unwrap();
+    let entries = ladder.tidy_entries(&det);
+    Json(json!({
+        "enabled": st.cfg.tidy.enabled,
+        "after_minutes": st.cfg.tidy.after_minutes,
+        "background_hints": st.cfg.tidy.background_hints && st.platform.background.available(),
+        "trim": st.cfg.tidy.trim,
+        "tracking": entries.iter().map(|e| json!({
+            "pid": e.pid, "name": e.name,
+            "quiet_minutes": (e.quiet_minutes * 10.0).round() / 10.0,
+            "hinted": e.hinted, "trimmed": e.trimmed,
+            "pss_mb": det.get(e.pid).map(|s| mb(s.pss)).unwrap_or(0.0),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
+    let det = st.det.read().unwrap();
+    let p = st.pressure();
 
     let w = ladder::World {
         det: &det,
-        hierarchy: h.as_ref(),
+        groups: st.platform.ready_groups(),
         psi: p,
-        available_bytes: ladder::available_bytes(&st.root),
+        available_bytes: ladder::available_bytes(st.platform.memory.as_ref()),
         watchlist: &st.cfg.watchlist,
         goal: String::new(),
         tabs: None,
@@ -700,6 +841,53 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
 }
 
 // ── History ─────────────────────────────────────────────────────────────────
+
+/// Pause freezing for `secs` seconds (max 600) and thaw what is frozen, so a
+/// window arranger can talk to every app. `DELETE /hold` ends it early.
+async fn hold(State(st): State<AppState>, Path(secs): Path<u64>) -> Json<Value> {
+    st.set_hold(secs);
+    // Thaw now rather than waiting for the monitor's next tick.
+    let thawed: Vec<String> = st.ladder.lock().unwrap().thaw_all().into_iter().map(|(n, _)| n).collect();
+    tracing::info!("hold {secs}s; thawed {} group(s)", thawed.len());
+    Json(json!({"hold_seconds": secs.min(600), "thawed": thawed}))
+}
+
+async fn release_hold(State(st): State<AppState>) -> Json<Value> {
+    st.set_hold(0);
+    Json(json!({"hold_seconds": 0}))
+}
+
+/// The Jev decision tier: whether it is on, what it has cost, and whether it is paused.
+async fn intel() -> Json<Value> {
+    Json(match crate::tabintel::global() {
+        Some(i) => i.status(std::time::Instant::now()),
+        None => json!({"enabled": false, "configured": false}),
+    })
+}
+
+/// How often unloaded tabs are returned to: the data that calibrates the model.
+async fn outcomes(State(st): State<AppState>) -> Json<Value> {
+    let h = st.history.lock().unwrap();
+    let now = ramwarden_core::history::unix_now() as i64;
+    let day = h.labelled_outcomes(86_400, now).unwrap_or_default();
+    let returned = day.iter().filter(|o| o.returned).count();
+    let (mut predicted, mut brier) = (0.0, 0.0);
+    for o in &day {
+        predicted += o.p_return;
+        brier += (o.p_return - if o.returned { 1.0 } else { 0.0 }).powi(2);
+    }
+    let n = day.len().max(1) as f64;
+    Json(json!({
+        "recorded": h.count_outcomes().unwrap_or(0),
+        "labelled_24h": day.len(),
+        "returned_24h": returned,
+        // Calibration: if the model is right, these two roughly agree.
+        "mean_predicted_return": if day.is_empty() { Value::Null } else { json!(predicted / n) },
+        "actual_return_rate": if day.is_empty() { Value::Null } else { json!(returned as f64 / n) },
+        // 0 is perfect; always answering 0.5 scores 0.25.
+        "brier": if day.is_empty() { Value::Null } else { json!(brier / n) },
+    }))
+}
 
 async fn history(State(st): State<AppState>) -> Json<Value> {
     let h = st.history.lock().unwrap();
@@ -786,9 +974,9 @@ async fn signals(State(st): State<AppState>) -> Json<Value> {
 /// Everything v1's `_window_state()` returned, so the GTK window can run out of
 /// process against this daemon without being modified.
 async fn window_state(State(st): State<AppState>) -> Json<Value> {
-    let m = meminfo::read(&st.root).unwrap_or_default();
-    let z = zram::total(&st.root).unwrap_or_default();
-    let p = psi::system_memory(&st.root).unwrap_or_default();
+    let m = st.memory();
+    let z = st.platform.memory.compression().unwrap_or_default();
+    let p = st.pressure();
     let det = st.det.read().unwrap();
     let totals = det.totals();
 
@@ -797,20 +985,7 @@ async fn window_state(State(st): State<AppState>) -> Json<Value> {
 
     let suspended: Vec<Value> = {
         let mut ladder = st.ladder.lock().unwrap();
-        let root = ladder.actuator().root().clone();
-        ladder
-            .actuator()
-            .suspended()
-            .iter()
-            .map(|e| {
-                json!({
-                    "name": e.name,
-                    "pids": e.live_pids(),
-                    "rss_mb": mb(e.pss(&root)),
-                    "minutes": (e.minutes() * 10.0).round() / 10.0,
-                })
-            })
-            .collect()
+        suspended_json(ladder.actuator())
     };
 
     let hub = st.hub.lock().unwrap();
@@ -829,16 +1004,28 @@ async fn window_state(State(st): State<AppState>) -> Json<Value> {
         },
         "suspended": suspended,
         // v2 additions the window can ignore.
-        "psi_some": p.some.avg10,
-        "psi_full": p.full.avg10,
+        "psi_some": p.some_avg10,
+        "psi_full": p.full_avg10,
+        "pressure_estimated": p.estimated,
         "zram_saved_mb": mb(z.saved()),
         "warm": det.is_warm(),
     }))
 }
 
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn getuid() -> u32;
+/// What RamWarden has frozen, as `/suspended` and `/state` report it.
+fn suspended_json(act: &mut ramwarden_core::actuator::Actuator) -> Vec<Value> {
+    let control = act.control();
+    act.suspended()
+        .iter()
+        .map(|e| {
+            json!({
+                "name": e.name,
+                "pids": e.live_pids(),
+                "rss_mb": mb(e.pss(control.as_ref())),
+                "minutes": (e.minutes() * 10.0).round() / 10.0,
+            })
+        })
+        .collect()
 }
 
 fn browser_snapshot(st: &AppState) -> Value {

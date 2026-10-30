@@ -1,5 +1,5 @@
 //! Browser-scoped, model-independent memory policy.
-use crate::{tabpolicy, tabs::Tab};
+use crate::{tabpolicy, tabrank, tabs::Tab};
 use serde::{Deserialize, Serialize};
 
 pub const BATCH_LIMIT: usize = 5;
@@ -21,11 +21,47 @@ pub struct Row {
     pub closeable: bool,
     pub status: &'static str,
     pub reason: String,
+    /// Release order: higher goes first. `est_mb / (p_return + ε)`, see `tabrank`.
     pub priority: i64,
+    /// Estimated chance the user returns to this tab (0-1).
+    pub p_return: f64,
+    /// Estimated RAM the tab holds while loaded. A prior by site type, not a measurement.
+    pub est_mb: u32,
+    /// Recency-weighted visit count from the extension's activation log.
+    pub frecency: f64,
+    /// On the same site as a tab the user is using right now.
+    pub related: bool,
+    /// Site class (`feed`, `app`, `reference`, `page`), for the feature description.
+    pub class: &'static str,
+    /// An older copy of a page that is open more recently elsewhere.
+    pub duplicate: bool,
+    /// The closed-form return chance, before any model adjustment.
+    pub p_rules: f64,
+    /// The model's own answer for this tab's features, when it has one.
+    pub p_model: Option<f64>,
 }
 
 pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0);
+    rank_at(browser, tabs, threshold, now_ms)
+}
+
+/// Tabs this recently used count as "what the user is doing right now".
+const ACTIVE_WINDOW_MINUTES: i64 = 15;
+
+/// [`rank`] at an explicit time, so the frecency math is testable.
+pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<Row> {
     let threshold = threshold.max(5);
+    // Sites of the tabs in use right now: a tab on one of them is probably part
+    // of the same task. One pass to build, O(1) per tab to look up.
+    let active_sites: std::collections::HashSet<String> = tabs
+        .iter()
+        .filter(|t| t.active == Some(true) || t.inactive_minutes <= ACTIVE_WINDOW_MINUTES)
+        .filter_map(|t| tabrank::site_key(&t.url))
+        .collect();
     let canonical = |t: &Tab| t.url.split('#').next().unwrap_or("").to_string();
     let mut copies: std::collections::HashMap<String, (usize, (i64, i64))> =
         std::collections::HashMap::new();
@@ -57,7 +93,7 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 ("protected", "playing audio")
             } else if t.incognito {
                 ("protected", "private tab")
-            } else if tabpolicy::is_protected(&t.url) {
+            } else if tabpolicy::is_protected_for(&t.url, t.inactive_minutes) {
                 ("protected", "editor, internal page or protected URL")
             } else if t.discard_supported != Some(true)
                 || t.active.is_none()
@@ -88,6 +124,33 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 ("candidate", "idle background tab; reloads when selected")
             };
             let eligible = status == "candidate";
+            let class = tabrank::classify(&t.url);
+            let mb = tabrank::est_mb(class);
+            let frec = tabrank::frecency(&t.activations, now_ms);
+            let related = tabrank::site_key(&t.url).is_some_and(|k| active_sites.contains(&k));
+            let mult = tabrank::half_life_multiplier(frec, related);
+            let p_rules = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
+            let features = crate::tabintel::Features {
+                class: tabrank::class_name(class),
+                idle_minutes: t.inactive_minutes,
+                frecency: frec,
+                related,
+                duplicate,
+            };
+            // Advisory model tier: a cached answer adjusts the estimate or vetoes the
+            // unload. Absent (disabled, not asked yet, breaker open) means no change.
+            let adj = if eligible { crate::tabintel::adjust(p_rules, &features) } else { crate::tabintel::Adjusted::none(p_rules) };
+            let (status, reason, eligible) = if adj.veto {
+                ("protected", "model says this tab may hold unsaved work", false)
+            } else {
+                (status, reason, eligible)
+            };
+            let p = adj.p;
+            let reason = if eligible {
+                format!("{reason} (return chance {:.0}%, ~{mb} MB)", p * 100.0)
+            } else {
+                reason.to_string()
+            };
             Row {
                 target: Target {
                     browser: browser.into(),
@@ -99,12 +162,16 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
                 eligible,
                 closeable: can_close(t),
                 status,
-                reason: reason.into(),
-                priority: if eligible {
-                    t.inactive_minutes.clamp(0, 10080) + if duplicate { 10080 } else { 0 }
-                } else {
-                    0
-                },
+                reason,
+                priority: if eligible { tabrank::score(mb, p).round() as i64 } else { 0 },
+                p_return: p,
+                est_mb: mb,
+                frecency: frec,
+                related,
+                class: features.class,
+                duplicate,
+                p_rules,
+                p_model: adj.p_model,
             }
         })
         .collect();
@@ -311,5 +378,49 @@ mod manual_close_tests {
         tab.audible = None;
         tab.url = "https://docs.google.com/document/d/a/edit".into();
         assert!(!can_close(&tab));
+    }
+
+    fn tab_at(id: i64, url: &str, age: i64, activations: &[f64]) -> Tab {
+        serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":age,
+            "active":false,"pinned":false,"audible":false,"discarded":false,"autoDiscardable":true,
+            "status":"complete","discardSupported":true,"activations":activations}))
+        .unwrap()
+    }
+
+    const DAY_MS: f64 = 86_400_000.0;
+
+    #[test]
+    fn a_tab_you_visit_often_outranks_an_identical_one_you_do_not() {
+        let now = 20.0 * DAY_MS;
+        let daily: Vec<f64> = (0..6).map(|d| now - d as f64 * DAY_MS - 3_600_000.0).collect();
+        // Same site type, same idleness; only the visit history differs.
+        let rows = rank_at(
+            "b",
+            &[tab_at(1, "https://a.example.org/x", 600, &[]), tab_at(2, "https://b.example.org/y", 600, &daily)],
+            45,
+            now,
+        );
+        let release_order: Vec<i64> = rows.iter().filter(|r| r.eligible).map(|r| r.target.id).collect();
+        assert_eq!(release_order, vec![1, 2], "the rarely-visited tab is released first");
+        let freq = rows.iter().find(|r| r.target.id == 2).unwrap();
+        assert!(freq.frecency > 3.0 && freq.p_return > rows.iter().find(|r| r.target.id == 1).unwrap().p_return);
+    }
+
+    #[test]
+    fn a_tab_on_the_site_you_are_using_is_kept_longer() {
+        let now = 20.0 * DAY_MS;
+        let mut active = tab_at(9, "https://www.example.org/now", 0, &[]);
+        active.active = Some(true);
+        let rows = rank_at(
+            "b",
+            &[active, tab_at(1, "https://docs.example.org/guide", 600, &[]), tab_at(2, "https://other.net/z", 600, &[])],
+            45,
+            now,
+        );
+        let related = rows.iter().find(|r| r.target.id == 1).unwrap();
+        let stranger = rows.iter().find(|r| r.target.id == 2).unwrap();
+        assert!(related.related && !stranger.related);
+        assert!(related.p_return > stranger.p_return);
+        assert!(related.priority < stranger.priority, "the unrelated tab goes first");
     }
 }

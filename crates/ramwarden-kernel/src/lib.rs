@@ -17,15 +17,22 @@
 //!
 //! Everything is addressed through a [`Root`] so tests can substitute a synthetic
 //! `/proc` and `/sys` tree.
+//!
+//! Linux only: on any other target this crate is empty. [`platform`] is the
+//! adapter that presents all of it through `ramwarden-platform`'s traits.
+#![cfg(target_os = "linux")]
 
 mod error;
 mod root;
 
 pub mod cgroup;
+pub mod desktop;
+pub mod helper;
 pub mod madvise;
 pub mod meminfo;
 pub mod net;
 pub mod oom;
+pub mod platform;
 pub mod process;
 pub mod procfd;
 pub mod psi;
