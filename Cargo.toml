@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ramwarden-kernel", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
+members = ["crates/ramwarden-kernel", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui", "crates/ramwarden-cloud"]
 
 [workspace.package]
 version = "0.2.1"
@@ -28,6 +28,10 @@ reqwest    = { version = "0.12", default-features = false, features = ["json", "
 nvml-wrapper = "0.13"
 gtk4       = { version = "0.11", features = ["v4_10"] }
 tracing    = "0.1"
+mongodb    = "3"
+sha2       = "0.10"
+dotenvy    = "0.15"
+rand       = "0.9"
 
 [profile.release]
 lto       = "thin"
