@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, mac, windows, linux]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Windows and macOS stay advisory until macos-sync (which carries their
+    # crates) is merged into main. Flip `required` to true then.
+    continue-on-error: ${{ !matrix.required }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            required: true
+          - os: windows-latest
+            required: false
+          - os: macos-latest
+            required: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+      - name: Format
+        # Advisory until one repo-wide `cargo fmt` commit lands after the
+        # branch reconcile; formatting now would conflict with every open PR.
+        continue-on-error: true
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
