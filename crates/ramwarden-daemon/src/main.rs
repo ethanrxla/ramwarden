@@ -135,9 +135,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hold_until: Arc::new(Mutex::new(None)),
     };
 
+    // Bind before the monitor starts, so a daemon that cannot have the port
+    // exits without ever acting alongside the one that has it.
+    let bind = format!("{}:{}", state.cfg.server.host, state.cfg.server.port);
+    let listener = match bind_when_free(&bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("cannot listen on {bind}: {e}");
+            return Err(e.into());
+        }
+    };
+
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());
 
-    let bind = format!("{}:{}", state.cfg.server.host, state.cfg.server.port);
     // CORS and the origin guard are part of the router; see `guard`.
     let app = routes::router(state.clone());
     if !ramwarden_daemon::guard::is_loopback(&state.cfg.server.host) {
@@ -149,7 +159,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("RamWarden listening on http://{bind}");
 
     axum::serve(listener, app)
@@ -172,6 +181,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+/// How long a starting daemon waits for its port to come free.
+const BIND_PATIENCE: Duration = Duration::from_secs(15);
+
+/// Bind, retrying while the address is in use. A replacement started by the
+/// watchdog, or a logon start, can arrive while the previous daemon is still
+/// exiting. The watchdog's first relaunch delayed with `timeout`, which exits
+/// at once without a console, so the wait belongs here.
+async fn bind_when_free(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
+    let deadline = Instant::now() + BIND_PATIENCE;
+    loop {
+        match tokio::net::TcpListener::bind(addr).await {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Ctrl-C everywhere; on Windows also console close, logoff and shutdown, so
