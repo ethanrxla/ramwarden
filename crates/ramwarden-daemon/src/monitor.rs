@@ -94,22 +94,85 @@ impl TabCloser for Tabs {
         let state = self.state.clone();
         self.handle.spawn(async move {
             let _guard = UnloadGuard;
-            state.request_all_tabs().await;
-            let targets = {
-                let hub = state.hub.lock().unwrap();
-                crate::browser::snapshot(&hub.reg, state.cfg.thresholds.inactivity_minutes as i64)
-                    .into_iter().filter(|r|r.eligible).take(crate::browser::BATCH_LIMIT)
-                    .map(|r|r.target).collect::<Vec<_>>()
-            };
-            let result = state.discard_tabs(&targets).await;
-            tracing::info!("{} tabs unloaded, {} queued, {} refused; tabs remain open",
-                result.confirmed.len(), result.queued.len(), result.refused.len());
+            release_tabs(&state, "pressure").await;
         });
         Outcome {
             notes: vec!["tab unload started in the background".into()],
             ..Outcome::default()
         }
     }
+}
+
+/// One release pass: unload the top idle tabs, then close the long-idle ones the
+/// user is unlikely to come back to (when `[tabs] close` allows it).
+async fn release_tabs(state: &AppState, trigger: &str) {
+    state.request_all_tabs().await;
+    let threshold = state.cfg.thresholds.inactivity_minutes as i64;
+    let (to_unload, to_close, titles) = {
+        let hub = state.hub.lock().unwrap();
+        let rows = crate::browser::snapshot(&hub.reg, threshold);
+        let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        let titles: std::collections::HashMap<_, _> = rows.iter()
+            .filter(|r| close.contains(&r.target))
+            .map(|r| (r.target.clone(), r.title.clone())).collect();
+        let unload: Vec<_> = rows.into_iter()
+            .filter(|r| r.eligible && !close.contains(&r.target))
+            .take(crate::browser::BATCH_LIMIT).map(|r| r.target).collect();
+        (unload, close, titles)
+    };
+
+    let unloaded = state.discard_tabs(&to_unload).await;
+    let mut closed = crate::hub::DiscardResult::default();
+    match state.cfg.tabs.close.as_str() {
+        "live" if !to_close.is_empty() => closed = state.close_selected_tabs(&to_close).await,
+        "dry-run" => for t in &to_close {
+            tracing::info!("tabs: would close {} (dry-run)", t.url);
+        },
+        _ => {}
+    }
+
+    let notes = format!("{} unloaded, {} closed, {} queued, {} refused",
+        unloaded.confirmed.len(), closed.confirmed.len(),
+        unloaded.queued.len() + closed.queued.len(), unloaded.refused.len() + closed.refused.len());
+    tracing::info!("tabs ({trigger}): {notes}");
+    // Closed tabs also go in the daemon's own closed_tabs table, so the popup
+    // can list them for reopening even before the extension is reloaded.
+    let closed_rows: Vec<(String, String)> = closed.confirmed.iter().chain(&closed.queued)
+        .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
+    for (url, _) in &closed_rows {
+        tracing::info!("tabs: closed {url}");
+    }
+    if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
+        let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
+    }
+    if unloaded.confirmed.is_empty() && closed.confirmed.is_empty() && closed.queued.is_empty() {
+        return;
+    }
+    if let Ok(h) = state.history.lock() {
+        let _ = h.log(&ramwarden_core::history::NewAction {
+            rung: -1, trigger: trigger.into(), action: "release_tabs".into(),
+            target: "idle browser tabs".into(), succeeded: true, notes, ..Default::default()
+        });
+    }
+}
+
+/// Run a release pass on the sweep timer, whatever the pressure.
+fn sweep_tabs(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Instant) {
+    let every = state.cfg.tabs.sweep_minutes;
+    if every <= 0.0 || last.elapsed() < Duration::from_secs_f64(every * 60.0) {
+        return;
+    }
+    if state.hub.lock().unwrap().reg.browsers_connected() == 0
+        || UNLOAD_RUNNING.swap(true, Ordering::AcqRel)
+    {
+        return;
+    }
+    *last = Instant::now();
+    let state = state.clone();
+    handle.spawn(async move {
+        let _guard = UnloadGuard;
+        release_tabs(&state, "sweep").await;
+    });
 }
 
 /// Start the monitor on its own thread.
@@ -206,6 +269,10 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
     let mut last_intel = Instant::now() - Duration::from_secs(60);
+    // First sweep a minute after start, once the browsers have checked in.
+    let mut last_sweep = Instant::now()
+        .checked_sub(Duration::from_secs_f64((cfg.tabs.sweep_minutes * 60.0 - 60.0).max(0.0)))
+        .unwrap_or_else(Instant::now);
     let mut quitter = crate::appquit::Quitter::new();
     let mut held = false;
 
@@ -246,6 +313,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         // browser, then a hash lookup per reported tab.
         reconcile_returns(&state);
         refresh_intel(&state, &handle, &mut last_intel);
+        sweep_tabs(&state, &handle, &mut last_sweep);
         crate::appquit::consider(&state, &handle, &mut quitter);
 
         // 2. Look.

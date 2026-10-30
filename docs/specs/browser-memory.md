@@ -24,6 +24,15 @@ explicit; Unload selected keeps tabs open and reloadable.
 - The automatic pressure ladder uses bounded discard in its existing tab rung,
   after cgroup reclaim and cold-page paging. Preserve pressure hysteresis and
   add a 30-second browser-batch cooldown. No model is required to save memory.
+- A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
+  pressure, so a machine with spare RAM still releases idle tabs. It may also
+  close tabs, the one exception to "keep tabs open": only rows that passed every
+  unload guard or were already unloaded, idle at least `close_after_hours`, with
+  a Jev-adjusted return chance below `close_below_return`, at most
+  `max_close_per_sweep` per sweep. `close` is `off`, `dry-run` (default: log
+  only) or `live`. The extension rechecks each tab live before closing, answers
+  every close command, and saves closed URLs to a reopen list in the popup.
+  The badge counts unloaded tabs, since the browser draws them unchanged.
 - Confirm only successful browser API results. Poll delivery remains explicitly
   queued, never labelled reclaimed. No per-tab bytes are estimated from RSS.
 

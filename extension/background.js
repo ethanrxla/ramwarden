@@ -186,74 +186,74 @@ function buildTabReport(activity) {
           pinned: tab.pinned,
           audible: tab.audible ?? false,
           discarded: tab.discarded ?? false,
-          autoDiscardable: tab.autoDiscardable ?? false,
+          // Firefox has no per-tab opt-out and leaves this undefined; reporting
+          // that as false marked every Firefox tab "browser opted out".
+          autoDiscardable: tab.autoDiscardable !== false,
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
           activations: known?.activations ?? [],
         });
       }
+      _unloaded = report.filter(t => t.discarded).length;
+      _badge(_connected);
       resolve(report);
     });
   });
 }
 
-// chrome.tabs.remove() fails the WHOLE batch if any single ID is invalid, and its
-// callback fires either way. Ignoring lastError meant a batch that closed nothing
-// still reported every ID as closed. Confirm only what actually went away.
-function closeTabs(tabIds) {
-  if (!tabIds?.length) return;
-  const safeIds = tabIds.filter(id => {
-    const entry = tabActivity[id];
-    return entry && !isProtected(entry.url);
-  });
-  if (!safeIds.length) return;
+// Closes are checked against the live tab, not tabActivity: that map can miss
+// tabs after a service-worker restart, and a silently filtered batch never
+// answered, so the daemon waited out its timeout and nothing closed. Every close
+// command now gets a reply, even an empty one. Each closed tab is saved to
+// releasedTabs, which the popup lists for one-click reopening.
+const RELEASED_LIMIT = 200;
 
-  chrome.tabs.remove(safeIds, () => {
-    if (!chrome.runtime.lastError) {
-      _confirmClosed(safeIds);
-      return;
-    }
-    console.warn("[RamWarden] batch close failed:", chrome.runtime.lastError.message,
-                 "— retrying individually");
-    _closeOneByOne(safeIds);
-  });
+async function closeTabs(tabIds) {
+  const tabs = [];
+  for (const id of (tabIds || [])) {
+    const tab = await new Promise(r => chrome.tabs.get(id, t => r(chrome.runtime.lastError ? null : t)));
+    if (tab && !isProtected(tab.url) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito) tabs.push(tab);
+  }
+  const closed = [];
+  for (const tab of tabs) {
+    const ok = await new Promise(r => chrome.tabs.remove(tab.id, () => r(!chrome.runtime.lastError)));
+    if (ok) closed.push(tab);
+  }
+  if (closed.length) await _rememberReleased(closed);
+  _confirmClosed(closed.map(t => t.id));
+  return closed.map(t => t.id);
 }
 
-// Remove tabs one at a time so a single dead ID cannot block the rest, and collect
-// the ones that genuinely closed.
-function _closeOneByOne(ids) {
-  const closed = [];
-  let remaining = ids.length;
-
-  for (const id of ids) {
-    chrome.tabs.remove(id, () => {
-      if (chrome.runtime.lastError) {
-        // Already gone — drop it from tracking so it stops being re-reported.
-        delete tabActivity[id];
-      } else {
-        closed.push(id);
-      }
-      if (--remaining === 0) {
-        persistActivity();
-        _confirmClosed(closed);
-      }
-    });
-  }
+async function _rememberReleased(tabs) {
+  const r = await new Promise(res => chrome.storage.local.get("releasedTabs", res));
+  const now = Date.now();
+  const added = tabs.map(t => ({ url: t.url, title: t.title || t.url, closedAt: now }));
+  const releasedTabs = [...added, ...(r?.releasedTabs || [])].slice(0, RELEASED_LIMIT);
+  await new Promise(res => chrome.storage.local.set({ releasedTabs }, res));
 }
 
 function _confirmClosed(ids) {
   for (const id of ids) delete tabActivity[id];
   persistActivity();
   if (IS_FIREFOX) {
-    _poll();
+    if (ids.length) _poll();
   } else {
     _send({ action: "tabs_closed", tabIds: ids });
   }
 }
 
+// The badge shows how many tabs RamWarden has unloaded: Chrome keeps them in
+// the tab strip looking the same, so without it nothing seems to happen.
+let _connected = false;
+let _unloaded = 0;
+
 function _badge(connected) {
-  chrome.action.setBadgeText({ text: connected ? "" : "!" });
+  _connected = connected;
+  chrome.action.setBadgeText({ text: !connected ? "!" : _unloaded ? String(_unloaded) : "" });
   chrome.action.setBadgeBackgroundColor({ color: connected ? "#22c55e" : "#ef4444" });
+  chrome.action.setTitle?.({ title: connected
+    ? `RamWarden: ${_unloaded} tab(s) unloaded (they stay in the tab strip and reload when clicked)`
+    : "RamWarden: daemon offline" });
 }
 
 // ── Load config, then start the right transport ───────────────────────────────
@@ -308,7 +308,7 @@ async function _poll() {
     _badge(true);
     const data = await resp.json();
     for (const cmd of (data.commands || [])) {
-      if (cmd.action === "close") closeTabs(cmd.tabIds);
+      if (cmd.action === "close") await closeTabs(cmd.tabIds);
       if (cmd.action === "discard") await discardTabs(cmd);
     }
   } catch (e) {
@@ -388,7 +388,7 @@ async function discardTabs(command) {
       resolve(chrome.runtime.lastError ? null : tab);
     }));
     if (!tab || tab.url !== target.url || isProtected(tab.url) || tab.active || tab.pinned || tab.audible
-        || tab.incognito || tab.discarded || tab.autoDiscardable !== true || tab.status !== "complete") continue;
+        || tab.incognito || tab.discarded || tab.autoDiscardable === false || tab.status !== "complete") continue;
     const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
     if (!last || (Date.now() - last) / 60000 < minimum) continue;
     // Check stored activity again: activation may have arrived while get awaited.

@@ -251,6 +251,41 @@ impl Default for Tidy {
     }
 }
 
+/// Tab housekeeping that runs at any pressure, not only on the ladder's tab rung.
+///
+/// The ladder unloads tabs only once memory is short, and a laptop with spare RAM
+/// may never get there: the extension shows as connected and nothing is ever
+/// released. The sweep unloads idle tabs on a timer, and closes the ones the
+/// user is unlikely to return to (Jev's adjusted return chance, under the
+/// browser-memory guards). Closed tabs are kept in the extension's "Released
+/// tabs" list, where one click reopens them.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Tabs {
+    /// Minutes between sweeps. 0 turns the sweep off.
+    pub sweep_minutes: f64,
+    /// `off`, `dry-run` (log what would close) or `live`.
+    pub close: String,
+    /// A tab must have been idle at least this long to be closed.
+    pub close_after_hours: f64,
+    /// Close only below this chance of the user returning.
+    pub close_below_return: f64,
+    /// At most this many closes per sweep.
+    pub max_close_per_sweep: usize,
+}
+
+impl Default for Tabs {
+    fn default() -> Self {
+        Tabs {
+            sweep_minutes: 5.0,
+            close: "dry-run".into(),
+            close_after_hours: 24.0,
+            close_below_return: 0.2,
+            max_close_per_sweep: 10,
+        }
+    }
+}
+
 /// VRAM policy: unload idle local models when a game needs the card.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -429,6 +464,7 @@ pub struct Config {
     pub logging: Logging,
     pub tidy: Tidy,
     pub gpu: Gpu,
+    pub tabs: Tabs,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -453,6 +489,7 @@ struct Raw {
     logging: Logging,
     tidy: Tidy,
     gpu: Gpu,
+    tabs: Tabs,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -518,6 +555,7 @@ impl Default for Config {
             logging: Logging::default(),
             tidy: Tidy::default(),
             gpu: Gpu::default(),
+            tabs: Tabs::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -689,6 +727,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         logging: raw.logging,
         tidy: raw.tidy,
         gpu: raw.gpu,
+        tabs: raw.tabs,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
@@ -749,6 +788,16 @@ key = "sk-ant-should-be-ignored"
 [server]
 port = 7823
 "#;
+
+    #[test]
+    fn the_shipped_configs_keep_tab_closing_in_dry_run() {
+        for text in [include_str!("../../../ramwarden.toml"), include_str!("../../../packaging/macos/config.toml")] {
+            let c = parse(text).unwrap();
+            assert_eq!(c.tabs.close, "dry-run");
+            assert_eq!(c.tabs.sweep_minutes, 5.0);
+        }
+        assert_eq!(parse("").unwrap().tabs.close, "dry-run", "closing is never live by default");
+    }
 
     #[test]
     fn loads_the_config_this_machine_actually_runs() {
