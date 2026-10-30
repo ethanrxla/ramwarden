@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-mac", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-ml", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-helper", "crates/ramwarden-ui"]
+members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-mac", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-ml", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-api", "crates/ramwarden-helper", "crates/ramwarden-ui"]
 
 [workspace.package]
 version = "0.2.1"
