@@ -12,34 +12,49 @@ jobs:
   check:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Windows and macOS stay advisory until macos-sync (which carries their
-    # crates) is merged into main. Flip `required` to true then.
-    continue-on-error: ${{ !matrix.required }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            required: true
+            platform_crate: crates/ramwarden-kernel
           - os: windows-latest
-            required: false
+            platform_crate: crates/ramwarden-nt
           - os: macos-latest
-            required: false
+            platform_crate: crates/ramwarden-mac
     steps:
       - uses: actions/checkout@v4
+      # A platform is built only once its crate exists on the branch, so a
+      # branch without Windows or macOS support skips those jobs instead of
+      # failing. Once the crate lands the job runs and must pass.
+      - name: Platform supported on this branch?
+        id: platform
+        shell: bash
+        run: |
+          if [ -f "${{ matrix.platform_crate }}/Cargo.toml" ]; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${{ matrix.platform_crate }} is not on this branch; skipping ${{ matrix.os }}."
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.platform.outputs.supported == 'true'
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        if: steps.platform.outputs.supported == 'true'
       - name: Linux GUI dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
       - name: Format
+        if: steps.platform.outputs.supported == 'true'
         # Advisory until one repo-wide `cargo fmt` commit lands after the
         # branch reconcile; formatting now would conflict with every open PR.
         continue-on-error: true
         run: cargo fmt --all --check
       - name: Clippy
+        if: steps.platform.outputs.supported == 'true'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
+        if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
