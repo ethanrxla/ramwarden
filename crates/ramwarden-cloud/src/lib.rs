@@ -10,6 +10,7 @@
 pub mod config;
 pub mod db;
 pub mod model;
+pub mod secret;
 
 pub use config::CloudConfig;
 pub use db::{Db, DbError};

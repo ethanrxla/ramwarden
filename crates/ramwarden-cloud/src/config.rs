@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ramwarden_ai::secret::Secret;
+use crate::secret::Secret;
 use serde::Deserialize;
 
 /// The database name when none is configured. One cluster can hold a

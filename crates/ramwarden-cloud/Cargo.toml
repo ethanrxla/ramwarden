@@ -7,7 +7,6 @@ repository.workspace = true
 description = "RamWarden Cloud: the hosted backend's storage (MongoDB Atlas) for accounts, wallets, devices, passes, payments and usage."
 
 [dependencies]
-ramwarden-ai = { path = "../ramwarden-ai" }
 mongodb    = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }

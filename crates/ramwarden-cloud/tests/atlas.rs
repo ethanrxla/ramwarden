@@ -3,12 +3,15 @@
 //! Skipped unless `RAMWARDEN_TEST_MONGODB_URI` is set, because CI has no
 //! cluster. Point it at Atlas (or any replica set; transactions need one) and
 //! run `cargo test -p ramwarden-cloud --test atlas`. Each run uses a fresh
-//! database named `ramwarden-test-<random>` and drops it at the end.
+//! database named `ramwarden-test-<random>` and drops its collections at the
+//! end. Collections, not the database: an Atlas user with "read and write to
+//! any database" may not run `dropDatabase`, and an empty database costs
+//! nothing (Atlas stops listing it).
 
 use std::time::Duration;
 
 use mongodb::bson::{DateTime, oid::ObjectId};
-use ramwarden_ai::secret::Secret;
+use ramwarden_cloud::secret::Secret;
 use ramwarden_cloud::db::{Claim, PaymentOutcome, Rotation};
 use ramwarden_cloud::model::*;
 use ramwarden_cloud::{CloudConfig, Db, DbError};
@@ -32,7 +35,14 @@ async fn the_database_enforces_the_money_and_abuse_rules() {
     };
     let result = std::panic::AssertUnwindSafe(run(&db));
     let outcome = futures::FutureExt::catch_unwind(result).await;
-    db.database().drop().await.expect("drop test database");
+    let names = db.database().list_collection_names().await.expect("list test collections");
+    for name in names {
+        db.database()
+            .collection::<mongodb::bson::Document>(&name)
+            .drop()
+            .await
+            .expect("drop test collection");
+    }
     if let Err(p) = outcome {
         std::panic::resume_unwind(p);
     }
