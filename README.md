@@ -105,7 +105,43 @@ reason has gone is how a user ends up force-quitting a healthy application.
 
 The kill rung arms a **cancellable countdown** rather than acting immediately. It
 proceeds by default — this is a window to intervene, not a request for permission.
-Set `kill_grace_seconds = 0` for no window at all.
+Set `kill_grace_seconds = 0` for no window at all. Once the countdown ends the
+targets go into a queue and leave it **one per tick**, coldest first, so pressure
+is re-read between kills and the rest are spared as soon as it drops. An app you
+used again after it was armed is spared too.
+
+Suspends go on an **undo stack**: `POST /ladder/undo` resumes the most recent one.
+
+### Least recently used first, and Jev decides
+
+The detector keeps an LRU of every running application: a hash map paired with a
+doubly linked list. When you focus an app, play audio from it or launch it, it
+moves to the front in O(1); whatever you have gone longest without touching sits
+at the tail. Suspend and kill consider candidates from the tail, rather than
+simply the largest first. Background CPU and network traffic deliberately do not
+count as a touch: chat apps sync every few minutes, and counting that made them
+look permanently fresh.
+
+```bash
+curl -s localhost:7823/lru | jq '.coldest_first[:5]'
+```
+
+With Jev enabled, the coldest few candidates go to [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev),
+TypeSafe's System One model, in one request. For each it answers how likely you are
+to come back within the hour, and whether the app is routine, important, sensitive
+or protected. Only routine apps you are unlikely to return to are touched, with a
+higher bar for a kill (85%) than a suspend (70%). If Jev cannot be reached,
+suspends fall back to the activity gate and kills do not happen.
+
+```toml
+# ~/.config/ramwarden/secrets.toml (or $TYPESAFE_API_KEY)
+[jev]
+api_key = "..."
+enabled = true
+```
+
+Jev can only veto. It is only ever shown apps that already passed the gate below,
+so no answer from it can reach a protected process.
 
 Every action is recorded, including the ones that decided to do nothing. When
 nobody is watching, that record is the only way to answer "why is my editor
@@ -327,6 +363,8 @@ GET  /psi              pressure, and the rung it currently selects
 GET  /activity         every process with its verdict and the reasons for it
 GET  /ladder/plan      what the ladder would do next, without doing it
 POST /ladder/cancel-kill
+POST /ladder/undo      resume the most recently suspended app
+GET  /lru              applications, least recently used first
 GET  /actions          what the ladder has done unattended
 GET  /ai               model tiers, GPU headroom, page-out route
 GET  /signals          behaviour log, labelled for training
@@ -347,8 +385,9 @@ skips structural protection.
 
 ```
 crates/ramwarden-kernel   cgroup v2, PSI, PSS, pidfd, zram, meminfo, oom, madvise
-crates/ramwarden-core     activity detection, the gate, the ladder, history
-crates/ramwarden-ai       local Nemotron, goal re-ranking, NVML
+crates/ramwarden-core     activity detection, the gate, the ladder, history,
+                          and the LRU / linked queue / linked stack they use
+crates/ramwarden-ai       local Nemotron, Jev, goal re-ranking, NVML
 crates/ramwarden-daemon   the :7823 API and the loop that drives the ladder
 crates/ramwarden-helper   the setcap'd page-out shim, and nothing else
 crates/ramwarden-ui       the GTK4 window

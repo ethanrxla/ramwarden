@@ -28,6 +28,9 @@ use ramwarden_core::actuator::Outcome;
 use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::signals::Signals;
 use ramwarden_core::desktop::DesktopProbe;
+use ramwarden_ai::jev::Jev;
+use ramwarden_ai::secret::Secret;
+use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement};
 use ramwarden_core::ladder::{self, TabCloser, World};
 use ramwarden_kernel::{cgroup, psi};
 
@@ -94,6 +97,63 @@ impl TabCloser for Tabs {
     }
 }
 
+/// Bridges the ladder's judge to Jev, the same way [`Tabs`] bridges to the
+/// browsers: the ladder is synchronous, so block on the request here.
+struct JevJudge {
+    jev: Jev,
+    handle: tokio::runtime::Handle,
+}
+
+impl Judge for JevJudge {
+    fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String> {
+        let started = Instant::now();
+        let out = self
+            .handle
+            .block_on(self.jev.judge(intent, candidates))
+            .map_err(|e| e.to_string())?;
+        for j in &out {
+            tracing::info!(
+                "jev: {} {}: {} ({:?})",
+                if j.close { "approve" } else { "keep" },
+                j.name,
+                j.reason,
+                started.elapsed()
+            );
+        }
+        Ok(out)
+    }
+}
+
+/// Jev, if it is enabled and has a key.
+fn jev_judge(cfg: &ramwarden_core::config::Config, handle: &tokio::runtime::Handle) -> Option<JevJudge> {
+    if !cfg.jev.enabled {
+        return None;
+    }
+    let jev = Jev::new(
+        &cfg.jev.base_url,
+        Secret::new(cfg.jev.api_key.trim()),
+        &cfg.jev.model,
+        cfg.jev.suspend_threshold,
+        cfg.jev.kill_threshold,
+        Duration::from_millis(cfg.jev.timeout_ms),
+    )
+    .inspect(|j| {
+        tracing::info!(
+            "Jev judging suspends (>= {:.0}%) and kills (>= {:.0}%) with {} key {}",
+            j.suspend_threshold * 100.0,
+            j.kill_threshold * 100.0,
+            j.model,
+            j.key_fingerprint()
+        )
+    })
+    .inspect_err(|e| tracing::warn!("Jev unavailable: {e} — the gate alone decides"))
+    .ok()?;
+    Some(JevJudge {
+        jev,
+        handle: handle.clone(),
+    })
+}
+
 /// Start the monitor on its own thread.
 pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
@@ -130,6 +190,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     };
 
     let cfg = Arc::clone(&state.cfg);
+    let mut judge = jev_judge(&cfg, &handle);
     let mut interval = IDLE_INTERVAL;
     let mut last_sample = Instant::now() - Duration::from_secs(cfg.logging.interval_seconds);
     let mut last_prune = Instant::now();
@@ -177,6 +238,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             watchlist: &cfg.watchlist,
             goal: String::new(),
             tabs: Some(&mut closer),
+            judge: judge.as_mut().map(|j| j as &mut dyn Judge),
         };
 
         let report = {

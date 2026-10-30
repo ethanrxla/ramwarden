@@ -266,6 +266,41 @@ impl Default for Nvidia {
     }
 }
 
+/// Jev, TypeSafe's System One model, as the ladder's judge.
+///
+/// Off unless enabled *and* given a key. Without it the ladder decides on the
+/// activity gate alone, as it always has.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Jev {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    /// Read from `secrets.toml` or `$TYPESAFE_API_KEY`. Never put it in
+    /// `ramwarden.toml`, which is tracked by git.
+    pub api_key: String,
+    /// Jev answers in 70-500 ms; past this the ladder stops waiting.
+    pub timeout_ms: u64,
+    /// Probability the user is not coming back that allows a suspend.
+    pub suspend_threshold: f64,
+    /// The same for a kill. Higher, because a kill loses unsaved work.
+    pub kill_threshold: f64,
+}
+
+impl Default for Jev {
+    fn default() -> Self {
+        Jev {
+            enabled: false,
+            base_url: "https://api.typesafe.ai".to_string(),
+            model: "jev-latest".to_string(),
+            api_key: String::new(),
+            timeout_ms: 2_000,
+            suspend_threshold: 0.7,
+            kill_threshold: 0.85,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct WorkspaceRule {
     #[serde(rename = "match")]
@@ -286,6 +321,7 @@ pub struct Config {
     pub ladder: Ladder,
     pub ollama: Ollama,
     pub nvidia: Nvidia,
+    pub jev: Jev,
     pub logging: Logging,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
@@ -306,6 +342,7 @@ struct Raw {
     ladder: Ladder,
     ollama: Ollama,
     nvidia: Nvidia,
+    jev: Jev,
     logging: Logging,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
@@ -353,6 +390,7 @@ impl Default for Config {
             ladder: Ladder::default(),
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
+            jev: Jev::default(),
             logging: Logging::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
@@ -416,6 +454,12 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if secrets.nvidia.enabled {
             cfg.nvidia.enabled = true;
         }
+        if !secrets.jev.api_key.is_empty() {
+            cfg.jev.api_key = secrets.jev.api_key;
+        }
+        if secrets.jev.enabled {
+            cfg.jev.enabled = true;
+        }
     }
 
     // The environment wins over both files, which is how a service unit or a
@@ -424,6 +468,11 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         && !k.trim().is_empty()
     {
         cfg.nvidia.api_key = k.trim().to_string();
+    }
+    if let Ok(k) = std::env::var("TYPESAFE_API_KEY")
+        && !k.trim().is_empty()
+    {
+        cfg.jev.api_key = k.trim().to_string();
     }
 
     if let Err(e) = cfg.ladder.validate() {
@@ -442,6 +491,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ladder: raw.ladder,
         ollama: raw.ollama,
         nvidia: raw.nvidia,
+        jev: raw.jev,
         logging: raw.logging,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,

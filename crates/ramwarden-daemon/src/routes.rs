@@ -58,6 +58,8 @@ pub fn router(state: AppState) -> Router {
         .route("/psi", get(pressure))
         .route("/ladder/plan", get(ladder_plan))
         .route("/ladder/cancel-kill", post(cancel_kill))
+        .route("/ladder/undo", post(undo_last))
+        .route("/lru", get(lru))
         .route("/actions", get(actions))
         .route("/ai", get(ai_status))
         .route("/signals", get(signals))
@@ -636,6 +638,7 @@ async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
         watchlist: &st.cfg.watchlist,
         goal: String::new(),
         tabs: None,
+        judge: None,
     };
     let ladder = st.ladder.lock().unwrap();
     let plan = ladder.plan(&w);
@@ -652,6 +655,39 @@ async fn ladder_plan(State(st): State<AppState>) -> Json<Value> {
             "targets": p.targets,
             "seconds_remaining": p.remaining().as_secs(),
         })),
+        "kill_queue": ladder.queued_kills(),
+        "undo": ladder.undo_stack(),
+    }))
+}
+
+/// Resume whatever the ladder suspended most recently.
+async fn undo_last(State(st): State<AppState>) -> impl IntoResponse {
+    let undone = st.ladder.lock().unwrap().undo_last();
+    match undone {
+        Some((name, outcome)) => {
+            tracing::info!("undo: resumed {name}");
+            (
+                StatusCode::OK,
+                Json(json!({"resumed": name, "notes": outcome.notes})),
+            )
+        }
+        None => (
+            StatusCode::CONFLICT,
+            Json(json!({"resumed": null, "notes": ["nothing to undo"]})),
+        ),
+    }
+}
+
+/// Applications from least to most recently used — the order the ladder
+/// considers them in.
+async fn lru(State(st): State<AppState>) -> Json<Value> {
+    let det = st.det.read().unwrap();
+    Json(json!({
+        "coldest_first": det.coldest().map(|(name, r)| json!({
+            "name": name,
+            "idle_minutes": (r.idle().as_secs_f64() / 60.0).round(),
+            "touched": r.touched,
+        })).collect::<Vec<_>>(),
     }))
 }
 

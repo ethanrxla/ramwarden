@@ -39,7 +39,9 @@ use crate::actuator::{Actuator, Outcome};
 use crate::config;
 use crate::detector::Detector;
 use crate::history::{History, NewAction};
-use crate::signals::Verdict;
+use crate::judge::{Candidate, Intent, Judge};
+use crate::signals::{Signals, Verdict};
+use crate::structures::{LinkedQueue, LinkedStack};
 
 /// How much of a scope's reclaimable memory to ask for at the first rung.
 ///
@@ -64,6 +66,12 @@ const COLD_VMA_FLOOR: u64 = 2 * 1024 * 1024;
 /// Walking full `smaps` is expensive, and the cgroup rung has already taken the
 /// cheap bulk of the memory.
 const PAGEOUT_LIMIT: usize = 3;
+
+/// How many candidates from the LRU tail to put in front of the judge per tick.
+///
+/// The coldest few are where the decision is; asking about everything would
+/// make the request larger without changing what gets closed first.
+const JUDGE_LIMIT: usize = 8;
 
 /// Which rung the current pressure calls for.
 ///
@@ -159,6 +167,8 @@ pub struct World<'a> {
     pub watchlist: &'a [String],
     pub goal: String,
     pub tabs: Option<&'a mut dyn TabCloser>,
+    /// Asked before suspending or killing. `None` means the gate alone decides.
+    pub judge: Option<&'a mut dyn Judge>,
 }
 
 /// A kill the ladder intends to carry out, once its grace period expires.
@@ -222,6 +232,13 @@ pub struct Ladder {
     act: Actuator,
     history: Option<History>,
     pending_kill: Option<PendingKill>,
+    /// Kills whose grace period is over, coldest first. One leaves per tick, so
+    /// pressure is re-read between kills and the rest are spared the moment it
+    /// drops below the kill rung.
+    kill_queue: LinkedQueue<(String, Instant)>,
+    /// What the ladder suspended, newest on top, so "undo" resumes the most
+    /// recent first.
+    undo: LinkedStack<String>,
     last_tabs: Option<Instant>,
 }
 
@@ -232,6 +249,8 @@ impl Ladder {
             act,
             history: None,
             pending_kill: None,
+            kill_queue: LinkedQueue::new(),
+            undo: LinkedStack::new(),
             last_tabs: None,
         }
     }
@@ -265,9 +284,35 @@ impl Ladder {
         self.pending_kill.as_ref()
     }
 
-    /// Call off an armed kill. The UI's cancel button.
+    /// Kills past their grace period that have not happened yet, next first.
+    pub fn queued_kills(&self) -> Vec<String> {
+        self.kill_queue.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    /// Call off an armed kill, and any still queued. The UI's cancel button.
     pub fn cancel_kill(&mut self) -> bool {
-        self.pending_kill.take().is_some()
+        let queued = !self.kill_queue.is_empty();
+        self.kill_queue.clear();
+        self.pending_kill.take().is_some() || queued
+    }
+
+    /// Applications the ladder suspended, most recent first.
+    pub fn undo_stack(&self) -> Vec<String> {
+        self.undo.iter().cloned().collect()
+    }
+
+    /// Resume the most recently suspended application that is still suspended.
+    ///
+    /// Entries already resumed by other means (the release rung, the UI's
+    /// resume button) are discarded on the way down.
+    pub fn undo_last(&mut self) -> Option<(String, Outcome)> {
+        while let Some(name) = self.undo.pop() {
+            if self.act.is_suspended(&name) {
+                let outcome = self.act.resume(&name);
+                return Some((name, outcome));
+            }
+        }
+        None
     }
 
     /// Work out what this tick would do, changing nothing.
@@ -323,10 +368,13 @@ impl Ladder {
         plan
     }
 
-    /// Distinct process names that are both idle and on the watchlist.
+    /// Distinct process names that are both idle and on the watchlist, least
+    /// recently used first.
     ///
     /// `reclaimable` has already applied the gate and the watchlist ceiling, so
-    /// this only deduplicates.
+    /// this only deduplicates and orders. The order comes from the detector's
+    /// LRU: walking it from the tail means the app the user has gone longest
+    /// without touching is the first considered, rather than simply the largest.
     fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
         let mut seen: Vec<String> = Vec::new();
         for s in w.det.reclaimable(w.watchlist) {
@@ -334,7 +382,76 @@ impl Ladder {
                 seen.push(s.name.clone());
             }
         }
-        seen
+        let mut ordered: Vec<String> = w
+            .det
+            .coldest()
+            .filter(|(name, _)| seen.iter().any(|s| s == name))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        // Anything the LRU has not seen yet keeps its largest-first place.
+        for name in seen {
+            if !ordered.contains(&name) {
+                ordered.push(name);
+            }
+        }
+        ordered
+    }
+
+    /// The eligible names a judge agrees to act on, in LRU order, plus the
+    /// steps to report for each one it vetoed.
+    ///
+    /// `Err` when a judge is attached but could not be reached.
+    fn judged_names(
+        &self,
+        w: &mut World<'_>,
+        intent: Intent,
+    ) -> (Vec<String>, Vec<(String, Outcome)>, Option<String>) {
+        let names = self.eligible_names(w);
+        let Some(judge) = w.judge.as_mut() else {
+            return (names, Vec::new(), None);
+        };
+        if names.is_empty() {
+            return (names, Vec::new(), None);
+        }
+
+        let candidates: Vec<Candidate> = names
+            .iter()
+            .take(JUDGE_LIMIT)
+            .enumerate()
+            .map(|(rank, name)| {
+                let procs: Vec<&Signals> = w
+                    .det
+                    .reclaimable(w.watchlist)
+                    .into_iter()
+                    .filter(|s| &s.name == name)
+                    .collect();
+                let idle = w
+                    .det
+                    .recency(name)
+                    .map(|r| r.idle().as_secs_f64() / 60.0)
+                    .unwrap_or(0.0);
+                Candidate::from_signals(name, rank, idle, &procs)
+            })
+            .collect();
+
+        match judge.judge(intent, &candidates) {
+            Ok(verdicts) => {
+                let mut keep = Vec::new();
+                let mut vetoed = Vec::new();
+                for c in &candidates {
+                    match verdicts.iter().find(|j| j.name == c.name) {
+                        Some(j) if j.close => keep.push(c.name.clone()),
+                        Some(j) => vetoed.push((c.name.clone(), Outcome::refused(j.reason.clone()))),
+                        None => vetoed.push((
+                            c.name.clone(),
+                            Outcome::refused("the judge gave no verdict"),
+                        )),
+                    }
+                }
+                (keep, vetoed, None)
+            }
+            Err(e) => (names, Vec::new(), Some(e)),
+        }
     }
 
     /// Run one tick.
@@ -360,11 +477,13 @@ impl Ladder {
         match rung {
             Rung::Release => {
                 self.pending_kill = None;
+                self.kill_queue.clear();
                 self.release(w, &mut report);
                 return report;
             }
             Rung::Hold => {
                 self.pending_kill = None;
+                self.kill_queue.clear();
                 return report;
             }
             _ => {}
@@ -389,6 +508,7 @@ impl Ladder {
         } else {
             // Dropped back below the kill threshold: stand the kill down.
             self.pending_kill = None;
+            self.kill_queue.clear();
         }
 
         report.kill_pending = self.pending_kill.clone();
@@ -539,12 +659,24 @@ impl Ladder {
 
     // ── Rung 3: suspend ─────────────────────────────────────────────────────
 
-    fn do_suspend(&mut self, w: &World<'_>, report: &mut Report) {
-        for name in self.eligible_names(w) {
+    /// Suspending is reversible, so a judge that cannot be reached does not
+    /// block it: the gate alone decides, as it did before judges existed.
+    fn do_suspend(&mut self, w: &mut World<'_>, report: &mut Report) {
+        let (names, vetoed, unreachable) = self.judged_names(w, Intent::Suspend);
+        if let Some(e) = unreachable {
+            tracing::warn!("judge unavailable for suspend ({e}) — using the gate alone");
+        }
+        for (name, outcome) in vetoed {
+            report.steps.push(("suspend", name, outcome));
+        }
+        for name in names {
             if self.act.is_suspended(&name) {
                 continue;
             }
             let outcome = self.act.suspend(&name, w.det, w.watchlist, false);
+            if !outcome.did_nothing() {
+                self.undo.push(name.clone());
+            }
             report.total_freed += outcome.bytes_freed;
             report.steps.push(("suspend", name, outcome));
         }
@@ -552,8 +684,55 @@ impl Ladder {
 
     // ── Rung 4: kill ────────────────────────────────────────────────────────
 
-    fn do_kill(&mut self, w: &World<'_>, report: &mut Report) {
-        let targets = self.eligible_names(w);
+    /// Kill whatever is next in the queue, if it is still eligible.
+    ///
+    /// Re-checked at the last moment against the LRU: an app the user came back
+    /// to after it was armed must not be killed for having been idle a minute
+    /// ago. (Not against the gate: by now the suspend rung has usually stopped
+    /// it, and a stopped process no longer counts as reclaimable.)
+    fn kill_next(&mut self, w: &World<'_>, report: &mut Report) {
+        let Some((name, armed_at)) = self.kill_queue.dequeue() else {
+            return;
+        };
+        if w.det.recency(&name).is_some_and(|r| r.touched && r.since > armed_at) {
+            report.steps.push((
+                "kill",
+                name,
+                Outcome::refused("used again since it was armed — spared"),
+            ));
+            return;
+        }
+        let outcome = self.act.kill(&name, w.det, w.watchlist, false);
+        report.total_freed += outcome.bytes_freed;
+        report.steps.push(("kill", name, outcome));
+    }
+
+    /// Killing is not reversible, so a judge that cannot be reached blocks it.
+    fn do_kill(&mut self, w: &mut World<'_>, report: &mut Report) {
+        // Already past the grace period: work through the queue, one per tick.
+        if !self.kill_queue.is_empty() {
+            self.kill_next(w, report);
+            return;
+        }
+
+        let armed = self.pending_kill.is_some();
+        let (targets, vetoed, unreachable) = if armed {
+            (self.eligible_names(w), Vec::new(), None)
+        } else {
+            self.judged_names(w, Intent::Kill)
+        };
+        if let Some(e) = unreachable {
+            self.pending_kill = None;
+            report.steps.push((
+                "kill",
+                targets.join(", "),
+                Outcome::refused(format!("judge unavailable ({e}) — not killing without it")),
+            ));
+            return;
+        }
+        for (name, outcome) in vetoed {
+            report.steps.push(("kill", name, outcome));
+        }
 
         if targets.is_empty() {
             self.pending_kill = None;
@@ -570,13 +749,10 @@ impl Ladder {
         match &self.pending_kill {
             // Already armed and the window has closed: proceed.
             Some(p) if p.due() => {
-                let armed = p.targets.clone();
+                let at = p.armed_at;
+                self.kill_queue = p.targets.iter().map(|t| (t.clone(), at)).collect();
                 self.pending_kill = None;
-                for name in armed {
-                    let outcome = self.act.kill(&name, w.det, w.watchlist, false);
-                    report.total_freed += outcome.bytes_freed;
-                    report.steps.push(("kill", name, outcome));
-                }
+                self.kill_next(w, report);
             }
             // Armed, still inside the window.
             Some(p) => {
@@ -594,11 +770,8 @@ impl Ladder {
                 };
                 if pending.due() {
                     // grace of zero: no window, act now.
-                    for name in targets {
-                        let outcome = self.act.kill(&name, w.det, w.watchlist, false);
-                        report.total_freed += outcome.bytes_freed;
-                        report.steps.push(("kill", name, outcome));
-                    }
+                    self.kill_queue = targets.into_iter().map(|t| (t, pending.armed_at)).collect();
+                    self.kill_next(w, report);
                 } else {
                     tracing::warn!(
                         "arming kill of {} in {}s — cancel to stop it",
@@ -631,6 +804,8 @@ impl Ladder {
             tracing::info!("resumed {name} — pressure back to {:.1}%", w.psi.some.avg10);
             report.steps.push(("resume", name, outcome));
         }
+        // Everything on it was just resumed.
+        self.undo.clear();
         if let Some(h) = w.hierarchy {
             for (name, outcome) in self.act.release_caps(h) {
                 report.steps.push(("release", name, outcome));
@@ -976,6 +1151,7 @@ mod tests {
             watchlist,
             goal: String::new(),
             tabs: None,
+            judge: None,
         }
     }
 
@@ -1086,6 +1262,7 @@ mod tests {
 
         let mut w = World {
             tabs: Some(&mut tabs),
+            judge: None,
             ..world(&f, &h, &det, 16.0, 0.0, &wl)
         };
         let report = l.step(&mut w);
@@ -1574,5 +1751,164 @@ mod tests {
         let det = f.detector(true);
         // Three idle processes at 500 MB each; the compositor is excluded.
         assert_eq!(idle_bytes(&det), 4 * 500 * 1024 * 1024);
+    }
+
+    // ── LRU order, the judge, and the kill queue ────────────────────────────
+
+    /// Two idle watchlisted apps; `hot` was focused at some point, the other never.
+    fn lru_detector(f: &Fixture, hot: &str) -> Detector {
+        let mut sigs = Vec::new();
+        for (pid, name) in [(30, "Discord"), (31, "Slack")] {
+            let mut s = Signals::new(pid, name, classify(name, "", None));
+            s.pss = 500 * 1024 * 1024;
+            s.age_minutes = 600.0;
+            s.is_focused = name == hot;
+            sigs.push(s);
+        }
+        Detector::preloaded(f.root.clone(), true, sigs)
+    }
+
+    struct FakeJudge {
+        calls: Vec<(Intent, Vec<String>)>,
+        allow: Vec<&'static str>,
+        fail: bool,
+    }
+
+    impl Judge for FakeJudge {
+        fn judge(&mut self, intent: Intent, c: &[Candidate]) -> Result<Vec<crate::judge::Judgement>, String> {
+            self.calls.push((intent, c.iter().map(|c| c.name.clone()).collect()));
+            if self.fail {
+                return Err("timed out".into());
+            }
+            Ok(c.iter()
+                .map(|c| crate::judge::Judgement {
+                    name: c.name.clone(),
+                    close: self.allow.contains(&c.name.as_str()),
+                    confidence: 0.61,
+                    reason: "Jev is not convinced (61%)".into(),
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn candidates_come_from_the_lru_tail_first() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let l = ladder(cfg(), &f.root);
+
+        // The focused flag makes an app ineligible this tick, so check order on
+        // a detector where both are idle but one was touched earlier.
+        let mut det = lru_detector(&f, "Slack");
+        let w = world(&f, &h, &det, 1.0, 30.0, &wl);
+        assert_eq!(l.eligible_names(&w), vec!["Discord".to_string()]);
+
+        det = lru_detector(&f, "none");
+        let w = world(&f, &h, &det, 1.0, 30.0, &wl);
+        let names = l.eligible_names(&w);
+        assert_eq!(names.len(), 2);
+        // Both cold and untouched: order follows the LRU, which is stable.
+        let lru: Vec<String> = det.coldest().map(|(n, _)| n.to_string()).collect();
+        assert_eq!(names, lru);
+    }
+
+    #[test]
+    fn the_judge_sees_lru_candidates_and_its_veto_is_reported() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: false };
+
+        let mut w = World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) };
+        let report = l.step(&mut w);
+
+        assert_eq!(j.calls[0].0, Intent::Suspend);
+        assert_eq!(j.calls[1].0, Intent::Kill);
+        assert_eq!(j.calls[0].1.len(), 2);
+        let vetoes: Vec<_> = report
+            .steps
+            .iter()
+            .filter(|(_, _, o)| o.notes.iter().any(|n| n.contains("Jev is not convinced")))
+            .collect();
+        assert_eq!(vetoes.len(), 4, "{:?}", report.steps); // 2 apps x suspend + kill
+        assert!(l.pending_kill().is_none(), "nothing approved, nothing armed");
+    }
+
+    #[test]
+    fn only_what_the_judge_approves_is_armed() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec!["Slack"], fail: false };
+
+        l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        assert_eq!(l.pending_kill().unwrap().targets, vec!["Slack".to_string()]);
+    }
+
+    #[test]
+    fn an_unreachable_judge_blocks_kills_but_not_suspends() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: true };
+
+        let report = l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        let suspends = report.steps.iter().filter(|(a, _, _)| *a == "suspend").count();
+        assert_eq!(suspends, 2, "suspend falls back to the gate: {:?}", report.steps);
+        let (_, _, kill) = report.steps.iter().find(|(a, _, _)| *a == "kill").unwrap();
+        assert!(kill.notes[0].contains("not killing without it"), "{kill:?}");
+        assert!(l.pending_kill().is_none());
+    }
+
+    #[test]
+    fn due_kills_leave_the_queue_one_per_tick_and_stop_when_pressure_drops() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut c = cfg();
+        c.kill_grace_seconds = 0;
+        let mut l = ladder(c, &f.root);
+
+        let report = l.step(&mut world(&f, &h, &det, 1.0, 30.0, &wl));
+        let kills = report.steps.iter().filter(|(a, _, _)| *a == "kill").count();
+        assert_eq!(kills, 1, "{:?}", report.steps);
+        assert_eq!(l.queued_kills().len(), 1);
+
+        // Pressure eases below the kill rung: the rest of the queue is spared.
+        l.step(&mut world(&f, &h, &det, 16.0, 0.0, &wl));
+        assert!(l.queued_kills().is_empty());
+    }
+
+    #[test]
+    fn cancel_also_empties_the_kill_queue() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut c = cfg();
+        c.kill_grace_seconds = 0;
+        let mut l = ladder(c, &f.root);
+        l.step(&mut world(&f, &h, &det, 1.0, 30.0, &wl));
+        assert!(l.cancel_kill());
+        assert!(l.queued_kills().is_empty());
+    }
+
+    #[test]
+    fn undo_skips_entries_that_are_no_longer_suspended() {
+        let f = Fixture::new();
+        let mut l = ladder(cfg(), &f.root);
+        l.undo.push("Discord".into());
+        l.undo.push("Slack".into());
+        // Neither is actually suspended in the fixture.
+        assert!(l.undo_last().is_none());
+        assert!(l.undo_stack().is_empty());
     }
 }

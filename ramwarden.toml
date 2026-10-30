@@ -22,6 +22,15 @@ watchlist = [
 # [api]
 # key = "sk-ant-..."
 
+# Jev (TypeSafe's System One model) judges the coldest apps on the LRU before
+# the ladder suspends or kills them. Put the key in secrets.toml under [jev]
+# api_key, or in $TYPESAFE_API_KEY — never here.
+# [jev]
+# enabled = true
+# model = "jev-latest"
+# suspend_threshold = 0.7   # chance the user is not coming back, to suspend
+# kill_threshold = 0.85     # and to kill
+
 # db_path = "/home/you/.local/share/ramwarden/history.db"
 
 # Workspace sorting rules — applied when "Sort Workspaces" is triggered.

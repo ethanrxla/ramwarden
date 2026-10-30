@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         watchlist: &cfg.watchlist,
         goal: String::new(),
         tabs: None,
+        judge: None,
     };
 
     let plan = l.plan(&w);

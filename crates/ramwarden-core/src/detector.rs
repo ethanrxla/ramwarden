@@ -16,12 +16,14 @@
 //!   nothing can honestly be called idle and everything is refused.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use ramwarden_kernel::{Root, cgroup, net, process, smaps};
 
 use crate::pattern;
 use crate::roles::classify;
 use crate::signals::{Protection, Signals, Verdict};
+use crate::structures::Lru;
 
 /// Resident size below which PSS is approximated rather than measured.
 ///
@@ -89,6 +91,30 @@ pub struct Detector {
     /// plausible. It was shipped that way once, caused by systemd mount-namespace
     /// sandboxing on the service unit.
     pss_unavailable: bool,
+    /// Application names, most recently used first. See [`Recency`].
+    recency: Lru<String, Recency>,
+}
+
+/// When the user last used an application, as opposed to when it last ran.
+///
+/// Only user-facing signals count as a touch: focus, audio, and having just
+/// been launched. CPU time and network traffic deliberately do not. Chat apps
+/// wake up for background sync every few minutes, and counting that as use
+/// made them look permanently fresh — their "quiet" timer kept resetting to
+/// zero and they could never reach the tail.
+#[derive(Clone, Copy, Debug)]
+pub struct Recency {
+    /// When this name was last touched, or first seen if never.
+    pub since: Instant,
+    /// Whether it has been touched at all since the daemon started. An
+    /// untouched entry's age is a lower bound.
+    pub touched: bool,
+}
+
+impl Recency {
+    pub fn idle(&self) -> Duration {
+        self.since.elapsed()
+    }
 }
 
 impl Detector {
@@ -100,6 +126,7 @@ impl Detector {
             ticks: 0,
             our_pid: std::process::id() as i32,
             pss_unavailable: false,
+            recency: Lru::new(),
         }
     }
 
@@ -120,6 +147,7 @@ impl Detector {
             s.score(warm);
             d.signals.insert(s.pid, s);
         }
+        d.update_recency();
         d
     }
 
@@ -221,6 +249,7 @@ impl Detector {
 
         self.cpu_prev = cpu_now;
         self.signals = fresh;
+        self.update_recency();
         // Recoverable: if the unit is fixed and reloaded, a later tick will read
         // rollups again and the warning should be able to fire once more.
         if self.pss_unavailable && self.signals.values().any(|s| s.pss != s.rss) {
@@ -228,6 +257,28 @@ impl Detector {
             tracing::info!("smaps_rollup is readable again — PSS accounting restored");
         }
         Ok(())
+    }
+
+    /// Fold this sample into the LRU.
+    ///
+    /// A name any of whose processes was used moves to the head. A name seen for
+    /// the first time without being used joins at the tail, so an app that was
+    /// already sitting idle when the daemon started is treated as cold rather
+    /// than brand new. Names with no process left are dropped.
+    fn update_recency(&mut self) {
+        let now = Instant::now();
+        let mut used: HashMap<&str, bool> = HashMap::new();
+        for s in self.signals.values() {
+            *used.entry(s.name.as_str()).or_default() |= s.recently_used();
+        }
+        self.recency.retain(|name, _| used.contains_key(name.as_str()));
+        for (name, was_used) in used {
+            if was_used {
+                self.recency.put_hot(name.to_string(), Recency { since: now, touched: true });
+            } else if !self.recency.contains(name) {
+                self.recency.put_cold(name.to_string(), Recency { since: now, touched: false });
+            }
+        }
     }
 
     /// pid -> cgroup scope name, for every process in the user's session.
@@ -253,6 +304,16 @@ impl Detector {
     }
 
     // ── Queries ─────────────────────────────────────────────────────────────
+
+    /// Application names, least recently used first.
+    pub fn coldest(&self) -> impl Iterator<Item = (&str, &Recency)> {
+        self.recency.iter_cold().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// When `name` was last used, if it is running.
+    pub fn recency(&self, name: &str) -> Option<&Recency> {
+        self.recency.peek(name)
+    }
 
     pub fn snapshot(&self) -> &HashMap<i32, Signals> {
         &self.signals

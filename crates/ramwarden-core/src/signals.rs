@@ -256,6 +256,15 @@ impl Signals {
     pub fn worth_reclaiming(&self) -> bool {
         !self.is_stopped() && self.pss >= IDLE_FLOOR_BYTES
     }
+
+    /// Whether the *user* touched this, which is what moves it up the LRU.
+    ///
+    /// Narrower than [`Verdict::InUse`] on purpose: background CPU and open
+    /// connections keep a process from being reclaimed this tick, but they are
+    /// not the user coming back to it.
+    pub fn recently_used(&self) -> bool {
+        self.is_focused || self.playing_audio || self.age_minutes < FRESH_MINUTES
+    }
 }
 
 #[cfg(test)]
