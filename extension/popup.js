@@ -55,10 +55,19 @@ async function init() {
     });
   }
 
-  // Tabs RamWarden closed, newest first, saved by the extension itself.
-  chrome.storage.local.get("releasedTabs", (r) => {
-    renderHistory((r.releasedTabs || []).map(t => ({ url: t.url, title: t.title, closedMs: t.closedAt })));
-  });
+  // Tabs RamWarden closed, newest first: the extension's own list merged with
+  // the daemon's closed_tabs record, which also covers closes made before the
+  // extension was reloaded.
+  const local = await new Promise(r => chrome.storage.local.get("releasedTabs", r));
+  let daemon = [];
+  try { daemon = (await daemonJSON("/history")).closed_tabs || []; } catch { /* offline */ }
+  const seen = new Set();
+  const merged = [
+    ...(local.releasedTabs || []).map(t => ({ url: t.url, title: t.title, closedMs: t.closedAt })),
+    ...daemon.map(t => ({ url: t.url, title: t.title, closedMs: Date.parse(t.closed_at.endsWith("Z") ? t.closed_at : t.closed_at + "Z") })),
+  ].filter(t => t.url && !seen.has(t.url) && seen.add(t.url))
+   .sort((a, b) => (b.closedMs || 0) - (a.closedMs || 0));
+  renderHistory(merged);
 
   document.getElementById("analyze-btn").addEventListener("click", async () => {
     const btn = document.getElementById("analyze-btn");
@@ -145,7 +154,7 @@ function renderHistory(items) {
     return;
   }
   list.innerHTML = items.slice(0, 20).map((item) => {
-    const time = new Date(item.closedMs ?? (item.closed_at + "Z")).toLocaleString(undefined, {
+    const time = new Date(item.closedMs || Date.now()).toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     });
     return `<div class="history-item">

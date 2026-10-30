@@ -108,14 +108,17 @@ impl TabCloser for Tabs {
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
     let threshold = state.cfg.thresholds.inactivity_minutes as i64;
-    let (to_unload, to_close) = {
+    let (to_unload, to_close, titles) = {
         let hub = state.hub.lock().unwrap();
         let rows = crate::browser::snapshot(&hub.reg, threshold);
         let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        let titles: std::collections::HashMap<_, _> = rows.iter()
+            .filter(|r| close.contains(&r.target))
+            .map(|r| (r.target.clone(), r.title.clone())).collect();
         let unload: Vec<_> = rows.into_iter()
             .filter(|r| r.eligible && !close.contains(&r.target))
             .take(crate::browser::BATCH_LIMIT).map(|r| r.target).collect();
-        (unload, close)
+        (unload, close, titles)
     };
 
     let unloaded = state.discard_tabs(&to_unload).await;
@@ -132,6 +135,16 @@ async fn release_tabs(state: &AppState, trigger: &str) {
         unloaded.confirmed.len(), closed.confirmed.len(),
         unloaded.queued.len() + closed.queued.len(), unloaded.refused.len() + closed.refused.len());
     tracing::info!("tabs ({trigger}): {notes}");
+    // Closed tabs also go in the daemon's own closed_tabs table, so the popup
+    // can list them for reopening even before the extension is reloaded.
+    let closed_rows: Vec<(String, String)> = closed.confirmed.iter().chain(&closed.queued)
+        .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
+    for (url, _) in &closed_rows {
+        tracing::info!("tabs: closed {url}");
+    }
+    if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
+        let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
+    }
     if unloaded.confirmed.is_empty() && closed.confirmed.is_empty() && closed.queued.is_empty() {
         return;
     }
