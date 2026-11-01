@@ -416,17 +416,23 @@ impl Default for Nvidia {
     }
 }
 
-/// The Wazuh warden (`[wardens.wazuh]`): where this machine's Wazuh manager and
-/// indexer are, and how loud an alert must be to reach the user.
+/// ThreatWarden (`[wardens.threat]`). Its first engine is Wazuh.
 ///
-/// Off by default. It is also a Pro warden, so `enabled = true` does nothing
-/// until the plan unlocks it. Passwords come from `secrets.toml`, `.env` or
-/// `$WAZUH_API_PASSWORD` / `$WAZUH_INDEXER_PASSWORD`, never this file. See
-/// `docs/specs/wardens.md` and `docs/wazuh-setup.md`.
+/// Hosted by default: RamWarden runs Wazuh, and this computer authenticates
+/// with its device sign-in, so a user with a Wazuh pass needs no settings at
+/// all. `mode = "self"` points it at a manager the user runs instead; only
+/// then do the manager fields below matter. Passwords come from
+/// `secrets.toml`, `.env` or `$WAZUH_API_PASSWORD` / `$WAZUH_INDEXER_PASSWORD`,
+/// never this file. See `docs/specs/wardens.md` and `docs/threatwarden-self-hosting.md`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Wazuh {
+    /// On unless turned off. It still does nothing until a pass unlocks it.
     pub enabled: bool,
+    /// `hosted` (RamWarden runs Wazuh) or `self` (your own manager).
+    pub mode: String,
+    /// The hosted API.
+    pub cloud_url: String,
     /// The manager's server API, e.g. `https://wazuh.example.com:55000`.
     /// Empty: report only the local agent's health.
     pub manager_url: String,
@@ -454,7 +460,9 @@ pub struct Wazuh {
 impl Default for Wazuh {
     fn default() -> Self {
         Wazuh {
-            enabled: false,
+            enabled: true,
+            mode: "hosted".to_string(),
+            cloud_url: "https://api.ramwarden.app".to_string(),
             manager_url: String::new(),
             api_user: "wazuh-wui".to_string(),
             api_password: String::new(),
@@ -472,11 +480,11 @@ impl Default for Wazuh {
     }
 }
 
-/// `[wardens.*]`: one section per add-on warden.
+/// `[wardens.*]`: one section per add-on warden, named by its id.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Wardens {
-    pub wazuh: Wazuh,
+    pub threat: Wazuh,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -568,15 +576,25 @@ fn home() -> PathBuf {
 /// Per-user config directory: `%APPDATA%` on Windows, `~/.config` elsewhere.
 /// Chosen by which variable exists rather than by `cfg`, so a Linux box is
 /// unaffected by a Windows convention it never sets.
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".config"))
 }
 
+/// The token device sign-in stores, which authenticates this computer to the
+/// hosted API (`<config dir>/ramwarden/device-token`). `None`: signed out.
+/// Never logged; wrap it in a `Secret` before holding it.
+pub fn device_token() -> Option<String> {
+    std::fs::read_to_string(config_dir().join("ramwarden").join("device-token"))
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
 /// Per-user data directory: `%LOCALAPPDATA%` on Windows, `~/.local/share`
 /// elsewhere.
-fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local").join("share"))
@@ -702,12 +720,12 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if secrets.jev.enabled {
             cfg.jev.enabled = true;
         }
-        let w = &secrets.wardens.wazuh;
+        let w = &secrets.wardens.threat;
         if !w.api_password.is_empty() {
-            cfg.wardens.wazuh.api_password = w.api_password.clone();
+            cfg.wardens.threat.api_password = w.api_password.clone();
         }
         if !w.indexer_password.is_empty() {
-            cfg.wardens.wazuh.indexer_password = w.indexer_password.clone();
+            cfg.wardens.threat.indexer_password = w.indexer_password.clone();
         }
     }
 
@@ -772,7 +790,7 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
     .into_iter()
     .flatten()
     .collect();
-    let wazuh = &mut cfg.wardens.wazuh;
+    let wazuh = &mut cfg.wardens.threat;
     for (field, var) in [
         (&mut wazuh.api_password, "WAZUH_API_PASSWORD"),
         (&mut wazuh.indexer_password, "WAZUH_INDEXER_PASSWORD"),
@@ -824,12 +842,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_wazuh_warden_is_off_by_default_and_parses_its_section() {
-        assert!(!Config::default().wardens.wazuh.enabled);
+    fn the_wazuh_warden_is_hosted_by_default_and_parses_its_section() {
+        let d = Config::default().wardens.threat;
+        assert!(d.enabled, "a pass is all a user should need");
+        assert_eq!(d.mode, "hosted");
+        assert_eq!(d.cloud_url, "https://api.ramwarden.app");
         let cfg = parse(
             r#"
-[wardens.wazuh]
-enabled = true
+[wardens.threat]
+mode = "self"
 manager_url = "https://wazuh.lan:55000"
 indexer_url = "https://wazuh.lan:9200"
 ca_file = "/etc/ramwarden/wazuh-root-ca.pem"
@@ -837,8 +858,9 @@ min_level = 5
 "#,
         )
         .unwrap();
-        let w = &cfg.wardens.wazuh;
+        let w = &cfg.wardens.threat;
         assert!(w.enabled);
+        assert_eq!(w.mode, "self");
         assert_eq!(w.manager_url, "https://wazuh.lan:55000");
         assert_eq!(w.min_level, 5);
         assert_eq!(w.alert_level, 12, "unset keys keep their defaults");
@@ -850,19 +872,19 @@ min_level = 5
     fn wazuh_passwords_come_from_secrets_toml() {
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("ramwarden.toml");
-        std::fs::write(&cfg_path, "[wardens.wazuh]\nenabled = true\n").unwrap();
+        std::fs::write(&cfg_path, "[wardens.threat]\nenabled = true\n").unwrap();
         std::fs::write(
             dir.path().join("secrets.toml"),
-            "[wardens.wazuh]\napi_password = \"api-pw\"\nindexer_password = \"idx-pw\"\n",
+            "[wardens.threat]\napi_password = \"api-pw\"\nindexer_password = \"idx-pw\"\n",
         )
         .unwrap();
         let cfg = load_from(&cfg_path).unwrap();
         // The environment would override these; only assert when it is not set.
         if std::env::var("WAZUH_API_PASSWORD").is_err() {
-            assert_eq!(cfg.wardens.wazuh.api_password, "api-pw");
+            assert_eq!(cfg.wardens.threat.api_password, "api-pw");
         }
         if std::env::var("WAZUH_INDEXER_PASSWORD").is_err() {
-            assert_eq!(cfg.wardens.wazuh.indexer_password, "idx-pw");
+            assert_eq!(cfg.wardens.threat.indexer_password, "idx-pw");
         }
     }
 

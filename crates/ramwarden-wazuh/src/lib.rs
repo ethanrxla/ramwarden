@@ -15,15 +15,26 @@
 //!
 //! ## Read-only by construction
 //!
-//! The client exposes authentication, one agent lookup and one alert search.
-//! There is no method that calls active response, restarts an agent or changes
-//! a rule, so no bug in policy can make the Wazuh warden act.
+//! The clients expose authentication, agent lookup and alert search. There is
+//! no method that calls active response, restarts an agent or changes a rule,
+//! so no bug in policy can make the Wazuh warden act. The one thing that
+//! changes the computer is [`install`], which installs Wazuh's own agent when
+//! the user asks, behind the OS's own admin prompt.
+//!
+//! ## Hosted or self-hosted
+//!
+//! By default RamWarden hosts Wazuh and [`cloud`] talks to it with the device
+//! sign-in token: no keys, no server, no certificates for the user. [`api`]
+//! talks to a manager the user runs themselves.
 
 pub mod agent;
 pub mod api;
+pub mod cloud;
+pub mod install;
 
 pub use agent::{LocalAgent, default_agent_name};
 pub use api::{Alert, Client, Endpoints, ManagerAgent};
+pub use cloud::{Cloud, CloudStatus, EnrollRequest, Enrollment};
 
 /// Everything that can go wrong talking to Wazuh. Each is a normal
 /// configuration the warden reports as "off", never a reason to fail.
@@ -44,6 +55,14 @@ pub enum Error {
     Unreachable(&'static str, String),
     #[error("unexpected answer from the Wazuh {0}: {1}")]
     Parse(&'static str, String),
+    /// The device token was refused: sign in to RamWarden again.
+    #[error("this computer is signed out of RamWarden")]
+    SignedOut,
+    /// The account has no current Wazuh pass.
+    #[error("this account has no Wazuh warden pass")]
+    NoPass,
+    #[error("{0}")]
+    Install(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

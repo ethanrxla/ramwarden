@@ -15,9 +15,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 
 fn state(dir: &std::path::Path) -> AppState {
-    let mut wardens = ramwarden_core::config::Wardens::default();
-    wardens.wazuh.enabled = true;
-    let cfg = Config { db_path: dir.join("history.db"), wardens, ..Config::default() };
+    let cfg = Config { db_path: dir.join("history.db"), ..Config::default() };
     let platform = Arc::new(fake::platform(Default::default()));
     AppState {
         cfg: Arc::new(cfg.clone()),
@@ -51,6 +49,15 @@ async fn get(st: &AppState, path: &str) -> (u16, String, Vec<u8>) {
     (status, ctype, to_bytes(r.into_body(), 1_000_000).await.unwrap().to_vec())
 }
 
+async fn post(st: &AppState, path: &str) -> u16 {
+    ramwarden_daemon::routes::router(st.clone())
+        .oneshot(Request::builder().method("POST").uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
 async fn json(st: &AppState, path: &str) -> Value {
     let (status, _, body) = get(st, path).await;
     assert_eq!(status, 200, "{path}");
@@ -62,50 +69,58 @@ async fn json(st: &AppState, path: &str) -> Value {
 #[tokio::test]
 async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     let dir = tempfile::tempdir().unwrap();
+    // A config dir with no device token in it: signed out, so nothing here
+    // can reach the hosted API. The only test in this binary.
+    // SAFETY: set before any other thread reads the environment.
+    unsafe {
+        std::env::set_var("APPDATA", dir.path());
+    }
     let st = state(dir.path());
 
     // Free tier: RAM works, Wazuh is locked and has no report.
     let list = json(&st, "/wardens").await;
     assert_eq!(list["paid"], serde_json::json!([]));
     let ids: Vec<&str> = list["wardens"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["ram", "wazuh"]);
+    assert_eq!(ids, ["ram", "threat"]);
     let ram = &list["wardens"][0];
     assert_eq!(ram["access"], "free");
     assert_eq!(ram["unlocked"], true);
     assert_ne!(ram["status"]["level"], "locked");
-    let wazuh = &list["wardens"][1];
-    assert_eq!(wazuh["access"], "pro");
-    assert_eq!(wazuh["unlocked"], false);
-    assert_eq!(wazuh["status"]["level"], "locked");
-    assert_eq!(wazuh["icon"], "/wardens/wazuh/icon.svg");
-    assert!(json(&st, "/wardens/wazuh").await["report"].is_null());
+    let threat = &list["wardens"][1];
+    assert_eq!(threat["access"], "pro");
+    assert_eq!(threat["unlocked"], false);
+    assert_eq!(threat["status"]["level"], "locked");
+    assert_eq!(threat["icon"], "/wardens/threat/icon.svg");
+    assert!(json(&st, "/wardens/threat").await["report"].is_null());
 
-    // A locked warden does no work: polling leaves it unchecked.
+    // A locked warden cannot be set up.
     let w = ramwarden_daemon::wardens::Wardens::global(&st.cfg);
-    w.poll_wazuh(None).await;
-    assert!(json(&st, "/wardens/wazuh").await["report"].is_null());
+    assert_eq!(post(&st, "/wardens/threat/setup").await, 403);
 
-    // A RAM (hosted Jev) pass does not unlock it; a Wazuh pass does.
+    // A RAM (hosted Jev) pass does not unlock it; a ThreatWarden pass does.
     let until = ramwarden_core::wardens::now() + 3600;
     let pass = |id: &str| format!(r#"{{"v":1,"wardens":{{"{id}":{until}}}}}"#);
     std::fs::write(dir.path().join("entitlement.json"), pass("ram")).unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
-    std::fs::write(dir.path().join("entitlement.json"), pass("wazuh")).unwrap();
+    std::fs::write(dir.path().join("entitlement.json"), pass("threat")).unwrap();
     let list = json(&st, "/wardens").await;
-    assert_eq!(list["paid"], serde_json::json!(["wazuh"]));
+    assert_eq!(list["paid"], serde_json::json!(["threat"]));
     assert_eq!(list["wardens"][1]["unlocked"], true);
 
-    // Unlocked with no manager configured: it reports, and never says "clear"
-    // about alerts it could not see.
-    w.poll_wazuh(None).await;
-    let one = json(&st, "/wardens/wazuh").await;
+    // Unlocked but this computer is signed out: hosted mode says so, never
+    // "clear" about alerts it could not see, and setup is refused.
+    w.threat.poll(None).await;
+    let one = json(&st, "/wardens/threat").await;
     assert!(one["report"].is_object(), "{one}");
-    assert_ne!(one["status"]["level"], "locked");
-    assert!(!one["report"]["problems"].as_array().unwrap().is_empty());
+    assert_eq!(one["report"]["mode"], "hosted");
+    assert_eq!(one["status"]["level"], "off");
+    assert_eq!(one["status"]["headline"], "Sign in to RamWarden");
+    assert_eq!(post(&st, "/wardens/threat/setup").await, 409);
+    assert_eq!(post(&st, "/wardens/ram/setup").await, 400);
 
     // Icons: the RAM warden is the brand ram the clients already draw.
     assert!(list["wardens"][0]["icon"].is_null());
-    let (status, ctype, body) = get(&st, "/wardens/wazuh/icon.svg").await;
+    let (status, ctype, body) = get(&st, "/wardens/threat/icon.svg").await;
     assert_eq!(status, 200);
     assert_eq!(ctype, "image/svg+xml");
     assert!(String::from_utf8(body).unwrap().contains("<svg"));

@@ -85,6 +85,7 @@ pub fn router(state: AppState) -> Router {
         .route("/wardens", get(crate::wardens::list))
         .route("/wardens/{id}", get(crate::wardens::one))
         .route("/wardens/{id}/icon.svg", get(crate::wardens::icon_svg))
+        .route("/wardens/{id}/setup", post(crate::wardens::setup))
         .with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses
         // everything a web page might send. See `guard` for why both.

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use ramwarden_platform::Secret;
 use reqwest::{StatusCode, Url};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{Error, Result};
@@ -39,27 +39,45 @@ pub struct Endpoints {
     pub timeout: Duration,
 }
 
-/// The manager's view of one agent.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+/// The manager's view of one agent. Also the shape the hosted API returns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagerAgent {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     /// `active`, `disconnected`, `pending` or `never_connected`.
     pub status: String,
+    #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
     pub last_keep_alive: Option<String>,
 }
 
-/// One alert from the indexer, trimmed to what the UI shows.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+/// One alert, trimmed to what the UI shows. Also the shape the hosted API
+/// returns, where the triage fields are filled in by its AI tier.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Alert {
     pub timestamp: String,
     pub rule_id: String,
     pub level: u8,
     pub description: String,
+    #[serde(default)]
     pub groups: Vec<String>,
     /// MITRE ATT&CK tactics, when the rule maps to any.
+    #[serde(default)]
     pub tactics: Vec<String>,
+    /// What happened, in plain language (hosted AI triage).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    /// What, if anything, the user should do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advice: Option<String>,
+    /// `benign`, `suspicious` or `threat`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    /// The model's calibrated confidence in `verdict`, 0-1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
 }
 
 /// A read-only client for one Wazuh deployment.
@@ -181,7 +199,7 @@ impl Client {
 
 /// `""` is "not configured". Anything else must be https, or http to this
 /// machine only.
-fn parse_url(s: &str) -> Result<Option<Url>> {
+pub(crate) fn parse_url(s: &str) -> Result<Option<Url>> {
     let s = s.trim();
     if s.is_empty() {
         return Ok(None);
@@ -204,7 +222,7 @@ fn is_loopback(url: &Url) -> bool {
 }
 
 /// `base` + `path`, whether or not `base` ends in a slash.
-fn join(base: &Url, path: &str) -> Url {
+pub(crate) fn join(base: &Url, path: &str) -> Url {
     let mut u = base.clone();
     let joined = format!("{}/{}", base.path().trim_end_matches('/'), path);
     u.set_path(&joined);
@@ -271,6 +289,10 @@ pub fn parse_alerts(body: &Value) -> Result<Vec<Alert>> {
                 description: rule["description"].as_str().unwrap_or_default().to_string(),
                 groups: strings(&rule["groups"]),
                 tactics: strings(&rule["mitre"]["tactic"]),
+                explanation: None,
+                advice: None,
+                verdict: None,
+                confidence: None,
             })
         })
         .collect())

@@ -256,7 +256,11 @@ const ANTI_CHEAT: &[&str] = &[
 /// these are system processes whatever the watchlist says. Prefixes, because
 /// Linux truncates `comm` to 15 bytes (`wazuh-logcollec`) and Windows names the
 /// agent `wazuh-agent.exe` and its service `WazuhSvc`. See `docs/specs/wardens.md`.
-const SECURITY_AGENT_PREFIXES: &[&str] = &["wazuh-", "wazuhsvc", "ossec-", "ossec_"];
+/// ThreatWarden's other engines (ClamAV, Suricata, ntopng) are protected the
+/// same way; see `docs/specs/threatwarden.md`.
+const SECURITY_AGENT_PREFIXES: &[&str] = &[
+    "wazuh-", "wazuhsvc", "ossec-", "ossec_", "clamd", "clamscan", "freshclam", "suricata", "ntopng",
+];
 
 /// Games recognised by name. Most Unreal titles are also caught by the
 /// `-shipping` suffix their builds carry.
@@ -367,11 +371,12 @@ mod tests {
     /// Wazuh's agent and manager daemons on Linux and macOS (as `comm`, so
     /// truncated to 15 bytes), and its Windows agent and service.
     #[test]
-    fn the_security_agent_is_structural() {
+    fn threatwardens_engines_are_structural() {
         for name in [
             "wazuh-agentd", "wazuh-execd", "wazuh-logcollec", "wazuh-modulesd", "wazuh-syscheckd",
             "wazuh-analysisd", "wazuh-remoted", "wazuh-db", "wazuh-apid",
             "wazuh-agent", "WazuhSvc", "ossec-agent", "ossec-agentd",
+            "clamd", "clamscan", "freshclam", "Suricata-Main", "suricata", "ntopng",
         ] {
             let role = role_of(name);
             assert_eq!(role, Role::System, "{name}");

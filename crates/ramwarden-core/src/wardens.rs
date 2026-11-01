@@ -45,15 +45,15 @@ pub const RAM: WardenInfo = WardenInfo {
     access: Access::Free,
 };
 
-pub const WAZUH: WardenInfo = WardenInfo {
-    id: "wazuh",
-    name: "Wazuh Warden",
-    role: "Watches this computer's Wazuh security agent and tells you when it sees a threat.",
+pub const THREAT: WardenInfo = WardenInfo {
+    id: "threat",
+    name: "ThreatWarden",
+    role: "Watches for attacks, malware and intrusions, explains what it finds, and asks before acting.",
     access: Access::Pro,
 };
 
 /// Every warden, in the order the UI shows them. Adding a warden starts here.
-pub const CATALOGUE: &[WardenInfo] = &[RAM, WAZUH];
+pub const CATALOGUE: &[WardenInfo] = &[RAM, THREAT];
 
 pub fn find(id: &str) -> Option<&'static WardenInfo> {
     CATALOGUE.iter().find(|w| w.id == id)
@@ -64,11 +64,11 @@ pub fn find(id: &str) -> Option<&'static WardenInfo> {
 ///
 /// ```json
 /// {"v":1, "account":"…", "device":"…", "issued_at":1793500000,
-///  "wardens":{"ram":1796000000, "wazuh":1798000000}, "sig":"<base64 ed25519>"}
+///  "wardens":{"ram":1796000000, "threat":1798000000}, "sig":"<base64 ed25519>"}
 /// ```
 ///
 /// Passes are sold per warden, each with its own expiry, so a RAM pass never
-/// unlocks Wazuh and a bundle is simply both keys. `"ram"` is the hosted Jev
+/// unlocks ThreatWarden and a bundle is simply both keys. `"ram"` is the hosted Jev
 /// tier; the local RAM warden itself is free and ignores it. A warden missing
 /// from the map stays locked.
 ///
@@ -129,6 +129,8 @@ pub enum Level {
     Off,
     /// Needs a plan the user does not have.
     Locked,
+    /// Installing what it needs (the Wazuh agent).
+    Setup,
 }
 
 /// A warden's state in one line, plus a sentence of detail.
@@ -176,6 +178,18 @@ impl Default for ThreatThresholds {
     }
 }
 
+/// The rule level an alert counts at, after the hosted AI triage. A `threat`
+/// verdict on an alert the user would see anyway lifts it to the alert level.
+/// A model can make an alert louder, never quieter: `benign` changes nothing,
+/// because Wazuh's own rule level is the floor.
+pub fn effective_level(rule_level: u8, verdict: Option<&str>, t: ThreatThresholds) -> u8 {
+    if verdict == Some("threat") && rule_level >= t.min_level {
+        rule_level.max(t.alert_level)
+    } else {
+        rule_level
+    }
+}
+
 /// Whether the security agent can report at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentHealth {
@@ -189,7 +203,7 @@ pub enum AgentHealth {
     Missing,
 }
 
-/// The Wazuh warden's verdict, from the agent's health and the rule levels of
+/// ThreatWarden's Wazuh verdict, from the agent's health and the rule levels of
 /// the alerts seen in the lookback window.
 ///
 /// Silence from an agent that cannot report is not safety: a disconnected agent
@@ -281,7 +295,7 @@ mod tests {
     fn no_passes_unlock_only_free_wardens() {
         let e = Entitlement::default();
         assert!(e.allows(&RAM, NOW));
-        assert!(!e.allows(&WAZUH, NOW));
+        assert!(!e.allows(&THREAT, NOW));
         assert!(e.paid_at(NOW).is_empty());
     }
 
@@ -289,26 +303,26 @@ mod tests {
     fn each_pass_unlocks_only_its_own_warden() {
         // A RAM (hosted Jev) pass must not unlock Wazuh.
         let e = ent(&[("ram", NOW + 60)]);
-        assert!(!e.allows(&WAZUH, NOW));
-        let e = ent(&[("wazuh", NOW + 60)]);
-        assert!(e.allows(&WAZUH, NOW));
-        let other = WardenInfo { id: "future", ..WAZUH };
+        assert!(!e.allows(&THREAT, NOW));
+        let e = ent(&[("threat", NOW + 60)]);
+        assert!(e.allows(&THREAT, NOW));
+        let other = WardenInfo { id: "future", ..THREAT };
         assert!(!e.allows(&other, NOW));
     }
 
     #[test]
     fn a_bundle_is_both_keys_with_their_own_expiries() {
-        let e = ent(&[("ram", NOW + 10), ("wazuh", NOW + 1000)]);
-        assert_eq!(e.paid_at(NOW), vec!["ram", "wazuh"]);
-        assert_eq!(e.paid_at(NOW + 500), vec!["wazuh"]);
-        assert!(e.allows(&WAZUH, NOW + 500));
+        let e = ent(&[("ram", NOW + 10), ("threat", NOW + 1000)]);
+        assert_eq!(e.paid_at(NOW), vec!["ram", "threat"]);
+        assert_eq!(e.paid_at(NOW + 500), vec!["threat"]);
+        assert!(e.allows(&THREAT, NOW + 500));
     }
 
     #[test]
     fn an_expired_pass_is_locked_and_free_wardens_stay_free() {
         for until in [NOW, NOW - 1] {
-            let e = ent(&[("wazuh", until)]);
-            assert!(!e.allows(&WAZUH, NOW), "{until}");
+            let e = ent(&[("threat", until)]);
+            assert!(!e.allows(&THREAT, NOW), "{until}");
             assert!(e.allows(&RAM, NOW));
         }
     }
@@ -322,10 +336,10 @@ mod tests {
         assert_eq!(Entitlement::load(&p), Entitlement::default());
         std::fs::write(
             &p,
-            format!(r#"{{"v":1,"account":"a","device":"d","issued_at":{NOW},"wardens":{{"wazuh":{}}},"sig":"x"}}"#, NOW + 5),
+            format!(r#"{{"v":1,"account":"a","device":"d","issued_at":{NOW},"wardens":{{"threat":{}}},"sig":"x"}}"#, NOW + 5),
         )
         .unwrap();
-        assert!(Entitlement::load(&p).allows(&WAZUH, NOW));
+        assert!(Entitlement::load(&p).allows(&THREAT, NOW));
     }
 
     #[test]
@@ -359,6 +373,16 @@ mod tests {
         assert!(s.headline.contains("not connected"));
         // A high alert still outranks the connection problem.
         assert_eq!(assess_threats(AgentHealth::Disconnected, &[14], t, NOW).level, Level::Alert);
+    }
+
+    #[test]
+    fn triage_can_raise_an_alert_but_never_lower_one() {
+        let t = ThreatThresholds::default();
+        assert_eq!(effective_level(8, Some("threat"), t), 12);
+        assert_eq!(effective_level(14, Some("threat"), t), 14);
+        assert_eq!(effective_level(14, Some("benign"), t), 14, "never quieter");
+        assert_eq!(effective_level(3, Some("threat"), t), 3, "below the floor stays hidden");
+        assert_eq!(effective_level(9, None, t), 9);
     }
 
     #[test]

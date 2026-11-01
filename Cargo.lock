@@ -4659,10 +4659,12 @@ name = "ramwarden-wazuh"
 version = "0.2.1"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "ramwarden-platform",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

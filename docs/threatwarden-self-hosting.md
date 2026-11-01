@@ -1,6 +1,10 @@
-# Setting up the Wazuh warden
+# ThreatWarden: self-hosting Wazuh (advanced)
 
-The Wazuh warden reports what this computer's Wazuh security agent has seen.
+Most users never read this page: ThreatWarden is hosted by RamWarden and
+turns on with one click. This is for people who want ThreatWarden to use a
+Wazuh server they run themselves (`mode = "self"`).
+
+ThreatWarden reports what this computer's Wazuh security agent has seen.
 RamWarden does not ship or run Wazuh itself: you install Wazuh's own packages,
 and RamWarden reads from them. This page is everything that has to be done by
 hand. The behaviour is specified in [specs/wardens.md](specs/wardens.md).
@@ -83,13 +87,13 @@ Per-OS notes:
 
 ## 3. RamWarden (on each computer)
 
-The Wazuh warden is a Pro warden: it needs a Wazuh pass (on its own or in a
+ThreatWarden is a paid warden: it needs a ThreatWarden pass (on its own or in a
 bundle). Once you have it, add this to RamWarden's config (`ramwarden.toml`, or
 `%APPDATA%\ramwarden\config.toml` / `~/.config/ramwarden/config.toml`):
 
 ```toml
-[wardens.wazuh]
-enabled      = true
+[wardens.threat]
+mode         = "self"
 manager_url  = "https://wazuh.example.lan:55000"
 api_user     = "ramwarden-api"
 indexer_url  = "https://wazuh.example.lan:9200"
@@ -104,7 +108,7 @@ Put the passwords in `secrets.toml` beside it (never in `ramwarden.toml`,
 which may be in git):
 
 ```toml
-[wardens.wazuh]
+[wardens.threat]
 api_password     = "..."
 indexer_password = "..."
 ```
@@ -113,7 +117,7 @@ or in the environment as `WAZUH_API_PASSWORD` and `WAZUH_INDEXER_PASSWORD`
 (a `.env` beside the config works too). Restart the daemon, then check:
 
 ```bash
-curl -s http://127.0.0.1:7823/wardens/wazuh
+curl -s http://127.0.0.1:7823/wardens/threat
 ```
 
 `status.level` is `clear`, `watch` or `alert` when it is working. `off` comes
