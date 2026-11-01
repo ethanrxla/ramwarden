@@ -1,0 +1,11 @@
+# Ed25519 public keys that may sign the release manifest, one base64 key per
+# line. Compiled into the launcher, never read at run time, so nothing on the
+# user's disk can add a key. Two lines during a key rotation, one otherwise.
+#
+# Empty means this build cannot verify a manifest and update checks report
+# that instead of installing anything. Generate a pair with:
+#
+#   cargo run -p ramwarden-launcher -- release keygen
+#
+# Paste the public half below and store the private half as the GitHub
+# Actions secret RAMWARDEN_SIGNING_KEY. Never commit the private half.

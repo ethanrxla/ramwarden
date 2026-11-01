@@ -1,5 +1,9 @@
 #!/bin/sh
 set -e
 # The units are per-user, so there is nothing system-wide to stop. Users who
-# enabled them are told how to disable them in the README.
+# enabled them are told how to disable them in the README. The update timer is
+# the exception: postinst enables it for every user, so removal disables it.
+if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --global disable ramwarden-update.timer >/dev/null 2>&1 || true
+fi
 exit 0

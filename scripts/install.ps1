@@ -12,6 +12,7 @@
       `conhost --headless` so it has no window but still receives the console
       close/logoff/shutdown events it uses to restore Tidy hints;
     * the tray (when built) at logon;
+    * the launcher's update check (when built) at logon and every six hours;
     * a starter config at %APPDATA%\ramwarden\config.toml if none exists.
 
 .EXAMPLE
@@ -24,6 +25,11 @@
   # feature; it starts ramwarden-gpu when there is GPU work.
   scripts\cargo-cuda.cmd build --release -p ramwarden-ml --features cuda,embed --bin ramwarden-gpu
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+
+.EXAMPLE
+  # What the release installer (packaging\windows\ramwarden.iss) runs, on its
+  # unpacked payload. The launcher updates by running that installer.
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Source <payload>
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall
@@ -47,17 +53,18 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $Dest     = Join-Path $env:ProgramFiles 'RamWarden'
 $TaskName = 'RamWarden daemon'
 $TrayTask = 'RamWarden tray'
+$UpdateTask = 'RamWarden updates'
 $Service  = Join-Path $Dest 'ramwarden-service.exe'
 $Shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\RamWarden.lnk'
 
 function Remove-RamWarden {
-  foreach ($t in @($TaskName, $TrayTask)) {
+  foreach ($t in @($TaskName, $TrayTask, $UpdateTask)) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
       Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
       Unregister-ScheduledTask -TaskName $t -Confirm:$false
     }
   }
-  Get-Process ramwarden-daemon, ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process ramwarden-daemon, ramwarden-tray, ramwarden-launcher -ErrorAction SilentlyContinue | Stop-Process -Force
   if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
     if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
     Start-Sleep -Seconds 1
@@ -104,7 +111,11 @@ $ConfigDir = Join-Path $env:APPDATA 'ramwarden'
 $Config    = Join-Path $ConfigDir 'config.toml'
 if (-not (Test-Path $Config)) {
   New-Item -ItemType Directory -Force $ConfigDir | Out-Null
-  Copy-Item (Join-Path $Root '..\ramwarden.toml') $Config
+  # A release payload carries the starter config beside the binaries; a source
+  # checkout has it at the repository root.
+  $Template = Join-Path $Source 'ramwarden.toml'
+  if (-not (Test-Path $Template)) { $Template = Join-Path $Root '..\ramwarden.toml' }
+  Copy-Item $Template $Config
   Write-Host "Wrote starter config to $Config"
 }
 
@@ -136,8 +147,23 @@ if (Test-Path $tray) {
   $lnk.Save()
 }
 
+# Update checks: as this user, not elevated. The check only downloads and
+# verifies; installing a Windows update raises a UAC prompt, so it is done
+# from the tray or `ramwarden-launcher update`, never unattended.
+$launcherExe = Join-Path $Dest 'ramwarden-launcher.exe'
+if (Test-Path $launcherExe) {
+  $a = New-ScheduledTaskAction -Execute $launcherExe -Argument 'check --background' -WorkingDirectory $ConfigDir
+  $t1 = New-ScheduledTaskTrigger -AtLogOn -User $user
+  $t1.Delay = 'PT10M'
+  $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(30) -RepetitionInterval (New-TimeSpan -Hours 6)
+  $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+         -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+  Register-ScheduledTask -TaskName $UpdateTask -Action $a -Trigger @($t1, $t2) -Settings $s -Principal $task | Out-Null
+}
+
 Write-Host "RamWarden installed to $Dest"
 Write-Host "  app     : Start menu -> RamWarden (or the ring icon in the system tray)"
 Write-Host "  service : $((Get-Service RamWarden).Status)"
 Write-Host "  daemon  : http://127.0.0.1:7823  (log: $log)"
 Write-Host "  debloat : & '$Dest\ramwarden-debloat.exe' status"
+if (Test-Path $launcherExe) { Write-Host "  updates : & '$launcherExe' status" }

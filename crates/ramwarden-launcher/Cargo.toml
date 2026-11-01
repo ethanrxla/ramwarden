@@ -1,0 +1,36 @@
+[package]
+name    = "ramwarden-launcher"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Installs, updates and reports on RamWarden's wardens from a signed release manifest."
+
+[lib]
+name = "ramwarden_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ramwarden-launcher"
+path = "src/main.rs"
+
+[dependencies]
+ramwarden-core = { path = "../ramwarden-core" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+ed25519-dalek = "2"
+getrandom  = "0.2"
+sha2       = "0.10"
+base64     = "0.22"
+hex        = "0.4"
+semver     = "1"
+ureq       = "2"
+tar        = "0.4"
+flate2     = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
