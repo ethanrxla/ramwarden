@@ -114,7 +114,7 @@ set -eu
 TOKEN='{token}'
 REL='{releases}'
 case "$(uname -s)" in
-  Darwin) CONF="$HOME/Library/Application Support/ramwarden"; ASSET=ramwarden-macos-aarch64.tar.gz ;;
+  Darwin) CONF="$HOME/.config/ramwarden"; ASSET=ramwarden-macos-aarch64.tar.gz ;;
   Linux) CONF="${{XDG_CONFIG_HOME:-$HOME/.config}}/ramwarden"; ASSET=ramwarden-linux-x86_64.tar.gz ;;
   *) echo "RamWarden supports macOS and Linux here; on Windows use the PowerShell line." >&2; exit 1 ;;
 esac
