@@ -86,8 +86,10 @@ impl Config {
             // leave room for that and stop a script.
             per_minute: num("RAMWARDEN_API_PER_MINUTE", var("RAMWARDEN_API_PER_MINUTE"), 20)?,
             per_day: num("RAMWARDEN_API_PER_DAY", var("RAMWARDEN_API_PER_DAY"), 1000)?,
-            max_state_bytes: num("RAMWARDEN_API_MAX_STATE_BYTES", var("RAMWARDEN_API_MAX_STATE_BYTES"), 4096)?,
-            max_questions: num("RAMWARDEN_API_MAX_QUESTIONS", var("RAMWARDEN_API_MAX_QUESTIONS"), 8)?,
+            // The ladder judge sends up to 8 candidates in one request, two
+            // questions each, with a JSON state describing all of them.
+            max_state_bytes: num("RAMWARDEN_API_MAX_STATE_BYTES", var("RAMWARDEN_API_MAX_STATE_BYTES"), 16_384)?,
+            max_questions: num("RAMWARDEN_API_MAX_QUESTIONS", var("RAMWARDEN_API_MAX_QUESTIONS"), 24)?,
             daily_input_tokens: num(
                 "RAMWARDEN_API_DAILY_INPUT_TOKENS",
                 var("RAMWARDEN_API_DAILY_INPUT_TOKENS"),
@@ -116,7 +118,7 @@ mod tests {
         assert_eq!(c.jev_model, "jev-latest");
         assert_eq!(c.bind.port(), 8080);
         assert_eq!(c.tokens, vec![hash_token(TOKEN)]);
-        assert_eq!((c.per_minute, c.per_day, c.max_state_bytes), (20, 1000, 4096));
+        assert_eq!((c.per_minute, c.per_day, c.max_state_bytes, c.max_questions), (20, 1000, 16_384, 24));
     }
 
     #[test]

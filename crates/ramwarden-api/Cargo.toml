@@ -26,5 +26,9 @@ tracing-subscriber = { workspace = true }
 sha2 = "0.10"
 
 [dev-dependencies]
+# Only to build the daemon's real Jev requests in a test, so a question the
+# daemon changes without updating the catalog fails here, not in production.
+ramwarden-daemon = { path = "../ramwarden-daemon" }
+ramwarden-core   = { path = "../ramwarden-core" }
 tower = { version = "0.5", features = ["util"] }
 tokio = { workspace = true, features = ["net"] }

@@ -23,9 +23,9 @@ in `secrets.toml`, `.env` or the environment. Never in `ramwarden.toml`.
 | Rule | Default | Answer when broken |
 | --- | --- | --- |
 | Bearer token on the list | required | 401 |
-| Every question equals a [catalog](../../crates/ramwarden-api/src/catalog.rs) entry (name and definition) | built-in 6 | 422 |
-| `state` size | 4096 bytes | 422 |
-| Questions per request | 8 | 422 |
+| Every question equals a [catalog](../../crates/ramwarden-api/src/catalog.rs) entry (name and definition), or fits a ladder-judge template (`return_{i}`, `kind_{i}`: same index in name and text, an app name of at most 80 characters, fixed criteria) | 6 fixed, 2 templates | 422 |
+| `state` size | 16,384 bytes | 422 |
+| Questions per request | 24 (the ladder judge sends up to 16) | 422 |
 | Requests per token per minute | 20 | 429 |
 | Requests per token per UTC day | 1000 | 429 |
 | Upstream input tokens per UTC day, all users | 20,000,000 (about $0.84 at $0.042/MTok) | 503 |
@@ -64,7 +64,9 @@ Make a token with `openssl rand -hex 24 | sed 's/^/rw_/'`. Serve it behind TLS
 
 The catalog matches definitions exactly, so new or reworded questions must be
 added to `catalog.rs` (or the catalog file) **before** a daemon that sends them
-ships, and old ones kept until no released daemon sends them. A question the
+ships, and old ones kept until no released daemon sends them. The ladder judge's
+per-candidate wording lives in `Template::ladder_judge`, copied from
+`crates/ramwarden-daemon/src/ladderjudge.rs`. A question the
 server does not know is refused with 422, and the daemon falls back as above.
 
 ## Next phases

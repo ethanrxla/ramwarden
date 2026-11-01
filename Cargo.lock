@@ -4491,6 +4491,8 @@ version = "0.2.1"
 dependencies = [
  "axum",
  "ramwarden-ai",
+ "ramwarden-core",
+ "ramwarden-daemon",
  "reqwest",
  "serde",
  "serde_json",
