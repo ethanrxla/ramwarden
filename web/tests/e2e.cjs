@@ -182,6 +182,9 @@ async function run() {
     await p.waitForSelector("h2:text('Upgrade to Pro')");
     assert.equal(await p.isChecked('input[name=tier][value="pro"]'), true);
     assert.match(await p.textContent("#buy p.muted"), /charged today/);
+    // A card upgrade changes the plan in place, without a checkout page.
+    await p.click("#buy button.wallet:has-text('Card')");
+    await p.waitForSelector("h2:text('RamWarden Pro')");
     assert.deepEqual(p.errors, []);
   });
 

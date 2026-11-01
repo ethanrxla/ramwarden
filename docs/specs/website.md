@@ -116,6 +116,13 @@ Checkout:
   ThreatWarden and has no trial. Bullets say what the visitor gets and promise
   only what ships; engines are still never named. The open-source repo stays
   as one line under the cards and a small card beside the install box.
+- **Upgrades are a few clicks.** The account page offers Upgrade to Plus on
+  Lite and Upgrade to Pro on Plus. Upgrading calls the normal checkout with the
+  Pro plan while Plus is live: Base answers `{upgrade: true, payer,
+  transactions}`, sent from the paying wallet; card answers `{upgrade: true,
+  url: null}`, changed in place and prorated, so the page follows the payment.
+  The limits themselves (Lite: no AI, 1 device) are enforced by the server and
+  the signed entitlement, never by the page.
 - **The install box knows who you are.** Signed out: OS tabs and Choose a
   plan, no command. Trial or active: a personal one-liner and installer
   download from `POST /v1/install/link`. Lapsed or cancelled: Renew. No

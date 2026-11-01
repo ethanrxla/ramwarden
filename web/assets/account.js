@@ -264,10 +264,23 @@ class AccountPage {
       purpose: "Pick the wallet to pay from. It does not have to be the one you signed in with.",
     });
     try {
-      show(area, notice("info", "Preparing your trial…"));
+      show(area, notice("info", this.upgrading ? "Preparing your upgrade…" : "Preparing your plan…"));
       const order = chain === "evm" ? await api.checkoutBase(plan, wallet.address) : await api.checkoutSolana(plan, wallet.address);
-      show(area, notice("info", chain === "evm" ? "Confirm in your wallet: allow up to one year of the plan, then start the trial. Nothing is charged today." : "Confirm in Phantom. Nothing is charged today."));
-      await wallet.pay(order);
+      let payer = wallet;
+      // An upgrade changes the running plan, so it has to be sent from the
+      // wallet that already pays for it.
+      if (order.upgrade && order.payer && order.payer.toLowerCase() !== String(wallet.address).toLowerCase()) {
+        payer = await pickWallet(area, { chain, purpose: `Upgrades are confirmed in the wallet that pays (${shortAddress(order.payer)}).` });
+      }
+      const say = order.upgrade
+        ? "Confirm the upgrade in your wallet. Pro is charged from today."
+        : order.trial
+          ? chain === "evm"
+            ? "Confirm in your wallet: allow up to one year of the plan, then start the trial. Nothing is charged today."
+            : "Confirm in Phantom. Nothing is charged today."
+          : "Confirm in your wallet. The first payment is charged today.";
+      show(area, notice("info", say));
+      await payer.pay(order);
       await this.waitForPayment(order.payment_id, area);
     } catch (err) {
       show(area, notice("error", errorText(err)));
@@ -277,7 +290,14 @@ class AccountPage {
   async payStripe(plan, area) {
     try {
       show(area, notice("info", "Opening card checkout…"));
-      const { url, payment_id } = await api.checkoutStripe(plan);
+      const { url, payment_id, upgrade } = await api.checkoutStripe(plan);
+      // A card upgrade changes the subscription in place, prorated: there is
+      // no checkout page, only the confirmation to follow.
+      if (upgrade) {
+        show(area, notice("info", "Upgrading your card plan…"));
+        await this.waitForPayment(payment_id, area);
+        return;
+      }
       if (isMock) {
         show(area, notice("info", "Preview mode: card checkout would open here."));
         await this.waitForPayment(payment_id, area);
@@ -293,7 +313,7 @@ class AccountPage {
   // Card plans cancel server side. Wallet plans are cancelled from the wallet
   // that pays, so the server hands back that transaction to send.
   async cancel(button) {
-    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to local mode.")) return;
+    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to Lite.")) return;
     button.disabled = true;
     try {
       const r = await api.cancel();
@@ -319,6 +339,7 @@ class AccountPage {
       const p = await api.payment(id);
       if (p.status === "confirmed") {
         this.account = await api.account();
+        this.upgrading = null;
         this.render();
         this.flash(notice("ok", this.account.status === "trial" ? "Your trial has started. Install RamWarden below." : "You're all set. Install RamWarden below."));
         return;

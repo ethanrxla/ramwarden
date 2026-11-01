@@ -168,6 +168,16 @@ export class MockApi {
   async checkoutBase(plan, payer) {
     const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
     this.payer = payer;
+    if (this.#upgrading(p)) {
+      // An upgrade changes the running plan; it must come from the wallet that pays.
+      const payerNow = this.account_.billing?.payer || payer;
+      return this.#payment(plan, "base", {
+        upgrade: true,
+        payer: payerNow,
+        trial: false,
+        transactions: [{ to: "0x0000000000000000000000000000000000000002", data: "0x87654321" }],
+      });
+    }
     return this.#payment(plan, "base", {
       chain_id: 84532,
       trial: this.account_.trial_available && p.trial_days > 0,
@@ -183,6 +193,8 @@ export class MockApi {
   }
   async checkoutStripe(plan) {
     const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
+    // A card upgrade changes the subscription in place: no checkout page.
+    if (this.#upgrading(p)) return this.#payment(plan, "card", { upgrade: true, url: null, trial: false });
     return this.#payment(plan, "card", { url: "#stripe-mock", trial: this.account_.trial_available && p.trial_days > 0 });
   }
   async payment(id) {
@@ -208,6 +220,12 @@ export class MockApi {
       Object.assign(p, { account_status: this.account_.status, tier: plan.tier, trial_ends_at: this.account_.trial_ends_at });
     }
     return p;
+  }
+
+  // Plus to Pro (or monthly to annual) while a plan is live.
+  #upgrading(plan) {
+    const a = this.account_;
+    return ["trial", "active", "grace"].includes(a.status) && a.tier === "ram" && plan.tier === "pro";
   }
 
   #payment(plan, method, extra) {
