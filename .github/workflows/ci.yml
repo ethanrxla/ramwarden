@@ -48,7 +48,7 @@ jobs:
         if: steps.platform.outputs.supported == 'true'
       - name: Linux GUI dependencies
         if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev xvfb
       - name: Format
         if: steps.platform.outputs.supported == 'true'
         # Advisory until one repo-wide `cargo fmt` commit lands after the
@@ -61,6 +61,15 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Windows tray
+        if: runner.os == 'Windows' && steps.platform.outputs.supported == 'true'
+        run: cargo clippy -p ramwarden-ui --features tray --all-targets -- -D warnings
+      - name: Linux panes
+        if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
+        run: xvfb-run -a cargo test -p ramwarden-ui --features gui -- --test-threads=1
+      - name: Mac menu bar
+        if: runner.os == 'macOS' && steps.platform.outputs.supported == 'true'
+        run: bash macos/menubar/test.sh
 
   # The website in web/: plain HTML, CSS and ES modules with no build step.
   # Unit tests need only Node; the browser tests drive Chromium against the

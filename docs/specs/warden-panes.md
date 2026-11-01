@@ -25,10 +25,12 @@ each platform already had) and **ThreatWarden**. The API they read is in
   - not unlocked: "Get a ThreatWarden pass · {price}" opens `upgrade_url`
     (fallbacks `$6 per 2 months`, `https://ramwarden.app/#pricing`). The
     locked pane lists the engines the pass turns on and nothing else, because
-    a locked warden does no work.
+    a locked warden does no work. Any stale report is ignored while locked.
   - unlocked, enabled, level `off` and the agent not installed: "Turn on"
     posts `/wardens/threat/setup`. An installed agent that is off is not
     offered a reinstall.
+  - Setup errors are shown to the user. On macOS, setup has a 20-second
+    timeout and the button is disabled while the request is pending.
 - **Engines**: the daemon's `report.engines` when present; otherwise Wazuh's
   line from agent health and the others from the alerts their groups raised.
 - **Alerts**: up to 8, each tagged with the AI verdict (`threat`,
@@ -51,5 +53,7 @@ each platform already had) and **ThreatWarden**. The API they read is in
   lines win; unknown levels parse; the sprite parser reads the real icon.
 - `app.rs` live GTK test (xvfb): the ThreatWarden pane shows the upgrade
   button and the icon against a fake daemon.
-- Windows: `cargo clippy --target x86_64-pc-windows-gnu -p ramwarden-ui
-  --features tray` in CI. macOS: `macos/menubar/build.sh` on a Mac.
+- CI enables the Windows `tray` feature for clippy and Linux `gui` tests under
+  xvfb. macOS runs `bash macos/menubar/test.sh`: compiles the app into a
+  temporary directory and tests locked reports, setup replies and alert counts.
+  `macos/menubar/build.sh` remains the local install command.

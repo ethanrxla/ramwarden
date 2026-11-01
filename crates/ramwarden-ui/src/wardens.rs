@@ -373,7 +373,7 @@ impl ThreatPane {
     }
 
     pub fn from_warden(w: &Warden) -> ThreatPane {
-        let report = w.threat_report();
+        let report = w.unlocked.then(|| w.threat_report()).flatten();
         let level = if w.unlocked {
             w.status.level
         } else {
@@ -723,6 +723,23 @@ mod tests {
                 price: "$5".into()
             }
         );
+    }
+
+    #[test]
+    fn locked_wardens_hide_stale_reports() {
+        let mut w = warden(LOCKED);
+        w.report = serde_json::json!({
+            "summary": "stale summary",
+            "alerts": [{"description": "stale alert"}],
+            "agents": [{"name": "other computer"}],
+            "problems": ["stale problem"]
+        });
+        let p = ThreatPane::from_warden(&w);
+        assert!(p.summary.is_none());
+        assert!(p.alerts.is_empty());
+        assert!(p.agents.is_empty());
+        assert!(p.problems.is_empty());
+        assert!(p.engines.iter().all(|e| e.state == "locked"));
     }
 
     #[test]

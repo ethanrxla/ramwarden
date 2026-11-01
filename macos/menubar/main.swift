@@ -64,6 +64,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var threat: ThreatPane?
     var threatIcon16: NSImage?
     var threatIcon32: NSImage?
+    var threatSetupPending = false
+    var threatSetupNote: String?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         menu.delegate = self

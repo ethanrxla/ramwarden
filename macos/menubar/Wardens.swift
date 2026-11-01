@@ -116,7 +116,7 @@ func threatPane(from json: Any?) -> ThreatPane {
     let status = w["status"] as? [String: Any] ?? [:]
     let unlocked = w["unlocked"] as? Bool ?? false
     let enabled = w["enabled"] as? Bool ?? false
-    let report = w["report"] as? [String: Any]
+    let report = unlocked ? w["report"] as? [String: Any] : nil
     let local = report?["local"] as? [String: Any] ?? [:]
     let installed = local["installed"] as? Bool ?? false
 
@@ -175,7 +175,7 @@ func threatPane(from json: Any?) -> ThreatPane {
             let s = (manager ?? localStatus)?.replacingOccurrences(of: "_", with: " ") ?? "connection unknown"
             wazuh = ThreatEngine(name: "Wazuh agent", state: "error", detail: "Installed, \(s)")
         }
-        let raised = p.alerts.map { $0.engine.lowercased() }
+        let raised = alerts.map { engineOf($0["groups"] as? [String] ?? []).lowercased() }
         p.engines = [wazuh] + engineOrder.dropFirst().map { (e: (String, String)) -> ThreatEngine in
             let (id, name) = e
             let n = raised.filter { $0 == id }.count
@@ -304,6 +304,7 @@ extension App {
 
     func buildThreatPane() {
         guard let p = threat else { add("Loading ThreatWarden…", nil); return }
+        if let note = threatSetupNote { line(note, small: true, tip: note) }
 
         let title = NSMutableAttributedString(string: p.name + "  ", attributes: [
             .font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
@@ -333,6 +334,7 @@ extension App {
             let m = NSMenuItem(title: "Turn on ThreatWarden", action: #selector(turnOnThreat), keyEquivalent: "")
             m.target = self
             m.toolTip = "Installs Wazuh's own agent and connects it. macOS asks for your password once."
+            m.isEnabled = !threatSetupPending
             menu.addItem(m)
         }
 
@@ -369,9 +371,10 @@ extension App {
             big = spriteImage(svg: svg, size: 32)
             small = spriteImage(svg: svg, size: 16)
         }
+        let icons = (big, small)
         await MainActor.run {
             self.threat = p
-            if let big = big { self.threatIcon32 = big; self.threatIcon16 = small }
+            if let big = icons.0 { self.threatIcon32 = big; self.threatIcon16 = icons.1 }
         }
     }
 
@@ -380,12 +383,35 @@ extension App {
     }
 
     @objc func turnOnThreat() {
+        guard !threatSetupPending else { return }
+        threatSetupPending = true
+        threatSetupNote = "Starting setup…"
+        rebuild()
         var req = URLRequest(url: base.appendingPathComponent("wardens/threat/setup"))
+        req.timeoutInterval = 20
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = "{}".data(using: .utf8)
-        URLSession.shared.dataTask(with: req) { _, _, _ in
-            Task { await self.refreshThreat(); await MainActor.run { self.rebuild() } }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            let note = setupMessage(data: data, status: (response as? HTTPURLResponse)?.statusCode, error: error)
+            Task {
+                await self.refreshThreat()
+                await MainActor.run {
+                    self.threatSetupPending = false
+                    self.threatSetupNote = note
+                    self.rebuild()
+                }
+            }
         }.resume()
     }
+}
+
+func setupMessage(data: Data?, status: Int?, error: Error?) -> String {
+    if let error = error { return "Setup did not start: \(error.localizedDescription)" }
+    let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+    if let status = status, (200..<300).contains(status), json?["started"] as? Bool == true {
+        return "ThreatWarden is setting up. Approve the macOS prompt when it appears."
+    }
+    let reason = json?["error"] as? String ?? status.map { "daemon returned HTTP \($0)" } ?? "no response"
+    return "Setup did not start: \(reason)"
 }
