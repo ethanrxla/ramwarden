@@ -196,3 +196,34 @@ footer a { color: var(--muted); }
 
 .mt { margin-top: 18px; }
 .mt-lg { margin-top: 40px; }
+
+/* Crypto checkout, shown up front: people should see they can pay with a
+   wallet before they reach the pricing table. */
+.crypto-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 28px;
+  padding: 12px 16px; border: 1px solid var(--line); border-radius: 999px; width: fit-content;
+  background: var(--bg-2); color: var(--text); text-decoration: none; font-size: 15px;
+}
+.crypto-strip:hover { border-color: var(--accent); color: var(--text); }
+.crypto-badge { background: var(--accent); color: var(--accent-ink); font: 700 12px var(--mono); letter-spacing: .5px; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; }
+@media (max-width: 720px) { .crypto-strip { border-radius: var(--radius); } }
+
+.pay-panel { display: grid; grid-template-columns: 1fr 1.3fr; gap: 24px; margin-top: 24px; padding: 24px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--panel); }
+.pay-panel h3 { margin: 0 0 8px; }
+.pay-panel p { margin: 0; color: var(--muted); }
+.pay-facts { margin: 0; padding-left: 18px; color: var(--muted); }
+.pay-facts li { margin: 4px 0; }
+@media (max-width: 720px) { .pay-panel { grid-template-columns: 1fr; } }
+
+/* Wardens */
+.warden.card { display: flex; flex-direction: column; gap: 10px; }
+.warden .warden-head { display: flex; align-items: center; gap: 14px; }
+.warden img { width: 52px; height: 52px; }
+.warden .warden-head div { display: flex; flex-direction: column; }
+.warden .job { color: var(--muted); font-size: 14px; }
+.warden .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+.badge { font: 600 12px var(--mono); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+.badge.included { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.badge.addon { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 50%, transparent); }
+.warden.next { border-style: dashed; background: transparent; }
+.site-header nav a.button, .site-header nav a.button:hover { color: var(--accent-ink); }

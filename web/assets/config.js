@@ -29,6 +29,33 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
+  // The wardens: one agent per job, each with its own icon. The landing page
+  // builds its "Meet the wardens" cards from this list, so adding a warden is
+  // one entry here plus an icon in assets/. `tier` is "included" (every plan),
+  // "addon" (bought on top of Pro) or "pro"; `status` is "available" or "soon".
+  wardens: [
+    {
+      id: "ram",
+      name: "RAM Warden",
+      icon: "assets/warden-ram.svg",
+      job: "Memory",
+      tier: "included",
+      status: "available",
+      summary:
+        "Watches memory pressure, tries reversible fixes first and protects what you're using. Jev decides which idle apps and tabs you won't miss.",
+    },
+    {
+      id: "wazuh",
+      name: "Wazuh Warden",
+      icon: "assets/warden-threat.svg",
+      job: "Threat detection",
+      tier: "addon",
+      status: "soon",
+      summary:
+        "Built on the open-source Wazuh agent: file integrity, suspicious processes, vulnerable software and known attack patterns, explained in plain words.",
+    },
+  ],
+
   plans: [
     { id: "pro_30d", name: "Pro, 30 days", usd: 4, days: 30 },
     { id: "pro_365d", name: "Pro, 1 year", usd: 36, days: 365 },

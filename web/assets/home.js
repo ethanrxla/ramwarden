@@ -66,7 +66,43 @@ function fillPrices() {
   }
 }
 
+const TIER = { included: "Included in every plan", addon: "Pro add-on", pro: "Pro" };
+
+// One card per warden in config.js, then an empty slot that says more are
+// coming, so a new warden is a config entry and an icon, not a page edit.
+function renderWardens() {
+  const list = document.getElementById("warden-list");
+  if (!list) return;
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text != null ? { textContent: text } : {});
+  const cards = config.wardens.map((w) => {
+    const card = el("div", "warden card");
+    const head = el("div", "warden-head");
+    const icon = el("img");
+    icon.src = w.icon;
+    icon.alt = "";
+    const title = el("div");
+    title.append(el("h3", null, w.name), el("span", "job", w.job));
+    head.append(icon, title);
+    const badges = el("div", "badges");
+    badges.append(el("span", `badge ${w.tier}`, TIER[w.tier] || w.tier));
+    if (w.status === "soon") badges.append(el("span", "badge", "Coming soon"));
+    card.append(head, el("p", null, w.summary), badges);
+    return card;
+  });
+  const next = el("div", "warden card next");
+  const head = el("div", "warden-head");
+  const icon = el("img");
+  icon.src = "assets/warden-next.svg";
+  icon.alt = "";
+  const title = el("div");
+  title.append(el("h3", null, "More wardens"), el("span", "job", "On the way"));
+  head.append(icon, title);
+  next.append(head, el("p", null, "Each new warden takes one job off your plate and joins as an add-on, so you only pay for the ones you want."));
+  list.replaceChildren(...cards, next);
+}
+
 if (typeof document !== "undefined") {
+  renderWardens();
   setUpDownloads();
   setUpExtension();
   fillPrices();

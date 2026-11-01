@@ -89,6 +89,9 @@ async function run() {
     await p.waitForSelector("#extension-action >> text=Load unpacked");
     assert.equal(await p.textContent('[data-plan="pro_30d"]'), "4");
     assert.match(await p.getAttribute('[data-download="linux"]', "href"), /github\.com\/ethanrxla\/ramwarden\/releases/);
+    // Every warden in config.js gets a card, plus the "more wardens" slot.
+    assert.deepEqual(await p.$$eval("#warden-list .warden h3", (hs) => hs.map((h) => h.textContent)), ["RAM Warden", "Wazuh Warden", "More wardens"]);
+    assert.ok(await p.isVisible(".crypto-strip >> text=Pay with crypto"), "crypto checkout is visible in the hero");
     assert.deepEqual(p.errors, []);
   });
 

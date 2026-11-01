@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="More wardens">
+  <path d="M32 4 8 13v17c0 15 10 25 24 30 14-5 24-15 24-30V13L32 4z" fill="none" stroke="#8b9bb0" stroke-width="3" stroke-dasharray="5 4" stroke-linejoin="round"/>
+  <path d="M32 22v20M22 32h20" stroke="#8b9bb0" stroke-width="3" stroke-linecap="round"/>
+</svg>

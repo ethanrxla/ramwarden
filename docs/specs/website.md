@@ -11,7 +11,7 @@ static files to any host.
 
 | Page | Purpose |
 | --- | --- |
-| `index.html` | Pitch, the reclaim ladder, Jev, comparison, downloads, extension, pricing, FAQ |
+| `index.html` | Tagline, crypto checkout strip, the wardens, the reclaim ladder, Jev, comparison, downloads, extension, pricing with a pay-with-crypto panel, FAQ |
 | `link.html?code=XXXX-XXXX` | Approves a device sign-in (RFC 8628). The daemon opens it after `POST /v1/device/start` |
 | `account.html` | Web sign-in, pass status, today's usage, devices, checkout |
 | `privacy.html` | Privacy policy (draft until launch) |
@@ -79,6 +79,13 @@ Checkout:
   live and that the app works without it. No wallet: links to install
   MetaMask or Phantom. No release asset: the download goes to the releases
   page. No store listing: unpacked-install steps.
+- **Wardens come from config.** Each agent is a "warden" (your RAM, your
+  warden). `config.wardens` lists them with name, icon, job, tier
+  (`included`, `addon`, `pro`) and status (`available`, `soon`); the landing
+  page renders one card each plus a "more wardens" slot. Adding a warden is a
+  config entry and an SVG in `assets/`.
+- **Crypto checkout is visible before pricing.** The hero carries a "Pay with
+  crypto" strip naming Phantom, MetaMask, Base and Solana.
 - **Prices in one place.** `assets/config.js` holds plans and limits for the
   landing page; `checkout/config` overrides them on the account page.
 

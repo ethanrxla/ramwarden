@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>RamWarden: closes what you won't miss, keeps what you're working on</title>
-  <meta name="description" content="RamWarden is a memory manager for Windows, macOS and Linux. It reclaims memory the cheap way first, and uses Jev to decide which apps and browser tabs you won't come back to.">
+  <title>RamWarden: a small guardian for a crowded computer</title>
+  <meta name="description" content="RamWarden is a small guardian for a crowded computer. It watches memory pressure, tries reversible fixes first, and protects what you're using. Pay with crypto through Phantom or MetaMask.">
   <meta property="og:title" content="RamWarden">
-  <meta property="og:description" content="Free your RAM without losing your place. Reversible reclaim first; Jev decides what you won't miss.">
-  <link rel="icon" href="assets/icon.png">
+  <meta property="og:description" content="A small guardian for a crowded computer. Your RAM, your warden.">
+  <link rel="icon" href="assets/warden-ram.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/style.css">
   <script type="module" src="assets/home.js"></script>
 </head>
 <body>
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="./"><img src="assets/icon.png" alt="">RamWarden</a>
+      <a class="brand" href="./"><img src="assets/warden-ram.svg" alt="">RamWarden</a>
       <nav>
+        <a class="hide-sm" href="#wardens">Wardens</a>
         <a class="hide-sm" href="#how">How it works</a>
         <a class="hide-sm" href="#pricing">Pricing</a>
         <a class="hide-sm" href="#faq">FAQ</a>
@@ -30,18 +31,24 @@
   <main>
     <section class="hero">
       <div class="wrap">
-        <span class="eyebrow">Memory manager · Windows · macOS · Linux</span>
-        <h1>Free your RAM without losing your place.</h1>
+        <span class="eyebrow">Your RAM, your warden · Windows · macOS · Linux</span>
+        <h1>A small guardian for a crowded computer.</h1>
         <p class="lede">
-          RamWarden reclaims memory the cheap way first, compressing what you haven't touched,
-          and only then closes things. When it does, Jev decides what you won't come back to:
-          the stale tab and the idle app go, your dev server and your half-written draft stay.
+          It watches memory pressure, tries reversible fixes first, and protects what you're using.
+          Your warden explains its decisions, and asks before applying a fix from chat.
         </p>
         <div class="actions">
           <a class="button" id="hero-download" href="#download">Download for your computer</a>
           <a class="button secondary" href="#how">See how it decides</a>
           <small>Free and local by default. No account needed to use it.</small>
         </div>
+
+        <a class="crypto-strip" href="#pricing">
+          <span class="crypto-badge">Pay with crypto</span>
+          <span>USDC on <strong>Base</strong> and <strong>Solana</strong></span>
+          <span class="wallet-names"><strong>Phantom</strong> · <strong>MetaMask</strong> · any EVM wallet</span>
+          <span class="muted">Card works too</span>
+        </a>
 
         <div class="readout" aria-label="Example of one RamWarden decision">
           <div class="row head"><span>item</span><span>memory</span><span>decision</span><span>why</span></div>
@@ -51,6 +58,19 @@
           <div class="row"><span>Tab · Google Docs draft</span><span>390 MB</span><span class="spare">keep</span><span>may hold unsaved work</span></div>
           <div class="row"><span>Windows Terminal</span><span>210 MB</span><span class="keep">protected</span><span>terminals are never touched</span></div>
           <div class="row total"><span>freed</span><span>1.09 GB</span><span></span><span>nothing you were using</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="wardens">
+      <div class="wrap">
+        <h2>Meet the wardens.</h2>
+        <p class="sub">
+          Each warden is an agent with one job. They share what they see, explain what they do, and never
+          touch what is protected. RAM Warden comes with every plan; new wardens arrive as Pro add-ons.
+        </p>
+        <div class="grid three" id="warden-list">
+          <noscript><div class="card"><h3>RAM Warden</h3><p>Memory. Included in every plan.</p></div><div class="card"><h3>Wazuh Warden</h3><p>Threat detection. Pro add-on, coming soon.</p></div></noscript>
         </div>
       </div>
     </section>
@@ -112,7 +132,7 @@
     <section class="block" id="download">
       <div class="wrap">
         <h2>Download</h2>
-        <p class="sub">The app runs a small background service and shows a tray or menu-bar icon. It works fully offline; signing in only adds hosted Jev decisions.</p>
+        <p class="sub">The app runs your wardens as a small background service with a tray or menu-bar icon. It works fully offline; signing in only adds hosted Jev decisions.</p>
         <div class="grid three">
           <div class="download card" data-os="windows">
             <span class="tag"></span>
@@ -156,7 +176,7 @@ bash scripts/build-deb.sh</code></details>
     <section class="block" id="pricing">
       <div class="wrap">
         <h2>Pricing</h2>
-        <p class="sub">Everything RamWarden does on your computer is free. Pro pays for Jev running on our server, so you don't need your own key or a local model.</p>
+        <p class="sub">Everything RAM Warden does on your computer is free. Pro pays for Jev running on our server, so you don't need your own key or a local model. <strong>Pay with crypto</strong> from Phantom or MetaMask, or by card.</p>
         <div class="grid three">
           <div class="price card">
             <h3>Local</h3>
@@ -188,11 +208,23 @@ bash scripts/build-deb.sh</code></details>
               <li><span data-limit="pro.perDay">200</span> hosted Jev decisions a day</li>
               <li>Up to <span data-limit="pro.devices">3</span> devices</li>
               <li>A prepaid pass: nothing renews or charges you later</li>
+              <li>Add wardens like <strong>Wazuh Warden</strong> as they launch</li>
             </ul>
             <a class="button" href="account.html#buy">Get Pro</a>
           </div>
         </div>
-        <p class="pay-methods">Pay in USDC on Base (MetaMask, Phantom or any EVM wallet) or on Solana (Phantom), or by card through Stripe. Buying early adds to the pass you have.</p>
+        <div class="pay-panel">
+          <div>
+            <h3>Pay with crypto</h3>
+            <p>USDC on <strong>Base</strong> from MetaMask, Phantom or any EVM wallet, or USDC on <strong>Solana</strong> from Phantom. The price is in dollars, so it doesn't move with the market.</p>
+          </div>
+          <ul class="pay-facts">
+            <li>Every payment goes straight to RamWarden's treasury in the same transaction; the checkout contract never holds funds.</li>
+            <li>Your wallet shows exactly what you sign. Signing in costs no gas.</li>
+            <li>Prepaid passes: no allowance left open, nothing charged later.</li>
+            <li>Prefer a card? Stripe works too. Buying early adds to the pass you have.</li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -205,6 +237,8 @@ bash scripts/build-deb.sh</code></details>
           <p>It's built not to. It acts only when memory is actually short, tries compression first, spares anything you used recently, asks whether you'll be back, and only ever pauses or closes apps you've put on the watchlist. Closing starts a countdown you can cancel, and paused apps resume as soon as pressure passes.</p></details>
         <details><summary>Is it safe for games and anti-cheat?</summary>
           <p>Yes. Games, anti-cheat (Vanguard, EasyAntiCheat), security software and system processes are structurally protected. RamWarden never touches them, and it never weakens security settings to free memory.</p></details>
+        <details><summary>What is a warden?</summary>
+          <p>An agent on your computer with one job. RAM Warden handles memory. Wazuh Warden, coming as a Pro add-on, watches for threats using the open-source Wazuh agent. Each warden explains what it found and asks before applying a fix from chat.</p></details>
         <details><summary>Why sign in with a wallet?</summary>
           <p>It's an account without a password or an email. Signing the sign-in message costs no gas and moves no funds. Your RamWarden account is separate from the wallet, so you can pay from a different wallet or by card.</p></details>
         <details><summary>Do I need the browser extension?</summary>
