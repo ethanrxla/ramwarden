@@ -205,14 +205,32 @@ mod tests {
             .is_some_and(|p| p.suspended)
     }
 
+    /// Whether `pid` reaches the `want` state within two seconds. Suspension
+    /// is delivered to each thread as a kernel APC, so a thread sitting in a
+    /// wait (ping's are, in its timer) shows the `Suspended` wait reason only
+    /// once it next runs; reading the snapshot straight after
+    /// `NtSuspendProcess` returns failed on CI now and then.
+    fn becomes_suspended(pid: u32, want: bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if suspended(pid) == want {
+                return true;
+            }
+            if std::time::Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     #[test]
     fn suspends_and_resumes_a_real_process() {
         let mut child = spawn();
         let h = NtProcessHandle::open(child.id()).unwrap();
         h.suspend().unwrap();
-        assert!(suspended(child.id()), "every thread should be suspended");
+        assert!(becomes_suspended(child.id(), true), "every thread should be suspended");
         h.resume().unwrap();
-        assert!(!suspended(child.id()));
+        assert!(becomes_suspended(child.id(), false));
         child.kill().ok();
         child.wait().ok();
     }
