@@ -25,6 +25,8 @@ Workspace names may be new. You cannot close, quit or kill anything; if asked to
 say so in the summary and return no commands for it. \
 Set \"config\" only when the user asks to change their window manager config: \
 then it is the complete new file, keeping everything you were not asked to change. \
+Only known layout settings may change: AeroSpace gaps, accordion-padding, default-root-container-layout/orientation and normalization flags; komorebi default_workspace_padding, default_container_padding, border_width/offset; sway/i3 numeric gaps. \
+Keep all other settings, includes, variables and launch hooks unchanged. \
 Never add lines that start programs (exec, exec-and-forget, after-startup-command). \
 The summary is one plain sentence the user reads before approving.";
 
