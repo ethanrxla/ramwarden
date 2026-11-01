@@ -20,6 +20,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Refuse unsupported hosts before touching swap or packages.
+. /etc/os-release
+[[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || { echo "Use a fresh Ubuntu 24.04 server." >&2; exit 1; }
+[[ "$(uname -m)" == aarch64 || "$(uname -m)" == x86_64 ]] || exit 1
+[[ "$WAZUH_SERIES" =~ ^[0-9]+\.[0-9]+$ ]] || exit 1
+export DEBIAN_FRONTEND=noninteractive
+
 echo "==> Swap"
 if ! swapon --show | grep -q /swapfile; then
   fallocate -l 4G /swapfile
@@ -33,13 +40,28 @@ echo "==> Packages"
 apt-get update -y
 apt-get install -y curl iptables-persistent
 
+# Enforce management isolation before installing any listening services. Keep
+# SSH and unrelated traffic untouched; cover IPv6 as well as IPv4.
+for firewall in iptables ip6tables; do
+  "$firewall" -N RAMWARDEN_WAZUH 2>/dev/null || true
+  "$firewall" -F RAMWARDEN_WAZUH
+  "$firewall" -A RAMWARDEN_WAZUH -i lo -j RETURN
+  "$firewall" -A RAMWARDEN_WAZUH -p tcp -m multiport --dports 443,1515,55000,9200 -j DROP
+  "$firewall" -A RAMWARDEN_WAZUH -p tcp --dport 1514 -j ACCEPT
+  "$firewall" -A RAMWARDEN_WAZUH -j RETURN
+  "$firewall" -C INPUT -j RAMWARDEN_WAZUH 2>/dev/null || "$firewall" -I INPUT 1 -j RAMWARDEN_WAZUH
+done
+netfilter-persistent save >/dev/null
+
 echo "==> Wazuh ${WAZUH_SERIES} all-in-one (takes 10-20 minutes)"
 cd /root
+if [[ -f wazuh-install-files.tar ]] && ! systemctl is-active --quiet wazuh-manager wazuh-indexer wazuh-dashboard; then
+  echo "An earlier Wazuh installation is incomplete or stopped. Diagnose it before rerunning; refusing to overwrite keys." >&2
+  exit 1
+fi
 if [[ ! -f wazuh-install-files.tar ]]; then
   curl -sSfO "https://packages.wazuh.com/${WAZUH_SERIES}/wazuh-install.sh"
-  # -i skips the installer's hardware check, which can refuse 2-core machines
-  # that run a small deployment fine.
-  bash ./wazuh-install.sh -a -i
+  bash ./wazuh-install.sh -a
 fi
 
 echo "==> Per-agent keys only: disable password enrolment"
@@ -47,12 +69,7 @@ CONF=/var/ossec/etc/ossec.conf
 perl -0pi -e 's|(<auth>\s*<disabled>)no(</disabled>)|${1}yes${2}|' "$CONF"
 systemctl restart wazuh-manager
 
-echo "==> Firewall: agents in on 1514/tcp, everything else stays closed"
-if ! iptables -C INPUT -p tcp --dport 1514 -j ACCEPT 2>/dev/null; then
-  # Oracle's Ubuntu images end INPUT with a REJECT; insert before it.
-  iptables -I INPUT 5 -p tcp -m state --state NEW --dport 1514 -j ACCEPT
-fi
-netfilter-persistent save >/dev/null
+systemctl is-active --quiet wazuh-manager wazuh-indexer wazuh-dashboard
 
 echo
 echo "Done."

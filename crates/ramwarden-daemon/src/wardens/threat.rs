@@ -64,7 +64,7 @@ impl WazuhReport {
         let wazuh = match self.health() {
             AgentHealth::Connected => Engine::new("wazuh", "Wazuh agent", "on", "Connected"),
             AgentHealth::Disconnected => Engine::new("wazuh", "Wazuh agent", "error", "Installed, not connected"),
-            AgentHealth::Unknown => Engine::new("wazuh", "Wazuh agent", "on", "Installed; connection not confirmed"),
+            AgentHealth::Unknown => Engine::new("wazuh", "Wazuh agent", "error", "Installed; connection not confirmed"),
             AgentHealth::Missing => Engine::new("wazuh", "Wazuh agent", "off", "Not installed"),
         };
         vec![

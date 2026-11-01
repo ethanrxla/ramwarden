@@ -85,5 +85,5 @@ Registry, passes, hosting and the `/wardens` API are in
   protection is Wazuh's real-time file integrity monitoring plus scheduled and
   on-demand ClamAV scans; Defender stays on on Windows and is never touched.
 - The hosted manager for the first users is one Oracle Cloud Always Free ARM
-  server (2 OCPU, 12 GB). Phase 1 fits; each engine adds events, so watch the
+  server (2 OCPU, 12 GB, subject to account-wide Always Free quotas). Phase 1 fits; each engine adds events, so watch the
   indexer's disk and move to a paid server as passes grow.

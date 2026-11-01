@@ -327,6 +327,10 @@ pub fn assess_threats(health: AgentHealth, alert_levels: &[u8], t: ThreatThresho
             now,
         );
     }
+    if health == AgentHealth::Unknown {
+        return Status::new(Level::Watch, "Agent connection not confirmed",
+            "The local state is unreadable and the manager has not confirmed this agent is connected.", now);
+    }
     let detail = match health {
         AgentHealth::Unknown => "No alerts found. The agent's own state file was not readable.",
         _ => "The agent is connected and has raised nothing notable.",
@@ -510,6 +514,12 @@ mod tests {
         assert_eq!(ram_status(Rung::PageOut, 80.0, NOW).level, Level::Watch);
         assert_eq!(ram_status(Rung::Kill, 95.0, NOW).level, Level::Alert);
         assert!(ram_status(Rung::Hold, 40.4, NOW).detail.starts_with("40%"));
+    }
+
+    #[test]
+    fn unknown_connection_is_watch_not_clear() {
+        let s = assess_threats(AgentHealth::Unknown, &[], ThreatThresholds::default(), NOW);
+        assert_eq!(s.level, Level::Watch);
     }
 
     #[test]
