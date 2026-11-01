@@ -8,16 +8,21 @@ new release. Code: `crates/ramwarden-launcher`, `packaging/`, `scripts/package-*
 
 ### Wardens
 
-A warden is one agent the user runs. Each has a stable id, a tier and its own
-installer per platform:
+A warden is one agent the user runs. A warden that ships as its own binary has
+a stable id, a tier and an installer per platform in the manifest:
 
 | id | Name | Tier | Ships as |
 | --- | --- | --- | --- |
 | `ram` | RAM Warden | free | the RamWarden installer (daemon, tray or menu-bar app, launcher) |
-| `wazuh` | Wazuh Warden | pro | its own installer, downloaded with the device's pass |
 
-The launcher has no list of wardens. The release manifest is the list: adding
-a warden means publishing a manifest entry and installers for it.
+Wardens built into the daemon need no manifest entry of their own: the Wazuh
+warden ships inside `ramwarden-daemon` and is unlocked at run time by its pass
+(see `GET /wardens` on the daemon), so it updates with the RAM Warden. The
+Wazuh agent itself comes from Wazuh's official installers (`docs/wazuh-setup.md`).
+
+A warden that ships as its own binary gets its own manifest entry and
+installers; the launcher has no list of wardens beyond the manifest. A `pro`
+entry is downloaded only with the device's pass (below).
 
 ### Release assets
 
