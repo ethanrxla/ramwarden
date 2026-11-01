@@ -5,10 +5,13 @@ price, a duration and a set of wardens; buying one extends each of those wardens
 for the account. Plans and wardens live in [`plans.json`](plans.json), which the
 deploy script writes on-chain and the API serves to the website.
 
-| Warden id | Warden |
-| --- | --- |
-| 0 | RAM warden, cloud decisions (Pro) |
-| 1 | Wazuh warden, threat detection (add-on) |
+| Warden id | Slug | Warden | Plan |
+| --- | --- | --- | --- |
+| 0 | `ram` | RamWarden Pro: hosted Jev decisions | $4 for 60 days |
+| 1 | `wazuh` | ThreatWarden: hosted Wazuh threat detection | $6 for 60 days |
+
+A bundle plan covers both for $10. Slugs are internal ids shared with the
+daemon, the launcher and the release manifest, so ThreatWarden keeps `wazuh`.
 
 A new warden is a new id in `plans.json` plus plans that include it. The
 contract needs no change for up to 32 wardens.
@@ -27,6 +30,10 @@ contract needs no change for up to 32 wardens.
 4. The API sees `Purchased` with that `ref`, waits for the block to be safe,
    reads `paidUntil` back and records the entitlement. The daemon learns about
    it on its next token refresh.
+
+Anyone may pay for any account, so an agent with a wallet can buy a pass the
+same way: sign in with `POST /v1/auth/challenge` and `/verify`, then send the
+transactions `POST /v1/checkout/base` returns (see `docs/specs/hosted-api.md`).
 
 Solana (Phantom) needs no program: the API builds a plain USDC transfer to the
 treasury tagged with a unique reference key (Solana Pay) and records the same

@@ -25,11 +25,16 @@
 //! `state` describes the user's apps and tabs. It is forwarded and forgotten:
 //! logs carry the token's fingerprint, the question names, sizes and timings.
 
+pub mod accounts;
 pub mod catalog;
+pub mod checkout;
+pub mod entitlement;
 pub mod config;
 pub mod limits;
 pub mod routes;
+pub mod store;
 pub mod upstream;
+pub mod wallet;
 
 pub use config::Config;
 pub use routes::{AppState, router};

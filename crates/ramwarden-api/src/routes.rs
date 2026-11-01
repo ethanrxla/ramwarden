@@ -12,6 +12,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 
+use crate::accounts::{self, Cloud, PRO_WARDEN};
 use crate::catalog::Catalog;
 use crate::config::{TokenHash, hash_token, token_label};
 use crate::limits::{Limits, Refusal};
@@ -26,6 +27,8 @@ pub struct AppState {
     pub max_questions: usize,
     /// Unix seconds. A field so tests can move the clock.
     pub now: fn() -> u64,
+    /// Accounts, sign-in and checkout (phase 2). `None` serves phase 1 only.
+    pub cloud: Option<Cloud>,
 }
 
 pub fn unix_now() -> u64 {
@@ -36,39 +39,62 @@ pub fn router(state: Arc<AppState>) -> Router {
     // Room for the state, the questions and JSON overhead; anything bigger is
     // refused before it is read.
     let body_limit = state.max_state_bytes + 16 * 1024;
-    Router::new()
+    // The website calls from its own origin; nothing else gets CORS, so a
+    // third-party page cannot drive a signed-in tab's session.
+    let cors = state.cloud.as_ref().and_then(|c| c.site.origin.parse::<HeaderValue>().ok()).map(|origin| {
+        tower_http::cors::CorsLayer::new()
+            .allow_origin(origin)
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+            .max_age(std::time::Duration::from_secs(600))
+    });
+    let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/models", get(models))
         .route("/v1/systemone", post(systemone))
-        .layer(DefaultBodyLimit::max(body_limit))
-        .with_state(state)
+        .merge(accounts::routes())
+        .layer(DefaultBodyLimit::max(body_limit));
+    let app = match cors {
+        Some(c) => app.layer(c),
+        None => app,
+    };
+    app.with_state(state)
 }
 
-fn error(status: StatusCode, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error": message}))).into_response()
 }
 
-fn authorize(state: &AppState, headers: &HeaderMap) -> Result<TokenHash, Box<Response>> {
+/// Who is asking, and how much they may ask today.
+struct Caller {
+    /// What quotas are counted against.
+    key: TokenHash,
+    per_day: u32,
+    /// Set for a signed-in device, so usage shows on the account page.
+    account: Option<String>,
+}
+
+/// A phase 1 token, or a signed-in device's token. A device whose account
+/// holds a RAM warden pass gets the full daily quota; without one, the free
+/// tier's.
+async fn authorize(state: &AppState, headers: &HeaderMap) -> Result<Caller, Box<Response>> {
     let refuse = |why| Box::new(error(StatusCode::UNAUTHORIZED, why));
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| refuse("missing bearer token"))?;
-    let h = hash_token(token);
-    if state.tokens.contains(&h) {
-        Ok(h)
-    } else {
-        Err(refuse("unknown token"))
+    let token = accounts::bearer(headers).ok_or_else(|| refuse("missing bearer token"))?;
+    let key = hash_token(token);
+    if state.tokens.contains(&key) {
+        return Ok(Caller { key, per_day: state.limits.per_day(), account: None });
     }
+    let Some(c) = &state.cloud else { return Err(refuse("unknown token")) };
+    let now = (state.now)();
+    let (_, a) = accounts::device(c, headers, now).await.map_err(|_| refuse("unknown token"))?;
+    let per_day = if a.active(PRO_WARDEN, now) { state.limits.per_day() } else { c.free_per_day };
+    Ok(Caller { key, per_day, account: Some(a.id) })
 }
 
 /// Doubles as the daemon's key check, exactly as on TypeSafe. Sends nothing
 /// upstream.
 async fn models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err(r) = authorize(&state, &headers) {
+    if let Err(r) = authorize(&state, &headers).await {
         return *r;
     }
     Json(json!({"models": [{"name": state.upstream.model()}]})).into_response()
@@ -99,11 +125,11 @@ fn validate<'a>(state: &AppState, body: &'a Value) -> Result<(&'a str, &'a Map<S
 }
 
 async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let token = match authorize(&state, &headers) {
-        Ok(t) => t,
+    let caller = match authorize(&state, &headers).await {
+        Ok(c) => c,
         Err(r) => return *r,
     };
-    let label = token_label(&token);
+    let label = token_label(&caller.key);
 
     let parsed: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
@@ -118,7 +144,7 @@ async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body:
     };
 
     let now = (state.now)();
-    let remaining = match state.limits.take(&token, now) {
+    let remaining = match state.limits.take_capped(&caller.key, now, caller.per_day) {
         Ok(n) => n,
         Err(r) => {
             tracing::info!(token = %label, "limited: {r:?}");
@@ -135,6 +161,11 @@ async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body:
     match state.upstream.ask(s, questions).await {
         Ok((reply, input_tokens)) => {
             state.limits.spend(input_tokens, now);
+            if let (Some(c), Some(id)) = (&state.cloud, &caller.account)
+                && let Err(e) = c.store.count_use(id, now).await
+            {
+                tracing::warn!("usage not recorded: {e}");
+            }
             tracing::info!(
                 token = %label,
                 questions = ?names,
@@ -210,6 +241,7 @@ mod tests {
             max_state_bytes: 200,
             max_questions: 4,
             now: || 1_793_000_000,
+            cloud: None,
         }))
     }
 
