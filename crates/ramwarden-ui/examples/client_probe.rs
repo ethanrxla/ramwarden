@@ -1,5 +1,5 @@
 //! Drive the daemon client against a live daemon, with no GTK involved.
-//! cargo run -p ramwarden-ui --example probe -- [port]
+//! cargo run -p ramwarden-ui --example client_probe -- [port]
 
 use ramwarden_ui::client::Client;
 use ramwarden_ui::model::{self, Direction, SortKey};

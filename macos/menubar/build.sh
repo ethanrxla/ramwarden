@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
-# Build RamWarden.app (menu-bar only, no Dock icon) into ~/Applications.
+# Build before replacing the existing app. No credentials enter the app bundle.
 set -euo pipefail
 cd "$(dirname "$0")"
-APP="$HOME/Applications/RamWarden.app"
-rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
-swiftc -O -o "$APP/Contents/MacOS/RamWarden" main.swift
-cat > "$APP/Contents/Info.plist" <<PL
+APP="${RAMWARDEN_APP_DEST:-$HOME/Applications/RamWarden.app}"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+mkdir -p "$STAGE/RamWarden.app/Contents/MacOS" "$STAGE/RamWarden.app/Contents/Resources"
+cp ../../assets/brand/RamWarden.icns "$STAGE/RamWarden.app/Contents/Resources/"
+cp ../../assets/brand/icon128.png "$STAGE/RamWarden.app/Contents/Resources/RamWarden.png"
+swiftc -O -target "$(uname -m)-apple-macosx13.0" -o "$STAGE/RamWarden.app/Contents/MacOS/RamWarden" main.swift Companion.swift
+cat > "$STAGE/RamWarden.app/Contents/Info.plist" <<'PL'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+  <key>CFBundleIconFile</key><string>RamWarden.icns</string>
   <key>CFBundleName</key><string>RamWarden</string>
   <key>CFBundleIdentifier</key><string>com.ramwarden.menubar</string>
   <key>CFBundleExecutable</key><string>RamWarden</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>0.2.1</string>
+  <key>CFBundleVersion</key><string>0.2.2</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PL
-codesign --force --sign - "$APP" >/dev/null
+codesign --force --sign - "$STAGE/RamWarden.app" >/dev/null
+mkdir -p "$(dirname "$APP")"
+# ditto preserves bundle permissions and metadata; compilation failed => no install.
+ditto "$STAGE/RamWarden.app" "$APP"
 echo "built $APP"

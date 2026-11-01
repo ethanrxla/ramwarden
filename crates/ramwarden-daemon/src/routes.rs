@@ -28,7 +28,7 @@ use crate::tabs::{Tab, Transport};
 
 pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
-    Router::new()
+    let router = Router::new()
         // ── Contracts the shipped extensions depend on ──────────────────────
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))
@@ -86,7 +86,15 @@ pub fn router(state: AppState) -> Router {
         .route("/wardens/{id}", get(crate::wardens::one))
         .route("/wardens/{id}/icon.svg", get(crate::wardens::icon_svg))
         .route("/wardens/{id}/setup", post(crate::wardens::setup))
-        .with_state(state)
+        ;
+    // Do not expose private process context through a non-loopback listener.
+    let router = if policy.loopback {
+        router.route("/companion/state", get(crate::companion::status))
+            .route("/assistant/chat", post(crate::assistant::chat))
+            .route("/assistant/action", post(crate::assistant::act))
+            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::new())))
+    } else { router };
+    router.with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses
         // everything a web page might send. See `guard` for why both.
         .layer(axum::middleware::from_fn_with_state(policy.clone(), crate::guard::enforce))
@@ -143,11 +151,11 @@ in the system tray (it may be under the <code>^</code> arrow by the clock).</p>
 }
 
 async fn health(State(st): State<AppState>) -> Json<Value> {
-    let det = st.det.read().unwrap();
+    let det = st.det.try_read().ok();
     Json(json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
-        "warm": det.is_warm(),
+        "warm": det.as_ref().map(|d| d.is_warm()).unwrap_or(false),
         "uptime_seconds": st.started.elapsed().as_secs(),
     }))
 }
