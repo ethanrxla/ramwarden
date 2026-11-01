@@ -48,7 +48,6 @@ Prices set by Ethan on 2026-11-01:
 |---|---|---|---|
 | **RamWarden** | $4 / month | $20 / year (save 58%) | AI-powered memory management and system resource optimization: hosted decisions, browser extension, chat with your warden, color sync, up to 5 devices |
 | **RamWarden Pro** | $5 / month | $24 / year (save 60%) | Everything in RamWarden, plus the ThreatWarden security companion on the same 5 devices |
-| Extra devices | Pay as you go (see Q3) | | Each device past 5, on whichever tier the account has |
 
 - Both tiers start with a **14-day free trial**. After the trial the chosen
   payment method is charged automatically every month or every year,
@@ -390,7 +389,7 @@ a normal user. The friendliest honest flow:
 
 - Each account covers **5 devices**, any mix of macOS, Windows and Linux.
 - Pro covers ThreatWarden on the same 5 devices.
-- Device 6 onwards is **pay as you go** per device per period (Q3), billed
+- Device 6 onwards is **pay as you go** per device (priced later, not part of launch), billed
   through the same method as the subscription. The app refuses to link a 6th
   device until the user confirms the extra charge.
 - Devices can be removed on the account page to free a slot.
@@ -510,8 +509,7 @@ This needs `docs/specs/threatwarden.md` (PR #13) changed first.
 - **Q2. Trial needs payment up front?** Recommended yes (wallet approval or
   card on file), so the trial converts without a second step. This is how the
   wallet "charges after 2 weeks" works.
-- **Q3. Price per extra device** past 5. Suggestion: $0.50 per device per
-  month on RamWarden, $0.75 on Pro (annual: $4 and $5 per device per year).
+- **Q3.** Dropped: no extra-device price at launch.
 - **Q4. Domain.** The spec uses `ramwarden.app` as a placeholder.
 - **Q5. Jev on the site.** This spec stops naming Jev and TypeSafe on the
   site, in line with "don't say where we got it". Keep naming it if the
