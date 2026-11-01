@@ -32,7 +32,13 @@ explicit; Unload selected keeps tabs open and reloadable.
   `max_close_per_sweep` per sweep. `close` is `off`, `dry-run` (default: log
   only) or `live`. The extension rechecks each tab live before closing, answers
   every close command, and saves closed URLs to a reopen list in the popup.
-  The badge counts unloaded tabs, since the browser draws them unchanged.
+  An older tab on the same site (host, plus a `/u/N` account slot) as a more
+  recently used one is also closed after `close_duplicates_after_hours` idle,
+  under the same guards.
+  The badge counts unloaded tabs, since the browser draws them unchanged, and
+  the extension gathers unloaded tabs into one collapsed "Idle · N" group per
+  window (never the user's own groups or pinned tabs); a tab opened from it
+  leaves the group.
 - Confirm only successful browser API results. Poll delivery remains explicitly
   queued, never labelled reclaimed. No per-tab bytes are estimated from RSS.
 

@@ -78,3 +78,26 @@ test('closing answers every command, skips guarded tabs and saves what closed', 
     assert.equal(saved?.[0]?.url, expected.length ? f.tab.url : undefined);
   }
 });
+test('unloaded tabs are gathered into one collapsed Idle group, leaving user groups and pinned tabs', async()=>{
+  const f=fixture(); const grouped=[]; const updates=[];
+  const tabs=[
+    {id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
+    {id:2,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
+    {id:3,windowId:9,discarded:true,pinned:true,active:false,groupId:-1},
+    {id:4,windowId:9,discarded:true,pinned:false,active:false,groupId:55},
+    {id:5,windowId:9,discarded:false,pinned:false,active:true,groupId:-1},
+  ];
+  f.chrome.runtime.lastError=undefined;
+  f.chrome.tabGroups={query:(_,cb)=>cb([{id:55,title:'DNS migration'}]), update:(id,p)=>updates.push([id,p])};
+  f.chrome.tabs.group=(opts,cb)=>{grouped.push(opts);cb(77);};
+  await f.context._tidyIdleGroups(tabs);
+  assert.deepEqual(Array.from(grouped[0].tabIds),[1,2]);
+  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,true); assert.equal(updates[0][1].title,'Idle · 2');
+});
+test('a single unloaded tab does not get a group of its own', async()=>{
+  const f=fixture(); let grouped=0;
+  f.chrome.tabGroups={query:(_,cb)=>cb([]), update:()=>{}};
+  f.chrome.tabs.group=()=>{grouped++;};
+  await f.context._tidyIdleGroups([{id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1}]);
+  assert.equal(grouped,0);
+});

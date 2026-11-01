@@ -25,6 +25,16 @@ watchlist = [
 # [api]
 # key = "sk-ant-..."
 
+# Jev (TypeSafe's System One model) judges the coldest apps on the LRU before
+# the ladder suspends or kills them. Put the key in secrets.toml under [jev]
+# api_key, in a .env beside this file as JEV_API_KEY, or in $JEV_API_KEY /
+# $TYPESAFE_API_KEY — never here.
+# [jev]
+# enabled = true
+# model = "jev-latest"
+# suspend_threshold = 0.7   # chance the user is not coming back, to suspend
+# kill_threshold = 0.85     # and to kill
+
 # db_path = "/home/you/.local/share/ramwarden/history.db"
 
 # Workspace sorting rules — applied when "Sort Workspaces" is triggered.
@@ -79,5 +89,6 @@ workspace = 2
 sweep_minutes = 5          # unload idle tabs this often; 0 turns the sweep off
 close = "dry-run"          # off | dry-run (log what would close) | live
 close_after_hours = 24     # a tab must be idle this long before it can be closed
-close_below_return = 0.2   # and its return chance (Jev-adjusted) below this
+close_below_return = 0.3   # and its return chance (Jev-adjusted) below this
+close_duplicates_after_hours = 4   # older tabs on a site you have open more recently; 0 = off
 max_close_per_sweep = 10   # closed tabs are listed in the extension popup for reopening

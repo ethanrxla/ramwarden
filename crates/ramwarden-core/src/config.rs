@@ -270,6 +270,10 @@ pub struct Tabs {
     pub close_after_hours: f64,
     /// Close only below this chance of the user returning.
     pub close_below_return: f64,
+    /// An older tab on the same site as a more recently used one is closed after
+    /// this long idle, whatever its return chance: the newer tab already covers
+    /// the site. 0 turns this off.
+    pub close_duplicates_after_hours: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
 }
@@ -280,7 +284,8 @@ impl Default for Tabs {
             sweep_minutes: 5.0,
             close: "dry-run".into(),
             close_after_hours: 24.0,
-            close_below_return: 0.2,
+            close_below_return: 0.3,
+            close_duplicates_after_hours: 4.0,
             max_close_per_sweep: 10,
         }
     }
@@ -378,6 +383,15 @@ pub struct Jev {
     pub cache_hours: u64,
     /// "Could this tab hold unsaved work?" at or above this vetoes unloading.
     pub unsaved_veto: f64,
+    /// The ladder's judge: the chance the user is not coming back to an app
+    /// that allows a suspend. See `ramwarden_ai::jev::judge`.
+    pub suspend_threshold: f64,
+    /// The same for a kill. Higher, because a kill loses unsaved work.
+    pub kill_threshold: f64,
+    /// How long the ladder waits for Jev mid-pressure. Jev answers in
+    /// 70-500 ms; the 15 s `timeout_seconds` suits the unhurried tab tier, not
+    /// a ladder tick.
+    pub ladder_timeout_ms: u64,
 }
 
 impl Default for Jev {
@@ -395,6 +409,9 @@ impl Default for Jev {
             max_candidates: 20,
             cache_hours: 6,
             unsaved_veto: 0.6,
+            suspend_threshold: 0.7,
+            kill_threshold: 0.85,
+            ladder_timeout_ms: 2_000,
         }
     }
 }
@@ -705,7 +722,6 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
             }
         }
     }
-
     if let Err(e) = cfg.ladder.validate() {
         return Err(format!("{}: {e}", path.display()));
     }

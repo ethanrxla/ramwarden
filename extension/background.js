@@ -69,7 +69,9 @@ let tabActivity = {};
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab || isProtected(tab.url)) return;
+    if (chrome.runtime.lastError || !tab) return;
+    _leaveIdleGroup(tab);
+    if (isProtected(tab.url)) return;
     // Keep the last 24 activations: the daemon turns them into a frecency score
     // (how often, and how recently, this tab is actually visited).
     const prior = tabActivity[tabId]?.activations ?? [];
@@ -195,6 +197,7 @@ function buildTabReport(activity) {
         });
       }
       _unloaded = report.filter(t => t.discarded).length;
+      _tidyIdleGroups(liveTabs);
       _badge(_connected);
       resolve(report);
     });
@@ -240,6 +243,55 @@ function _confirmClosed(ids) {
   } else {
     _send({ action: "tabs_closed", tabIds: ids });
   }
+}
+
+// ── Idle group ─────────────────────────────────────────────────────────────────
+
+// Unloaded tabs are gathered into one collapsed "Idle" group per window, so the
+// tab strip shows the tabs in use and one chip for the rest. Nothing is closed:
+// expanding the group shows them all, and a tab opened from it leaves the group.
+// The group is found again by its title, so a service-worker restart needs no
+// stored state. The user's own groups and pinned tabs are never touched.
+const IDLE_PREFIX = "Idle";
+const NO_GROUP = -1;
+
+function _idleTitle(n) { return `${IDLE_PREFIX} · ${n}`; }
+
+async function _idleGroupIn(windowId) {
+  const groups = await new Promise(r => chrome.tabGroups.query({ windowId }, g => r(chrome.runtime.lastError ? [] : g)));
+  return groups.find(g => (g.title || "").startsWith(IDLE_PREFIX + " ·"));
+}
+
+async function _tidyIdleGroups(liveTabs) {
+  if (!chrome.tabGroups?.query || typeof chrome.tabs.group !== "function") return;
+  const byWindow = new Map();
+  for (const t of liveTabs) {
+    if (!byWindow.has(t.windowId)) byWindow.set(t.windowId, []);
+    byWindow.get(t.windowId).push(t);
+  }
+  for (const [windowId, tabs] of byWindow) {
+    const group = await _idleGroupIn(windowId);
+    const gid = group?.id ?? NO_GROUP;
+    const loose = tabs.filter(t => t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
+    const members = tabs.filter(t => gid !== NO_GROUP && t.groupId === gid).length;
+    // One tab is not worth a group of its own.
+    if (!loose.length || (gid === NO_GROUP && loose.length < 2)) {
+      if (group && group.title !== _idleTitle(members)) chrome.tabGroups.update(gid, { title: _idleTitle(members) });
+      continue;
+    }
+    const ids = loose.map(t => t.id);
+    const opts = gid === NO_GROUP ? { tabIds: ids, createProperties: { windowId } } : { tabIds: ids, groupId: gid };
+    const newId = await new Promise(r => chrome.tabs.group(opts, id => r(chrome.runtime.lastError ? NO_GROUP : id)));
+    if (newId === NO_GROUP) continue;
+    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: true });
+  }
+}
+
+// A tab opened from the Idle group goes back to the strip.
+async function _leaveIdleGroup(tab) {
+  if (!chrome.tabGroups?.get || tab.groupId === undefined || tab.groupId === NO_GROUP) return;
+  const group = await new Promise(r => chrome.tabGroups.get(tab.groupId, g => r(chrome.runtime.lastError ? null : g)));
+  if (group && (group.title || "").startsWith(IDLE_PREFIX + " ·")) chrome.tabs.ungroup(tab.id, () => void chrome.runtime.lastError);
 }
 
 // The badge shows how many tabs RamWarden has unloaded: Chrome keeps them in

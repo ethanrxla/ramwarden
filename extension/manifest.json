@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "RamWarden",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Tracks tab activity and connects to the local RamWarden daemon to save RAM.",
   "permissions": [
     "tabs",
     "storage",
     "notifications",
-    "alarms"
+    "alarms",
+    "tabGroups"
   ],
   "host_permissions": [
     "http://localhost:7823/*",

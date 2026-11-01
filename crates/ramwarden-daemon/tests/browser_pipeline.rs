@@ -281,3 +281,40 @@ async fn a_hold_pauses_freezing_until_it_expires_or_is_released() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert!(!st.on_hold(), "expires on its own");
 }
+
+/// The monitor closes tabs while it holds the ladder lock, and `/state` (which
+/// the tray and window poll) waits for that lock on a runtime worker. With every
+/// worker blocked, tokio's timers stop, so the close's own timeouts never fire.
+/// Before 2026-10-20 that held the lock for good and the window sat at "Waiting
+/// for the daemon". The close now runs in the background, so the monitor
+/// returns at once and never waits on the runtime under the lock.
+#[test]
+fn a_tab_close_under_the_ladder_lock_survives_every_worker_blocking_on_it() {
+    use ramwarden_core::ladder::TabCloser;
+    use std::time::{Duration, Instant};
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut st = state();
+    // Past the startup window, so the wait for a browser is the short one.
+    st.started = Instant::now() - Duration::from_secs(120);
+
+    let ladder = Arc::clone(&st.ladder);
+    let held = ladder.lock().unwrap();
+    for _ in 0..2 {
+        let st = st.clone();
+        rt.spawn(async move { call(st, "/state", "GET", Value::Null).await });
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    let outcome = ramwarden_daemon::monitor::Tabs::new(st.clone(), rt.handle().clone()).close_stale("");
+    assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
+    assert!(outcome.did_nothing(), "the unload only reports once it has run: {:?}", outcome.notes);
+
+    drop(held);
+    rt.shutdown_timeout(Duration::from_secs(5));
+}

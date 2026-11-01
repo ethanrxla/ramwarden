@@ -16,13 +16,15 @@
 //!   nothing can honestly be called idle and everything is refused.
 
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ramwarden_platform::{Owner, ProcessSample, ProcessSource};
 
 use crate::pattern;
 use crate::roles::classify;
 use crate::signals::{Protection, Signals, Verdict};
+use crate::structures::Lru;
+use crate::structures::circular::has_cycle;
 
 /// Signals that do not come from the process table — audio, windows, focus.
 /// Supplied separately so tests can hand them in directly.
@@ -73,6 +75,30 @@ pub struct Detector {
     /// front, silent, no working child. A runaway viewer looks like this, and so
     /// does a long legitimate job, so this only measures; Jev judges.
     app_busy_since: HashMap<String, Instant>,
+    /// Application names, most recently used first. See [`Recency`].
+    recency: Lru<String, Recency>,
+}
+
+/// When the user last used an application, as opposed to when it last ran.
+///
+/// Only user-facing signals count as a touch: focus, audio, and having just
+/// been launched. CPU time and network traffic deliberately do not. Chat apps
+/// wake up for background sync every few minutes, and counting that as use
+/// made them look permanently fresh — their "quiet" timer kept resetting to
+/// zero and they could never reach the tail.
+#[derive(Clone, Copy, Debug)]
+pub struct Recency {
+    /// When this name was last touched, or first seen if never.
+    pub since: Instant,
+    /// Whether it has been touched at all since the daemon started. An
+    /// untouched entry's age is a lower bound.
+    pub touched: bool,
+}
+
+impl Recency {
+    pub fn idle(&self) -> Duration {
+        self.since.elapsed()
+    }
 }
 
 /// A source with nothing in it, for detectors that are only ever preloaded.
@@ -96,6 +122,7 @@ impl Detector {
             focused: None,
             app_active: HashMap::new(),
             app_busy_since: HashMap::new(),
+            recency: Lru::new(),
         }
     }
 
@@ -122,6 +149,7 @@ impl Detector {
             s.score(warm);
             d.signals.insert(s.pid, s);
         }
+        d.update_recency();
         d
     }
 
@@ -225,10 +253,43 @@ impl Detector {
         self.signals = fresh;
         self.parents = parents;
         self.focused = desktop.focused_pid;
+        self.update_recency();
         Ok(())
     }
 
+    /// Fold this sample into the LRU.
+    ///
+    /// A name any of whose processes was used moves to the head. A name seen for
+    /// the first time without being used joins at the tail, so an app that was
+    /// already sitting idle when the daemon started is treated as cold rather
+    /// than brand new. Names with no process left are dropped.
+    fn update_recency(&mut self) {
+        let now = Instant::now();
+        let mut used: HashMap<&str, bool> = HashMap::new();
+        for s in self.signals.values() {
+            *used.entry(s.name.as_str()).or_default() |= s.recently_used();
+        }
+        self.recency.retain(|name, _| used.contains_key(name.as_str()));
+        for (name, was_used) in used {
+            if was_used {
+                self.recency.put_hot(name.to_string(), Recency { since: now, touched: true });
+            } else if !self.recency.contains(name) {
+                self.recency.put_cold(name.to_string(), Recency { since: now, touched: false });
+            }
+        }
+    }
+
     // ── Queries ─────────────────────────────────────────────────────────────
+
+    /// Application names, least recently used first.
+    pub fn coldest(&self) -> impl Iterator<Item = (&str, &Recency)> {
+        self.recency.iter_cold().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// When `name` was last used, if it is running.
+    pub fn recency(&self, name: &str) -> Option<&Recency> {
+        self.recency.peek(name)
+    }
 
     /// Whether `pid` is the focused application or one of its descendants: a
     /// helper, renderer or child the user is, in effect, looking at. Walks the
@@ -394,13 +455,19 @@ fn propagate(sigs: &mut HashMap<i32, Signals>, parents: &HashMap<i32, i32>) {
         .map(|s| (s.pid, s.name.clone(), s.pid))
         .collect();
 
+    let parent = |p: i32| parents.get(&p).copied().filter(|&pp| pp != 0);
+
     for (pid, name, from_pid) in seeds {
-        let mut seen: HashSet<i32> = HashSet::from([pid]);
+        // A parent map read from /proc mid-churn can contain a cycle (a pid
+        // reused while we were reading). Floyd's check costs no allocation, so
+        // the visited set is only built for the rare chain that needs it.
+        let cyclic = has_cycle(pid, parent);
+        let mut seen: HashSet<i32> = if cyclic { HashSet::from([pid]) } else { HashSet::new() };
         let mut cur = parents.get(&pid).copied().unwrap_or(0);
-        // The `seen` set guards against a cycle in a malformed parent map,
-        // which would otherwise spin forever.
         while cur != 0 && !seen.contains(&cur) && sigs.contains_key(&cur) {
-            seen.insert(cur);
+            if cyclic {
+                seen.insert(cur);
+            }
             if let Some(anc) = sigs.get_mut(&cur)
                 && anc.active_descendant.is_none()
             {

@@ -12,6 +12,7 @@ pub mod freeze_journal;
 pub mod gpu;
 pub mod guard;
 pub mod hub;
+pub mod ladderjudge;
 pub mod monitor;
 pub mod outcomes;
 pub mod predict;

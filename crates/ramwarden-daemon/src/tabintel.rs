@@ -440,6 +440,7 @@ mod tests {
                 next.map(|(r, u)| Answers {
                     model: "jev-1.13.0".into(),
                     noul: [(Q_RETURN.to_string(), r), (Q_UNSAVED.to_string(), u)].into(),
+                    choice: Default::default(),
                     input_tokens: 300,
                     output_tokens: 40,
                 })

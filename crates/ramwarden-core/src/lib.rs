@@ -13,11 +13,13 @@ pub mod detector;
 pub mod exec;
 pub mod history;
 pub mod host;
+pub mod judge;
 pub mod ladder;
 pub mod pattern;
 pub mod rank;
 pub mod roles;
 pub mod signals;
+pub mod structures;
 pub mod tidy;
 pub mod workspaces;
 

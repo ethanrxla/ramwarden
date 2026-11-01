@@ -61,11 +61,43 @@ impl Response {
     }
 }
 
-/// Send one request to the service and read its answer.
+/// How long a caller waits for the service before giving up on it.
+///
+/// Every answer the service gives is a single syscall away, so a healthy one
+/// replies in milliseconds. Without a bound, a service that accepted the
+/// connection but never answered left the monitor thread blocked in a pipe read
+/// for good, holding the ladder lock, so the daemon's whole HTTP API queued
+/// behind it and the window sat at "Waiting for the daemon" (2026-10-11).
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send one request to the service and read its answer, giving up after
+/// [`CALL_TIMEOUT`].
 ///
 /// An absent service is `Unsupported`, not an error to report loudly: it is
 /// the normal state of an install where the user never added the service.
+///
+/// The exchange runs on a short-lived thread so the wait can be bounded; a
+/// synchronous pipe read cannot be. On a timeout that thread is left to finish
+/// (or stay blocked) on its own: it owns nothing but its pipe handle.
 pub fn call(request: &Request) -> Result<Response> {
+    let request = request.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("ramwarden-pipe".into())
+        .spawn(move || {
+            let _ = tx.send(call_blocking(&request));
+        })
+        .map_err(|e| Error::os(format!("pipe thread: {e}")))?;
+    match rx.recv_timeout(CALL_TIMEOUT) {
+        Ok(result) => result,
+        Err(_) => Err(Error::os(format!(
+            "ramwarden-service did not answer within {}s",
+            CALL_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+fn call_blocking(request: &Request) -> Result<Response> {
     let pipe = open_with_retry()?;
     let mut writer = pipe
         .try_clone()

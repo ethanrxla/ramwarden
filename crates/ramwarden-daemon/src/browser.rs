@@ -348,20 +348,63 @@ mod selection_tests {
 }
 
 /// Manual close does not require automatic eviction eligibility.
-/// Tabs the sweep may close outright: idle at least `close_after_hours`, and
-/// unlikely to be wanted back (`p_return`, Jev-adjusted where Jev has answered,
-/// below `close_below_return`). Only rows that already passed every unload guard
-/// (`candidate`) or were unloaded earlier qualify, so a protected, recent,
-/// loading or model-vetoed tab is never closed. Most-redundant first.
+/// Tabs the sweep may close outright. Only rows that already passed every unload
+/// guard (`candidate`) or were unloaded earlier qualify, so a protected, recent,
+/// loading or model-vetoed tab is never closed. Two reasons qualify one:
+///
+/// * idle at least `close_after_hours` and unlikely to be wanted back
+///   (`p_return`, Jev-adjusted where Jev has answered, below `close_below_return`);
+/// * an older tab on the same site (see [`site_of`]) as a more recently used one,
+///   idle at least `close_duplicates_after_hours`. The newer tab already covers
+///   the site, and three Google searches or two copies of a dashboard are most of
+///   what makes a tab strip unreadable.
+///
+/// Most-redundant first.
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
     let min_idle = (cfg.close_after_hours.max(1.0) * 60.0) as i64;
-    let mut picked: Vec<&Row> = rows
+    let dup_idle = (cfg.close_duplicates_after_hours * 60.0) as i64;
+    // Freshest tab per (browser, site): every other tab on that site is a copy.
+    let mut freshest: std::collections::HashMap<(&str, String), (i64, i64)> = std::collections::HashMap::new();
+    for r in rows {
+        if let Some(site) = site_of(&r.target.url) {
+            let e = freshest.entry((r.target.browser.as_str(), site)).or_insert((r.inactive_minutes, r.target.id));
+            *e = (*e).min((r.inactive_minutes, r.target.id));
+        }
+    }
+    let older_copy = |r: &Row| {
+        dup_idle > 0
+            && r.inactive_minutes >= dup_idle
+            && site_of(&r.target.url).is_some_and(|site| {
+                freshest.get(&(r.target.browser.as_str(), site)) != Some(&(r.inactive_minutes, r.target.id))
+            })
+    };
+    let mut picked: Vec<(&Row, bool)> = rows
         .iter()
         .filter(|r| r.closeable && matches!(r.status, "candidate" | "unloaded"))
-        .filter(|r| r.inactive_minutes >= min_idle && r.p_return < cfg.close_below_return)
+        .filter_map(|r| {
+            let stale = r.inactive_minutes >= min_idle && r.p_return < cfg.close_below_return;
+            let copy = older_copy(r);
+            (stale || copy).then_some((r, copy))
+        })
         .collect();
-    picked.sort_by(|a, b| a.p_return.total_cmp(&b.p_return).then(b.inactive_minutes.cmp(&a.inactive_minutes)));
-    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+    picked.sort_by(|(a, a_copy), (b, b_copy)| {
+        b_copy.cmp(a_copy)
+            .then(a.p_return.total_cmp(&b.p_return))
+            .then(b.inactive_minutes.cmp(&a.inactive_minutes))
+    });
+    picked.into_iter().take(cfg.max_close_per_sweep).map(|(r, _)| r.target.clone()).collect()
+}
+
+/// The site a tab is "on" for duplicate closing: its host, plus a Google-style
+/// account slot (`/u/1/`), so two signed-in accounts are not one site.
+fn site_of(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    let mut segments = parsed.path_segments().into_iter().flatten();
+    let account = segments.by_ref().skip_while(|s| *s != "u").nth(1)
+        .filter(|n| n.chars().all(|c| c.is_ascii_digit()));
+    Some(match account { Some(n) => format!("{host}/u/{n}"), None => host })
 }
 
 pub fn can_close(tab: &Tab) -> bool {
@@ -399,6 +442,31 @@ mod manual_close_tests {
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
         assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn older_tabs_on_the_same_site_close_but_the_freshest_and_other_accounts_stay() {
+        let cfg = ramwarden_core::config::Tabs::default();
+        let tabs = vec![
+            idle(1, "https://www.google.com/search?q=a", 300, false),
+            idle(2, "https://www.google.com/search?q=b", 600, true),
+            idle(3, "https://google.com/search?q=c", 90, false),
+            idle(4, "https://mail.google.com/mail/u/0/#inbox", 300, false),
+            idle(5, "https://mail.google.com/mail/u/1/#inbox", 300, false),
+            idle(6, "https://example.org/one", 300, false),
+        ];
+        let rows = rank("b", &tabs, 30);
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "tab 3 is the freshest Google tab; the two Gmail accounts are different sites");
+        assert_eq!(site_of("https://mail.google.com/mail/u/1/#inbox").as_deref(), Some("mail.google.com/u/1"));
+    }
+
+    #[test]
+    fn duplicate_closing_can_be_turned_off() {
+        let cfg = ramwarden_core::config::Tabs { close_duplicates_after_hours: 0.0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 90, false)];
+        assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
     }
 
     #[test]

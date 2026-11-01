@@ -17,6 +17,7 @@
 //! closing that window ends its process and returns everything it used.
 
 pub mod icon;
+pub mod launch;
 pub mod poller;
 pub mod views;
 
