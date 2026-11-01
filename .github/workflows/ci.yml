@@ -80,3 +80,21 @@ jobs:
           npm install --no-save --no-package-lock playwright@1
           npx playwright install --with-deps chromium
           node web/tests/e2e.cjs
+
+  # The checkout contract in contracts/. Hardhat compiles with the solc-js build
+  # pinned in contracts/package.json and runs the tests on its in-process chain.
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+      - run: npm ci
+      - run: npx hardhat test

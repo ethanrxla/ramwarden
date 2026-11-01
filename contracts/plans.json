@@ -1,0 +1,15 @@
+{
+  "_comment": "Wardens and plans sold by RamWardenCheckout. The deploy script writes these on-chain; the API serves them from here. Prices are proposals until Ethan confirms them.",
+  "wardens": {
+    "0": { "slug": "ram", "name": "RAM warden, cloud decisions (Pro)" },
+    "1": { "slug": "wazuh", "name": "Wazuh warden, threat detection (add-on)" }
+  },
+  "plans": [
+    { "id": 1, "name": "Pro, 30 days",            "usd": 4,  "days": 30,  "wardens": [0] },
+    { "id": 2, "name": "Pro, 1 year",             "usd": 36, "days": 365, "wardens": [0] },
+    { "id": 3, "name": "Wazuh warden, 30 days",   "usd": 6,  "days": 30,  "wardens": [1] },
+    { "id": 4, "name": "Wazuh warden, 1 year",    "usd": 60, "days": 365, "wardens": [1] },
+    { "id": 5, "name": "Pro + Wazuh, 30 days",    "usd": 8,  "days": 30,  "wardens": [0, 1] },
+    { "id": 6, "name": "Pro + Wazuh, 1 year",     "usd": 80, "days": 365, "wardens": [0, 1] }
+  ]
+}
