@@ -62,6 +62,13 @@ Pressure Stall Information — the wall time actually lost waiting for memory.
 
 ## Install
 
+Releases on GitHub carry an installer for each platform: `RamWarden.pkg`
+(macOS), `ramwarden-windows-x86_64.exe` (Windows) and `ramwarden-linux-x86_64.deb`
+or `.tar.gz` (Linux). Each installs `ramwarden-launcher`, which checks for
+signed updates every six hours and installs them with `ramwarden-launcher
+update`; see [`docs/specs/updates.md`](docs/specs/updates.md). From a local
+build:
+
 ```bash
 sudo dpkg -i dist/ramwarden_*.deb
 systemctl --user daemon-reload

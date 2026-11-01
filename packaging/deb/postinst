@@ -18,6 +18,12 @@ if [ "$1" = "configure" ]; then
         echo "ramwarden: setcap not found (install libcap2-bin) —" >&2
         echo "           targeted page-out will be unavailable." >&2
     fi
+    # Update checks for every user, from their next login. Checking only
+    # reports: installing a .deb update asks for a password, so it happens
+    # when the user runs `ramwarden-launcher update`.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --global enable ramwarden-update.timer >/dev/null 2>&1 || true
+    fi
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q /usr/share/applications || true
     fi

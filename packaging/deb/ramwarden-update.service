@@ -1,0 +1,10 @@
+[Unit]
+Description=RamWarden — check for warden updates
+Documentation=https://github.com/ethanrxla/ramwarden/blob/main/docs/specs/updates.md
+
+[Service]
+Type=oneshot
+# Honours [updates].mode in config.toml. With the .deb it only reports: an apt
+# install needs a password prompt, and nobody is there to answer it.
+ExecStart=/usr/bin/ramwarden-launcher check --background
+Nice=10

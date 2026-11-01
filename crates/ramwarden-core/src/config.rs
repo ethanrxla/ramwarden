@@ -269,6 +269,34 @@ impl Default for Gpu {
     }
 }
 
+/// How the launcher keeps installed wardens current. See `docs/specs/updates.md`.
+///
+/// Read by `ramwarden-launcher`, not by the daemon: updating is the launcher's
+/// job, and keeping it out of the daemon means a broken update can never stop
+/// the ladder.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Updates {
+    /// `off`, `notify` (check and report, the default) or `install` (also
+    /// install, where that needs no elevation prompt).
+    pub mode: String,
+    /// Signed release manifest. Its detached signature is `<url>.sig`.
+    pub manifest_url: String,
+    /// Hours between background checks.
+    pub check_hours: u64,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Updates {
+            mode: "notify".to_string(),
+            manifest_url: "https://github.com/ethanrxla/ramwarden/releases/latest/download/manifest.json"
+                .to_string(),
+            check_hours: 6,
+        }
+    }
+}
+
 /// Graceful app quits, the one macOS lever that really frees an app's memory.
 ///
 /// Freezing an app frees nothing; asking it to quit does. Three guards keep it
@@ -441,6 +469,7 @@ pub struct Config {
     pub logging: Logging,
     pub tidy: Tidy,
     pub gpu: Gpu,
+    pub updates: Updates,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -465,6 +494,7 @@ struct Raw {
     logging: Logging,
     tidy: Tidy,
     gpu: Gpu,
+    updates: Updates,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -503,7 +533,7 @@ fn home() -> PathBuf {
 /// Per-user config directory: `%APPDATA%` on Windows, `~/.config` elsewhere.
 /// Chosen by which variable exists rather than by `cfg`, so a Linux box is
 /// unaffected by a Windows convention it never sets.
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".config"))
@@ -511,7 +541,7 @@ fn config_dir() -> PathBuf {
 
 /// Per-user data directory: `%LOCALAPPDATA%` on Windows, `~/.local/share`
 /// elsewhere.
-fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local").join("share"))
@@ -530,6 +560,7 @@ impl Default for Config {
             logging: Logging::default(),
             tidy: Tidy::default(),
             gpu: Gpu::default(),
+            updates: Updates::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -700,6 +731,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         logging: raw.logging,
         tidy: raw.tidy,
         gpu: raw.gpu,
+        updates: raw.updates,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),

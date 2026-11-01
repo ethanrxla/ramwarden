@@ -1,0 +1,17 @@
+#!/bin/sh
+# The .pkg is the first-install path only. It carries the same tarball the
+# launcher uses for updates and runs its install.sh as the logged-in user
+# (RamWarden is a per-user agent, so nothing goes into /Library), inside that
+# user's launchd session so the agents bootstrap into it.
+set -eu
+USER_NAME="$(stat -f%Su /dev/console)"
+if [ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ] || [ "$USER_NAME" = "loginwindow" ]; then
+    echo "RamWarden: no user is logged in at the console; log in and run the installer again." >&2
+    exit 1
+fi
+USER_ID="$(id -u "$USER_NAME")"
+WORK="$(sudo -u "$USER_NAME" mktemp -d)"
+sudo -u "$USER_NAME" tar -xzf "$(dirname "$0")/payload.tar.gz" -C "$WORK"
+launchctl asuser "$USER_ID" sudo -u "$USER_NAME" -H /bin/sh "$WORK/install.sh"
+rm -rf "$WORK"
+exit 0

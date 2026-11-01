@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ramwarden.updater</string>
+  <!-- Honours [updates].mode in config.toml. On macOS updates need no
+       password, so mode = "install" applies them unattended. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.local/bin/ramwarden-launcher</string>
+    <string>check</string>
+    <string>--background</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RAMWARDEN_CONFIG</key>
+    <string>__HOME__/.config/ramwarden/config.toml</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/ramwarden-updates.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/ramwarden-updates.log</string>
+</dict>
+</plist>

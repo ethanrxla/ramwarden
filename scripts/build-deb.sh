@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build a .deb containing the three RamWarden binaries.
+# Build a .deb containing the RamWarden binaries. scripts/package-linux.sh
+# calls this for releases and also builds the per-user tarball.
 #
 # v1 shipped a Python tree plus a pip install into /usr/lib/ramwarden, which meant
 # the package depended on the host's Python and on PyPI being reachable at install
@@ -19,7 +20,7 @@ echo "building ramwarden $VERSION for $ARCH"
 # The GUI needs GTK4 headers; the daemon and helper do not. Build them separately
 # so a headless machine can still produce a usable package.
 cargo build --release --manifest-path "$ROOT/Cargo.toml" \
-    -p ramwarden-daemon -p ramwarden-helper
+    -p ramwarden-daemon -p ramwarden-helper -p ramwarden-launcher
 if pkg-config --exists gtk4 2>/dev/null; then
     cargo build --release --manifest-path "$ROOT/Cargo.toml" \
         -p ramwarden-ui --features gui --bin ramwarden
@@ -35,8 +36,11 @@ mkdir -p "$STAGE"/usr/share/doc/ramwarden
 
 install -m 0755 "$ROOT/target/release/ramwarden-daemon" "$STAGE/usr/bin/ramwarden-daemon"
 install -m 0755 "$ROOT/target/release/ramwarden-helper" "$STAGE/usr/bin/ramwarden-helper"
+install -m 0755 "$ROOT/target/release/ramwarden-launcher" "$STAGE/usr/bin/ramwarden-launcher"
 install -m 0644 "$ROOT/packaging/deb/ramwarden.service"        "$STAGE/usr/lib/systemd/user/ramwarden.service"
 install -m 0644 "$ROOT/packaging/deb/ramwarden-helper.service" "$STAGE/usr/lib/systemd/user/ramwarden-helper.service"
+install -m 0644 "$ROOT/packaging/deb/ramwarden-update.service" "$STAGE/usr/lib/systemd/user/ramwarden-update.service"
+install -m 0644 "$ROOT/packaging/deb/ramwarden-update.timer"   "$STAGE/usr/lib/systemd/user/ramwarden-update.timer"
 install -m 0644 "$ROOT/ramwarden.toml" "$STAGE/etc/ramwarden/config.toml"
 install -m 0644 "$ROOT/README.md"      "$STAGE/usr/share/doc/ramwarden/README.md"
 
@@ -97,6 +101,7 @@ Install and enable:
     systemctl --user daemon-reload
     systemctl --user enable --now ramwarden
     systemctl --user enable --now ramwarden-helper   # optional, for page-out
+    systemctl --user enable --now ramwarden-update.timer   # update checks
 
 Then launch the window from your application menu, or run `ramwarden`.
 NEXT

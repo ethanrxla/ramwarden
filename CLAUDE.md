@@ -28,6 +28,7 @@ ramwarden-helper     Linux setcap page-out shim
 ramwarden-service    Windows SYSTEM service (privileged ops over a named pipe)
 ramwarden-debloat    reversible Windows tweaks and profiles
 ramwarden-ui         client + model shared; GTK view (Linux), egui + tray (Windows)
+ramwarden-launcher   installs and updates wardens from a signed release manifest
 ```
 
 The rules:

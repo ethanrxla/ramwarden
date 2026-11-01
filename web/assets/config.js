@@ -20,9 +20,10 @@ export const config = {
   // the releases page instead, so publishing a release never breaks the site
   // and an unpublished asset never shows a 404.
   downloads: {
-    windows: null, // e.g. ".../releases/latest/download/ramwarden-setup-x64.exe"
-    macos: null,   // e.g. ".../releases/latest/download/RamWarden.dmg"
-    linux: null,   // e.g. ".../releases/latest/download/ramwarden_0.2.1_amd64.deb"
+    // The release workflow publishes these names (docs/specs/updates.md):
+    windows: null, // ".../releases/latest/download/ramwarden-windows-x86_64.exe"
+    macos: null,   // ".../releases/latest/download/RamWarden.pkg"
+    linux: null,   // ".../releases/latest/download/ramwarden-linux-x86_64.deb"
   },
 
   // Chrome Web Store listing. Null until the store review passes; until then
