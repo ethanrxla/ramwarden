@@ -84,6 +84,34 @@ A `pro` warden's artifact URLs point at the hosted API, which serves them to
 (`docs/specs/website.md`). No token: the warden is listed as locked and never
 fetched. A 401 or 403 is reported as "needs a Pro pass".
 
+### Personal install line
+
+The site's one-liner (`docs/specs/hosted-api.md`) saves an approved device code
+as `<config dir>/ramwarden/link-token` (owner-only), then runs the installer.
+The launcher claims it with `POST <[updates].api_url>/v1/device/token
+{device_code, device_name, platform}`, writes the returned `device_token` to
+`<config dir>/ramwarden/device-token` (mode 600 on macOS and Linux) and deletes
+the link token. `<config dir>` is `%APPDATA%` on Windows and `~/.config`
+elsewhere; on macOS `~/Library/Application Support/ramwarden/link-token` is also
+read, where the first install script wrote it.
+
+| Who runs the claim | When |
+| --- | --- |
+| `install.ps1`, `packaging/macos/install.sh`, `packaging/linux/install.sh` | last step of the install |
+| every `ramwarden-launcher` command (`status`, `check`, `update`) | first, before anything else |
+| `ramwarden-launcher link` | by hand; prints the outcome |
+
+| Answer | Link token | Reported |
+| --- | --- | --- |
+| 200 `{device_token, …}` | deleted, device token saved | signed in |
+| a device token already exists | deleted, nothing sent | already signed in |
+| 400 `expired_token`, or a token with characters the server never issues | deleted | expired: sign in from the app |
+| 403 `device_limit` | deleted | no free device slot |
+| 400 `authorization_pending`, 5xx, no answer | kept | retried by the next run |
+
+Without a claim the app falls back to the device sign-in page, as it does on a
+machine installed from a plain download.
+
 ## Policy
 
 - **The signature is the trust, not HTTPS.** Manifest keys are compiled in from

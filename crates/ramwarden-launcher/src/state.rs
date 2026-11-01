@@ -59,17 +59,9 @@ impl State {
     }
 }
 
-/// The token the app stores after device sign-in, sent only to fetch paid
-/// wardens. `None` means a free install: paid wardens show as locked.
-pub fn device_token() -> Option<String> {
-    let path = ramwarden_core::config::config_dir()
-        .join("ramwarden")
-        .join("device-token");
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-}
+/// The token device sign-in (or a claimed install link) stores, sent only to
+/// fetch paid wardens. `None` means signed out: paid wardens show as locked.
+pub use ramwarden_core::config::device_token;
 
 #[cfg(test)]
 mod tests {

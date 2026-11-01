@@ -22,6 +22,11 @@ pub trait Fetch {
 
     /// True if a loopback health URL answers 2xx within a second.
     fn healthy(&self, url: &str) -> bool;
+
+    /// POST a JSON body; the status and body come back whatever the status,
+    /// because the caller reads the API's error codes. Err only when no
+    /// answer arrived at all.
+    fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<(u16, Vec<u8>)>;
 }
 
 /// HTTPS through `ureq` with rustls, so no OpenSSL on any platform.
@@ -62,6 +67,23 @@ impl Fetch for Http {
             return Err(Error::Fetch(format!("{url}: larger than {limit} bytes")));
         }
         Ok(n)
+    }
+
+    fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<(u16, Vec<u8>)> {
+        if !url.starts_with("https://") {
+            return Err(Error::Fetch(format!("{url} is not HTTPS")));
+        }
+        let bytes = serde_json::to_vec(body).map_err(|e| Error::Fetch(e.to_string()))?;
+        let req = self.agent.post(url).set("Content-Type", "application/json");
+        let resp = match req.send_bytes(&bytes) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
+            Err(e) => return Err(Error::Fetch(format!("{url}: {e}"))),
+        };
+        let status = resp.status();
+        let mut out = Vec::new();
+        resp.into_reader().take(64 * 1024).read_to_end(&mut out)?;
+        Ok((status, out))
     }
 
     fn healthy(&self, url: &str) -> bool {

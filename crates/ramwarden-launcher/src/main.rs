@@ -5,6 +5,7 @@
 //! ramwarden-launcher check [--background]
 //! ramwarden-launcher update [all|<id>]   install newer versions
 //! ramwarden-launcher install <id>        add a warden, e.g. wazuh (Pro)
+//! ramwarden-launcher link                claim a personal install line's sign-in
 //!
 //! ramwarden-launcher release keygen
 //! ramwarden-launcher release manifest --warden ram --name "RAM Warden" --tier free \
@@ -22,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ramwarden_launcher::fetch::Http;
+use ramwarden_launcher::link::{Link, Linked, device_name, platform};
 use ramwarden_launcher::manifest::{Format, Tier};
 use ramwarden_launcher::release::Spec;
 use ramwarden_launcher::signing::Signer;
@@ -39,13 +41,14 @@ fn main() -> ExitCode {
             Ok(())
         }
         ["release", rest @ ..] => release(rest),
+        ["link"] => link(true),
         [] | ["status"] => status(),
         ["check"] => check(false),
         ["check", "--background"] => check(true),
         ["update"] | ["update", "all"] => update(None),
         ["update", id] | ["install", id] => update(Some(id)),
         _ => {
-            eprintln!("usage: ramwarden-launcher [status|check [--background]|update [all|<id>]|install <id>|release …]");
+            eprintln!("usage: ramwarden-launcher [status|check [--background]|update [all|<id>]|install <id>|link|release …]");
             return ExitCode::from(2);
         }
     };
@@ -58,13 +61,42 @@ fn main() -> ExitCode {
     }
 }
 
-fn updater() -> (Updater<Http>, ramwarden_core::config::Updates) {
-    let cfg = ramwarden_core::config::load()
+fn config() -> ramwarden_core::config::Updates {
+    ramwarden_core::config::load()
         .map(|c| c.updates)
         .unwrap_or_else(|e| {
             eprintln!("config: {e}; using default update settings");
             Default::default()
-        });
+        })
+}
+
+/// Claim a personal install line's link token, if one is waiting. Every
+/// command runs this first, so whichever runs first after an install (the
+/// installer's last step, the scheduled check, the user) signs the machine
+/// in, and later runs find nothing to do. `loud` prints even "nothing".
+fn link(loud: bool) -> Result<(), Error> {
+    let cfg = config();
+    let l = Link::for_user(&cfg.api_url);
+    match l.claim(&Http::default(), &device_name(), platform()) {
+        Ok(Linked::Nothing) if loud => println!("no install link waiting"),
+        Ok(Linked::Nothing) => {}
+        Ok(Linked::Claimed { .. }) => println!("signed in to your RamWarden account as {}", device_name()),
+        Ok(Linked::AlreadySignedIn) => println!("already signed in; the install link was not needed"),
+        Ok(Linked::Expired) => println!("the install link has expired; sign in from the app instead"),
+        Ok(Linked::DeviceLimit) => {
+            println!("your account has no free device slot; remove one at the account page, then sign in from the app")
+        }
+        Ok(Linked::Pending) => println!("the install link is not approved yet; it will be tried again"),
+        Err(e) if loud => return Err(e),
+        // Offline: the token is kept and the next run tries again.
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+fn updater() -> (Updater<Http>, ramwarden_core::config::Updates) {
+    let _ = link(false);
+    let cfg = config();
     let up = Updater {
         fetch: Http::default(),
         verifier: Verifier::shipped(),

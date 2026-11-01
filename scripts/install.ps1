@@ -166,6 +166,16 @@ if (Test-Path $launcherExe) {
   Register-ScheduledTask -TaskName $UpdateTask -Action $a -Trigger @($t1, $t2) -Settings $s -Principal $task | Out-Null
 }
 
+# A personal install line (the site's `irm ... | iex`) leaves a link token in
+# %APPDATA%\ramwarden; claim it so this PC is signed in to the buyer's account.
+# Best effort: offline, the scheduled check claims it later.
+if (Test-Path $launcherExe) {
+  & $launcherExe link
+  if ($LASTEXITCODE -ne 0) { Write-Host 'Account sign-in will be retried by the update check.' }
+  # A failed sign-in is not a failed install: don't let its code become ours.
+  $global:LASTEXITCODE = 0
+}
+
 Write-Host "RamWarden installed to $Dest"
 Write-Host "  app     : Start menu -> RamWarden (or the ring icon in the system tray)"
 Write-Host "  service : $((Get-Service RamWarden).Status)"

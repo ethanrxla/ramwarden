@@ -329,6 +329,9 @@ mod tests {
         fn healthy(&self, url: &str) -> bool {
             url.contains("7823")
         }
+        fn post_json(&self, url: &str, _: &serde_json::Value) -> Result<(u16, Vec<u8>)> {
+            Err(Error::Fetch(format!("no POST in these tests: {url}")))
+        }
     }
 
     const URL: &str = "https://example.test/manifest.json";

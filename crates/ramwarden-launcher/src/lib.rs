@@ -32,6 +32,7 @@
 
 pub mod fetch;
 pub mod install;
+pub mod link;
 pub mod manifest;
 pub mod release;
 pub mod signing;

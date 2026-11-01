@@ -51,6 +51,10 @@ if [ -f "$HERE/bin/ramwarden" ]; then
     sed "s|^Exec=ramwarden|Exec=$BIN/ramwarden|" "$HERE/ramwarden.desktop" > "$APPS/ramwarden.desktop"
 fi
 
+# A personal install line leaves a link token; claim it now so this machine
+# is signed in before the user opens anything. Harmless when there is none.
+"$BIN/ramwarden-launcher" link || true
+
 if systemctl --user daemon-reload 2>/dev/null; then
     systemctl --user enable ramwarden.service ramwarden-update.timer >/dev/null 2>&1 || true
     # restart, not start: an update must replace the running daemon.

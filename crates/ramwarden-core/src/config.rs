@@ -373,6 +373,9 @@ pub struct Updates {
     pub manifest_url: String,
     /// Hours between background checks.
     pub check_hours: u64,
+    /// The hosted API, where the launcher claims a personal install line's
+    /// link token (`POST /v1/device/token`).
+    pub api_url: String,
 }
 
 impl Default for Updates {
@@ -382,6 +385,7 @@ impl Default for Updates {
             manifest_url: "https://github.com/ethanrxla/ramwarden/releases/latest/download/manifest.json"
                 .to_string(),
             check_hours: 6,
+            api_url: "https://api.ramwarden.app".to_string(),
         }
     }
 }
