@@ -43,12 +43,16 @@ From the hosted API (`docs/specs/hosted-api.md`, PR #5) and the website:
    token in the body, for wallet tools without a cookie jar.
 5. `POST /v1/checkout/cancel` returns the wallet's `cancel` transaction (Base)
    or cancels at Stripe (card).
+6. Upgrades (Lite to Plus, Plus to Pro, monthly to yearly) go through the same
+   checkout routes: `upgrade: true`, and on Base the transactions end in
+   `changePlan`, sent by the `payer` the answer names. Downgrades are 409.
+   `GET /v1/account` carries `plan`: `lite`, `plus` or `pro`.
 
 Warden ids are `ram` (hosted Jev) and `threat` (ThreatWarden). Plan ids are
 the contract's numbers. Prices are whatever `checkout/config` says; at the
-time of writing plan 1 is RamWarden $4/month, plan 2 RamWarden Pro (adds
-ThreatWarden) $5/month, plan 3 RamWarden $20/year and plan 4 Pro $24/year,
-renewing until cancelled. Plans 1 and 3 have a 14-day trial (`trial_days:
+time of writing Lite is free (one device, no Jev), plan 1 is RamWarden Plus
+$4/month, plan 2 RamWarden Pro (adds ThreatWarden) $5/month, plan 3 Plus
+$20/year and plan 4 Pro $24/year, renewing until cancelled. Plans 1 and 3 have a 14-day trial (`trial_days:
 14`); Pro (2 and 4) is charged when it starts (`trial_days: 0`), and the
 agent says "charged now", never "free trial", for it. Native Solana answers
 503 until it opens, so agents pay on Base.
@@ -64,7 +68,8 @@ agent says "charged now", never "free trial", for it. Native Solana answers
   and never uses a session key, delegated permission or auto-approving
   wallet. Renewals are the contract's, from the allowance the user approved;
   the agent never re-approves, upgrades or subscribes again on its own, and
-  always cancels when asked.
+  always cancels when asked. Before an upgrade it says that any trial ends,
+  the new plan is charged now, and on Base unused time is not refunded.
 - **Exact amounts only.** The USDC approval equals the plan's `approval_usd`
   (one year of the plan, never unlimited), the `startTrial` price equals the
   plan's `usd`, and transactions go only to `base.usdc` and `base.contract`.

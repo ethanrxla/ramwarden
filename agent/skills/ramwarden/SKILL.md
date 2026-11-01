@@ -1,6 +1,6 @@
 ---
 name: ramwarden
-description: Install and drive RamWarden, a local memory manager with a ThreatWarden security add-on. Use when the computer is slow or out of RAM, to free memory, unload idle browser tabs, explain what is using memory, check ThreatWarden alerts, or subscribe to or cancel RamWarden or RamWarden Pro with crypto.
+description: Install and drive RamWarden, a local memory manager with a ThreatWarden security add-on. Use when the computer is slow or out of RAM, to free memory, unload idle browser tabs, explain what is using memory, check ThreatWarden alerts, or subscribe to, upgrade or cancel RamWarden Plus or Pro with crypto.
 ---
 
 # RamWarden
@@ -12,13 +12,14 @@ browser tabs next, freezing or closing apps last. Its agents are called
 
 | Warden | What it does | Access |
 | --- | --- | --- |
-| RAM Warden | memory pressure, reclaim, tab unloading | works in local mode without a subscription; the **RamWarden** plan adds hosted Jev decisions |
+| RAM Warden | memory pressure, reclaim, tab unloading | free on **Lite** with fixed rules; **Plus** adds hosted Jev decisions |
 | ThreatWarden | security alerts from the machine's Wazuh agent, read-only | **RamWarden Pro** plan |
 
 Current prices (the server's `/v1/checkout/config` is the authority, always
-quote from it): **RamWarden $4/month or $20/year, RamWarden Pro $5/month or
-$24/year**, renewing until cancelled. RamWarden plans start with a 14-day
-free trial; Pro is charged when it starts. Paid in
+quote from it): **RamWarden Lite free (one device, no hosted AI), RamWarden
+Plus $4/month or $20/year, RamWarden Pro $5/month or $24/year**, renewing
+until cancelled. Plus starts with a 14-day free trial; Pro is charged when it
+starts. Paid in
 USDC on Base with MetaMask or Phantom, or by card when offered.
 
 The daemon listens on `http://127.0.0.1:7823`. Every call below is plain HTTP
@@ -45,7 +46,7 @@ page.
    names the app. Report what the daemon says happened, not what you asked for.
 4. **Is anything wrong security-wise?** `GET /wardens/threat` (ThreatWarden).
    It reports, it never acts. If its status is `locked`, offer RamWarden Pro.
-5. **Subscribe or cancel.** Follow [references/buying.md](references/buying.md) exactly.
+5. **Subscribe, upgrade or cancel.** Follow [references/buying.md](references/buying.md) exactly.
 
 ## Rules
 
