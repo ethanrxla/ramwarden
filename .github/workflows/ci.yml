@@ -61,3 +61,22 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+
+  # The website in web/: plain HTML, CSS and ES modules with no build step.
+  # Unit tests need only Node; the browser tests drive Chromium against the
+  # mock server and injected fake wallets.
+  web:
+    name: website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test web/tests/*.test.mjs
+      - name: Browser tests
+        run: |
+          npm install --no-save --no-package-lock playwright@1
+          npx playwright install --with-deps chromium
+          node web/tests/e2e.cjs

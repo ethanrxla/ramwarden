@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="robots" content="index">
+  <title>Privacy · RamWarden</title>
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/icon.png" alt="">RamWarden</a>
+      <nav>
+        <a class="hide-sm" href="./#pricing">Pricing</a>
+        <a class="hide-sm" href="./#download">Download</a>
+        <a href="account.html">Account</a>
+      </nav>
+    </div>
+  </header>
+  <main class="app prose">
+    <div class="wrap narrow">
+      <h1>Privacy</h1>
+      <p class="muted">Draft. Last updated 1 November 2026.</p>
+
+      <h2>The short version</h2>
+      <p>RamWarden runs on your computer. On the free local tier it sends nothing to us. With a hosted plan, it sends short descriptions of the apps and tabs it is deciding about, our server asks Jev, and the description is forgotten once the answer is back.</p>
+
+      <h2>What stays on your computer</h2>
+      <ul>
+        <li>Your process list, memory figures, window focus and activity history.</li>
+        <li>Your browser tabs. The extension talks only to RamWarden on your own machine (localhost), never to our server.</li>
+        <li>Your settings and watchlist.</li>
+      </ul>
+
+      <h2>What a hosted plan sends</h2>
+      <p>Only when memory is short and RamWarden is choosing what to close, and only if you have signed in: for each candidate, its name (an app name, or a tab's title and site), how long it has been idle, how much memory it uses, and one of a fixed set of questions, such as whether you are likely to come back to it within a day. Our server will only forward those fixed questions.</p>
+      <p>We forward this to TypeSafe, which runs Jev, to get the answer. We do not store request contents and do not write them to logs. Our logs hold a short fingerprint of your device's token, which questions were asked, sizes and timings.</p>
+
+      <h2>Your account</h2>
+      <ul>
+        <li><strong>Wallet addresses</strong> you sign in with. Signing in costs no gas and gives us no access to your funds.</li>
+        <li><strong>Devices</strong> you have linked: a name, the platform and when each was last seen. You can revoke any of them from your account page.</li>
+        <li><strong>Payments</strong>: the plan, amount, method and the transaction or Stripe reference, kept for accounting. Card details go to Stripe and never reach us.</li>
+        <li><strong>Usage</strong>: how many hosted decisions you used each day, as counts only, kept for about 13 months.</li>
+      </ul>
+      <p>On-chain payments are public by nature: anyone can see a payment from your wallet to RamWarden's checkout.</p>
+
+      <h2>This website</h2>
+      <p>No analytics, no trackers, no third-party scripts and no cookies. Signing in on this site keeps a session token in your browser tab until you close it.</p>
+
+      <h2>Contact and deletion</h2>
+      <p>To have your account deleted, or for any privacy question, open an issue on <a href="https://github.com/ethanrxla/ramwarden/issues">GitHub</a>.</p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>RamWarden</span>
+      <span><a href="privacy.html">Privacy</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
+    </div>
+  </footer>
+</body>
+</html>
