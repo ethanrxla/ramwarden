@@ -71,6 +71,14 @@ systemctl --user enable --now ramwarden-helper   # optional, see below
 
 Then launch **RamWarden** from your application menu, or run `ramwarden`.
 
+### From an AI agent
+
+RamWarden ships as an agent skill, so your own agent can install it, explain
+what is using memory and free it with your OK:
+`/plugin marketplace add ethanrxla/ramwarden` then
+`/plugin install ramwarden@ramwarden` in Claude Code, or
+`npx skills add ethanrxla/ramwarden` for other agents. See [`agent/`](agent/).
+
 ### Build from source
 
 ```bash
