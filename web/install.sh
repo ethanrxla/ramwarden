@@ -35,29 +35,29 @@ say "downloading $file"
 curl -fsSL "$REPO/$file" -o "$tmp/$file" \
   || die "could not download $file. If no release has been published yet, build from source: https://github.com/ethanrxla/ramwarden"
 
-# The manifest lists each artifact's SHA-256. Check it when we can parse it.
-if curl -fsSL "$REPO/manifest.json" -o "$tmp/manifest.json" 2>/dev/null && command -v python3 >/dev/null; then
-  want=$(python3 - "$tmp/manifest.json" "$file" <<'PY'
-import json, sys
+# Never run a release whose manifest or checksum cannot be verified.
+command -v python3 >/dev/null || die "python3 is required to verify the release manifest."
+curl -fsSL "$REPO/manifest.json" -o "$tmp/manifest.json" || die "release manifest unavailable; not installing."
+want=$(python3 - "$tmp/manifest.json" "$file" <<'PYHASH'
+import json, re, sys
 m = json.load(open(sys.argv[1]))
-for w in m.get("wardens", [m]):
-    for a in w.get("artifacts", []):
-        if a.get("url", "").endswith("/" + sys.argv[2]):
-            print(a.get("sha256", "")); raise SystemExit
-PY
-)
-  if [ -n "$want" ]; then
-    if command -v sha256sum >/dev/null; then got=$(sha256sum "$tmp/$file" | cut -d' ' -f1)
-    else got=$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1); fi
-    [ "$got" = "$want" ] || die "checksum mismatch for $file; not installing."
-    say "checksum verified"
-  fi
-fi
+matches = [a.get("sha256", "") for w in m.get("wardens", [m])
+           for a in w.get("artifacts", [])
+           if a.get("url", "").endswith("/" + sys.argv[2])]
+if len(matches) != 1 or not re.fullmatch(r"[0-9a-fA-F]{64}", matches[0]):
+    raise SystemExit("Missing, duplicate, or invalid release checksum; not installing.")
+print(matches[0].lower())
+PYHASH
+) || die "could not verify manifest; not installing."
+if command -v sha256sum >/dev/null; then got=$(sha256sum "$tmp/$file" | cut -d' ' -f1)
+else got=$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1); fi
+[ "$got" = "$want" ] || die "checksum mismatch for $file; not installing."
+say "checksum verified"
 
 mkdir -p "$tmp/x"
 tar xzf "$tmp/$file" -C "$tmp/x"
 inst=$(find "$tmp/x" -maxdepth 2 -name install.sh | head -n 1)
 [ -n "$inst" ] || die "the release has no install.sh."
-(cd "$(dirname "$inst")" && sh ./install.sh)
+(cd "$(dirname "$inst")" && bash ./install.sh)
 
 say "installed. Open RamWarden, then click Sign in for Pro, or keep it local and free."

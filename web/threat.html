@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>ThreatWarden: four security engines, one warden that explains them</title>
-  <meta name="description" content="ThreatWarden is RamWarden's security warden: Wazuh, ClamAV, Suricata and ntopng in one place, explained in plain words. Hosted and plug-and-play, or self-hosted and open source.">
+  <meta name="description" content="ThreatWarden is RamWarden's security warden: Wazuh, with ClamAV, Suricata and a lightweight network view planned in one place, explained in plain words. Hosted and plug-and-play, or self-hosted and open source.">
   <meta property="og:title" content="ThreatWarden by RamWarden">
   <meta property="og:description" content="See threats before they see you.">
   <link rel="icon" href="assets/pets/threat.svg" type="image/svg+xml">
@@ -39,7 +39,7 @@
           <span class="eyebrow">ThreatWarden · a RamWarden warden</span>
           <p class="catchline" data-rotate='["See threats before they see you.","For people who click every link.","If you&apos;re one of those people who download first and ask later…","Please stop running random installers.","For people with 100 tabs and zero idea what&apos;s on their network.","Know what&apos;s talking to your computer."]'><em>See threats before they see you.</em></p>
           <h1>Four open-source security engines. One warden that explains them.</h1>
-          <p class="lede">ThreatWarden watches your computer with Wazuh, ClamAV, Suricata and ntopng, and tells you in plain words what it saw and whether you need to do anything. It observes; it never switches anything off.</p>
+          <p class="lede">ThreatWarden starts with Wazuh and explains its findings in plain words. ClamAV scans, optional Suricata detection, and a lightweight network view are planned. It observes; it never switches anything off.</p>
           <div class="actions">
             <a class="button" href="#get">Get ThreatWarden</a>
             <a class="button secondary" href="#stack">What it watches</a>
@@ -58,9 +58,9 @@
         <p class="sub">Each engine is the official, unmodified open-source project. ThreatWarden reads what they find and puts it in one place.</p>
         <div class="grid two">
           <div class="card"><span class="num">HOST</span><h3>Wazuh <small>intrusion detection</small></h3><p>Log analysis, file integrity monitoring, vulnerable software and known attack patterns on this computer, scored by Wazuh's own rules.</p></div>
-          <div class="card"><span class="num">FILES</span><h3>ClamAV <small>malware scanning</small></h3><p>Scans downloads and the places malware likes to hide against a signature database that updates on its own.</p></div>
-          <div class="card"><span class="num">NETWORK</span><h3>Suricata <small>network intrusion detection</small></h3><p>Inspects traffic for exploit attempts, command-and-control callbacks and known-bad hosts.</p></div>
-          <div class="card"><span class="num">TRAFFIC</span><h3>ntopng <small>network visibility</small></h3><p>Shows what is talking to what: which apps use the network, how much, and with whom.</p></div>
+          <div class="card"><span class="num">FILES</span><h3>ClamAV <small>planned · malware scanning</small></h3><p>Scans downloads and the places malware likes to hide against a signature database that updates on its own.</p></div>
+          <div class="card"><span class="num">NETWORK</span><h3>Suricata <small>planned · network intrusion detection</small></h3><p>Inspects traffic for exploit attempts, command-and-control callbacks and known-bad hosts.</p></div>
+          <div class="card"><span class="num">TRAFFIC</span><h3>Network view <small>planned · connection visibility</small></h3><p>Shows what is talking to what: which apps use the network, how much, and with whom.</p></div>
         </div>
       </div>
     </section>
@@ -107,7 +107,7 @@
           <div class="card path">
             <span class="num">SELF-HOSTED · OPEN SOURCE</span>
             <h3>Your own server, your own setup.</h3>
-            <p>Install the official Wazuh, ClamAV, Suricata and ntopng packages yourself, run your own Wazuh manager on an always-on Linux box, and point ThreatWarden at it with read-only accounts. Nothing reaches our servers.</p>
+            <p>Install the official Wazuh agent yourself, run your own Wazuh manager on an always-on Linux box, and point ThreatWarden at it with read-only accounts. Nothing reaches our servers.</p>
             <a class="button secondary mt" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/wazuh-setup.md">Setup guide</a>
           </div>
         </div>
@@ -133,7 +133,7 @@
             <h3>ThreatWarden hosted</h3>
             <div class="amount">$<span data-plan="2">6</span> <small>every 2 months</small></div>
             <ul>
-              <li>Wazuh, ClamAV, Suricata and ntopng, managed for you</li>
+              <li>Hosted Wazuh; additional engines planned</li>
               <li>Plain-words alerts in the RamWarden app</li>
               <li>A prepaid pass: nothing renews or charges you later</li>
               <li>Stacks with RamWarden Pro ($<span data-plan="1">4</span> every 2 months)</li>
@@ -149,7 +149,7 @@
         <h2>Questions</h2>
         <details><summary>Does it replace my antivirus?</summary>
           <p>No. It adds visibility on top of what you already run, and it never turns your existing protection off. RamWarden never weakens security settings to free memory.</p></details>
-        <details><summary>Are Wazuh, ClamAV, Suricata and ntopng modified?</summary>
+        <details><summary>Are the security engines modified?</summary>
           <p>No. ThreatWarden uses the official, unmodified projects from their own packages and reads what they report. They are separate open-source projects with their own licences; RamWarden is not affiliated with them.</p></details>
         <details><summary>What does the hosted version send to your servers?</summary>
           <p>The security events your engines produce, so the hosted manager can analyse them and send the results back. Self-hosting keeps all of it on your own server.</p></details>

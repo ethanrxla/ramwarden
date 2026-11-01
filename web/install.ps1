@@ -19,20 +19,20 @@ try {
     try { Invoke-WebRequest -UseBasicParsing "$repo/$file" -OutFile $exe }
     catch { throw "Could not download $file. If no release has been published yet, build from source: https://github.com/ethanrxla/ramwarden" }
 
-    # The manifest lists each artifact's SHA-256. No manifest: skip the check.
-    $m = $null
-    try { $m = Invoke-RestMethod "$repo/manifest.json" } catch { }
-    if ($m) {
-        $items = if ($m.wardens) { $m.wardens } else { @($m) }
-        $want = ($items.artifacts | Where-Object { $_.url -like "*/$file" } | Select-Object -First 1).sha256
-        if ($want) {
-            $got = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-            if ($got -ne $want.ToLower()) { throw "Checksum mismatch for $file; not installing." }
-            Write-Host 'ramwarden: checksum verified'
-        }
+    # Verification is mandatory, including when the manifest download fails.
+    $m = Invoke-RestMethod "$repo/manifest.json"
+    $items = if ($m.wardens) { $m.wardens } else { @($m) }
+    $matches = @($items.artifacts | Where-Object { $_.url -like "*/$file" })
+    if ($matches.Count -ne 1 -or $matches[0].sha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw 'Missing, duplicate, or invalid release checksum; not installing.'
     }
+    $want = $matches[0].sha256
+    $got = (Get-FileHash $exe -Algorithm SHA256).Hash
+    if ($got -ne $want) { throw "Checksum mismatch for $file; not installing." }
+    Write-Host 'ramwarden: checksum verified'
 
-    Start-Process -FilePath $exe -Wait
+    $installer = Start-Process -FilePath $exe -Wait -PassThru
+    if ($installer.ExitCode -notin @(0, 3010)) { throw "Installer failed with exit code $($installer.ExitCode)." }
     Write-Host 'ramwarden: installed. Open RamWarden from the tray, then Sign in for Pro, or keep it local and free.'
 } finally {
     Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
