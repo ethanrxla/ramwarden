@@ -17,7 +17,7 @@ stands unless you change it.
 
 ### 1.1 Two products that never blur together
 
-| | **Open source** | **RamWarden Plus / Pro** |
+| | **Open source** | **RamWarden / RamWarden Pro** |
 |---|---|---|
 | What it is | The GitHub repo and its releases | The packaged, signed app |
 | Where you get it | github.com, nowhere else | The website, after signing in |
@@ -42,24 +42,28 @@ Rules that keep them separate:
 
 ### 1.2 Tiers
 
-| Tier | Price | Includes |
-|---|---|---|
-| **Plus** | $4 every 2 months | RamWarden with hosted decisions, browser extension, chat with your warden, color sync, up to 5 devices |
-| **Pro** | $6 every 2 months (see Q1) | Everything in Plus, plus ThreatWarden on the same 5 devices |
-| Extra devices | Pay as you go (see Q3) | Each device past 5, on whichever tier the account has |
+Prices set by Ethan on 2026-11-01:
+
+| Tier | Monthly | Annual | Includes |
+|---|---|---|---|
+| **RamWarden** | $4 / month | $20 / year (save 58%) | AI-powered memory management and system resource optimization: hosted decisions, browser extension, chat with your warden, color sync, up to 5 devices |
+| **RamWarden Pro** | $5 / month | $24 / year (save 60%) | Everything in RamWarden, plus the ThreatWarden security companion on the same 5 devices |
+| Extra devices | Pay as you go (see Q3) | | Each device past 5, on whichever tier the account has |
 
 - Both tiers start with a **14-day free trial**. After the trial the chosen
-  payment method is charged automatically every 2 months until cancelled.
+  payment method is charged automatically every month or every year,
+  whichever the user picked, until cancelled.
   The "prepaid pass, nothing renews" model is retired.
 - One trial per account **and** per device (see 4.4), so new wallets do not
   mean endless trials.
-- Plan ids stay the contract's numbers so the agent skill keeps working:
-  1 = Plus, 2 = Pro. Plan 3 (the old $10 bundle) is retired if Q1 resolves
-  to "Pro includes Plus".
+- Plan ids (the contract's numbers, used by the agent skill):
+  1 = RamWarden monthly, 2 = Pro monthly, 3 = RamWarden annual,
+  4 = Pro annual. The old 60-day passes and the $10 bundle are retired, and
+  `contracts/plans.json` changes to match.
 
 ### 1.3 Naming
 
-- Product: **RamWarden**. Tiers: **Plus** and **Pro**. The agents are
+- Product: **RamWarden**. Tiers: **RamWarden** and **RamWarden Pro**. The agents are
   **wardens**: the RAM warden (in both tiers) and **ThreatWarden** (Pro).
 - Tagline: "Free your RAM. Keep your peace."
 - Pets: the pixel ram (RamWarden) and the pixel cyborg ram (ThreatWarden).
@@ -97,7 +101,7 @@ black/purple/green).
 | 3 | Scroll world | The scroll-scrubbed world (scroll-world style) | Same component, ThreatWarden palette |
 | 4 | Pet | The ram pet sits under the scroll world, talking (see 2.5) | The cyborg pet, same position |
 | 5 | How it works | 3 or 4 cards (Measures, Triggers, Protects, Decides) | 4 cards (Host, Files, Network, Traffic), abstract copy |
-| 6 | Pricing | Shared component: Plus card, Pro card, open-source line | Same component |
+| 6 | Pricing | Shared component: RamWarden card, Pro card, open-source line | Same component |
 | 7 | FAQ | Short | Short |
 | 8 | Footer | Same | Same |
 
@@ -121,8 +125,8 @@ cut, to keep the page short (your call, Q6).
 | Hero | "Free and local by default. No account needed to use it." | Remove |
 | Hero | "Watch the film" button | Remove |
 | Pricing | "A prepaid pass: nothing renews or charges you later" | Remove |
-| Pricing | "Pro" card ($4) | Rename to **Plus** |
-| Pricing | (none) | Add **Pro** card after Plus, the only card in ThreatWarden colors |
+| Pricing | "Pro" card ($4 / 2 months) | **RamWarden** card, $4 / month or $20 / year |
+| Pricing | (none) | Add **RamWarden Pro** card after it, $5 / month or $24 / year, the only card in ThreatWarden colors |
 | Pricing | "Free account, $0, sign in with a wallet, 5 hosted decisions a day, 1 device" | Remove. Replaced by the open-source line below the cards |
 | Account | "It's an account without a password or an email... Your RamWarden account is separate from the wallet..." | "Sign in with your wallet or your email." |
 | ThreatWarden eyebrow | "ThreatWarden · a RamWarden warden" | Remove |
@@ -135,11 +139,19 @@ cut, to keep the page short (your call, Q6).
 | Jev section | "RamWarden asks Jev, TypeSafe's 'system one' model..." | "Your warden asks three quick questions about everything it might close." The three question cards stay |
 | Anywhere | "our server", "our servers", "RamWarden's servers" | Remove or rephrase as "your warden" / "RamWarden" |
 
+### 2.3a Marketing hooks (from Ethan, 2026-11-01)
+
+| Hook | Where it goes |
+|---|---|
+| "Two intelligent desktop companions. Performance and security, starting at $24 a year." | Pricing section heading, and the shared footer. Accurate because $24/year is RamWarden Pro, the tier that has both wardens |
+| "Your PC has 32GB of RAM. So why does it still feel slow?" | Added to the RamWarden hero's rotating catchlines. On macOS visitors it reads "Your Mac" |
+| "Your task manager isn't telling you the whole story." | Heading of the RamWarden "How it works" section, above the Measures card (counting memory the way the OS charges it) |
+
 ### 2.4 Install section (moved up)
 
 Directly under the hero. Two clearly separate halves:
 
-**Left, the product (Plus/Pro):**
+**Left, the product (RamWarden / Pro):**
 - Signed out: OS tabs (macOS, Windows, Linux) with a **Start free trial**
   button. No command is shown yet, because the command is personal.
 - Signed in (trial or paid): the same tabs show a **personal one-liner**,
@@ -193,12 +205,16 @@ The bottom-right pets open a chat panel and act as support and sales:
 ### 2.7 Pricing component
 
 ```
-[ Plus  $4 / 2 months ]  [ Pro  $6 / 2 months  (ThreatWarden colors) ]
-  14-day free trial         14-day free trial
-  RAM warden, hosted        Everything in Plus
-  decisions, extension,     + ThreatWarden
-  chat, 5 devices           5 devices
-  [Start free trial]        [Start free trial]
+            ( Monthly | Annual, save up to 60% )
+
+[ RamWarden  $4 / month ]    [ RamWarden Pro  $5 / month ]  (ThreatWarden colors)
+  or $20 / year                or $24 / year
+  14-day free trial            14-day free trial
+  AI-powered memory            Everything in RamWarden,
+  management and system        plus the ThreatWarden
+  resource optimization        security companion
+  5 devices                    5 devices
+  [Start free trial]           [Start free trial]
 
   Pay with a wallet, card or Apple Pay. Cancel any time.
   Prefer to build it yourself? RamWarden is open source on GitHub.
@@ -219,7 +235,7 @@ The bottom-right pets open a chat panel and act as support and sales:
 
 - "Your RamWarden account is basically your wallet." Signing in with a new
   wallet creates the account and **immediately starts the purchase flow**:
-  the user picks Plus or Pro, confirms in the wallet, and the trial begins.
+  the user picks RamWarden or Pro, monthly or annual, confirms in the wallet, and the trial begins.
   There is no "account but nothing bought" state for wallet users.
 - Email sign-up works the same way: verify email, pick a tier, enter a card
   (or Apple Pay), trial begins.
@@ -245,10 +261,11 @@ The current `RamWardenCheckout` sells prepaid passes. It changes to a
 subscription with a trial:
 
 1. **Start trial**: the user signs one transaction that (a) approves the
-   contract to spend USDC up to **6 periods** of the plan price (one year, $24
-   for Plus, $36 for Pro) and (b) calls `startTrial(account, plan)`. The
+   contract to spend USDC up to **one year** of the plan (monthly: 12 x $4 =
+   $48 or 12 x $5 = $60; annual: $20 or $24) and (b) calls
+   `startTrial(account, plan)`. The
    wallet shows exactly this amount. No money moves.
-2. **Charge**: after 14 days, and every 60 days after, anyone may call
+2. **Charge**: after 14 days, and every month or year after, anyone may call
    `charge(account)` (we run the keeper). The contract pulls **exactly one
    period's price** and extends `paidUntil`. It can never pull more, earlier,
    or for a plan the user didn't pick.
@@ -257,14 +274,14 @@ subscription with a trial:
    notice, then drops to local mode.
 4. **Cancel**: `cancel(account)` from the wallet, or revoking the approval
    in the wallet, stops all future charges. Service runs to `paidUntil`.
-5. After 6 periods the user is asked to re-approve. They are never asked
+5. After a year of charges the user is asked to re-approve. They are never asked
    for an unlimited approval.
 6. **Solana**: the same flow using an SPL token delegate approval capped at
-   6 periods and a program that enforces the same schedule. Built after Base.
+   one year and a program that enforces the same schedule. Built after Base.
 
 The contract stays the license's source of truth (`paidUntil[account][warden]`).
-The plan's warden list decides what is unlocked: Plus unlocks warden 0, Pro
-unlocks 0 and 1.
+The plan's warden list decides what is unlocked: RamWarden unlocks warden 0,
+Pro unlocks 0 and 1.
 
 ### 3.4 Card payments
 
@@ -288,14 +305,14 @@ Builds on `ramwarden-cloud` (PR #6). One database, these collections:
 
 | Collection | Holds |
 |---|---|
-| `accounts` | `_id`, `identity: {kind: "wallet", chain, address} \| {kind: "email", email}`, `tier: "plus" \| "pro" \| null`, `status: "trial" \| "active" \| "grace" \| "lapsed" \| "cancelled"`, `trial_ends_at`, `paid_until`, `billing: {method: "base" \| "solana" \| "card", ref}`, `device_limit`, `prefs` |
+| `accounts` | `_id`, `identity: {kind: "wallet", chain, address} \| {kind: "email", email}`, `tier: "ram" \| "pro" \| null`, `interval: "month" \| "year"`, `status: "trial" \| "active" \| "grace" \| "lapsed" \| "cancelled"`, `trial_ends_at`, `paid_until`, `billing: {method: "base" \| "solana" \| "card", ref}`, `device_limit`, `prefs` |
 | `sessions` | One document per signed-in browser or device: hashed token, account id, kind (`web` / `device`), user agent, created, last seen, expiry |
 | `devices` | Per installed app: device public key, name, OS, `tailscale_node` (optional), first and last seen, revoked flag |
 | `payments` | Every charge attempt and its outcome |
 | `trials` | Hashed device fingerprints that have used a trial |
 | `chat` | Chat-warden conversations, 30-day TTL |
 
-- **Plus and Pro are separated by the `tier` field**, indexed, and every
+- **RamWarden and Pro users are separated by the `tier` field**, indexed, and every
   hosted route checks it. ThreatWarden routes require `tier == "pro"` and an
   active status. We do not split them into separate databases: one account
   can move between tiers.
@@ -399,7 +416,7 @@ network access to their machines.
    tailnet name. Every step is confirmed by the user, as the skill already
    requires for purchases.
 
-Requires an active Plus or Pro account, because enrollment tokens are only
+Requires an active RamWarden or Pro account, because enrollment tokens are only
 minted for one.
 
 ### 7.3 Businesses
@@ -450,7 +467,7 @@ This needs `docs/specs/threatwarden.md` (PR #13) changed first.
 
 - Purchases become "start trial" or "change tier", still only on the user's
   request and confirmed in their wallet. The agent never approves more than
-  the 6-period cap.
+  the one-year cap.
 - New: add devices (7.2), list and remove devices.
 - The "never renews on its own" wording is updated: the **agent** never
   renews; the **subscription** renews by the user's approval.
@@ -488,14 +505,13 @@ This needs `docs/specs/threatwarden.md` (PR #13) changed first.
 
 ## 12. Open questions
 
-- **Q1. Pro price.** Recommended: Pro is $6 every 2 months and includes
-  Plus (a simple two-step ladder). Alternative: Pro is ThreatWarden only at
-  $6, added to Plus for $10 total.
+- **Q1. Pro price.** Decided 2026-11-01: RamWarden $4/month or $20/year,
+  RamWarden Pro $5/month or $24/year, Pro includes everything.
 - **Q2. Trial needs payment up front?** Recommended yes (wallet approval or
   card on file), so the trial converts without a second step. This is how the
   wallet "charges after 2 weeks" works.
-- **Q3. Price per extra device** past 5. Suggestion: $1 per device per 2
-  months for Plus, $1.50 for Pro.
+- **Q3. Price per extra device** past 5. Suggestion: $0.50 per device per
+  month on RamWarden, $0.75 on Pro (annual: $4 and $5 per device per year).
 - **Q4. Domain.** The spec uses `ramwarden.app` as a placeholder.
 - **Q5. Jev on the site.** This spec stops naming Jev and TypeSafe on the
   site, in line with "don't say where we got it". Keep naming it if the
