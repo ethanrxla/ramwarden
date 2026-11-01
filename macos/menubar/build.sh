@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 APP="$HOME/Applications/RamWarden.app"
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
-swiftc -O -o "$APP/Contents/MacOS/RamWarden" main.swift
+swiftc -O -o "$APP/Contents/MacOS/RamWarden" main.swift Wardens.swift
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

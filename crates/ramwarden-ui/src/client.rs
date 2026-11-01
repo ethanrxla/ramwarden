@@ -240,7 +240,7 @@ impl Client {
         &self.base
     }
 
-    async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, timeout: Duration) -> Result<T> {
+    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, timeout: Duration) -> Result<T> {
         let r = self
             .http
             .get(format!("{}{path}", self.base))
@@ -251,7 +251,24 @@ impl Client {
         Self::decode(r).await
     }
 
-    async fn post<T: for<'de> Deserialize<'de>>(
+    /// A body that is not JSON (a warden's SVG icon).
+    pub(crate) async fn get_text(&self, path: &str, timeout: Duration) -> Result<String> {
+        let r = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        let status = r.status();
+        let text = r.text().await.map_err(|e| Error::Transport(e.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::Status { status: status.as_u16(), body: text.chars().take(300).collect() });
+        }
+        Ok(text)
+    }
+
+    pub(crate) async fn post<T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
         body: serde_json::Value,

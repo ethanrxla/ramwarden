@@ -1,6 +1,8 @@
 // RamWarden menu-bar app: a thin status item over the daemon's HTTP API.
-// It holds no policy and takes no destructive action of its own; the only write
-// it ever makes is resuming an app the daemon froze.
+// It holds no policy and takes no destructive action of its own. Its writes are
+// resuming an app the daemon froze and, when the user clicks it, ThreatWarden's
+// "Turn on". The menu has a RAM pane (below) and a ThreatWarden pane
+// (Wardens.swift).
 import AppKit
 
 let base = URL(string: "http://127.0.0.1:7823")!
@@ -58,6 +60,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu = NSMenu()
     var snap: Snapshot?
+    var pane: Pane = .ram
+    var threat: ThreatPane?
+    var threatIcon16: NSImage?
+    var threatIcon32: NSImage?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         menu.delegate = self
@@ -72,6 +78,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refresh() async {
         let s = await loadSnapshot()
+        if s != nil { await refreshThreat() }
         await MainActor.run { self.snap = s; self.updateTitle() }
     }
 
@@ -84,7 +91,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "tabs": dot = "🟠"
         default: dot = "🔴"
         }
-        item.button?.title = "\(dot) \(Int(s.percent))%"
+        // ThreatWarden asking the user to act shows from the RAM pane too.
+        let shield = threat?.level == "alert" ? " ⚠︎" : ""
+        item.button?.title = "\(dot) \(Int(s.percent))%\(shield)"
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -113,6 +122,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add("RamWarden daemon not reachable", nil)
             menu.addItem(.separator())
             add("Start daemon", #selector(startDaemon))
+            add("Quit", #selector(quit), key: "q")
+            return
+        }
+        menu.addItem(paneSwitcher())
+        menu.addItem(.separator())
+        if pane == .threat {
+            buildThreatPane()
+            menu.addItem(.separator())
             add("Quit", #selector(quit), key: "q")
             return
         }

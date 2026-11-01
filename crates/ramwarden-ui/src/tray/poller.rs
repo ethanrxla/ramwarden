@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use super::launch::DaemonLauncher;
 use crate::client::{Client, DebloatState, Error, GpuReport, State, TidyState};
+use crate::wardens::{Sprite, ThreatPane};
 
 /// Everything the window shows, as last fetched.
 #[derive(Clone, Debug, Default)]
@@ -20,6 +21,10 @@ pub struct Snapshot {
     pub tidy: Option<TidyState>,
     pub gpu: Option<GpuReport>,
     pub debloat: Option<DebloatState>,
+    /// The ThreatWarden pane, as `crate::wardens` lays it out.
+    pub threat: Option<ThreatPane>,
+    /// ThreatWarden's 8-bit cyborg, fetched once from the daemon.
+    pub threat_icon: Option<Sprite>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
     /// What is being done about it: starting the daemon, or where to look.
@@ -40,6 +45,8 @@ pub enum Command {
     DebloatApply { name: String, include_optional: bool },
     DebloatRevert(String),
     GpuUnload(Option<String>),
+    /// ThreatWarden's "Turn on": install and enrol the Wazuh agent.
+    WardenSetup(String),
 }
 
 pub struct Poller {
@@ -105,7 +112,7 @@ impl Poller {
                 }
             });
         }
-        // Slow loop: the GPU and debloat status are costlier to compute.
+        // Slow loop: the GPU, debloat and ThreatWarden status are costlier to compute.
         if full {
             let (shared, client, repaint) = (shared.clone(), client.clone(), repaint.clone());
             runtime.spawn(async move {
@@ -142,8 +149,17 @@ impl Poller {
     }
 
     async fn refresh_slow(client: &Client, shared: &Mutex<Snapshot>) {
-        let (gpu, debloat) = tokio::join!(client.gpu(), client.debloat());
+        let (gpu, debloat, threat) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
+        let need_icon = shared.lock().unwrap().threat_icon.is_none();
+        let icon = match (&threat.icon, need_icon) {
+            (Some(path), true) => client.warden_icon(path).await.ok(),
+            _ => None,
+        };
         let mut s = shared.lock().unwrap();
+        s.threat = Some(threat);
+        if icon.is_some() {
+            s.threat_icon = icon;
+        }
         if let Ok(g) = gpu {
             s.gpu = Some(g);
         }
@@ -184,6 +200,11 @@ impl Poller {
                     if n == 0 { "no local models were loaded".into() } else { format!("unloaded {n} model(s)") }
                 }
                 Err(e) => format!("unload: {e}"),
+            },
+            Command::WardenSetup(id) => match client.warden_setup(&id).await {
+                Ok(r) if r.started => "ThreatWarden is setting up. Approve the Windows prompt when it appears.".into(),
+                Ok(r) => format!("setup did not start: {}", r.error.unwrap_or_default()),
+                Err(e) => format!("setup did not start: {e}"),
             },
         }
     }

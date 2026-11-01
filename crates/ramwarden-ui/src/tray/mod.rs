@@ -24,7 +24,7 @@ pub mod views;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
+use eframe::egui::{self, RichText};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -33,6 +33,13 @@ use poller::{Command, Poller};
 use views::UiState;
 
 // ── The window process ──────────────────────────────────────────────────────
+
+/// One pane per warden. The RAM pane holds the memory tabs below.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Ram,
+    Threat,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -44,8 +51,12 @@ enum Tab {
 
 struct WindowApp {
     poller: Poller,
+    pane: Pane,
     tab: Tab,
     view: UiState,
+    /// ThreatWarden's cyborg, uploaded once, sampled nearest so the 8-bit
+    /// pixels stay square.
+    threat_icon: Option<egui::TextureHandle>,
 }
 
 impl eframe::App for WindowApp {
@@ -53,16 +64,37 @@ impl eframe::App for WindowApp {
         let ctx = ui.ctx().clone();
         let snap = self.poller.snapshot();
 
+        if self.threat_icon.is_none()
+            && let Some(s) = &snap.threat_icon
+        {
+            let image = egui::ColorImage::from_rgba_unmultiplied([s.width as usize, s.height as usize], &s.rgba);
+            self.threat_icon = Some(ctx.load_texture("threatwarden", image, egui::TextureOptions::NEAREST));
+        }
+
         egui::Panel::top("tabs").show(ui, |ui| {
+            // The wardens first, then the RAM warden's own tabs under it.
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
-                ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
-                ui.selectable_value(&mut self.tab, Tab::Debloat, "Privacy & startup");
-                ui.selectable_value(&mut self.tab, Tab::Gpu, "GPU");
+                ui.selectable_value(&mut self.pane, Pane::Ram, RichText::new("RAM").strong());
+                let threat = match &snap.threat {
+                    Some(p) => RichText::new("ThreatWarden ●").strong().color(views::level_colour(p.level)),
+                    None => RichText::new("ThreatWarden").strong(),
+                };
+                if let Some(t) = &self.threat_icon {
+                    ui.add(egui::Image::from_texture(egui::load::SizedTexture::from_handle(t)).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+                }
+                ui.selectable_value(&mut self.pane, Pane::Threat, threat);
                 if snap.busy {
                     ui.spinner();
                 }
             });
+            if self.pane == Pane::Ram {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
+                    ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
+                    ui.selectable_value(&mut self.tab, Tab::Debloat, "Privacy & startup");
+                    ui.selectable_value(&mut self.tab, Tab::Gpu, "GPU");
+                });
+            }
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             if let Some(e) = &snap.error {
@@ -75,11 +107,12 @@ impl eframe::App for WindowApp {
         });
 
         let mut command: Option<Command> = None;
-        egui::CentralPanel::default().show(ui, |ui| match self.tab {
-            Tab::Overview => views::overview(ui, &snap),
-            Tab::Processes => command = views::processes(ui, &snap, &mut self.view),
-            Tab::Debloat => command = views::debloat(ui, &snap, &mut self.view),
-            Tab::Gpu => command = views::gpu(ui, &snap),
+        egui::CentralPanel::default().show(ui, |ui| match (self.pane, self.tab) {
+            (Pane::Threat, _) => command = views::threat(ui, &snap, self.threat_icon.as_ref()),
+            (Pane::Ram, Tab::Overview) => views::overview(ui, &snap),
+            (Pane::Ram, Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
+            (Pane::Ram, Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
+            (Pane::Ram, Tab::Gpu) => command = views::gpu(ui, &snap),
         });
 
         if let Some((pending, question)) = self.view.confirm.clone() {
@@ -106,8 +139,8 @@ impl eframe::App for WindowApp {
     }
 }
 
-/// Run the window until it is closed.
-pub fn run_window(client: Client) -> Result<(), String> {
+/// Run the window until it is closed, starting on `pane`.
+pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
@@ -128,8 +161,10 @@ pub fn run_window(client: Client) -> Result<(), String> {
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
                 poller: Poller::start(client, true, move || ctx.request_repaint()),
+                pane,
                 tab: Tab::Overview,
                 view: UiState::default(),
+                threat_icon: None,
             }))
         }),
     )
@@ -146,6 +181,7 @@ fn gauge_icon(fraction: f32) -> Option<Icon> {
 struct Tray {
     icon: TrayIcon,
     open: MenuId,
+    threat: MenuId,
     quit: MenuId,
     shown_fraction: f32,
 }
@@ -153,9 +189,11 @@ struct Tray {
 impl Tray {
     fn new() -> Result<Self, String> {
         let open = MenuItem::new("Open RamWarden", true, None);
+        let threat = MenuItem::new("ThreatWarden", true, None);
         let quit = MenuItem::new("Quit", true, None);
         let menu = Menu::new();
         menu.append(&open).map_err(|e| e.to_string())?;
+        menu.append(&threat).map_err(|e| e.to_string())?;
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
@@ -166,6 +204,7 @@ impl Tray {
         Ok(Tray {
             icon,
             open: open.id().clone(),
+            threat: threat.id().clone(),
             quit: quit.id().clone(),
             shown_fraction: -1.0,
         })
@@ -192,14 +231,19 @@ impl Tray {
     }
 }
 
-/// Launch the window process, or leave it alone if it is already open.
-fn open_window(child: &mut Option<Child>) {
+/// Launch the window process on `pane`, or leave it alone if it is already
+/// open.
+fn open_window(child: &mut Option<Child>, pane: Pane) {
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").spawn()) {
+    let mut args = vec!["--window"];
+    if pane == Pane::Threat {
+        args.push("--threat");
+    }
+    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args).spawn()) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
@@ -221,14 +265,14 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         if start_hidden {
             return Ok(()); // a second logon start: the tray is already there
         }
-        return run_window(client);
+        return run_window(client, Pane::Ram);
     }
 
     let poller = Poller::start(client, false, || {});
     let mut tray = Tray::new()?;
     let mut window: Option<Child> = None;
     if !start_hidden {
-        open_window(&mut window);
+        open_window(&mut window, Pane::Ram);
     }
 
     let mut last = Instant::now() - Duration::from_secs(10);
@@ -250,12 +294,15 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
                 return Ok(());
             }
             if e.id == tray.open {
-                open_window(&mut window);
+                open_window(&mut window, Pane::Ram);
+            }
+            if e.id == tray.threat {
+                open_window(&mut window, Pane::Threat);
             }
         }
         while let Ok(e) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = e {
-                open_window(&mut window);
+                open_window(&mut window, Pane::Ram);
             }
         }
         if last.elapsed() >= Duration::from_secs(2) {
