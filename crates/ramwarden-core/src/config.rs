@@ -138,6 +138,14 @@ impl Ladder {
     }
 }
 
+/// Conversational cloud use is separate from automated cloud analysis.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Assistant {
+    pub cloud_enabled: bool,
+    pub cloud_model: Option<String>,
+}
+
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -476,6 +484,7 @@ pub struct Config {
     pub ladder: Ladder,
     pub ollama: Ollama,
     pub nvidia: Nvidia,
+    pub assistant: Assistant,
     pub jev: Jev,
     pub quit: Quit,
     pub logging: Logging,
@@ -501,6 +510,7 @@ struct Raw {
     ladder: Ladder,
     ollama: Ollama,
     nvidia: Nvidia,
+    assistant: Assistant,
     jev: Jev,
     quit: Quit,
     logging: Logging,
@@ -567,6 +577,7 @@ impl Default for Config {
             ladder: Ladder::default(),
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
+            assistant: Assistant::default(),
             jev: Jev::default(),
             quit: Quit::default(),
             logging: Logging::default(),
@@ -657,6 +668,8 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if !secrets.nvidia.api_key.is_empty() {
             cfg.nvidia.api_key = secrets.nvidia.api_key;
         }
+        if secrets.assistant.cloud_enabled { cfg.assistant.cloud_enabled = true; }
+        if secrets.assistant.cloud_model.is_some() { cfg.assistant.cloud_model = secrets.assistant.cloud_model; }
         if secrets.nvidia.enabled {
             cfg.nvidia.enabled = true;
         }
@@ -738,6 +751,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ladder: raw.ladder,
         ollama: raw.ollama,
         nvidia: raw.nvidia,
+        assistant: raw.assistant,
         jev: raw.jev,
         quit: raw.quit,
         logging: raw.logging,
