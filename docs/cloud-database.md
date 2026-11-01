@@ -1,8 +1,10 @@
 # RamWarden Cloud database (MongoDB Atlas)
 
-The hosted tier keeps its accounts, passes and usage in MongoDB Atlas. The
-Rust layer is `crates/ramwarden-cloud`; the HTTP API and payment watchers call
-its `Db` type and never touch MongoDB directly. The daemon, the GTK app and the
+The hosted tier keeps its accounts, subscriptions, devices and usage in
+MongoDB Atlas. The Rust layer is `crates/ramwarden-cloud`: the `Store` trait,
+with `MongoStore` (Atlas) and `MemoryStore` (tests and local development)
+behind it. The HTTP API and payment watchers call the trait and never touch
+MongoDB directly. The daemon, the GTK app and the
 browser extension never talk to the database at all.
 
 ## Setting up Atlas
@@ -51,52 +53,48 @@ RAMWARDEN_TEST_MONGODB_URI='mongodb+srv://…' cargo test -p ramwarden-cloud --t
 
 ## Schema
 
-An account is not a wallet: one account links any number of wallets, and later
-an email or a Stripe customer. Payments only ever move `entitlement_until`, and
-the API checks that one field on each request.
+An account is one identity, a wallet or a verified email (product spec 3.1),
+that never changes. Billing fields are written only by the Base watcher and
+the Stripe webhook, and the API derives `status` and what each warden unlocks
+from them on every request.
 
 | Collection | One document per | Key fields | Indexes |
 |---|---|---|---|
-| `accounts` | person | `wallets[] {chain, address, linked_at}`, `email?`, `stripe_customer_id?`, `entitlement_until?` | unique `(wallets.chain, wallets.address)`; unique `email`, `stripe_customer_id` (partial) |
-| `devices` | daemon install | `account_id`, `name`, `platform` (linux, windows, macos), `last_seen_at`, `revoked_at?` | `(account_id, revoked_at)` |
-| `device_codes` | sign-in attempt (RFC 8628) | `device_code_hash`, `user_code` (`XXXX-XXXX`), `nonce` for SIWE/SIWS, `status` (pending, approved, claimed), `account_id?` | unique hash, unique user code, TTL on `expires_at` |
-| `refresh_tokens` | refresh token | `token_hash`, `account_id`, `device_id`, `rotated_at?`, `revoked_at?` | unique hash, `device_id`, TTL on `expires_at` |
-| `payments` | confirmed payment | `method` (base_usdc, solana_pay, stripe), `external_id`, `plan` (pro_30d, pro_365d), `amount_minor`, `currency`, `payer?` | unique `(method, external_id)`, `(account_id, created_at)` |
-| `usage_daily` | account per UTC day | `day` (`YYYY-MM-DD`), `cloud_analyses`, `input_tokens` | unique `(account_id, day)`, TTL on `expire_at` (400 days) |
+| `accounts` | person | `identity {kind: wallet, chain, address} \| {kind: email, email}`, `chain_key` (hex keccak-256 of the id, the contract's account key), `tier` (ram, pro, null), `interval`, `trial_ends_at`, `paid_until`, `cancelled`, `trial_used`, `billing {method: base \| card, reference}`, `device_limit` (5), `prefs` | unique `identity`, unique `chain_key`, `tier` |
+| `devices` | daemon install | `account_id`, `name`, `platform` (linux, windows, macos), `token_hash`, `created_at`, `last_seen_at` | unique `token_hash`, `(account_id, created_at)` |
+| `device_codes` | sign-in attempt (RFC 8628) | `_id` = user code `XXXX-XXXX`, `device_code_hash`, `status {state: pending \| approved, account_id?}` | unique hash, TTL on `expire_at` |
+| `sessions` | web session | `token_hash`, `account_id`, `kind` (web) | unique hash, `account_id`, TTL on `expire_at` |
+| `challenges` | wallet sign-in message | `_id` = nonce, `chain`, `address`, `message`, `user_code?` | TTL on `expire_at` |
+| `email_codes` | email sign-in | `_id` = email, `code_hash`, `user_code?`, `attempts`, `created_at` | TTL on `expire_at` |
+| `payments` | checkout started | `account_id`, `plan` (1 to 4), `method` (base, card), `status` (pending, confirmed, failed), `payer?`, `external_id?` (Base `<tx>:<log>`, Stripe subscription id) | `(account_id, created_at)` |
+| `usage_daily` | account per UTC day | `day`, `count` | TTL on `expire_at` |
 
 EVM addresses are stored lowercased (EIP-55 capitals are only a checksum), so
 the same MetaMask wallet cannot become two accounts. Solana addresses keep their
-case.
+case. Emails are lowercased.
 
 ## Rules the database enforces
 
 These hold with several API instances running, because each is an index or a
 single atomic update rather than a read followed by a write.
 
-- **A wallet belongs to one account.** First sign-in is an upsert; two racing
-  sign-ins collide on the unique wallet index and the loser reads the winner's
-  account.
-- **A payment extends a pass once.** The payment insert and the extension run
-  in one transaction, and `(method, external_id)` is unique, so a webhook
-  delivered twice or a replayed block returns `AlreadyRecorded` and changes
-  nothing. External ids: Base `<tx hash>:<log index>`, Solana Pay the reference
-  key, Stripe the invoice id.
-- **Renewing early never loses days.** A pass extends from its end if it is
-  still running, from now if it lapsed. `set_entitlement_until` (for
-  `paidUntil` read back from the contract) only ever lengthens.
-- **Quotas cannot be overrun.** Free is 5 cloud analyses a day, Pro 200. The
-  increment is conditional on being under the limit; at the limit the upsert
-  collides with the unique `(account_id, day)` index and the API answers
-  "out of cloud analyses, using local".
-- **Device limits.** Free 1, Pro 3. Revoking a device revokes all its refresh
-  tokens.
-- **Tokens are spent once.** Device codes and refresh tokens are stored as
-  SHA-256 hashes. A refresh token is rotated on every use; presenting a spent
-  one revokes the whole device.
+- **An identity belongs to one account.** First sign-in is an upsert on
+  `identity`; two racing sign-ins collide on the unique index and the loser
+  reads the winner's account.
+- **Paid time only moves forward.** `paid_until` is written with `$max`, so a
+  replayed log, a rescan from an old block or a retried webhook can't shorten
+  or double it. `trial_used` only ever becomes true.
+- **Secrets are spent once.** Device codes, challenges and email codes are
+  taken with `find_one_and_delete` (or a guarded update), so two racing claims
+  can't both win. Device codes, device tokens, sessions and email codes are
+  stored as SHA-256; the raw value is returned once, to its owner.
+- **5 devices per account.** `register_device` refuses past `device_limit`.
+  Revoking a device deletes it and so its token.
+- **Expired sign-in material disappears on its own** through TTL indexes on
+  `expire_at`.
 - **No browsing data is stored.** Usage rows hold counts only. Request bodies
   (tab titles, hostnames) never reach the database.
 
-## Not here yet
-
-The HTTP routes, JWT access tokens, SIWE/SIWS signature checks, the chain
-watchers and Stripe webhooks belong to the API crate and call into this one.
+The shared behaviour tests in `ramwarden_cloud::store::contract` run against
+`MemoryStore` in every build and against Atlas with
+`RAMWARDEN_TEST_MONGODB_URI`.

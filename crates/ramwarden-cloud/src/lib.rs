@@ -1,16 +1,19 @@
-//! RamWarden Cloud's storage: accounts, wallets, devices, passes, payments and
-//! usage, on MongoDB Atlas.
+//! RamWarden's hosted service storage: accounts, sign-ins, devices,
+//! subscriptions and payments.
 //!
-//! This crate is the database layer only. The HTTP API, sign-in pages and
-//! payment watchers sit on top of [`db::Db`]; none of them touch MongoDB
-//! directly, so every rule money depends on lives here, enforced by an index
-//! or an atomic update. See `docs/cloud-database.md` for the schema and the
-//! Atlas setup.
+//! The HTTP API (`ramwarden-api`) sees only the [`store::Store`] trait.
+//! [`mongo::MongoStore`] implements it on MongoDB Atlas, enforcing each money
+//! or abuse rule with an index or one atomic update; [`store::MemoryStore`]
+//! implements it in memory for tests and development. The schema and the
+//! Atlas setup are in `docs/cloud-database.md`; the product rules behind it in
+//! `docs/product-spec.md` 4.
 
 pub mod config;
-pub mod db;
 pub mod model;
+pub mod mongo;
 pub mod secret;
+pub mod store;
 
 pub use config::CloudConfig;
-pub use db::{Db, DbError};
+pub use mongo::MongoStore;
+pub use store::{MemoryStore, Store, StoreError};

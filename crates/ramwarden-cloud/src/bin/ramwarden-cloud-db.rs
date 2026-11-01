@@ -8,7 +8,7 @@
 //! `ramwarden_cloud::config`), so a passing `ping` here means the server will
 //! connect too.
 
-use ramwarden_cloud::{CloudConfig, Db, model};
+use ramwarden_cloud::{CloudConfig, MongoStore, model};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -26,7 +26,7 @@ async fn main() {
 
 async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = CloudConfig::load()?;
-    let db = match Db::connect(&cfg).await {
+    let db = match MongoStore::connect(&cfg).await {
         Ok(db) => db,
         Err(e) => {
             eprintln!(
@@ -47,7 +47,9 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
                 model::ACCOUNTS,
                 model::DEVICES,
                 model::DEVICE_CODES,
-                model::REFRESH_TOKENS,
+                model::SESSIONS,
+                model::CHALLENGES,
+                model::EMAIL_CODES,
                 model::PAYMENTS,
                 model::USAGE_DAILY,
             ] {
