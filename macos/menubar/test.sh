@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-swiftc -O -o "$TMP/RamWarden" main.swift Wardens.swift
-sed '/^let app = NSApplication.shared/,$d' main.swift > "$TMP/App.swift"
+swiftc -O -o "$TMP/RamWarden" main.swift Companion.swift Wardens.swift
+sed '/^let lockPath = /,$d' main.swift > "$TMP/App.swift"
 cp tests.swift "$TMP/main.swift"
-swiftc -o "$TMP/tests" "$TMP/App.swift" Wardens.swift "$TMP/main.swift"
+swiftc -o "$TMP/tests" "$TMP/App.swift" Companion.swift Wardens.swift "$TMP/main.swift"
 "$TMP/tests"

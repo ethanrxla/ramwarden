@@ -4,6 +4,7 @@
 // "Turn on". The menu has a RAM pane (below) and a ThreatWarden pane
 // (Wardens.swift).
 import AppKit
+import Darwin
 
 let base = URL(string: "http://127.0.0.1:7823")!
 
@@ -21,36 +22,26 @@ struct Snapshot {
 
 func fetchJSON(_ path: String) async -> Any? {
     var req = URLRequest(url: base.appendingPathComponent(path))
-    req.timeoutInterval = 2
-    guard let (data, _) = try? await URLSession.shared.data(for: req) else { return nil }
+    req.timeoutInterval = 5
+    guard let (data, response) = try? await URLSession.shared.data(for: req),
+          (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
     return try? JSONSerialization.jsonObject(with: data)
 }
 
-func loadSnapshot() async -> Snapshot? {
-    guard let psi = await fetchJSON("psi") as? [String: Any] else { return nil }
-    var s = Snapshot()
-    s.rung = psi["rung"] as? String ?? "unknown"
-    s.availableMB = psi["available_mb"] as? Double ?? 0
-    s.someAvg10 = (psi["some"] as? [String: Any])?["avg10"] as? Double ?? 0
-
-    if let st = await fetchJSON("stats") as? [String: Any] {
-        s.usedMB = st["used_mb"] as? Double ?? 0
-        s.totalMB = st["total_mb"] as? Double ?? 0
-        s.percent = st["percent"] as? Double ?? 0
-        let procs = st["processes"] as? [[String: Any]] ?? []
-        s.top = procs.prefix(6).map { ($0["name"] as? String ?? "?", $0["rss_mb"] as? Double ?? 0) }
+func loadSnapshot(previous: Snapshot?) async -> Snapshot? {
+    guard let st = await fetchJSON("companion/state") as? [String:Any],
+          st["ok"] as? Bool == true, let total = st["total_mb"] as? Double, total > 0 else { return nil }
+    var s = previous ?? Snapshot()
+    s.rung = st["rung"] as? String ?? "unknown"
+    s.someAvg10 = st["psi_some"] as? Double ?? 0
+    s.availableMB = st["available_mb"] as? Double ?? 0
+    s.usedMB = st["used_mb"] as? Double ?? 0
+    s.totalMB = total
+    s.percent = st["percent"] as? Double ?? 0
+    if let rows = st["processes"] as? [[String:Any]] {
+        s.top = rows.map { ($0["name"] as? String ?? "?",$0["rss_mb"] as? Double ?? 0) }
     }
-    if let a = await fetchJSON("actions") as? [String: Any],
-       let list = a["actions"] as? [[String: Any]] {
-        s.actions = list.prefix(5).map {
-            let at = String(($0["at"] as? String ?? "").suffix(8).prefix(5))
-            let ok = ($0["succeeded"] as? Bool ?? false) ? "✓" : "✗"
-            return "\(at)  \($0["action"] as? String ?? "?")  \($0["target"] as? String ?? "")  \(ok)"
-        }
-    }
-    if let sus = await fetchJSON("suspended") as? [[String: Any]] {
-        s.suspended = sus.compactMap { $0["name"] as? String }
-    }
+    if let names = st["suspended"] as? [String] { s.suspended = names }
     return s
 }
 
@@ -66,22 +57,39 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var threatIcon32: NSImage?
     var threatSetupPending = false
     var threatSetupNote: String?
+    let companion = Companion()
+    var refreshing = false
+    var failedRefreshes = 0
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        item.autosaveName = "RamWarden"
         menu.delegate = self
         item.menu = menu
         item.button?.title = "RW …"
         rebuild()
+        companion.restore()
         Task { await refresh() }
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             Task { await self.refresh() }
         }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        companion.openChat()
+        return true
+    }
+
     func refresh() async {
-        let s = await loadSnapshot()
+        guard !refreshing else { return }; refreshing = true
+        let s = await loadSnapshot(previous:snap)
         if s != nil { await refreshThreat() }
-        await MainActor.run { self.snap = s; self.updateTitle() }
+        await MainActor.run {
+            if let s = s { self.snap = s; self.failedRefreshes = 0 }
+            else { self.failedRefreshes += 1 }
+            if self.failedRefreshes >= 3 { self.snap = nil }
+            self.updateTitle(); self.companion.model.connected = self.snap != nil
+            self.refreshing = false
+        }
     }
 
     func updateTitle() {
@@ -120,6 +128,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func rebuild() {
         menu.removeAllItems()
+        add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
+        add("Open assistant", #selector(openAssistant))
+        add("Customize ram colors…", #selector(customizeRam))
+        menu.addItem(.separator())
         guard let s = snap else {
             add("RamWarden daemon not reachable", nil)
             menu.addItem(.separator())
@@ -189,7 +201,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .appendingPathComponent("Library/Logs/ramwarden.log"))
     }
 
+    @objc func toggleCompanion() { companion.toggle(); rebuild() }
+    @objc func openAssistant() { companion.openChat() }
+    @objc func customizeRam() { companion.openColors() }
+
     @objc func quit() { NSApp.terminate(nil) }
+}
+
+// A per-user lock also covers login launch plus a manual reopen.
+let lockPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/com.ramwarden.menubar.lock").path
+let instanceLock = open(lockPath, O_CREAT | O_RDWR, 0o600)
+if instanceLock < 0 || flock(instanceLock, LOCK_EX | LOCK_NB) != 0 { exit(0) }
+// macOS puts a new status item at the far left of the extras, which on a notched
+// MacBook with a busy menu bar is behind the notch, where it is never drawn. Start
+// it near the clock instead (points from the right edge); a ⌘-drag still moves it
+// and AppKit saves that over this.
+let positionKey = "NSStatusItem Preferred Position RamWarden"
+if UserDefaults.standard.object(forKey: positionKey) == nil {
+    UserDefaults.standard.set(300.0, forKey: positionKey)
 }
 
 let app = NSApplication.shared

@@ -9,14 +9,15 @@
   <meta name="description" content="RamWarden is a memory manager for Windows, macOS and Linux. It reclaims memory the cheap way first, and uses Jev to decide which apps and browser tabs you won't come back to.">
   <meta property="og:title" content="RamWarden">
   <meta property="og:description" content="Free your RAM without losing your place. Reversible reclaim first; Jev decides what you won't miss.">
-  <link rel="icon" href="assets/icon.png">
+  <link rel="icon" href="assets/ramwarden-mark.png">
   <link rel="stylesheet" href="assets/style.css">
   <script type="module" src="assets/home.js"></script>
+  <script type="module" src="assets/lab.js"></script>
 </head>
-<body>
+<body class="landing">
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="./"><img src="assets/icon.png" alt="">RamWarden</a>
+      <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
       <nav>
         <a class="hide-sm" href="#how">How it works</a>
         <a class="hide-sm" href="#pricing">Pricing</a>
@@ -29,13 +30,14 @@
 
   <main>
     <section class="hero">
-      <div class="wrap">
-        <span class="eyebrow">Memory manager · Windows · macOS · Linux</span>
-        <h1>Free your RAM without losing your place.</h1>
+      <div class="wrap hero-layout">
+        <div class="hero-copy">
+        <img class="hero-emblem" src="assets/logo.png" alt="RamWarden red ram with white eyes and silver WARDEN lettering" width="136" height="136">
+        <span class="eyebrow">Your computer. Under a watchful eye.</span>
+        <span class="platform-note">Memory manager · Windows · macOS · Linux</span>
+        <h1>Free your RAM.<br><em>Keep your place.</em></h1>
         <p class="lede">
-          RamWarden reclaims memory the cheap way first, compressing what you haven't touched,
-          and only then closes things. When it does, Jev decides what you won't come back to:
-          the stale tab and the idle app go, your dev server and your half-written draft stay.
+          A small guardian for a crowded computer. It watches memory pressure, tries reversible fixes first, and protects what you’re using. Your ram explains the decisions—and asks before applying a fix from chat.
         </p>
         <div class="actions">
           <a class="button" id="hero-download" href="#download">Download for your computer</a>
@@ -43,14 +45,19 @@
           <small>Free and local by default. No account needed to use it.</small>
         </div>
 
-        <div class="readout" aria-label="Example of one RamWarden decision">
-          <div class="row head"><span>item</span><span>memory</span><span>decision</span><span>why</span></div>
-          <div class="row"><span>Tab · flight search (3 days old)</span><span>612 MB</span><span class="close">unload</span><span>won't return within 24 h</span></div>
-          <div class="row"><span>Spotify (paused since lunch)</span><span>480 MB</span><span class="close">trim</span><span>idle, reversible</span></div>
-          <div class="row"><span>node · localhost:3000</span><span>1.1 GB</span><span class="spare">keep</span><span>dev server you need running</span></div>
-          <div class="row"><span>Tab · Google Docs draft</span><span>390 MB</span><span class="spare">keep</span><span>may hold unsaved work</span></div>
-          <div class="row"><span>Windows Terminal</span><span>210 MB</span><span class="keep">protected</span><span>terminals are never touched</span></div>
-          <div class="row total"><span>freed</span><span>1.09 GB</span><span></span><span>nothing you were using</span></div>
+        </div>
+        <div class="memory-lab" data-memory-lab data-optimized="false">
+          <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
+          <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
+          <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
+          <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
+          <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
+            <svg viewBox="0 0 348 164" role="img" aria-labelledby="pressure-title pressure-desc"><title id="pressure-title">Memory pressure over time</title><desc id="pressure-desc" data-chart-summary></desc><defs><linearGradient id="pressure-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff697c" stop-opacity=".35"/><stop offset="100%" stop-color="#ff697c" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M20 24H328 M20 82H328 M20 140H328"/><path data-chart-area fill="url(#pressure-fill)"/><path data-chart-line fill="none" stroke="#ff697c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="160">Earlier</text><text x="300" y="160">Now</text></svg>
+          </div>
+          <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
+          <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
+          <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
+          <p class="lab-footnote">Drag the slider. A full computer isn’t always a struggling computer. This demo uses no live device data.</p>
         </div>
       </div>
     </section>
@@ -62,6 +69,13 @@
           Most memory pressure never needs anything closed. RamWarden climbs a ladder ordered by what a wrong
           call would cost you, and steps back down, undoing what it can, as soon as pressure passes.
         </p>
+        <div class="decision-flow" aria-label="Decision flow: observe, reclaim, page out, unload idle tabs, pause eligible apps">
+          <div data-step><span>01</span><strong>Observe</strong><small>Measure real pressure</small></div><b>→</b>
+          <div data-step><span>02</span><strong>Reclaim</strong><small>Ask for cold memory</small></div><b>→</b>
+          <div data-step><span>03</span><strong>Page out</strong><small>Reduce the active load</small></div><b>→</b>
+          <div data-step><span>04</span><strong>Unload</strong><small>Keep idle tabs open</small></div><b>→</b>
+          <div data-step><span>05</span><strong>Pause</strong><small>Eligible, allowed apps</small></div>
+        </div>
         <ol class="ladder">
           <li><span>1 · reclaim</span><strong>The OS compresses cold memory</strong><span>Costs you a few page faults</span></li>
           <li><span>2 · page-out</span><strong>Idle apps' unused pages move out</strong><span>Costs you a few page faults</span></li>
