@@ -81,13 +81,7 @@ impl Ipc3 {
             if output["type"] == "output" && !name.starts_with("__") {
                 state.monitors.push(name.to_string());
             }
-            for ws in children(output).filter(|n| n["type"] == "workspace") {
-                let ws_name = ws["name"].as_str().unwrap_or_default();
-                if ws_name.starts_with("__") {
-                    continue;
-                }
-                collect_windows(ws, ws_name, &mut state.windows);
-            }
+            collect_workspaces(output, &mut state.windows);
         }
         state.workspaces = spaces
             .into_iter()
@@ -166,6 +160,16 @@ fn collect_windows(node: &Value, workspace: &str, out: &mut Vec<WmWindow>) {
     for c in children(node) {
         collect_windows(c, workspace, out);
     }
+}
+
+fn collect_workspaces(node: &Value, out: &mut Vec<WmWindow>) {
+    if node["type"] == "workspace" {
+        let name = node["name"].as_str().unwrap_or_default();
+        if !name.starts_with("__") { collect_windows(node, name, out); }
+        return;
+    }
+    // i3 wraps workspaces in an output's `content` container; sway does not.
+    for child in children(node) { collect_workspaces(child, out); }
 }
 
 impl WindowManager for Ipc3 {
@@ -260,6 +264,18 @@ mod tests {
         assert_eq!(s.window(15).unwrap().workspace, "1");
         assert_eq!(s.monitors, vec!["DP-1"]);
         assert_eq!(s.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn i3_content_containers_do_not_hide_workspaces() {
+        let mut tree: Value = serde_json::from_str(TREE).unwrap();
+        let workspaces = tree["nodes"][1]["nodes"].take();
+        tree["nodes"][1]["nodes"] = serde_json::json!([{
+            "type": "con", "name": "content", "nodes": workspaces
+        }]);
+        let s = Ipc3::parse(WmKind::I3, &tree.to_string(), SPACES).unwrap();
+        assert_eq!(s.windows.len(), 3);
+        assert_eq!(s.window(14).unwrap().workspace, "1");
     }
 
     #[test]

@@ -175,10 +175,16 @@ async fn ask(State(st): State<AppState>, Json(body): Json<AskBody>) -> Response 
 async fn apply(State(st): State<AppState>, Path(id): Path<String>) -> Response {
     // Thaw first, so frozen apps can be moved; the hold keeps the ladder from
     // freezing them again mid-arrangement.
-    st.set_hold(APPLY_HOLD_SECS);
-    let thawed: Vec<String> = st.ladder.lock().unwrap().thaw_all().into_iter().map(|(n, _)| n).collect();
-    match with_arranger(&st, move |a| a.apply(&id)).await {
-        Ok(applied) => Json(json!({"applied": applied, "thawed": thawed})).into_response(),
+    let action_state = st.clone();
+    match with_arranger(&st, move |a| {
+        let mut thawed = Vec::new();
+        let applied = a.apply_with(&id, || {
+            action_state.set_hold(APPLY_HOLD_SECS);
+            thawed = action_state.ladder.lock().unwrap().thaw_all().into_iter().map(|(n, _)| n).collect();
+        })?;
+        Ok((applied, thawed))
+    }).await {
+        Ok((applied, thawed)) => Json(json!({"applied": applied, "thawed": thawed})).into_response(),
         Err(e) => refusal(e),
     }
 }

@@ -28,6 +28,8 @@ anyone who does not run one.
 - **Plans are short-lived and single-use.** A plan expires after 10 minutes,
   and applying consumes it. A window named in a plan that has since closed is
   reported as not found; nothing else is substituted for it.
+  A changed config or window-manager kind makes the plan stale. Invalid,
+  expired and stale plans do not thaw apps or change the memory hold timer.
 - **What happened, not what was attempted.** After applying, RamWarden reads
   the window manager's state again. A move is `done` only when the window is
   now on the target workspace; a command that the CLI accepted but that changed
@@ -47,12 +49,14 @@ anyone who does not run one.
   floating, tiling), and balance a workspace. There is no close, quit or kill:
   freeing memory by ending things stays with the ladder and its watchlist,
   whatever a model suggests.
-- **No new programs from a config edit.** AeroSpace (`exec-and-forget`,
-  `after-startup-command`, `exec-on-workspace-change`), sway/i3 (`exec`,
-  `exec_always`) and komorebi configs can launch programs. An edit that *adds*
-  a line containing one of those markers is refused, so a model (or a forged
-  request) cannot turn a layout change into code execution. Lines that were
-  already there are left alone. The user adds such lines by hand.
+- **Only known layout settings can be edited.** AeroSpace allows gaps,
+  accordion padding, default root layout/orientation and normalization flags;
+  komorebi allows default workspace/container padding and border width/offset;
+  sway/i3 allow simple numeric `gaps` directives. Everything else must remain
+  unchanged (parsed TOML/JSON values, or ordered lines for sway/i3). Configs
+  with sway/i3 line continuations are refused. This preserves launch hooks,
+  includes and variables, including multiline or escaped forms. Other edits
+  must be made by hand until a backend has a safe structured editor for them.
 - **Names are validated before they reach a CLI.** Workspace and monitor names
   are at most 64 characters with no control characters, no leading `-`, and
   none of `; , " [ ]`. sway and i3 take one command *string*, so this is what
@@ -87,7 +91,8 @@ anyone who does not run one.
   alongside; the two do not conflict.
 - komorebi's CLI moves only the *focused* window. A komorebi move therefore
   focuses the window first and then moves it, and a window komorebi cannot
-  focus is reported as failed.
+  focus is reported as failed. State is refreshed before every step so focus
+  and floating state from planning cannot be reused after the desktop changes.
 - GlazeWM (Windows) and Hyprland (Linux) are not implemented yet. Each is one
   more `WindowManager` backend.
 - AeroSpace's `reload-config` validates only the file on disk, so a new config

@@ -154,6 +154,19 @@ async fn turned_off_or_absent_is_a_normal_answer_not_an_error() {
 }
 
 #[tokio::test]
+async fn invalid_or_disabled_apply_does_not_hold_memory_management() {
+    let (_wm, ctl, _tmp) = desktop();
+    let st = state(ctl);
+    let (code, _) = call(st.clone(), "POST", "/desktop/apply/missing", json!(null)).await;
+    assert_eq!(code, 404);
+    assert!(!st.on_hold());
+    let st = state(DesktopCtl::disabled());
+    let (_, body) = call(st.clone(), "POST", "/desktop/apply/missing", json!(null)).await;
+    assert_eq!(body["available"], false);
+    assert!(!st.on_hold());
+}
+
+#[tokio::test]
 async fn asking_without_any_model_returns_notes_and_no_plan() {
     let (_wm, ctl, _tmp) = desktop();
     let mut st = state(ctl);

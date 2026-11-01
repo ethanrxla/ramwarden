@@ -160,9 +160,9 @@ impl WindowManager for Komorebi {
     }
 
     fn run(&mut self, cmd: &WmCommand) -> Result<()> {
-        if self.last.is_none() {
-            self.state()?;
-        }
+        // Focus and floating state may change between approval and execution,
+        // or during a previous step. Never act using the planning snapshot.
+        self.state()?;
         match cmd {
             WmCommand::Focus { window } => self.focus_window(*window),
             WmCommand::MoveToWorkspace { window, workspace } => {
@@ -257,16 +257,17 @@ mod tests {
         let (r, mut k) = with_state(
             Scripted::default()
                 .reply("komorebic state", STATE)
+                .reply("komorebic state", STATE)
                 .reply("komorebic eager-focus Slack.exe", "")
                 .reply("komorebic move-to-named-workspace code", ""),
         );
         k.run(&WmCommand::MoveToWorkspace { window: 200, workspace: "code".into() }).unwrap();
-        assert_eq!(r.calls().len(), 3);
+        assert_eq!(r.calls().len(), 4);
     }
 
     #[test]
     fn an_exe_with_two_windows_is_refused_rather_than_guessed() {
-        let (_r, mut k) = with_state(Scripted::default().reply("komorebic state", STATE));
+        let (_r, mut k) = with_state(Scripted::default().reply("komorebic state", STATE).reply("komorebic state", STATE));
         // 301 is not focused and firefox.exe has two windows.
         let e = k.run(&WmCommand::Focus { window: 301 }).unwrap_err();
         assert!(e.to_string().contains("2 windows"));
@@ -277,11 +278,23 @@ mod tests {
         let (r, mut k) = with_state(
             Scripted::default()
                 .reply("komorebic state", STATE)
+                .reply("komorebic state", STATE)
                 .reply("komorebic eager-focus Code.exe", "")
                 .reply("komorebic move-to-monitor-workspace 0 1", ""),
         );
         k.run(&WmCommand::MoveToWorkspace { window: 100, workspace: "#1:2".into() }).unwrap();
-        assert_eq!(r.calls().len(), 3);
+        assert_eq!(r.calls().len(), 4);
+    }
+
+    #[test]
+    fn a_window_that_lost_focus_is_not_treated_as_still_focused() {
+        let mut changed: Value = serde_json::from_str(STATE).unwrap();
+        changed["monitors"]["elements"][0]["workspaces"]["elements"][1]["containers"]["focused"] = 0.into();
+        let (r, mut k) = with_state(Scripted::default()
+            .reply("komorebic state", STATE)
+            .reply("komorebic state", &changed.to_string()));
+        assert!(k.run(&WmCommand::MoveToWorkspace { window: 300, workspace: "code".into() }).is_err());
+        assert_eq!(r.calls(), vec!["komorebic state", "komorebic state"]);
     }
 
     #[test]
@@ -289,9 +302,10 @@ mod tests {
         let (r, mut k) = with_state(
             Scripted::default()
                 .reply("komorebic state", STATE)
+                .reply("komorebic state", STATE)
                 .reply("komorebic eager-focus Spotify.exe", ""),
         );
         k.run(&WmCommand::SetLayout { window: 400, layout: WmLayout::Floating }).unwrap();
-        assert_eq!(r.calls().len(), 2);
+        assert_eq!(r.calls().len(), 3);
     }
 }

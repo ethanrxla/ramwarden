@@ -32,6 +32,9 @@ use ramwarden_wm::ConfigBackups;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[path = "arrange_config.rs"]
+mod config_guard;
+
 /// How long an unapproved plan stays valid. Long enough to read and answer a
 /// chat message; short enough that the desktop it was planned against is
 /// still roughly the desktop it will run on.
@@ -75,6 +78,8 @@ pub struct ConfigChange {
     pub removed: Vec<String>,
     #[serde(skip)]
     text: String,
+    #[serde(skip)]
+    original: String,
 }
 
 /// A plan awaiting approval.
@@ -268,9 +273,14 @@ impl Arranger {
             .config_path()
             .or_else(|| default_config_path(kind))
             .ok_or("config change dropped: no config file was found")?;
+        let old = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("config change dropped: cannot read original: {e}")),
+        };
+        config_guard::check(kind, &old, &text)?;
         wm.check_config(&text)
             .map_err(|e| format!("config change dropped: {e}"))?;
-        let old = std::fs::read_to_string(&path).unwrap_or_default();
         let (added, removed) = line_diff(&old, &text);
         let markers = kind.exec_markers();
         if let Some(line) = added.iter().find(|l| starts_programs(l, markers)) {
@@ -281,11 +291,17 @@ impl Arranger {
         if added.is_empty() && removed.is_empty() {
             return Err("config change dropped: it is the same as the current config".into());
         }
-        Ok(ConfigChange { path, added, removed, text })
+        Ok(ConfigChange { path, added, removed, text, original: old })
     }
 
     /// Carry out an approved plan, once.
     pub fn apply(&mut self, id: &str) -> Result<Applied> {
+        self.apply_with(id, || {})
+    }
+
+    /// Run preparation only after consuming a valid plan. Invalid, expired or
+    /// stale plans must not thaw applications or change the hold timer.
+    pub fn apply_with(&mut self, id: &str, prepare: impl FnOnce()) -> Result<Applied> {
         let plan = self
             .plans
             .remove(id)
@@ -293,6 +309,21 @@ impl Arranger {
         if plan.created.is_none_or(|c| c.elapsed() >= PLAN_TTL) {
             return Err(Error::missing(format!("plan {id} (expired; ask again)")));
         }
+        let current = self.state()?;
+        if current.kind != plan.wm {
+            return Err(Error::missing("the planned window manager; ask again"));
+        }
+        if let Some(c) = &plan.config {
+            let now = match std::fs::read_to_string(&c.path) {
+                Ok(text) => text,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(Error::os(format!("reading config: {e}"))),
+            };
+            if now != c.original {
+                return Err(Error::missing("config changed since planning; ask again"));
+            }
+        }
+        prepare();
 
         let mut results = Vec::new();
         let wm = self.wm()?;
@@ -753,11 +784,23 @@ mod tests {
     }
 
     #[test]
+    fn stale_config_refuses_the_plan_before_preparation() {
+        let mut r = rig(true, false);
+        let plan = r.arranger.propose(Proposal {
+            config: Some("gaps.inner.horizontal = 8\n".into()), ..Default::default()
+        }).unwrap();
+        std::fs::write(&r.config, "gaps.inner.horizontal = 12\n").unwrap();
+        let result = r.arranger.apply_with(plan.id.as_deref().unwrap(), || panic!("must not prepare"));
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&r.config).unwrap(), "gaps.inner.horizontal = 12\n");
+    }
+
+    #[test]
     fn a_rejected_reload_puts_the_old_config_back() {
         let mut r = rig(false, false);
         let plan = r
             .arranger
-            .propose(Proposal { config: Some("gapz = 1\n".into()), ..Default::default() })
+            .propose(Proposal { config: Some("gaps.inner.horizontal = 8\n".into()), ..Default::default() })
             .unwrap();
         let applied = r.arranger.apply(plan.id.as_deref().unwrap()).unwrap();
         let c = applied.config.unwrap();

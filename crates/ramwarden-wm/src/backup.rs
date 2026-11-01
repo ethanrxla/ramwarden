@@ -31,7 +31,11 @@ impl ConfigBackups {
     /// restoring it means "back to no settings".
     pub fn write(&self, kind: WmKind, path: &Path, text: &str) -> Result<PathBuf> {
         fs::create_dir_all(&self.dir).map_err(|e| Error::os(format!("{}: {e}", self.dir.display())))?;
-        let old = fs::read_to_string(path).unwrap_or_default();
+        let old = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(Error::os(format!("cannot back up {}: {e}", path.display()))),
+        };
         let backup = self.next_name(kind);
         fs::write(&backup, old).map_err(|e| Error::os(format!("{}: {e}", backup.display())))?;
         if let Some(parent) = path.parent() {
@@ -98,6 +102,16 @@ mod tests {
 
         b.restore(&first, &cfg).unwrap();
         assert_eq!(fs::read_to_string(&cfg).unwrap(), "gaps.inner.horizontal = 4\n");
+    }
+
+    #[test]
+    fn an_unreadable_original_is_not_replaced_by_an_empty_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = tmp.path().join("config");
+        fs::create_dir(&cfg).unwrap();
+        let b = ConfigBackups::new(tmp.path().join("backups"));
+        assert!(b.write(WmKind::AeroSpace, &cfg, "new").is_err());
+        assert!(b.latest(WmKind::AeroSpace).is_none());
     }
 
     #[test]
