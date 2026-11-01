@@ -22,7 +22,7 @@
 //! is what resumes suspended applications and lifts soft caps.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Outcome;
@@ -68,9 +68,15 @@ fn next_interval(rung: Option<ladder::Rung>) -> Duration {
 /// on a worker thread wants one of them. That worker then cannot drive the timers
 /// the unload is waiting on, the unload never finishes, and the locks are never
 /// released — the daemon stays alive, keeps its port open, and answers nothing.
-struct Tabs {
+pub struct Tabs {
     state: AppState,
     handle: tokio::runtime::Handle,
+}
+
+impl Tabs {
+    pub fn new(state: AppState, handle: tokio::runtime::Handle) -> Self {
+        Tabs { state, handle }
+    }
 }
 
 /// One unload at a time: the ladder ticks every second while it sits on the tabs
@@ -182,8 +188,174 @@ fn jev_judge(cfg: &ramwarden_core::config::Config, handle: &tokio::runtime::Hand
     })
 }
 
-/// Start the monitor on its own thread.
+/// Seconds since the Unix epoch when the monitor last finished a tick.
+static LAST_TICK: AtomicU64 = AtomicU64::new(0);
+
+/// Where the monitor is in its tick, and since when, so a stall names its phase.
+/// Until 2026-10-20 the watchdog could only say how long the monitor had been
+/// stuck, and every stall left nothing to go on but the tick before it.
+static PHASE: AtomicU8 = AtomicU8::new(Phase::Waiting as u8);
+static PHASE_SINCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Phase {
+    Waiting,
+    Desktop,
+    Sample,
+    Pressure,
+    Ladder,
+    Gpu,
+    Behaviour,
+    Upkeep,
+}
+
+impl Phase {
+    const ALL: [Phase; 8] = [
+        Phase::Waiting,
+        Phase::Desktop,
+        Phase::Sample,
+        Phase::Pressure,
+        Phase::Ladder,
+        Phase::Gpu,
+        Phase::Behaviour,
+        Phase::Upkeep,
+    ];
+
+    fn enter(self) {
+        PHASE.store(self as u8, Ordering::Relaxed);
+        PHASE_SINCE.store(epoch_secs(), Ordering::Relaxed);
+    }
+
+    fn current() -> (Phase, u64) {
+        let phase = Self::ALL[PHASE.load(Ordering::Relaxed) as usize];
+        (phase, PHASE_SINCE.load(Ordering::Relaxed))
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Phase::Waiting => "waiting for the next tick",
+            Phase::Desktop => "desktop probe (windows, focus, audio)",
+            Phase::Sample => "process sample",
+            Phase::Pressure => "pressure read",
+            Phase::Ladder => "ladder step",
+            Phase::Gpu => "VRAM policy",
+            Phase::Behaviour => "behaviour log",
+            Phase::Upkeep => "training and pruning",
+        }
+    }
+}
+
+/// How long the monitor may go without finishing a tick before the daemon is
+/// restarted. A tick is bounded by its slowest step (tab reports and closes
+/// time out in seconds, the service pipe in five), and the idle interval is ten
+/// seconds, so three minutes only passes when something is stuck for good.
+const STALL_LIMIT: Duration = Duration::from_secs(180);
+
+/// Exit code for a stalled monitor.
+const STALL_EXIT: i32 = 70;
+
+/// How often the watchdog looks, and how much longer than that one look may take
+/// before the machine is taken to have been asleep.
+const WATCH_EVERY: Duration = Duration::from_secs(30);
+const SLEEP_GAP: Duration = Duration::from_secs(90);
+
+/// Start a fresh daemon through the same launcher, with the same arguments. It
+/// waits for this one to release the port (see `bind_when_free` in main).
+///
+/// The logon task's restart-on-failure never fired: the daemon runs under
+/// `conhost --headless`, which reports success whatever the daemon's exit code
+/// (2026-10-12: task result 0x0 after an exit 70, and no daemon for the night).
+///
+/// The launcher is spawned directly. The first version built a `cmd /c "timeout
+/// … & "launcher" args"` line and passed it through `Command::args`, which
+/// escapes inner quotes as `\"`. cmd.exe reads those literally, so it looked for
+/// a program named `\"C:\Program Files\…\ramwarden-daemon.cmd\"` and no
+/// replacement ever ran (2026-10-13, -19, -20). `timeout` also exits at once
+/// without a console, so its delay never happened either. Rust escapes a `.cmd`
+/// it spawns itself correctly, and a hidden console (not none) keeps the
+/// launcher's own commands working.
+#[cfg(windows)]
+fn relaunch() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let launcher = exe.with_file_name("ramwarden-daemon.cmd");
+    let target = if launcher.exists() { launcher } else { exe };
+    match replacement(&target, std::env::args_os().skip(1))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(child) => tracing::info!("replacement daemon started (pid {}) from {}", child.id(), target.display()),
+        Err(e) => tracing::error!("could not start a replacement daemon from {}: {e}", target.display()),
+    }
+}
+
+#[cfg(not(windows))]
+fn relaunch() {}
+
+/// The command that starts a replacement: `target` with `args`, and no stdio
+/// to inherit. The daemon writes to `--log-file`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn replacement(
+    target: &std::path::Path,
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(target);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd
+}
+
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Start the monitor on its own thread, and a watchdog that restarts the daemon
+/// if the monitor stops ticking.
+///
+/// A stuck monitor is worse than a dead one: it can hold the ladder lock or wait
+/// on the detector's write lock, and the HTTP handlers then queue behind it until
+/// every runtime worker is blocked, so the window shows "Waiting for the daemon"
+/// with no error anywhere (2026-10-11: hung for a day and a half after a pageout
+/// rung). The daemon then starts its own replacement and exits.
 pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::JoinHandle<()> {
+    LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
+    std::thread::Builder::new()
+        .name("ramwarden-watchdog".into())
+        .spawn(|| {
+            let mut looked = epoch_secs();
+            loop {
+                std::thread::sleep(WATCH_EVERY);
+                let now = epoch_secs();
+                // Sleep and hibernate stop every thread but not the wall clock: after
+                // a 9 minute sleep the monitor looked stalled and the daemon was shut
+                // down on wake (2026-10-12). A look that took far longer than asked
+                // means the machine was suspended, so the monitor gets a fresh start.
+                if now.saturating_sub(looked) > SLEEP_GAP.as_secs() {
+                    tracing::info!("machine was suspended for about {}s; watchdog reset", now - looked);
+                    LAST_TICK.store(now, Ordering::Relaxed);
+                }
+                looked = now;
+                let quiet = now.saturating_sub(LAST_TICK.load(Ordering::Relaxed));
+                if quiet > STALL_LIMIT.as_secs() {
+                    let (phase, since) = Phase::current();
+                    tracing::error!(
+                        "monitor has not finished a tick in {quiet}s (in {} for {}s); restarting the daemon",
+                        phase.as_str(),
+                        now.saturating_sub(since)
+                    );
+                    relaunch();
+                    std::process::exit(STALL_EXIT);
+                }
+            }
+        })
+        .expect("spawn watchdog thread");
     std::thread::Builder::new()
         .name("ramwarden-monitor".into())
         .spawn(move || run(state, handle))
@@ -281,6 +453,8 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut held = false;
 
     loop {
+        LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
+        Phase::Waiting.enter();
         let woken_by_pressure = match trigger.as_mut() {
             Some(t) => t.wait(interval).unwrap_or(false),
             None => {
@@ -307,7 +481,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         held = false;
 
         // 1. Sample. The desktop probe caches its subprocesses internally.
+        Phase::Desktop.enter();
         let desktop = probe.sample();
+        Phase::Sample.enter();
         if let Err(e) = state.det.write().unwrap().sample(&desktop) {
             tracing::warn!("sampling failed: {e}");
             continue;
@@ -320,6 +496,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         crate::appquit::consider(&state, &handle, &mut quitter);
 
         // 2. Look.
+        Phase::Pressure.enter();
         let pressure = match state.platform.pressure.read() {
             Ok(p) => p,
             Err(e) => {
@@ -330,10 +507,8 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         let available = ladder::available_bytes(state.platform.memory.as_ref());
 
         // 3. Act.
-        let mut closer = Tabs {
-            state: state.clone(),
-            handle: handle.clone(),
-        };
+        Phase::Ladder.enter();
+        let mut closer = Tabs::new(state.clone(), handle.clone());
         let det = state.det.read().unwrap();
         let mut world = World {
             det: &det,
@@ -395,6 +570,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
         // ── VRAM: unload idle local models when a game needs the card ──────
         if cfg.gpu.unload_models_for_games {
+            Phase::Gpu.enter();
             let game = crate::gpu::game_running(&state.det.read().unwrap());
             let notes = handle.block_on(gpu_policy.tick(game, cfg.gpu.vram_percent, &state.models));
             for n in notes {
@@ -420,6 +596,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         if cfg.logging.enabled
             && last_sample.elapsed() >= Duration::from_secs(cfg.logging.interval_seconds)
         {
+            Phase::Behaviour.enter();
             last_sample = Instant::now();
             let floor = cfg.logging.floor_mb * 1024 * 1024;
             let samples: Vec<SignalSample> = {
@@ -449,6 +626,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
         // Retrain the reuse predictor daily, off this thread: it reads the
         // whole behaviour log and takes seconds to minutes.
+        Phase::Upkeep.enter();
         if cfg.logging.enabled && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400)) {
             last_train = Some(Instant::now());
             crate::predict::train_in_background(&state);
@@ -513,6 +691,38 @@ fn to_sample(s: &Signals) -> SignalSample {
 mod tests {
     use super::*;
     use ramwarden_core::ladder::Rung;
+
+    /// The first relaunch never ran: its hand-built `cmd /c` line reached cmd.exe
+    /// with `\"`-escaped quotes. The launcher lives in a path with a space and is
+    /// passed a path with a space, as `--log-file` is.
+    #[cfg(windows)]
+    #[test]
+    fn a_replacement_launcher_runs_with_its_arguments_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("Program Files");
+        std::fs::create_dir(&bin).unwrap();
+        let out = dir.path().join("args.txt");
+        let launcher = bin.join("ramwarden-daemon.cmd");
+        std::fs::write(&launcher, format!("@echo %* > \"{}\"\r\n", out.display())).unwrap();
+
+        let log = dir.path().join("log dir").join("daemon.log");
+        let status = replacement(&launcher, ["--log-file".into(), log.clone().into_os_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let args = std::fs::read_to_string(&out).unwrap();
+        assert!(args.contains("--log-file"), "{args}");
+        assert!(args.contains(&log.display().to_string()), "{args}");
+    }
+
+    #[test]
+    fn every_phase_round_trips_through_the_breadcrumb() {
+        for p in Phase::ALL {
+            p.enter();
+            assert_eq!(Phase::current().0, p);
+        }
+        Phase::Waiting.enter();
+    }
 
     /// A quiet machine must not be sampled every second, and one under pressure
     /// must not be sampled every ten.

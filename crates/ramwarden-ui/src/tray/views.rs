@@ -27,11 +27,18 @@ fn mb(v: f64) -> String {
     model::fmt_mb(v)
 }
 
+/// No `/state` yet: say why, and what is being done about it, rather than
+/// an open-ended "waiting" that looks the same whether the daemon is starting,
+/// crashed, or was never installed. The raw error is in the status bar.
+fn waiting(ui: &mut egui::Ui, snap: &Snapshot) {
+    ui.label(snap.daemon.as_deref().unwrap_or("Waiting for the daemon…"));
+}
+
 // ── Overview ────────────────────────────────────────────────────────────────
 
 pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {
     let Some(st) = &snap.state else {
-        ui.label("Waiting for the daemon…");
+        waiting(ui, snap);
         return;
     };
     let fraction = (st.percent / 100.0) as f32;
@@ -111,7 +118,7 @@ pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {
 
 pub fn processes(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<Command> {
     let Some(st) = &snap.state else {
-        ui.label("Waiting for the daemon…");
+        waiting(ui, snap);
         return None;
     };
     ui.horizontal(|ui| {

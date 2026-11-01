@@ -222,8 +222,12 @@ pub struct Client {
 
 impl Client {
     pub fn new(host: &str, port: u16) -> Result<Self> {
+        // The daemon is always on loopback. Without `no_proxy`, a system or
+        // `HTTP_PROXY` proxy (VPNs and corporate setups set one) receives the
+        // request instead, and the window waits on a daemon it never reaches.
         let http = reqwest::Client::builder()
             .timeout(ANALYZE_TIMEOUT)
+            .no_proxy()
             .build()
             .map_err(|e| Error::Transport(e.to_string()))?;
         Ok(Client {

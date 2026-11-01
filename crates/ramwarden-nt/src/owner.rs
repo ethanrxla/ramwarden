@@ -90,6 +90,14 @@ impl Identities {
                 cmdline: String::new(),
             };
         }
+        // Games and their anti-cheat are never opened, not even to read an owner
+        // or a command line: anti-cheat watches for foreign handles to the game,
+        // and Fortnite's Easy Anti-Cheat showed "Game Security Violation Detected"
+        // 86 s after a fresh daemon started resolving every process (2026-10-12).
+        // Unknown is safe: a game is structurally untouchable in the ladder anyway.
+        if never_open(&p.name) {
+            return Identity::default();
+        }
         let Ok(h) = open(p.pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
             // In our session but unopenable: protected or elevated. Treat as
             // unknown — never as ours.
@@ -232,6 +240,26 @@ fn sid_string(sid: &[u8]) -> Option<String> {
     }
 }
 
+/// Image names RamWarden must never open a handle to: Unreal game builds (the
+/// `-Shipping` suffix, which covers Fortnite and its overlay) and the anti-cheat
+/// services. Keep in step with `ramwarden_core::roles::ANTI_CHEAT` and `GAMES`.
+pub fn never_open(name: &str) -> bool {
+    const ANTI_CHEAT: &[&str] = &[
+        "vgc", "vgtray", "easyanticheat", "easyanticheat_eos", "beservice",
+        "eaanticheat.gameservice", "faceit", "faceitservice", "gameguard",
+    ];
+    const GAMES: &[&str] = &[
+        "league of legends", "valorant", "cs2", "dota2", "rocketleague", "r5apex",
+        "overwatch", "eldenring", "gta5", "gtav",
+    ];
+    let lower = name.trim().to_lowercase();
+    let lower = lower.strip_suffix(".exe").unwrap_or(&lower);
+    lower.ends_with("-shipping")
+        || lower.starts_with("fortnite")
+        || ANTI_CHEAT.contains(&lower)
+        || GAMES.contains(&lower)
+}
+
 /// The user SID of the process `pid`, as a string. The service uses this to
 /// find the *connecting* user's registry hive under `HKEY_USERS`.
 pub fn process_user_sid(pid: u32) -> Option<String> {
@@ -252,5 +280,24 @@ mod sid_tests {
         let me = super::current_user_sid().unwrap();
         assert!(me.starts_with("S-1-5-"), "{me}");
         assert_eq!(super::process_user_sid(std::process::id()).as_deref(), Some(me.as_str()));
+    }
+
+    /// Measured on the target machine with Fortnite running.
+    #[test]
+    fn games_and_anti_cheat_are_never_opened() {
+        for name in [
+            "FortniteClient-Win64-Shipping",
+            "FortniteClient-Win64-Shipping_EAC_EOS",
+            "FortniteLauncher",
+            "EOSOverlayRenderer-Win64-Shipping",
+            "EasyAntiCheat_EOS",
+            "EasyAntiCheat_EOS.exe",
+            "VALORANT-Win64-Shipping",
+            "vgc",
+        ] {
+            assert!(super::never_open(name), "{name}");
+        }
+        assert!(!super::never_open("Discord"));
+        assert!(!super::never_open("Cursor"));
     }
 }
