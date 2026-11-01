@@ -205,9 +205,35 @@ mod tests {
             .is_some_and(|p| p.suspended)
     }
 
+    /// Wait until the child has finished starting: its thread count unchanged
+    /// across a few samples. A process still in loader start-up creates
+    /// threads (the loader's worker pool) while `NtSuspendProcess` walks them,
+    /// and one created mid-walk runs on, which failed this test now and then on
+    /// CI (2026-11-01). RamWarden only ever suspends long-running apps.
+    fn settle(pid: u32) {
+        let threads = || {
+            crate::snapshot::processes()
+                .unwrap()
+                .into_iter()
+                .find(|p| p.pid == pid)
+                .map(|p| p.threads)
+        };
+        let (mut last, mut steady) = (threads(), 0);
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(100));
+            let now = threads();
+            steady = if now == last { steady + 1 } else { 0 };
+            last = now;
+            if steady >= 3 {
+                return;
+            }
+        }
+    }
+
     #[test]
     fn suspends_and_resumes_a_real_process() {
         let mut child = spawn();
+        settle(child.id());
         let h = NtProcessHandle::open(child.id()).unwrap();
         h.suspend().unwrap();
         assert!(suspended(child.id()), "every thread should be suspended");
