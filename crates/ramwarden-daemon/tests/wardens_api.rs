@@ -1,0 +1,116 @@
+//! `/wardens`: the warden list, Pro gating, icons, and a locked warden doing
+//! no work. See docs/specs/wardens.md.
+
+use axum::{
+    body::{Body, to_bytes},
+    http::Request,
+};
+use ramwarden_core::{
+    actuator::Actuator, config::Config, detector::Detector, history::History, ladder::Ladder,
+};
+use ramwarden_daemon::hub::{AppState, Hub};
+use ramwarden_platform::fake;
+use serde_json::Value;
+use std::sync::{Arc, Mutex, RwLock};
+use tower::ServiceExt;
+
+fn state(dir: &std::path::Path) -> AppState {
+    let mut wardens = ramwarden_core::config::Wardens::default();
+    wardens.wazuh.enabled = true;
+    let cfg = Config { db_path: dir.join("history.db"), wardens, ..Config::default() };
+    let platform = Arc::new(fake::platform(Default::default()));
+    AppState {
+        cfg: Arc::new(cfg.clone()),
+        det: Arc::new(RwLock::new(Detector::new(platform.processes()))),
+        ladder: Arc::new(Mutex::new(Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform)))),
+        platform,
+        hub: Arc::new(Mutex::new(Hub::new())),
+        history: Arc::new(Mutex::new(History::open(std::path::Path::new(":memory:")).unwrap())),
+        ai: Arc::new(ramwarden_daemon::ai::provider(&cfg)),
+        models: Arc::new(Default::default()),
+        predictor: Arc::new(ramwarden_daemon::predict::LivePredictor::new(
+            std::env::temp_dir().join("ramwarden-test-no-predictor.safetensors"),
+        )),
+        started: std::time::Instant::now(),
+        hold_until: Default::default(),
+    }
+}
+
+async fn get(st: &AppState, path: &str) -> (u16, String, Vec<u8>) {
+    let r = ramwarden_daemon::routes::router(st.clone())
+        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = r.status().as_u16();
+    let ctype = r
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    (status, ctype, to_bytes(r.into_body(), 1_000_000).await.unwrap().to_vec())
+}
+
+async fn json(st: &AppState, path: &str) -> Value {
+    let (status, _, body) = get(st, path).await;
+    assert_eq!(status, 200, "{path}");
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// One test, because the daemon keeps one set of wardens per process and the
+/// steps below change the plan on disk in order.
+#[tokio::test]
+async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
+    let dir = tempfile::tempdir().unwrap();
+    let st = state(dir.path());
+
+    // Free tier: RAM works, Wazuh is locked and has no report.
+    let list = json(&st, "/wardens").await;
+    assert_eq!(list["tier"], "free");
+    let ids: Vec<&str> = list["wardens"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["ram", "wazuh"]);
+    let ram = &list["wardens"][0];
+    assert_eq!(ram["access"], "free");
+    assert_eq!(ram["unlocked"], true);
+    assert_ne!(ram["status"]["level"], "locked");
+    let wazuh = &list["wardens"][1];
+    assert_eq!(wazuh["access"], "pro");
+    assert_eq!(wazuh["unlocked"], false);
+    assert_eq!(wazuh["status"]["level"], "locked");
+    assert_eq!(wazuh["icon"], "/wardens/wazuh/icon.svg");
+    assert!(json(&st, "/wardens/wazuh").await["report"].is_null());
+
+    // A locked warden does no work: polling leaves it unchecked.
+    let w = ramwarden_daemon::wardens::Wardens::global(&st.cfg);
+    w.poll_wazuh(None).await;
+    assert!(json(&st, "/wardens/wazuh").await["report"].is_null());
+
+    // The Wazuh add-on alone unlocks it; the tier stays free.
+    let until = ramwarden_core::wardens::now() + 3600;
+    std::fs::write(
+        dir.path().join("entitlement.json"),
+        format!(r#"{{"tier":"free","addons":["wazuh"],"until":{until}}}"#),
+    )
+    .unwrap();
+    let list = json(&st, "/wardens").await;
+    assert_eq!(list["tier"], "free");
+    assert_eq!(list["wardens"][1]["unlocked"], true);
+
+    // Unlocked with no manager configured: it reports, and never says "clear"
+    // about alerts it could not see.
+    w.poll_wazuh(None).await;
+    let one = json(&st, "/wardens/wazuh").await;
+    assert!(one["report"].is_object(), "{one}");
+    assert_ne!(one["status"]["level"], "locked");
+    assert!(!one["report"]["problems"].as_array().unwrap().is_empty());
+
+    // Icons.
+    for id in ["ram", "wazuh"] {
+        let (status, ctype, body) = get(&st, &format!("/wardens/{id}/icon.svg")).await;
+        assert_eq!(status, 200);
+        assert_eq!(ctype, "image/svg+xml");
+        assert!(String::from_utf8(body).unwrap().contains("<svg"));
+    }
+    assert_eq!(get(&st, "/wardens/nope/icon.svg").await.0, 404);
+    assert_eq!(get(&st, "/wardens/nope").await.0, 404);
+}

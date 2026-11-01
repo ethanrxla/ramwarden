@@ -33,6 +33,7 @@ mod pager;
 mod platform;
 mod pressure;
 mod process;
+pub mod secret;
 
 pub use background::{Background, NoBackground};
 pub use desktop::{Desktop, DesktopSource};
@@ -44,3 +45,4 @@ pub use pager::{NoPager, Pager};
 pub use platform::{Parts, Platform};
 pub use pressure::{Pressure, PressureSource, PressureWaker};
 pub use process::{Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource};
+pub use secret::Secret;

@@ -81,6 +81,10 @@ pub fn router(state: AppState) -> Router {
         .route("/reclaim/{scope}", post(reclaim_scope))
         .route("/tabs/close", post(close_tabs_route))
         .route("/history/clear", delete(clear_history))
+        // The wardens: RAM and the add-ons. See docs/specs/wardens.md.
+        .route("/wardens", get(crate::wardens::list))
+        .route("/wardens/{id}", get(crate::wardens::one))
+        .route("/wardens/{id}/icon.svg", get(crate::wardens::icon_svg))
         .with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses
         // everything a web page might send. See `guard` for why both.

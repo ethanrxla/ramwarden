@@ -4476,6 +4476,7 @@ version = "0.2.1"
 dependencies = [
  "nvml-wrapper",
  "ramwarden-nt",
+ "ramwarden-platform",
  "reqwest",
  "serde",
  "serde_json",
@@ -4517,6 +4518,7 @@ dependencies = [
  "ramwarden-ml",
  "ramwarden-nt",
  "ramwarden-platform",
+ "ramwarden-wazuh",
  "serde",
  "serde_json",
  "tempfile",
@@ -4614,6 +4616,7 @@ name = "ramwarden-platform"
 version = "0.2.1"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -4649,6 +4652,22 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon",
  "windows",
+]
+
+[[package]]
+name = "ramwarden-wazuh"
+version = "0.2.1"
+dependencies = [
+ "axum",
+ "ramwarden-platform",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

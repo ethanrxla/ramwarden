@@ -416,6 +416,69 @@ impl Default for Nvidia {
     }
 }
 
+/// The Wazuh warden (`[wardens.wazuh]`): where this machine's Wazuh manager and
+/// indexer are, and how loud an alert must be to reach the user.
+///
+/// Off by default. It is also a Pro warden, so `enabled = true` does nothing
+/// until the plan unlocks it. Passwords come from `secrets.toml`, `.env` or
+/// `$WAZUH_API_PASSWORD` / `$WAZUH_INDEXER_PASSWORD`, never this file. See
+/// `docs/specs/wardens.md` and `docs/wazuh-setup.md`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Wazuh {
+    pub enabled: bool,
+    /// The manager's server API, e.g. `https://wazuh.example.com:55000`.
+    /// Empty: report only the local agent's health.
+    pub manager_url: String,
+    pub api_user: String,
+    pub api_password: String,
+    /// The indexer, e.g. `https://wazuh.example.com:9200`. Alerts live here.
+    /// Empty: no alerts, agent health only.
+    pub indexer_url: String,
+    pub indexer_user: String,
+    pub indexer_password: String,
+    /// PEM root CA for a self-signed manager (Wazuh's default install). There
+    /// is deliberately no option to skip certificate checks.
+    pub ca_file: Option<PathBuf>,
+    /// This machine's agent name as enrolled. Empty: the hostname.
+    pub agent_name: String,
+    /// Alerts below this Wazuh rule level are ignored.
+    pub min_level: u8,
+    /// Alerts at or above this level are an alert rather than a "worth a look".
+    pub alert_level: u8,
+    pub lookback_hours: u32,
+    pub poll_seconds: u64,
+    pub timeout_seconds: u64,
+}
+
+impl Default for Wazuh {
+    fn default() -> Self {
+        Wazuh {
+            enabled: false,
+            manager_url: String::new(),
+            api_user: "wazuh-wui".to_string(),
+            api_password: String::new(),
+            indexer_url: String::new(),
+            indexer_user: "admin".to_string(),
+            indexer_password: String::new(),
+            ca_file: None,
+            agent_name: String::new(),
+            min_level: 7,
+            alert_level: 12,
+            lookback_hours: 24,
+            poll_seconds: 120,
+            timeout_seconds: 10,
+        }
+    }
+}
+
+/// `[wardens.*]`: one section per add-on warden.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Wardens {
+    pub wazuh: Wazuh,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct WorkspaceRule {
     #[serde(rename = "match")]
@@ -441,6 +504,7 @@ pub struct Config {
     pub logging: Logging,
     pub tidy: Tidy,
     pub gpu: Gpu,
+    pub wardens: Wardens,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -465,6 +529,7 @@ struct Raw {
     logging: Logging,
     tidy: Tidy,
     gpu: Gpu,
+    wardens: Wardens,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -530,6 +595,7 @@ impl Default for Config {
             logging: Logging::default(),
             tidy: Tidy::default(),
             gpu: Gpu::default(),
+            wardens: Wardens::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -588,6 +654,19 @@ fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// `var` from the environment, else from the first `.env` that sets it. The
+/// environment wins, as it does for every other key.
+fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
+    if let Ok(v) = std::env::var(var)
+        && !v.trim().is_empty()
+    {
+        return Some(v.trim().to_string());
+    }
+    env_files
+        .iter()
+        .find_map(|f| std::fs::read_to_string(f).ok().and_then(|t| dotenv_value(&t, &[var])))
+}
+
 /// Load one specific file, merging any adjacent `secrets.toml`.
 pub fn load_from(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -622,6 +701,13 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         }
         if secrets.jev.enabled {
             cfg.jev.enabled = true;
+        }
+        let w = &secrets.wardens.wazuh;
+        if !w.api_password.is_empty() {
+            cfg.wardens.wazuh.api_password = w.api_password.clone();
+        }
+        if !w.indexer_password.is_empty() {
+            cfg.wardens.wazuh.indexer_password = w.indexer_password.clone();
         }
     }
 
@@ -679,6 +765,23 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
             }
         }
     }
+    let env_files: Vec<PathBuf> = [
+        path.parent().map(|d| d.join(".env")),
+        Some(config_dir().join("ramwarden").join(".env")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let wazuh = &mut cfg.wardens.wazuh;
+    for (field, var) in [
+        (&mut wazuh.api_password, "WAZUH_API_PASSWORD"),
+        (&mut wazuh.indexer_password, "WAZUH_INDEXER_PASSWORD"),
+    ] {
+        if let Some(v) = secret_from_env(var, &env_files) {
+            *field = v;
+        }
+    }
+
     if let Err(e) = cfg.ladder.validate() {
         return Err(format!("{}: {e}", path.display()));
     }
@@ -700,6 +803,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         logging: raw.logging,
         tidy: raw.tidy,
         gpu: raw.gpu,
+        wardens: raw.wardens,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
@@ -718,6 +822,49 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_wazuh_warden_is_off_by_default_and_parses_its_section() {
+        assert!(!Config::default().wardens.wazuh.enabled);
+        let cfg = parse(
+            r#"
+[wardens.wazuh]
+enabled = true
+manager_url = "https://wazuh.lan:55000"
+indexer_url = "https://wazuh.lan:9200"
+ca_file = "/etc/ramwarden/wazuh-root-ca.pem"
+min_level = 5
+"#,
+        )
+        .unwrap();
+        let w = &cfg.wardens.wazuh;
+        assert!(w.enabled);
+        assert_eq!(w.manager_url, "https://wazuh.lan:55000");
+        assert_eq!(w.min_level, 5);
+        assert_eq!(w.alert_level, 12, "unset keys keep their defaults");
+        assert_eq!(w.api_user, "wazuh-wui");
+        assert_eq!(w.ca_file.as_deref(), Some(Path::new("/etc/ramwarden/wazuh-root-ca.pem")));
+    }
+
+    #[test]
+    fn wazuh_passwords_come_from_secrets_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("ramwarden.toml");
+        std::fs::write(&cfg_path, "[wardens.wazuh]\nenabled = true\n").unwrap();
+        std::fs::write(
+            dir.path().join("secrets.toml"),
+            "[wardens.wazuh]\napi_password = \"api-pw\"\nindexer_password = \"idx-pw\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&cfg_path).unwrap();
+        // The environment would override these; only assert when it is not set.
+        if std::env::var("WAZUH_API_PASSWORD").is_err() {
+            assert_eq!(cfg.wardens.wazuh.api_password, "api-pw");
+        }
+        if std::env::var("WAZUH_INDEXER_PASSWORD").is_err() {
+            assert_eq!(cfg.wardens.wazuh.indexer_password, "idx-pw");
+        }
+    }
 
     /// The config this machine actually runs, verbatim from `ramwarden.toml`.
     const SHIPPED: &str = r#"
