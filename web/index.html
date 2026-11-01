@@ -143,7 +143,7 @@
               <tr><td>Covers apps and tabs together</td><td class="yes">Yes, one decision across both</td><td class="no">Apps only</td><td class="no">Its own tabs only</td></tr>
               <tr><td>Knows what you're working on</td><td class="yes">Yes, Jev asks</td><td class="no">No</td><td class="no">Recency only</td></tr>
               <tr><td>Tries reversible reclaim first</td><td class="yes">Yes, always</td><td class="no">Often a blanket flush</td><td class="no">n/a</td></tr>
-              <tr><td>Acts only when memory is short</td><td class="yes">Yes, on stall time</td><td class="no">On a timer or a button</td><td class="no">On a timer</td></tr>
+              <tr><td>Pressure-aware app management</td><td class="yes">Yes; optional tab sweeps also run on a timer</td><td class="no">On a timer or a button</td><td class="no">On a timer</td></tr>
               <tr><td>Never touches games, terminals, security</td><td class="yes">Hard rule</td><td class="no">Varies</td><td class="no">n/a</td></tr>
             </tbody>
           </table>
@@ -172,7 +172,7 @@
           <div class="card path featured">
             <span class="num">PRO · WORKS OUT OF THE BOX</span>
             <h3>Install, sign in, done.</h3>
-            <p>Run the line above, click <strong>Sign in</strong> in RamWarden, and your warden uses our hosted Jev straight away: no keys, no model downloads, no setup. $4 every 2 months, paid with crypto or card.</p>
+            <p>Hosted Pro is being prepared: install, sign in, and use hosted Jev without managing keys or models. Planned price: $4 every 2 months. The account page reports which checkout methods are available.</p>
             <a class="button mt" href="account.html#buy">Get Pro</a>
           </div>
           <div class="card path">
@@ -239,10 +239,10 @@ bash scripts/build-deb.sh &amp;&amp; sudo dpkg -i dist/ramwarden_*.deb</code></d
         </div>
         <a class="addon card mt" href="threat.html">
           <img src="assets/pets/threat.svg" alt="" width="56" height="56">
-          <div><strong>Add ThreatWarden</strong><span>Wazuh, ClamAV, Suricata and ntopng, hosted and explained. $<span data-plan="2">6</span> every 2 months.</span></div>
+          <div><strong>Add ThreatWarden</strong><span>Wazuh first; malware scanning and network tools are planned. Hosted launch coming soon. $<span data-plan="2">6</span> every 2 months.</span></div>
           <span class="go">See ThreatWarden →</span>
         </a>
-        <p class="pay-methods">Pay in USDC on Base (MetaMask, Phantom or any EVM wallet) or on Solana (Phantom), or by card through Stripe. Buying early adds to the pass you have.</p>
+        <p class="pay-methods">Base USDC checkout is in development. Native Solana payments and Stripe cards are planned; the account page only enables methods the server supports.</p>
       </div>
     </section>
 
@@ -252,7 +252,7 @@ bash scripts/build-deb.sh &amp;&amp; sudo dpkg -i dist/ramwarden_*.deb</code></d
         <details><summary>What gets sent to your server?</summary>
           <p>Only with a hosted plan, and only when RamWarden is deciding what to close: a short description of the candidate (app or site name, how long it's been idle, its memory) and the fixed question being asked. The server passes it to Jev and forgets it. Request contents are never stored or logged. On the free local tier nothing is sent anywhere. See the <a href="privacy.html">privacy policy</a>.</p></details>
         <details><summary>Will it close something I'm using?</summary>
-          <p>It's built not to. It acts only when memory is actually short, tries compression first, spares anything you used recently, asks whether you'll be back, and only ever pauses or closes apps you've put on the watchlist. Closing starts a countdown you can cancel, and paused apps resume as soon as pressure passes.</p></details>
+          <p>Active, pinned and audible tabs are protected. App management follows memory pressure and the configured watchlist. Optional idle-tab sweeps run even without pressure; automatic tab closing is off by default and can close eligible background tabs when enabled. Closed-tab links are saved for reopening, but reopening cannot guarantee restoration of unsaved page state.</p></details>
         <details><summary>Is it safe for games and anti-cheat?</summary>
           <p>Yes. Games, anti-cheat (Vanguard, EasyAntiCheat), security software and system processes are structurally protected. RamWarden never touches them, and it never weakens security settings to free memory.</p></details>
         <details><summary>Why sign in with a wallet?</summary>
