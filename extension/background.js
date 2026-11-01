@@ -63,6 +63,32 @@ function isProtected(url) {
   return false;
 }
 
+// Protections that hold however long a tab sits: browser pages, private hosts
+// (dev servers, the router) and editors whose state lives in the tab. Every other
+// protection lifts once the tab has been left alone for RELEASE_MINUTES, the same
+// rule as the daemon's tabpolicy::is_protected_for.
+const RELEASE_MINUTES = 240;
+const HARD_PATTERNS = [
+  /^https?:\/\/localhost/i, /^https?:\/\/127\./, /^https?:\/\/192\.168\./, /^https?:\/\/10\.\d/,
+  /^https?:\/\/172\.(1[6-9]|2\d|3[01])\./,
+  /^https?:\/\/([^/]*\.)?(vscode\.dev|github\.dev|codesandbox\.io|stackblitz\.com|replit\.com|colab\.research\.google\.com)(\/|$|:)/i,
+];
+
+function isHardProtected(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return true;
+  return HARD_PATTERNS.some(r => r.test(url));
+}
+
+function isProtectedFor(url, idleMinutes) {
+  if (isHardProtected(url)) return true;
+  return isProtected(url) && idleMinutes < RELEASE_MINUTES;
+}
+
+function _idleMinutes(tab) {
+  const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
+  return last ? (Date.now() - last) / 60000 : 0;
+}
+
 // ── Tab activity tracking ─────────────────────────────────────────────────────
 
 let tabActivity = {};
@@ -215,7 +241,7 @@ async function closeTabs(tabIds) {
   const tabs = [];
   for (const id of (tabIds || [])) {
     const tab = await new Promise(r => chrome.tabs.get(id, t => r(chrome.runtime.lastError ? null : t)));
-    if (tab && !isProtected(tab.url) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito) tabs.push(tab);
+    if (tab && !isProtectedFor(tab.url, _idleMinutes(tab)) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito) tabs.push(tab);
   }
   const closed = [];
   for (const tab of tabs) {
@@ -439,7 +465,7 @@ async function discardTabs(command) {
     const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
       resolve(chrome.runtime.lastError ? null : tab);
     }));
-    if (!tab || tab.url !== target.url || isProtected(tab.url) || tab.active || tab.pinned || tab.audible
+    if (!tab || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
         || tab.incognito || tab.discarded || tab.autoDiscardable === false || tab.status !== "complete") continue;
     const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
     if (!last || (Date.now() - last) / 60000 < minimum) continue;

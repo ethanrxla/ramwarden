@@ -101,3 +101,18 @@ test('a single unloaded tab does not get a group of its own', async()=>{
   await f.context._tidyIdleGroups([{id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1}]);
   assert.equal(grouped,0);
 });
+test('a protected page left alone 4h can close; private hosts and in-tab editors never', async()=>{
+  const old = Date.now() - 300*60000;
+  for (const [url, lastAccessed, expected] of [
+    ['https://console.tailscale.com/admin', old, [7]],
+    ['https://login.microsoftonline.com/x', old, [7]],
+    ['https://console.tailscale.com/admin', Date.now() - 30*60000, []],
+    ['http://10.0.0.1/', old, []],
+    ['https://vscode.dev/', old, []],
+  ]) {
+    const f=fixture({url, lastAccessed}); const removed=[];
+    f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>cb?.();
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    assert.deepEqual(Array.from(await f.context.closeTabs([7])), expected, url);
+  }
+});

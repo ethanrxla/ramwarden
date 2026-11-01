@@ -282,6 +282,12 @@ pub struct Tabs {
     /// this long idle, whatever its return chance: the newer tab already covers
     /// the site. 0 turns this off.
     pub close_duplicates_after_hours: f64,
+    /// The tab budget: the most recently used tabs kept open per browser. Any
+    /// other tab untouched for `budget_idle_minutes` is closed, whatever its
+    /// return chance. 0 turns the budget off.
+    pub keep_tabs: usize,
+    /// How long a tab outside the budget may sit before it is closed.
+    pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
 }
@@ -294,6 +300,8 @@ impl Default for Tabs {
             close_after_hours: 24.0,
             close_below_return: 0.3,
             close_duplicates_after_hours: 4.0,
+            keep_tabs: 6,
+            budget_idle_minutes: 60.0,
             max_close_per_sweep: 10,
         }
     }
