@@ -18,7 +18,9 @@ subtask(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, async (args, _hre, runSuper) => {
   };
 });
 
-const accounts = process.env.DEPLOYER_KEY ? [process.env.DEPLOYER_KEY] : [];
+// The deployer key for deploy.cjs, the keeper key for keeper.cjs; never both in one shell.
+const key = process.env.DEPLOYER_KEY || process.env.KEEPER_KEY;
+const accounts = key ? [key] : [];
 
 module.exports = {
   solidity: { version: SOLC, settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun" } },

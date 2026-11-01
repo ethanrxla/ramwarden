@@ -2,12 +2,15 @@ const { expect } = require("chai");
 const { ethers, network } = require("hardhat");
 
 const DAY = 24 * 60 * 60;
+const MONTH = 30 * DAY;
+const YEAR = 365 * DAY;
 const USDC = (n) => BigInt(Math.round(n * 1e6));
-const RAM = 0; // the RAM warden's cloud tier
-const WAZUH = 1; // the Wazuh warden add-on
+const RAM = 0; // the RAM warden
+const THREAT = 1; // ThreatWarden
 const bit = (w) => 1 << w;
 const ACCOUNT = ethers.id("account:65f0c0ffee");
 const REF = ethers.id("payment:1");
+const [RAM_MONTH, PRO_MONTH, RAM_YEAR] = [1, 2, 3];
 
 async function now() {
   return (await ethers.provider.getBlock("latest")).timestamp;
@@ -19,152 +22,150 @@ async function forward(seconds) {
 }
 
 async function deploy() {
-  const [owner, treasury, buyer, other] = await ethers.getSigners();
+  const [owner, treasury, buyer, other, keeper] = await ethers.getSigners();
   const usdc = await (await ethers.getContractFactory("MockUSDC")).deploy();
   const checkout = await (await ethers.getContractFactory("RamWardenCheckout")).deploy(
     await usdc.getAddress(),
     treasury.address,
     owner.address,
   );
-  await checkout.setPlan(1, USDC(4), 30 * DAY, bit(RAM), true);
-  await checkout.setPlan(3, USDC(6), 30 * DAY, bit(WAZUH), true);
-  await checkout.setPlan(5, USDC(8), 30 * DAY, bit(RAM) | bit(WAZUH), true);
+  await checkout.setPlan(RAM_MONTH, USDC(4), MONTH, bit(RAM), true);
+  await checkout.setPlan(PRO_MONTH, USDC(5), MONTH, bit(RAM) | bit(THREAT), true);
+  await checkout.setPlan(RAM_YEAR, USDC(20), YEAR, bit(RAM), true);
   await usdc.mint(buyer.address, USDC(1000));
-  await usdc.connect(buyer).approve(await checkout.getAddress(), ethers.MaxUint256);
-  return { owner, treasury, buyer, other, usdc, checkout };
+  // What the website asks for: one year of the monthly plan, never unlimited.
+  await usdc.connect(buyer).approve(await checkout.getAddress(), USDC(12 * 5));
+  return { owner, treasury, buyer, other, keeper, usdc, checkout };
 }
 
 describe("RamWardenCheckout", function () {
-  it("moves the price straight to the treasury and extends only the plan's wardens", async function () {
+  it("a trial moves no money and unlocks the plan's wardens for 14 days", async function () {
     const { treasury, buyer, usdc, checkout } = await deploy();
-    const tx = await checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF);
+    const tx = await checkout.connect(buyer).startTrial(ACCOUNT, PRO_MONTH, USDC(5), REF);
     const t = await now();
+    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, PRO_MONTH, buyer.address, t + 14 * DAY, REF);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(0n);
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(t + 14 * DAY);
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(t + 14 * DAY);
+    expect(await checkout.isDue(ACCOUNT)).to.equal(false);
+  });
 
-    await expect(tx).to.emit(checkout, "Purchased").withArgs(ACCOUNT, 1, buyer.address, USDC(4), bit(RAM), REF);
-    await expect(tx).to.emit(checkout, "Extended").withArgs(ACCOUNT, RAM, t + 30 * DAY);
+  it("charges exactly one period when due, never early, never twice", async function () {
+    const { treasury, buyer, keeper, usdc, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    const trialEnds = (await checkout.subscriptions(ACCOUNT)).nextCharge;
+
+    await expect(checkout.connect(keeper).charge(ACCOUNT)).to.be.revertedWithCustomError(checkout, "NotDue");
+    await forward(14 * DAY);
+    await expect(checkout.connect(keeper).charge(ACCOUNT))
+      .to.emit(checkout, "Charged")
+      .withArgs(ACCOUNT, RAM_MONTH, buyer.address, USDC(4), trialEnds + BigInt(MONTH));
     expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(4));
     expect(await usdc.balanceOf(await checkout.getAddress())).to.equal(0n, "nothing rests in the contract");
-    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(t + 30 * DAY);
-    expect(await checkout.paidUntil(ACCOUNT, WAZUH)).to.equal(0n);
-    expect(await checkout.isActive(ACCOUNT, RAM)).to.equal(true);
-    expect(await checkout.isActive(ACCOUNT, WAZUH)).to.equal(false);
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(trialEnds + BigInt(MONTH));
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(0n, "RamWarden does not unlock ThreatWarden");
+    await expect(checkout.connect(keeper).charge(ACCOUNT)).to.be.revertedWithCustomError(checkout, "NotDue");
+
+    await forward(MONTH);
+    await checkout.connect(keeper).charge(ACCOUNT);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(8));
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(trialEnds + BigInt(2 * MONTH), "periods stay on cadence");
   });
 
-  it("a bundle extends every warden it names", async function () {
+  it("a price change never reaches existing subscribers", async function () {
+    const { owner, treasury, buyer, usdc, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await checkout.connect(owner).setPlan(RAM_MONTH, USDC(9), MONTH, bit(RAM) | bit(THREAT), true);
+    await forward(14 * DAY);
+    await checkout.charge(ACCOUNT);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(4));
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(0n, "nor does a widened plan");
+  });
+
+  it("a charge far past due starts the period now, so no one pays for time they lacked", async function () {
     const { buyer, checkout } = await deploy();
-    await checkout.connect(buyer).purchase(ACCOUNT, 5, USDC(8), REF);
-    const t = await now();
-    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(t + 30 * DAY);
-    expect(await checkout.paidUntil(ACCOUNT, WAZUH)).to.equal(t + 30 * DAY);
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await forward(14 * DAY + 10 * DAY);
+    await checkout.charge(ACCOUNT);
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(BigInt((await now()) + MONTH));
   });
 
-  it("renewing early stacks on the current expiry; renewing late starts from now", async function () {
-    const { buyer, checkout } = await deploy();
-    await checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF);
-    const first = await checkout.paidUntil(ACCOUNT, RAM);
-
-    await forward(10 * DAY);
-    await checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF);
-    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(first + BigInt(30 * DAY));
-
-    await forward(100 * DAY);
-    await checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF);
-    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(BigInt((await now()) + 30 * DAY));
+  it("a short balance or revoked approval fails the charge and changes nothing", async function () {
+    const { buyer, usdc, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    const before = await checkout.paidUntil(ACCOUNT, RAM);
+    await usdc.connect(buyer).approve(await checkout.getAddress(), 0);
+    await forward(14 * DAY);
+    await expect(checkout.charge(ACCOUNT)).to.be.reverted;
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(before);
+    expect(await checkout.isDue(ACCOUNT)).to.equal(true, "still due, so the keeper retries");
   });
 
-  it("anyone may pay for any account, so a pass can be a gift", async function () {
-    const { buyer, other, usdc, checkout } = await deploy();
-    await usdc.mint(other.address, USDC(10));
-    await usdc.connect(other).approve(await checkout.getAddress(), USDC(4));
-    await checkout.connect(other).purchase(ACCOUNT, 1, USDC(4), REF);
+  it("only the paying wallet can cancel; service runs to the end of the period", async function () {
+    const { buyer, other, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await expect(checkout.connect(other).cancel(ACCOUNT)).to.be.revertedWithCustomError(checkout, "NotPayer");
+    const until = await checkout.paidUntil(ACCOUNT, RAM);
+    await expect(checkout.connect(buyer).cancel(ACCOUNT)).to.emit(checkout, "Cancelled").withArgs(ACCOUNT, until);
     expect(await checkout.isActive(ACCOUNT, RAM)).to.equal(true);
-    expect(await usdc.balanceOf(buyer.address)).to.equal(USDC(1000), "the account's wallet paid nothing");
+    await forward(14 * DAY);
+    await expect(checkout.charge(ACCOUNT)).to.be.revertedWithCustomError(checkout, "NotSubscribed");
+    expect(await checkout.isActive(ACCOUNT, RAM)).to.equal(false);
   });
 
-  it("never charges more than the buyer agreed to", async function () {
-    const { owner, buyer, checkout } = await deploy();
-    await checkout.connect(owner).setPlan(1, USDC(5), 30 * DAY, bit(RAM), true);
-    await expect(checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF))
+  it("one trial per account: subscribing again charges the first period at once", async function () {
+    const { treasury, buyer, usdc, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await checkout.connect(buyer).cancel(ACCOUNT);
+    await checkout.connect(buyer).startTrial(ACCOUNT, PRO_MONTH, USDC(5), REF);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(5));
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(BigInt((await now()) + MONTH));
+  });
+
+  it("refuses a second subscription, a missing approval, a higher price and unknown plans", async function () {
+    const { owner, buyer, other, usdc, checkout } = await deploy();
+    await expect(checkout.connect(other).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF))
+      .to.be.revertedWithCustomError(checkout, "AllowanceTooLow")
+      .withArgs(0, USDC(4));
+    await expect(checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(3), REF))
       .to.be.revertedWithCustomError(checkout, "PriceAboveMax")
-      .withArgs(USDC(5), USDC(4));
-  });
-
-  it("refuses unknown or retired plans and the zero account", async function () {
-    const { owner, buyer, checkout } = await deploy();
-    await expect(checkout.connect(buyer).purchase(ACCOUNT, 99, USDC(100), REF))
+      .withArgs(USDC(4), USDC(3));
+    await expect(checkout.connect(buyer).startTrial(ACCOUNT, 99, USDC(100), REF))
       .to.be.revertedWithCustomError(checkout, "UnknownPlan")
       .withArgs(99);
-    await checkout.connect(owner).setPlan(1, 0, 0, 0, false);
-    await expect(checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF)).to.be.revertedWithCustomError(
-      checkout,
-      "UnknownPlan",
-    );
-    await expect(checkout.connect(buyer).purchase(ethers.ZeroHash, 3, USDC(6), REF)).to.be.revertedWithCustomError(
+    await expect(checkout.connect(buyer).startTrial(ethers.ZeroHash, RAM_MONTH, USDC(4), REF)).to.be.revertedWithCustomError(
       checkout,
       "ZeroAccount",
     );
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await usdc.mint(other.address, USDC(10));
+    await usdc.connect(other).approve(await checkout.getAddress(), USDC(10));
+    await expect(checkout.connect(other).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF)).to.be.revertedWithCustomError(
+      checkout,
+      "AlreadySubscribed",
+    );
+    await checkout.connect(owner).setPlan(RAM_YEAR, 0, 0, 0, false);
+    await expect(checkout.connect(other).startTrial(ethers.id("x"), RAM_YEAR, USDC(20), REF)).to.be.revertedWithCustomError(
+      checkout,
+      "UnknownPlan",
+    );
   });
 
-  it("fails without allowance or balance, and changes nothing", async function () {
-    const { other, checkout } = await deploy();
-    await expect(checkout.connect(other).purchase(ACCOUNT, 1, USDC(4), REF)).to.be.reverted;
-    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(0n);
-  });
-
-  it("pays and approves in one transaction with a permit, and tolerates a front-run permit", async function () {
-    const { buyer, treasury, other, usdc, checkout } = await deploy();
-    await usdc.connect(buyer).approve(await checkout.getAddress(), 0);
-    const deadline = (await now()) + DAY;
-    const sign = async (value) => {
-      const domain = {
-        name: "USD Coin",
-        version: "1",
-        chainId: (await ethers.provider.getNetwork()).chainId,
-        verifyingContract: await usdc.getAddress(),
-      };
-      const types = {
-        Permit: [
-          { name: "owner", type: "address" },
-          { name: "spender", type: "address" },
-          { name: "value", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-        ],
-      };
-      const message = {
-        owner: buyer.address,
-        spender: await checkout.getAddress(),
-        value,
-        nonce: await usdc.nonces(buyer.address),
-        deadline,
-      };
-      return ethers.Signature.from(await buyer.signTypedData(domain, types, message));
-    };
-
-    let sig = await sign(USDC(4));
-    await checkout.connect(buyer).purchaseWithPermit(ACCOUNT, 1, USDC(4), REF, deadline, sig.v, sig.r, sig.s);
-    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(4));
-
-    // Someone copies the permit from the mempool and submits it first.
-    sig = await sign(USDC(4));
-    await usdc.connect(other).permit(buyer.address, await checkout.getAddress(), USDC(4), deadline, sig.v, sig.r, sig.s);
-    await checkout.connect(buyer).purchaseWithPermit(ACCOUNT, 1, USDC(4), REF, deadline, sig.v, sig.r, sig.s);
-    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(8));
-  });
-
-  it("pausing stops purchases, and only the owner can pause or change plans", async function () {
+  it("pausing stops new trials and charges but never stops a cancel", async function () {
     const { owner, buyer, other, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
     await checkout.connect(owner).pause();
-    await expect(checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF)).to.be.revertedWithCustomError(
+    await expect(checkout.connect(buyer).startTrial(ethers.id("y"), RAM_MONTH, USDC(4), REF)).to.be.revertedWithCustomError(
       checkout,
       "EnforcedPause",
     );
-    await checkout.connect(owner).unpause();
-    await checkout.connect(buyer).purchase(ACCOUNT, 1, USDC(4), REF);
+    await forward(14 * DAY);
+    await expect(checkout.charge(ACCOUNT)).to.be.revertedWithCustomError(checkout, "EnforcedPause");
+    await checkout.connect(buyer).cancel(ACCOUNT);
 
     const token = await checkout.token();
     for (const call of [
-      () => checkout.connect(other).pause(),
+      () => checkout.connect(other).unpause(),
       () => checkout.connect(other).setPlan(7, USDC(1), DAY, 1, true),
       () => checkout.connect(other).setTreasury(other.address),
       () => checkout.connect(other).rescue(token, other.address, 1),
@@ -173,26 +174,19 @@ describe("RamWardenCheckout", function () {
     }
   });
 
-  it("refuses plans that are free, empty or too long, and passes too far ahead", async function () {
-    const { owner, buyer, checkout } = await deploy();
-    for (const [price, duration, wardens] of [
-      [0, DAY, 1],
+  it("refuses plans that are free, empty or longer than a year", async function () {
+    const { owner, checkout } = await deploy();
+    for (const [price, period, wardens] of [
+      [0, MONTH, 1],
       [USDC(1), 0, 1],
-      [USDC(1), DAY, 0],
-      [USDC(1), 6 * 365 * DAY, 1],
+      [USDC(1), MONTH, 0],
+      [USDC(1), 400 * DAY, 1],
     ]) {
-      await expect(checkout.connect(owner).setPlan(9, price, duration, wardens, true)).to.be.revertedWithCustomError(
+      await expect(checkout.connect(owner).setPlan(9, price, period, wardens, true)).to.be.revertedWithCustomError(
         checkout,
         "BadPlan",
       );
     }
-
-    await checkout.connect(owner).setPlan(9, USDC(1), 4 * 365 * DAY, bit(RAM), true);
-    await checkout.connect(buyer).purchase(ACCOUNT, 9, USDC(1), REF);
-    await expect(checkout.connect(buyer).purchase(ACCOUNT, 9, USDC(1), REF)).to.be.revertedWithCustomError(
-      checkout,
-      "TooFarAhead",
-    );
   });
 
   it("ownership moves in two steps and cannot be renounced", async function () {
@@ -219,10 +213,23 @@ describe("RamWardenCheckout", function () {
   });
 });
 
+describe("keeper", function () {
+  it("finds only the subscriptions that are due", async function () {
+    const { buyer, checkout } = await deploy();
+    const { dueAccounts } = require("../scripts/keeper.cjs");
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    await checkout.connect(buyer).startTrial(ethers.id("b"), RAM_MONTH, USDC(4), REF);
+    expect(await dueAccounts(checkout, 0)).to.deep.equal([]);
+    await forward(14 * DAY);
+    await checkout.connect(buyer).cancel(ethers.id("b"));
+    expect(await dueAccounts(checkout, 0)).to.deep.equal([ACCOUNT]);
+  });
+});
+
 describe("plans.json", function () {
   const plans = require("../plans.json");
 
-  it("every plan is valid for setPlan and names known wardens", async function () {
+  it("matches the approved spec and every plan is valid for setPlan", async function () {
     const [owner] = await ethers.getSigners();
     const usdc = await (await ethers.getContractFactory("MockUSDC")).deploy();
     const checkout = await (await ethers.getContractFactory("RamWardenCheckout")).deploy(
@@ -238,5 +245,8 @@ describe("plans.json", function () {
       const mask = p.wardens.reduce((m, w) => m | (1 << w), 0);
       await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * DAY, mask, true);
     }
+    // docs/product-spec.md 1.2: ids are fixed because the agent skill uses them.
+    const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.usd]]));
+    expect(by).to.deep.equal({ 1: ["ram", "month", 4], 2: ["pro", "month", 5], 3: ["ram", "year", 20], 4: ["pro", "year", 24] });
   });
 });

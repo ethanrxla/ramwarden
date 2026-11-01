@@ -1,53 +1,55 @@
 # RamWarden checkout contract
 
-`RamWardenCheckout` sells prepaid **warden passes** in USDC on Base. A plan is a
-price, a duration and a set of wardens; buying one extends each of those wardens
-for the account. Plans and wardens live in [`plans.json`](plans.json), which the
-deploy script writes on-chain and the API serves to the website.
+`RamWardenCheckout` sells **subscriptions** in USDC on Base, per
+`docs/product-spec.md` 1.2 and 3.3: a 14-day free trial, then the plan's price
+every month or year until cancelled. Plans live in [`plans.json`](plans.json),
+which the deploy script writes on-chain and the API serves to the website.
 
-| Warden id | Slug | Warden | Plan |
+| Plan | Tier | Price | Unlocks |
 | --- | --- | --- | --- |
-| 0 | `ram` | RamWarden Pro: hosted Jev decisions | $4 for 60 days |
-| 1 | `threat` | ThreatWarden: hosted threat detection | $6 for 60 days |
+| 1 | RamWarden | $4 / month | RAM warden (`ram`, warden 0) |
+| 2 | RamWarden Pro | $5 / month | RAM warden and ThreatWarden (`threat`, warden 1) |
+| 3 | RamWarden | $20 / year | RAM warden |
+| 4 | RamWarden Pro | $24 / year | RAM warden and ThreatWarden |
 
-A bundle plan covers both for $10. Slugs are internal ids shared with the
-daemon, the launcher and the release manifest, so they never change once the contract is deployed.
+Plan ids are fixed: the agent skill uses them.
 
-A new warden is a new id in `plans.json` plus plans that include it. The
-contract needs no change for up to 32 wardens.
+## How a subscription flows
 
-## How a payment flows
+1. **Start.** The signed-in user picks a plan. `POST /v1/checkout/base` returns
+   a USDC `approve` for one year of the plan (12 × the monthly price, or the
+   annual price) and `startTrial(account, plan, maxPrice, ref)`. `account` is
+   the keccak-256 of the RamWarden account id. No money moves; every warden in
+   the plan is unlocked for 14 days. An account that already had a trial is
+   charged its first period at once instead.
+2. **Charge.** When the trial ends, and every period after, anyone may call
+   `charge(account)`. `scripts/keeper.cjs` does it. The contract pulls exactly
+   the price fixed at start, from the wallet that started the subscription,
+   and extends `paidUntil[account][warden]` to the end of the new period.
+3. **Fail.** A short balance or revoked approval reverts the charge. The
+   keeper simulates first, so it costs no gas, and retries. The API shows the
+   account in grace for 3 days after `paidUntil`, then local mode.
+4. **Cancel.** `cancel(account)` from the paying wallet, or revoking the
+   approval, stops future charges. Service runs to `paidUntil`.
+5. After a year of monthly charges the approval is spent and the user is
+   asked to approve another year. Nobody is ever asked for an unlimited
+   approval.
 
-1. The signed-in user picks a plan on `account.html`.
-2. The API (`POST /v1/checkout/base`) returns the transactions to sign: a USDC
-   `approve` if the allowance is short, then
-   `purchase(account, plan, maxPrice, ref)`. `account` is the keccak-256 of the
-   RamWarden account id, `maxPrice` is the price the user was shown, and `ref` is
-   the API's payment id.
-3. The contract moves the USDC from the payer straight to the treasury Safe,
-   extends `paidUntil[account][warden]` for each warden in the plan, and emits
-   `Purchased` and one `Extended` per warden.
-4. The API sees `Purchased` with that `ref`, waits for the block to be safe,
-   reads `paidUntil` back and records the entitlement. The daemon learns about
-   it on its next token refresh.
-
-Anyone may pay for any account, so an agent with a wallet can buy a pass the
-same way: sign in with `POST /v1/auth/challenge` and `/verify`, then send the
-transactions `POST /v1/checkout/base` returns (see `docs/specs/hosted-api.md`).
-
-Solana (Phantom) needs no program: the API builds a plain USDC transfer to the
-treasury tagged with a unique reference key (Solana Pay) and records the same
-per-warden entitlement once it finds the transfer. Stripe writes the same record
-from its webhook.
+The API reads `TrialStarted`, `Charged`, `Cancelled` and `Extended` logs and
+records the account's tier, status and expiry. `paidUntil` is public, so the
+daemon can check a licence on-chain when the API is down.
 
 ## Safety properties
 
-- Funds never rest in the contract, so a bug can miscount days but not lose money.
-- USDC only: no ETH, no oracle, no swap. No upgrade proxy.
-- `maxPrice` means a price change between quote and inclusion can't overcharge.
-- A permit that someone front-ran is tolerated rather than failing the payment.
-- `pause` stops sales. Ownership moves in two steps and can't be renounced.
-- No pass can run more than five years ahead.
+- It never pulls more than the price fixed at start, never before a period is
+  due, never twice for one period, and only from the wallet that subscribed.
+  Changing a plan's price or wardens affects new subscriptions only.
+- A charge more than 3 days late starts the period now, so nobody pays for
+  time they had no service.
+- Funds never rest in the contract. USDC only: no ETH, no oracle, no swap, no
+  upgrade proxy.
+- `pause` stops trials and charges but never a cancel. Ownership moves in two
+  steps and can't be renounced.
 
 Get an outside review before mainnet.
 
@@ -55,7 +57,7 @@ Get an outside review before mainnet.
 
 ```bash
 npm ci
-npx hardhat test       # 14 tests, in-process chain
+npx hardhat test       # in-process chain
 ```
 
 ## Deploy
@@ -64,6 +66,15 @@ npx hardhat test       # 14 tests, in-process chain
 DEPLOYER_KEY=0x...  TREASURY=0x<Safe>  OWNER=0x<Safe> \
   npx hardhat run scripts/deploy.cjs --network baseSepolia   # then --network base
 ```
+
+Run the keeper every few minutes:
+
+```bash
+KEEPER_KEY=0x... CHECKOUT=0x<contract> FROM_BLOCK=<deploy block> \
+  npx hardhat run scripts/keeper.cjs --network baseSepolia
+```
+
+The keeper wallet only pays gas. `charge` can't send it anything.
 
 The deployer pays gas and writes the plans, then offers ownership to `OWNER`,
 which must call `acceptOwnership`. `BASE_RPC_URL` and `BASE_SEPOLIA_RPC_URL`
