@@ -12,9 +12,10 @@ built on open-source engines starting with [Wazuh](https://wazuh.com)
 - `GET /wardens` lists every warden the daemon knows, in a fixed order, with:
   `id`, `name`, `role`, `icon`, `access` (`free`, `pro`), `unlocked`,
   `enabled`, and `status`; plus `paid`, the ids of paid wardens whose pass
-  is current. `icon` is a daemon URL for the warden's SVG, or `null` for the
+  is current, and `tier` and `plan_status` from the signed entitlement
+  (`null` without one), for display only. `icon` is a daemon URL for the warden's SVG, or `null` for the
   RAM warden, which the clients already draw as the brand ram. A paid
-  warden also carries `price` (a display string, e.g. `$6 per 2 months`) and
+  warden also carries `price` (a display string, e.g. `In RamWarden Pro, from $5 a month`) and
   `upgrade_url` (where "Get a pass" opens); both are `null` for free wardens.
   Clients fall back to their own defaults when either is missing.
 - `status` is `{level, headline, detail, checked_at}`. `level` is one of
@@ -116,20 +117,24 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   system processes, so the RAM warden can never freeze or kill them, whatever
   the watchlist says. A memory manager that can suspend the security agent is
   a way to switch the security agent off.
-- **Access.** Each warden is `free` or `pro`. The RAM warden is free. Paid
-  wardens are sold as passes, one per warden with its own expiry, so a pass
-  for one never unlocks another and a bundle is simply several passes. The
-  record is `entitlement.json` beside the history database, as the account
-  server issued it: `{"v":1, "account", "device", "issued_at",
+- **Access.** Each warden is `free` or `pro`. The RAM warden is free.
+  ThreatWarden comes with the RamWarden Pro plan. The record is
+  `entitlement.json` beside the history database, as the account server
+  issued it (`GET /v1/entitlement`, v2 in `docs/specs/hosted-api.md`):
+  `{"v":2, "account", "device", "issued_at", "tier", "status",
   "wardens": {"<id>": <unix expiry>}, "sig"}`. A paid warden is unlocked
-  while its expiry is in the future; missing means locked. `"ram"` in that
-  map is the hosted Jev tier and does not affect the local RAM warden. No
-  file, or a malformed one, unlocks nothing. The server signs the canonical
-  JSON without `sig` with Ed25519; the daemon verifies it in
+  while its own expiry is in the future, and ThreatWarden also needs
+  `tier = "pro"`; missing means locked. `tier` can only narrow access, and
+  `status` (`trial`, `active`, `grace`, `cancelled`, `lapsed`) is for
+  display. `"ram"` in the map is the hosted Jev plan and does not affect the
+  local RAM warden. No file, or a malformed one, unlocks nothing. The server
+  signs a canonical text (`ramwarden-entitlement-v2`, then one `key=value`
+  line each for account, device, issued_at, tier, status, then
+  `warden:<id>=<expiry>` sorted) with Ed25519; the daemon verifies it in
   `Entitlement::load` against a public key compiled in at build time from
-  `RAMWARDEN_ENTITLEMENT_PUBLIC_KEY`. An edited, unsigned or foreign record,
-  or a build without the key, unlocks no paid warden. The key is never read
-  at run time, which would let anyone sign their own passes.
+  `RAMWARDEN_ENTITLEMENT_PUBLIC_KEY`. An edited, unsigned, v1 or foreign
+  record, or a build without the key, unlocks no paid warden. The key is
+  never read at run time, which would let anyone sign their own passes.
 - **Levels from Wazuh rule levels.** Wazuh rules carry a level from 0 to 15.
   An alert at level 12 or above in the lookback window is `alert`; any alert at
   or above `min_level` (default 7) is `watch`; none is `clear`. Twelve is

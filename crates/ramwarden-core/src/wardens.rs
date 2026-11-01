@@ -36,6 +36,9 @@ pub struct WardenInfo {
     /// One line on what it watches, for the UI's warden list.
     pub role: &'static str,
     pub access: Access,
+    /// The account tier a paid warden also needs (`tier` in the entitlement),
+    /// on top of its own expiry. `None` when any tier will do.
+    pub tier: Option<&'static str>,
     /// What a pass costs, for the UI's "Get a pass" line. `None` when free.
     pub price: Option<&'static str>,
     /// Where "Get a pass" opens. `None` when free.
@@ -51,6 +54,7 @@ pub const RAM: WardenInfo = WardenInfo {
     name: "RAM Warden",
     role: "Watches memory pressure, tries reversible fixes first, and protects what you're using.",
     access: Access::Free,
+    tier: None,
     price: None,
     upgrade_url: None,
 };
@@ -60,7 +64,8 @@ pub const THREAT: WardenInfo = WardenInfo {
     name: "ThreatWarden",
     role: "Watches for attacks, malware and intrusions, explains what it finds, and asks before acting.",
     access: Access::Pro,
-    price: Some("$6 per 2 months"),
+    tier: Some("pro"),
+    price: Some("In RamWarden Pro, from $5 a month"),
     upgrade_url: Some(PRICING_URL),
 };
 
@@ -71,16 +76,19 @@ pub fn find(id: &str) -> Option<&'static WardenInfo> {
     CATALOGUE.iter().find(|w| w.id == id)
 }
 
-/// What the user has paid for: one expiry per paid warden, as the account
-/// server issued it (`GET /v1/entitlement`, written to `entitlement.json`).
+/// What the user has paid for: the account's tier and status, and one expiry
+/// per paid warden, as the account server issued it (`GET /v1/entitlement`,
+/// written to `entitlement.json`).
 ///
 /// ```json
-/// {"v":1, "account":"…", "device":"…", "issued_at":1793500000,
+/// {"v":2, "account":"…", "device":"…", "issued_at":1793500000,
+///  "tier":"pro", "status":"trial",
 ///  "wardens":{"ram":1796000000, "threat":1798000000}, "sig":"<base64 ed25519>"}
 /// ```
 ///
-/// Passes are sold per warden, each with its own expiry, so a RAM pass never
-/// unlocks ThreatWarden and a bundle is simply both keys. `"ram"` is the hosted Jev
+/// Each warden has its own expiry, so the `ram` plan never unlocks
+/// ThreatWarden. ThreatWarden also needs `tier = "pro"`; `tier` can only
+/// narrow access, never widen it, and `status` is for display only. `"ram"` is the hosted Jev
 /// tier; the local RAM warden itself is free and ignores it. A warden missing
 /// from the map stays locked.
 ///
@@ -96,6 +104,10 @@ pub struct Entitlement {
     pub account: Option<String>,
     pub device: Option<String>,
     pub issued_at: u64,
+    /// `ram`, `pro` or `none`.
+    pub tier: Option<String>,
+    /// `trial`, `active`, `grace`, `cancelled`, `lapsed` or `none`. Display only.
+    pub status: Option<String>,
     /// Warden id → Unix seconds it is paid until.
     pub wardens: BTreeMap<String, u64>,
     pub sig: Option<String>,
@@ -108,7 +120,7 @@ pub struct Entitlement {
 pub const PUBLIC_KEY: Option<&str> = option_env!("RAMWARDEN_ENTITLEMENT_PUBLIC_KEY");
 
 /// The domain separator that starts every signed text.
-const DOMAIN: &str = "ramwarden-entitlement-v1";
+const DOMAIN: &str = "ramwarden-entitlement-v2";
 
 impl Entitlement {
     /// The exact bytes the server signs: one item per line, wardens sorted by
@@ -116,10 +128,12 @@ impl Entitlement {
     /// key order and number formatting cannot break a signature.
     pub fn signed_text(&self) -> String {
         let mut s = format!(
-            "{DOMAIN}\naccount={}\ndevice={}\nissued_at={}",
+            "{DOMAIN}\naccount={}\ndevice={}\nissued_at={}\ntier={}\nstatus={}",
             self.account.as_deref().unwrap_or_default(),
             self.device.as_deref().unwrap_or_default(),
-            self.issued_at
+            self.issued_at,
+            self.tier.as_deref().unwrap_or("none"),
+            self.status.as_deref().unwrap_or("none"),
         );
         for (w, t) in &self.wardens {
             s.push_str(&format!("\nwarden:{w}={t}"));
@@ -127,7 +141,7 @@ impl Entitlement {
         s
     }
 
-    /// Whether this is a v1 record signed by `public_key_b64`.
+    /// Whether this is a v2 record signed by `public_key_b64`.
     pub fn verify(&self, public_key_b64: &str) -> bool {
         use base64::Engine;
         use base64::engine::general_purpose::STANDARD as B64;
@@ -148,20 +162,27 @@ impl Entitlement {
         else {
             return false;
         };
-        self.v == 1 && key.verify(self.signed_text().as_bytes(), &Signature::from_bytes(&sig)).is_ok()
+        self.v == 2 && key.verify(self.signed_text().as_bytes(), &Signature::from_bytes(&sig)).is_ok()
     }
 
     /// Whether `w` is unlocked at `now` (Unix seconds).
     pub fn allows(&self, w: &WardenInfo, now: u64) -> bool {
         match w.access {
             Access::Free => true,
-            Access::Pro => self.wardens.get(w.id).is_some_and(|&until| until > now),
+            Access::Pro => {
+                w.tier.is_none_or(|t| self.tier.as_deref() == Some(t))
+                    && self.wardens.get(w.id).is_some_and(|&until| until > now)
+            }
         }
     }
 
-    /// The ids of every paid warden current at `now`.
+    /// The ids of every paid warden unlocked at `now`.
     pub fn paid_at(&self, now: u64) -> Vec<&str> {
-        self.wardens.iter().filter(|&(_, &u)| u > now).map(|(id, _)| id.as_str()).collect()
+        self.wardens
+            .iter()
+            .filter(|&(id, &u)| u > now && find(id).is_none_or(|w| self.allows(w, now)))
+            .map(|(id, _)| id.as_str())
+            .collect()
     }
 
     /// Read `entitlement.json` and check it against the compiled-in key.
@@ -375,7 +396,35 @@ mod tests {
     const NOW: u64 = 1_800_000_000;
 
     fn ent(paid: &[(&str, u64)]) -> Entitlement {
-        Entitlement { wardens: paid.iter().map(|&(k, v)| (k.to_string(), v)).collect(), ..Default::default() }
+        Entitlement {
+            tier: Some("pro".into()),
+            wardens: paid.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn threatwarden_needs_the_pro_tier_as_well_as_its_expiry() {
+        let mut e = ent(&[("ram", NOW + 10), ("threat", NOW + 10)]);
+        assert!(e.allows(&THREAT, NOW));
+        for tier in [Some("ram"), Some("none"), None] {
+            e.tier = tier.map(str::to_string);
+            assert!(!e.allows(&THREAT, NOW), "{tier:?}");
+            assert!(e.allows(&RAM, NOW));
+            assert_eq!(e.paid_at(NOW), vec!["ram"]);
+        }
+    }
+
+    #[test]
+    fn a_v1_record_is_refused_even_when_signed() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as B64;
+        use ed25519_dalek::{Signer, SigningKey};
+        let (mut e, key) = signed(&[("threat", NOW + 60)]);
+        assert!(e.verify(&key));
+        e.v = 1;
+        e.sig = Some(B64.encode(SigningKey::from_bytes(&TEST_SEED).sign(e.signed_text().as_bytes()).to_bytes()));
+        assert!(!e.verify(&key));
     }
 
     #[test]
@@ -424,7 +473,9 @@ mod tests {
         use ed25519_dalek::{Signer, SigningKey};
         let key = SigningKey::from_bytes(&TEST_SEED);
         let mut e = ent(wardens);
-        e.v = 1;
+        e.v = 2;
+        e.tier = Some("pro".into());
+        e.status = Some("trial".into());
         e.account = Some("acct1".into());
         e.device = Some("dev1".into());
         e.issued_at = NOW;
@@ -437,7 +488,7 @@ mod tests {
         let (e, _) = signed(&[("threat", 7), ("ram", 5)]);
         assert_eq!(
             e.signed_text(),
-            format!("ramwarden-entitlement-v1\naccount=acct1\ndevice=dev1\nissued_at={NOW}\nwarden:ram=5\nwarden:threat=7")
+            format!("ramwarden-entitlement-v2\naccount=acct1\ndevice=dev1\nissued_at={NOW}\ntier=pro\nstatus=trial\nwarden:ram=5\nwarden:threat=7")
         );
     }
 
@@ -457,7 +508,7 @@ mod tests {
         assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
 
         // Unsigned, garbage, missing.
-        std::fs::write(&p, format!(r#"{{"v":1,"wardens":{{"threat":{}}}}}"#, NOW + 5)).unwrap();
+        std::fs::write(&p, format!(r#"{{"v":2,"tier":"pro","wardens":{{"threat":{}}}}}"#, NOW + 5)).unwrap();
         assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
         std::fs::write(&p, "{not json").unwrap();
         assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());

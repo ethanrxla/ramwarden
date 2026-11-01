@@ -100,7 +100,7 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     assert_eq!(threat["unlocked"], false);
     assert_eq!(threat["status"]["level"], "locked");
     assert_eq!(threat["icon"], "/wardens/threat/icon.svg");
-    assert_eq!(threat["price"], "$6 per 2 months");
+    assert_eq!(threat["price"], "In RamWarden Pro, from $5 a month");
     assert_eq!(threat["upgrade_url"], "https://ramwarden.app/#pricing");
     assert!(ram["price"].is_null() && ram["upgrade_url"].is_null());
     assert!(json(&st, "/wardens/threat").await["report"].is_null());
@@ -112,7 +112,9 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     let until = ramwarden_core::wardens::now() + 3600;
     let pass = |id: &str| {
         let mut e = Entitlement {
-            v: 1,
+            v: 2,
+            tier: Some("pro".into()),
+            status: Some("active".into()),
             account: Some("acct1".into()),
             device: Some("dev1".into()),
             issued_at: until - 3600,
@@ -123,13 +125,14 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
         serde_json::to_string(&e).unwrap()
     };
     // An unsigned pass unlocks nothing.
-    std::fs::write(dir.path().join("entitlement.json"), format!(r#"{{"v":1,"wardens":{{"threat":{until}}}}}"#)).unwrap();
+    std::fs::write(dir.path().join("entitlement.json"), format!(r#"{{"v":2,"tier":"pro","wardens":{{"threat":{until}}}}}"#)).unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("ram")).unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("threat")).unwrap();
     let list = json(&st, "/wardens").await;
     assert_eq!(list["paid"], serde_json::json!(["threat"]));
+    assert_eq!((list["tier"].as_str(), list["plan_status"].as_str()), (Some("pro"), Some("active")));
     assert_eq!(list["wardens"][1]["unlocked"], true);
 
     // Unlocked but this computer is signed out: hosted mode says so, never
