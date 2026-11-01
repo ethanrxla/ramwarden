@@ -205,32 +205,40 @@ mod tests {
             .is_some_and(|p| p.suspended)
     }
 
-    /// Whether `pid` reaches the `want` state within two seconds. Suspension
-    /// is delivered to each thread as a kernel APC, so a thread sitting in a
-    /// wait (ping's are, in its timer) shows the `Suspended` wait reason only
-    /// once it next runs; reading the snapshot straight after
-    /// `NtSuspendProcess` returns failed on CI now and then.
-    fn becomes_suspended(pid: u32, want: bool) -> bool {
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            if suspended(pid) == want {
-                return true;
+    /// Wait until the child has finished starting: its thread count unchanged
+    /// across a few samples. A process still in loader start-up creates
+    /// threads (the loader's worker pool) while `NtSuspendProcess` walks them,
+    /// and one created mid-walk runs on, which failed this test now and then on
+    /// CI (2026-11-01). RamWarden only ever suspends long-running apps.
+    fn settle(pid: u32) {
+        let threads = || {
+            crate::snapshot::processes()
+                .unwrap()
+                .into_iter()
+                .find(|p| p.pid == pid)
+                .map(|p| p.threads)
+        };
+        let (mut last, mut steady) = (threads(), 0);
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(100));
+            let now = threads();
+            steady = if now == last { steady + 1 } else { 0 };
+            last = now;
+            if steady >= 3 {
+                return;
             }
-            if std::time::Instant::now() > deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
     #[test]
     fn suspends_and_resumes_a_real_process() {
         let mut child = spawn();
+        settle(child.id());
         let h = NtProcessHandle::open(child.id()).unwrap();
         h.suspend().unwrap();
-        assert!(becomes_suspended(child.id(), true), "every thread should be suspended");
+        assert!(suspended(child.id()), "every thread should be suspended");
         h.resume().unwrap();
-        assert!(becomes_suspended(child.id(), false));
+        assert!(!suspended(child.id()));
         child.kill().ok();
         child.wait().ok();
     }

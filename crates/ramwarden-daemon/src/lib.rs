@@ -27,3 +27,9 @@ pub mod worker;
 pub mod ws;
 
 pub mod browser;
+
+pub mod assistant;
+
+pub mod companion;
+
+pub mod assistant_prompt;

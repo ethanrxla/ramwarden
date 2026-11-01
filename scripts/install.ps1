@@ -130,6 +130,11 @@ if (Test-Path $tray) {
   # Start menu entry. Launching the app while the tray runs opens the window.
   $shell = New-Object -ComObject WScript.Shell
   $lnk = $shell.CreateShortcut($Shortcut)
+  $BrandIcon = Join-Path $Root '..\assets\brand\ramwarden.ico'
+  if (Test-Path $BrandIcon) {
+    Copy-Item $BrandIcon (Join-Path $Dest 'ramwarden.ico') -Force
+    $lnk.IconLocation = (Join-Path $Dest 'ramwarden.ico')
+  }
   $lnk.TargetPath = $tray
   $lnk.WorkingDirectory = $Dest
   $lnk.Description = 'RamWarden memory manager'

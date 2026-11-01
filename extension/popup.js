@@ -55,13 +55,19 @@ async function init() {
     });
   }
 
-  try {
-    const history = await daemonJSON("/history");
-    renderHistory(history);
-  } catch {
-    document.getElementById("history-list").innerHTML =
-      '<span style="color:#475569">Daemon offline</span>';
-  }
+  // Tabs RamWarden closed, newest first: the extension's own list merged with
+  // the daemon's closed_tabs record, which also covers closes made before the
+  // extension was reloaded.
+  const local = await new Promise(r => chrome.storage.local.get("releasedTabs", r));
+  let daemon = [];
+  try { daemon = (await daemonJSON("/history")).closed_tabs || []; } catch { /* offline */ }
+  const seen = new Set();
+  const merged = [
+    ...(local.releasedTabs || []).map(t => ({ url: t.url, title: t.title, closedMs: t.closedAt })),
+    ...daemon.map(t => ({ url: t.url, title: t.title, closedMs: Date.parse(t.closed_at.endsWith("Z") ? t.closed_at : t.closed_at + "Z") })),
+  ].filter(t => t.url && !seen.has(t.url) && seen.add(t.url))
+   .sort((a, b) => (b.closedMs || 0) - (a.closedMs || 0));
+  renderHistory(merged);
 
   document.getElementById("analyze-btn").addEventListener("click", async () => {
     const btn = document.getElementById("analyze-btn");
@@ -128,6 +134,15 @@ function renderRamBreakdown(report) {
   el.innerHTML = lines.join("");
 }
 
+// Inline onclick handlers are blocked by the MV3 content security policy, so
+// reopening goes through one delegated listener.
+document.getElementById("history-list").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-url]");
+  if (!a) return;
+  e.preventDefault();
+  chrome.tabs.create({ url: a.dataset.url });
+});
+
 function setConnected(ok) {
   document.getElementById("status-dot").className = ok ? "connected" : "";
 }
@@ -135,16 +150,15 @@ function setConnected(ok) {
 function renderHistory(items) {
   const list = document.getElementById("history-list");
   if (!items.length) {
-    list.innerHTML = '<span style="color:#475569">No tabs closed yet</span>';
+    list.innerHTML = '<span style="color:#475569">No tabs closed yet. Unloaded tabs stay in the tab strip and show in the badge count.</span>';
     return;
   }
   list.innerHTML = items.slice(0, 20).map((item) => {
-    const time = new Date(item.closed_at + "Z").toLocaleString(undefined, {
+    const time = new Date(item.closedMs || Date.now()).toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     });
     return `<div class="history-item">
-      <a href="${esc(item.url)}" title="${esc(item.title)}"
-         onclick="chrome.tabs.create({url:'${item.url.replace(/'/g,"\\'")}'}); return false;">
+      <a href="${esc(item.url)}" data-url="${esc(item.url)}" title="Reopen ${esc(item.title)}">
         ${esc(item.title || item.url)}
       </a>
       <span class="history-time">${time}</span>
