@@ -30,9 +30,12 @@ export function detectOs(nav = globalThis.navigator) {
 }
 
 // Which face the box shows for an account (or none).
-export function installState(account) {
+// A cancelled plan still counts until what was paid for runs out.
+export function installState(account, now = Date.now()) {
   if (!account || !account.status) return "signed-out";
   if (LIVE.includes(account.status)) return "ready";
+  const until = Date.parse(account.paid_until || account.trial_ends_at || "");
+  if (account.status === "cancelled" && until > now) return "ready";
   return "renew";
 }
 
@@ -88,7 +91,7 @@ export class InstallBox {
           "div",
           { class: "install-actions" },
           this.link.installers?.[os] ? h("a", { class: "button secondary small", href: this.link.installers[os] }, "Download installer") : null,
-          h("span", { class: "muted" }, "Personal to you. Works once, within 30 minutes, and signs this computer in."),
+          h("span", { class: "muted" }, "The line is personal: it works once, within 30 minutes, and signs this computer in. The installer asks you to sign in once."),
         ),
       );
     } else if (state === "ready") {

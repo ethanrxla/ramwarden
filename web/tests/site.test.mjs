@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { annualSaving, config, planFor } from "../assets/config.js";
 import { BODY_PALETTES, recolorSvg } from "../assets/pets.js";
+import { installState } from "../assets/install.js";
 
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEXT = /\.(html|js|mjs|cjs|json|css|md|sh|ps1|svg)$/;
@@ -74,4 +75,14 @@ test("plans match the product spec", () => {
   assert.equal(annualSaving(config.plans, "ram"), 58);
   assert.equal(annualSaving(config.plans, "pro"), 60);
   assert.equal(config.trialDays, 14);
+});
+
+test("install box state follows the account", () => {
+  const now = Date.parse("2026-11-01T00:00:00Z");
+  assert.equal(installState(null, now), "signed-out");
+  assert.equal(installState({ status: null }, now), "signed-out");
+  assert.equal(installState({ status: "trial" }, now), "ready");
+  assert.equal(installState({ status: "cancelled", paid_until: "2026-11-20T00:00:00Z" }, now), "ready");
+  assert.equal(installState({ status: "cancelled", paid_until: "2026-10-20T00:00:00Z" }, now), "renew");
+  assert.equal(installState({ status: "lapsed" }, now), "renew");
 });

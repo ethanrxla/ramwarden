@@ -7,12 +7,11 @@
 
 import { config, planFor } from "./config.js";
 import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
-import { InstallBox } from "./install.js";
+import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
 const POLL_MS = isMock ? 400 : 3000;
 const POLL_LIMIT = 60; // three minutes: Base confirms in seconds, Solana faster
-const LIVE = ["trial", "active", "grace"];
 const STATUS = {
   trial: (a) => `Free trial, ends ${formatDate(a.trial_ends_at)}. Then ${priceText(a)} until you cancel.`,
   active: (a) => `Renews ${formatDate(a.paid_until)} at ${priceText(a)}.`,
@@ -83,7 +82,7 @@ class AccountPage {
 
   render() {
     const a = this.account;
-    const live = LIVE.includes(a.status);
+    const live = installState(a) === "ready";
     this.flashArea = h("div");
     const install = live ? h("div", { class: "install" }) : null;
 

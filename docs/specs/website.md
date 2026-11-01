@@ -55,7 +55,7 @@ never sees the token.
 | `POST /v1/auth/logout` | *session* | `{ok}`, cookie cleared |
 | `GET /v1/account` | *session* | `account` (below) |
 | `PUT /v1/account/prefs` | *session*, any object up to 4 KB | `{prefs}` |
-| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4; not in PR #5 yet) |
+| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4); 402 without a live plan, 409 at 5 devices. Installers are plain release downloads that sign in through the device page |
 | `DELETE /v1/account/devices/{id}` | *session* | `{ok: true}` |
 | `GET /v1/checkout/config` | | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], base: {chain_id, network, contract, usdc}\|null, solana: null, stripe: bool, stripe_test: bool}` |
 | `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, trial, approval_usd, transactions: [{to, data, value}]}`; 409 while subscribed |
