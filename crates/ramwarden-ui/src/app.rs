@@ -791,7 +791,14 @@ fn repopulate(ui: &Rc<Ui>) {
     let horizontal = ui.process_scroll.hadjustment();
     let (y, x) = (vertical.value(), horizontal.value());
     let objects: Vec<_> = filtered.into_iter().map(RowObject::new).collect();
-    ui.store.splice(0, ui.store.n_items(), &objects);
+    // Replacing the entire model briefly removes every visible row, so GTK
+    // loses its scroll anchor even when the replacement has the same size.
+    // Keep the model populated while replacing rows, then adjust its tail.
+    let shared = ui.store.n_items().min(objects.len() as u32);
+    for i in 0..shared {
+        ui.store.splice(i, 1, &objects[i as usize..i as usize + 1]);
+    }
+    ui.store.splice(shared, ui.store.n_items() - shared, &objects[shared as usize..]);
     // ColumnView recomputes adjustments during layout, after idle callbacks.
     // Restore on the next completed layout rather than before it resets them.
     let frames=std::cell::Cell::new(0);
