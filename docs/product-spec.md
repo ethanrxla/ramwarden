@@ -1,6 +1,6 @@
 # RamWarden product and site spec
 
-Status: **draft for review** (2026-11-01). Nothing in this document is built yet
+Status: **approved by Ethan, 2026-11-01**. Nothing in this document is built yet
 unless a section says so. Once approved, each workstream changes its own spec in
 `docs/specs/` first and then the code, per `CLAUDE.md`.
 
