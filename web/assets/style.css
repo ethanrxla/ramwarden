@@ -348,7 +348,7 @@ footer a { color: var(--muted); }
 .landing .hero h1 { font-size:clamp(40px,4.4vw,60px); margin:14px 0 16px; }
 .landing .hero .lede { max-width:44ch; margin-bottom:26px; }
 .hero-media { justify-self:center; width:100%; }
-.hero-media video { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:20px; border:1px solid var(--line); background:#000 url("world/ram-hero-poster.jpg") center/cover no-repeat; box-shadow:0 30px 80px #0008; }
+.hero-media video { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:20px; border:1px solid var(--line); background:#000; box-shadow:0 30px 80px #0008; }
 .theme-threat .hero { background:radial-gradient(ellipse at 78% 30%,#5b21b655,transparent 62%), radial-gradient(ellipse at 10% 90%,#39ff8814,transparent 50%); }
 .theme-threat .hero h1 em { color:var(--accent); }
 .theme-threat .hero .eyebrow { color:var(--accent); }

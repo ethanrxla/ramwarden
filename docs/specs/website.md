@@ -26,7 +26,7 @@ Both warden tabs share one skeleton, in this order, with the same components:
 
 | # | Section | RamWarden | ThreatWarden |
 | --- | --- | --- | --- |
-| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Media: the looping ram clip (`assets/world/ram-hero.mp4`) | Same, "Catch threats. Keep your peace.". Media: the radar with the cyborg ram |
+| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Media: the looping red promo clip (`assets/world/promo-scrub.mp4`) | Same, "Catch threats. Keep your peace.". Media: the looping green ram clip (`assets/world/ram-hero.mp4`) |
 | 2 | Install (`#get`) | `assets/install.js`, the same on both | same |
 | 3 | Scroll world | The promo film scrubbed by scroll | The radar scene, threats caught as you scroll |
 | 4 | Pet | The ram, talking, with the color picker | The cyborg ram |
