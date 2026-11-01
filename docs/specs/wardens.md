@@ -119,8 +119,10 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   map is the hosted Jev tier and does not affect the local RAM warden. No
   file, or a malformed one, unlocks nothing. The server signs the canonical
   JSON without `sig` with Ed25519; the daemon verifies it in
-  `Entitlement::load` against a public key compiled into `ramwarden-core`
-  (until that key exists, unsigned records are accepted).
+  `Entitlement::load` against a public key compiled in at build time from
+  `RAMWARDEN_ENTITLEMENT_PUBLIC_KEY`. An edited, unsigned or foreign record,
+  or a build without the key, unlocks no paid warden. The key is never read
+  at run time, which would let anyone sign their own passes.
 - **Levels from Wazuh rule levels.** Wazuh rules carry a level from 0 to 15.
   An alert at level 12 or above in the lookback window is `alert`; any alert at
   or above `min_level` (default 7) is `watch`; none is `clear`. Twelve is

@@ -10,6 +10,10 @@ use ramwarden_core::{
 };
 use ramwarden_daemon::hub::{AppState, Hub};
 use ramwarden_platform::fake;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
+use ed25519_dalek::{Signer, SigningKey};
+use ramwarden_core::wardens::Entitlement;
 use serde_json::Value;
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
@@ -76,6 +80,11 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
         std::env::set_var("APPDATA", dir.path());
     }
     let st = state(dir.path());
+    let key = SigningKey::from_bytes(&[1; 32]);
+    let w = ramwarden_daemon::wardens::Wardens::install(ramwarden_daemon::wardens::Wardens::with_public_key(
+        &st.cfg,
+        Some(B64.encode(key.verifying_key().as_bytes())),
+    ));
 
     // Free tier: RAM works, Wazuh is locked and has no report.
     let list = json(&st, "/wardens").await;
@@ -94,12 +103,25 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     assert!(json(&st, "/wardens/threat").await["report"].is_null());
 
     // A locked warden cannot be set up.
-    let w = ramwarden_daemon::wardens::Wardens::global(&st.cfg);
     assert_eq!(post(&st, "/wardens/threat/setup").await, 403);
 
     // A RAM (hosted Jev) pass does not unlock it; a ThreatWarden pass does.
     let until = ramwarden_core::wardens::now() + 3600;
-    let pass = |id: &str| format!(r#"{{"v":1,"wardens":{{"{id}":{until}}}}}"#);
+    let pass = |id: &str| {
+        let mut e = Entitlement {
+            v: 1,
+            account: Some("acct1".into()),
+            device: Some("dev1".into()),
+            issued_at: until - 3600,
+            ..Default::default()
+        };
+        e.wardens.insert(id.to_string(), until);
+        e.sig = Some(B64.encode(key.sign(e.signed_text().as_bytes()).to_bytes()));
+        serde_json::to_string(&e).unwrap()
+    };
+    // An unsigned pass unlocks nothing.
+    std::fs::write(dir.path().join("entitlement.json"), format!(r#"{{"v":1,"wardens":{{"threat":{until}}}}}"#)).unwrap();
+    assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("ram")).unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("threat")).unwrap();

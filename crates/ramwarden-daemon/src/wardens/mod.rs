@@ -40,6 +40,9 @@ fn icon(id: &str) -> Option<&'static str> {
 /// The add-on wardens' state, shared by the pollers and the routes.
 pub struct Wardens {
     entitlement_path: PathBuf,
+    /// The key entitlement records must be signed with: the compiled-in one,
+    /// except in tests.
+    public_key: Option<String>,
     pub threat: Arc<ThreatWarden>,
 }
 
@@ -47,7 +50,13 @@ static GLOBAL: OnceLock<Arc<Wardens>> = OnceLock::new();
 
 impl Wardens {
     pub fn new(cfg: &Config) -> Wardens {
+        Wardens::with_public_key(cfg, wardens::PUBLIC_KEY.map(str::to_string))
+    }
+
+    /// For tests, which sign their own records. Production uses [`Wardens::new`].
+    pub fn with_public_key(cfg: &Config, public_key: Option<String>) -> Wardens {
         Wardens {
+            public_key,
             entitlement_path: cfg.db_path.with_file_name("entitlement.json"),
             threat: Arc::new(ThreatWarden::new(cfg)),
         }
@@ -59,9 +68,15 @@ impl Wardens {
         GLOBAL.get_or_init(|| Arc::new(Wardens::new(cfg))).clone()
     }
 
+    /// Install `w` as the daemon's wardens. Only the first install counts.
+    pub fn install(w: Wardens) -> Arc<Wardens> {
+        let _ = GLOBAL.set(Arc::new(w));
+        GLOBAL.get().unwrap().clone()
+    }
+
     /// Re-read on every use, so a purchase or an expiry takes effect at once.
     pub fn entitlement(&self) -> Entitlement {
-        Entitlement::load(&self.entitlement_path)
+        Entitlement::load_verified(&self.entitlement_path, self.public_key.as_deref())
     }
 
     pub fn unlocked(&self, w: &WardenInfo) -> bool {

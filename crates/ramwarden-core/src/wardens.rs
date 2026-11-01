@@ -72,9 +72,11 @@ pub fn find(id: &str) -> Option<&'static WardenInfo> {
 /// tier; the local RAM warden itself is free and ignores it. A warden missing
 /// from the map stays locked.
 ///
-/// The server signs the canonical JSON without `sig` with Ed25519. Checking
-/// that signature belongs in [`Entitlement::load`]; until the key is compiled
-/// in, an unsigned record is accepted.
+/// The file is on the user's own disk, so it is signed: the server signs
+/// [`Entitlement::signed_text`] with Ed25519, and [`Entitlement::load`]
+/// checks it against [`PUBLIC_KEY`]. An edited, unsigned or foreign record
+/// loads as "nothing unlocked". Format and reference signer:
+/// `ramwarden-api/src/entitlement.rs` and `docs/specs/hosted-api.md`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entitlement {
@@ -87,7 +89,56 @@ pub struct Entitlement {
     pub sig: Option<String>,
 }
 
+/// The server's entitlement-signing public key (base64 of 32 bytes), compiled
+/// in from `RAMWARDEN_ENTITLEMENT_PUBLIC_KEY` at build time. Compile-time only:
+/// a key read at run time would let anyone sign their own passes. A build
+/// without it unlocks no paid warden.
+pub const PUBLIC_KEY: Option<&str> = option_env!("RAMWARDEN_ENTITLEMENT_PUBLIC_KEY");
+
+/// The domain separator that starts every signed text.
+const DOMAIN: &str = "ramwarden-entitlement-v1";
+
 impl Entitlement {
+    /// The exact bytes the server signs: one item per line, wardens sorted by
+    /// id, no trailing newline. Built from the parsed fields, not the JSON, so
+    /// key order and number formatting cannot break a signature.
+    pub fn signed_text(&self) -> String {
+        let mut s = format!(
+            "{DOMAIN}\naccount={}\ndevice={}\nissued_at={}",
+            self.account.as_deref().unwrap_or_default(),
+            self.device.as_deref().unwrap_or_default(),
+            self.issued_at
+        );
+        for (w, t) in &self.wardens {
+            s.push_str(&format!("\nwarden:{w}={t}"));
+        }
+        s
+    }
+
+    /// Whether this is a v1 record signed by `public_key_b64`.
+    pub fn verify(&self, public_key_b64: &str) -> bool {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as B64;
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let Some(key) = B64
+            .decode(public_key_b64.trim())
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .and_then(|b| VerifyingKey::from_bytes(&b).ok())
+        else {
+            return false;
+        };
+        let Some(sig) = self
+            .sig
+            .as_deref()
+            .and_then(|s| B64.decode(s.trim()).ok())
+            .and_then(|b| <[u8; 64]>::try_from(b).ok())
+        else {
+            return false;
+        };
+        self.v == 1 && key.verify(self.signed_text().as_bytes(), &Signature::from_bytes(&sig)).is_ok()
+    }
+
     /// Whether `w` is unlocked at `now` (Unix seconds).
     pub fn allows(&self, w: &WardenInfo, now: u64) -> bool {
         match w.access {
@@ -101,16 +152,36 @@ impl Entitlement {
         self.wardens.iter().filter(|&(_, &u)| u > now).map(|(id, _)| id.as_str()).collect()
     }
 
-    /// Read `entitlement.json`. A missing or malformed file unlocks nothing:
-    /// a broken record must never lock the user out of the free wardens, and
-    /// must never unlock a paid one either.
+    /// Read `entitlement.json` and check it against the compiled-in key.
     pub fn load(path: &Path) -> Entitlement {
-        match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!("{}: {e}; treating as no paid wardens", path.display());
+        Entitlement::load_verified(path, PUBLIC_KEY)
+    }
+
+    /// Read `entitlement.json` and check its signature against `key`. A
+    /// missing, malformed or badly signed file, or no key, unlocks nothing: a
+    /// broken record must never lock the user out of the free wardens, and
+    /// must never unlock a paid one either.
+    pub fn load_verified(path: &Path, key: Option<&str>) -> Entitlement {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Entitlement::default();
+        };
+        let e: Entitlement = match serde_json::from_str(&text) {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!("{}: {err}; treating as no paid wardens", path.display());
+                return Entitlement::default();
+            }
+        };
+        match key {
+            Some(k) if e.verify(k) => e,
+            Some(_) => {
+                tracing::warn!("{}: signature does not verify; treating as no paid wardens", path.display());
                 Entitlement::default()
-            }),
-            Err(_) => Entitlement::default(),
+            }
+            None => {
+                tracing::warn!("this build has no entitlement key; paid wardens stay locked");
+                Entitlement::default()
+            }
         }
     }
 }
@@ -327,19 +398,54 @@ mod tests {
         }
     }
 
+    /// The checkout thread's fixed test seed (`ramwarden-api` entitlement
+    /// tests), so both sides check the same vector.
+    const TEST_SEED: [u8; 32] = [1; 32];
+
+    fn signed(wardens: &[(&str, u64)]) -> (Entitlement, String) {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as B64;
+        use ed25519_dalek::{Signer, SigningKey};
+        let key = SigningKey::from_bytes(&TEST_SEED);
+        let mut e = ent(wardens);
+        e.v = 1;
+        e.account = Some("acct1".into());
+        e.device = Some("dev1".into());
+        e.issued_at = NOW;
+        e.sig = Some(B64.encode(key.sign(e.signed_text().as_bytes()).to_bytes()));
+        (e, B64.encode(key.verifying_key().as_bytes()))
+    }
+
     #[test]
-    fn a_missing_or_malformed_file_unlocks_nothing() {
+    fn the_signed_text_matches_the_servers_format() {
+        let (e, _) = signed(&[("threat", 7), ("ram", 5)]);
+        assert_eq!(
+            e.signed_text(),
+            format!("ramwarden-entitlement-v1\naccount=acct1\ndevice=dev1\nissued_at={NOW}\nwarden:ram=5\nwarden:threat=7")
+        );
+    }
+
+    #[test]
+    fn only_a_correctly_signed_record_unlocks_anything() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("entitlement.json");
-        assert_eq!(Entitlement::load(&p), Entitlement::default());
+        let (e, key) = signed(&[("threat", NOW + 60)]);
+        std::fs::write(&p, serde_json::to_string(&e).unwrap()).unwrap();
+        assert!(Entitlement::load_verified(&p, Some(&key)).allows(&THREAT, NOW));
+        assert!(!Entitlement::load_verified(&p, None).allows(&THREAT, NOW), "no key, no unlock");
+
+        // Extending your own pass by editing the file breaks the signature.
+        let mut forged = e.clone();
+        forged.wardens.insert("threat".into(), NOW + 999_999);
+        std::fs::write(&p, serde_json::to_string(&forged).unwrap()).unwrap();
+        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
+
+        // Unsigned, garbage, missing.
+        std::fs::write(&p, format!(r#"{{"v":1,"wardens":{{"threat":{}}}}}"#, NOW + 5)).unwrap();
+        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
         std::fs::write(&p, "{not json").unwrap();
-        assert_eq!(Entitlement::load(&p), Entitlement::default());
-        std::fs::write(
-            &p,
-            format!(r#"{{"v":1,"account":"a","device":"d","issued_at":{NOW},"wardens":{{"threat":{}}},"sig":"x"}}"#, NOW + 5),
-        )
-        .unwrap();
-        assert!(Entitlement::load(&p).allows(&THREAT, NOW));
+        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
+        assert_eq!(Entitlement::load_verified(&dir.path().join("nope"), Some(&key)), Entitlement::default());
     }
 
     #[test]
