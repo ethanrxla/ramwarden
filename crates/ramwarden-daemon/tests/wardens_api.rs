@@ -66,7 +66,7 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
 
     // Free tier: RAM works, Wazuh is locked and has no report.
     let list = json(&st, "/wardens").await;
-    assert_eq!(list["tier"], "free");
+    assert_eq!(list["paid"], serde_json::json!([]));
     let ids: Vec<&str> = list["wardens"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["ram", "wazuh"]);
     let ram = &list["wardens"][0];
@@ -85,15 +85,14 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     w.poll_wazuh(None).await;
     assert!(json(&st, "/wardens/wazuh").await["report"].is_null());
 
-    // The Wazuh add-on alone unlocks it; the tier stays free.
+    // A RAM (hosted Jev) pass does not unlock it; a Wazuh pass does.
     let until = ramwarden_core::wardens::now() + 3600;
-    std::fs::write(
-        dir.path().join("entitlement.json"),
-        format!(r#"{{"tier":"free","addons":["wazuh"],"until":{until}}}"#),
-    )
-    .unwrap();
+    let pass = |id: &str| format!(r#"{{"v":1,"wardens":{{"{id}":{until}}}}}"#);
+    std::fs::write(dir.path().join("entitlement.json"), pass("ram")).unwrap();
+    assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
+    std::fs::write(dir.path().join("entitlement.json"), pass("wazuh")).unwrap();
     let list = json(&st, "/wardens").await;
-    assert_eq!(list["tier"], "free");
+    assert_eq!(list["paid"], serde_json::json!(["wazuh"]));
     assert_eq!(list["wardens"][1]["unlocked"], true);
 
     // Unlocked with no manager configured: it reports, and never says "clear"
@@ -104,13 +103,13 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     assert_ne!(one["status"]["level"], "locked");
     assert!(!one["report"]["problems"].as_array().unwrap().is_empty());
 
-    // Icons.
-    for id in ["ram", "wazuh"] {
-        let (status, ctype, body) = get(&st, &format!("/wardens/{id}/icon.svg")).await;
-        assert_eq!(status, 200);
-        assert_eq!(ctype, "image/svg+xml");
-        assert!(String::from_utf8(body).unwrap().contains("<svg"));
-    }
+    // Icons: the RAM warden is the brand ram the clients already draw.
+    assert!(list["wardens"][0]["icon"].is_null());
+    let (status, ctype, body) = get(&st, "/wardens/wazuh/icon.svg").await;
+    assert_eq!(status, 200);
+    assert_eq!(ctype, "image/svg+xml");
+    assert!(String::from_utf8(body).unwrap().contains("<svg"));
+    assert_eq!(get(&st, "/wardens/ram/icon.svg").await.0, 404);
     assert_eq!(get(&st, "/wardens/nope/icon.svg").await.0, 404);
     assert_eq!(get(&st, "/wardens/nope").await.0, 404);
 }

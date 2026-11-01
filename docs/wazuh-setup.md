@@ -83,8 +83,8 @@ Per-OS notes:
 
 ## 3. RamWarden (on each computer)
 
-The Wazuh warden is part of RamWarden Pro (or the Wazuh add-on). Once your
-plan includes it, add this to RamWarden's config (`ramwarden.toml`, or
+The Wazuh warden is a Pro warden: it needs a Wazuh pass (on its own or in a
+bundle). Once you have it, add this to RamWarden's config (`ramwarden.toml`, or
 `%APPDATA%\ramwarden\config.toml` / `~/.config/ramwarden/config.toml`):
 
 ```toml

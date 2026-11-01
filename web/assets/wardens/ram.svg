@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="RAM Warden">
-  <title>RAM Warden</title>
-  <path d="M32 4 9 12v18c0 15 10 25 23 30 13-5 23-15 23-30V12z" fill="#0b2a1f" stroke="#3ddc97" stroke-width="3" stroke-linejoin="round"/>
-  <rect x="20" y="22" width="24" height="18" rx="2.5" fill="#3ddc97"/>
-  <g stroke="#3ddc97" stroke-width="2.5" stroke-linecap="round">
-    <path d="M24 17v4M29.3 17v4M34.7 17v4M40 17v4M24 41v4M29.3 41v4M34.7 41v4M40 41v4"/>
-  </g>
-  <rect x="25" y="27" width="14" height="8" rx="1.5" fill="#062016"/>
-</svg>

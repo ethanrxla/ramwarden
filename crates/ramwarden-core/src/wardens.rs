@@ -10,6 +10,7 @@
 //! This module is policy only. Talking to Wazuh lives in `ramwarden-wazuh`;
 //! polling and the HTTP routes live in `ramwarden-daemon::wardens`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +23,7 @@ use crate::ladder::Rung;
 pub enum Access {
     /// Everyone has it.
     Free,
-    /// Unlocked by a Pro plan, or by buying this warden on its own as an add-on.
+    /// Paid: unlocked by a current pass for this warden (alone or in a bundle).
     Pro,
 }
 
@@ -58,57 +59,55 @@ pub fn find(id: &str) -> Option<&'static WardenInfo> {
     CATALOGUE.iter().find(|w| w.id == id)
 }
 
-/// The user's plan.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tier {
-    #[default]
-    Free,
-    Pro,
-}
-
-/// What the user has paid for, as the account sign-in last recorded it.
+/// What the user has paid for: one expiry per paid warden, as the account
+/// server issued it (`GET /v1/entitlement`, written to `entitlement.json`).
 ///
-/// `until` is Unix seconds; a plan or add-on past it is the free tier. Checking
-/// that this record really came from the account server is the account code's
-/// job: this type only answers "given this record, what is unlocked?".
+/// ```json
+/// {"v":1, "account":"…", "device":"…", "issued_at":1793500000,
+///  "wardens":{"ram":1796000000, "wazuh":1798000000}, "sig":"<base64 ed25519>"}
+/// ```
+///
+/// Passes are sold per warden, each with its own expiry, so a RAM pass never
+/// unlocks Wazuh and a bundle is simply both keys. `"ram"` is the hosted Jev
+/// tier; the local RAM warden itself is free and ignores it. A warden missing
+/// from the map stays locked.
+///
+/// The server signs the canonical JSON without `sig` with Ed25519. Checking
+/// that signature belongs in [`Entitlement::load`]; until the key is compiled
+/// in, an unsigned record is accepted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entitlement {
-    pub tier: Tier,
-    /// Warden ids bought on their own, e.g. `["wazuh"]`.
-    pub addons: Vec<String>,
-    pub until: Option<u64>,
+    pub v: u32,
+    pub account: Option<String>,
+    pub device: Option<String>,
+    pub issued_at: u64,
+    /// Warden id → Unix seconds it is paid until.
+    pub wardens: BTreeMap<String, u64>,
+    pub sig: Option<String>,
 }
 
 impl Entitlement {
-    /// Whether the plan is current at `now` (Unix seconds).
-    fn current(&self, now: u64) -> bool {
-        self.until.is_some_and(|u| u > now)
-    }
-
-    /// Whether `w` is unlocked at `now`.
+    /// Whether `w` is unlocked at `now` (Unix seconds).
     pub fn allows(&self, w: &WardenInfo, now: u64) -> bool {
         match w.access {
             Access::Free => true,
-            Access::Pro => {
-                self.current(now) && (self.tier == Tier::Pro || self.addons.iter().any(|a| a == w.id))
-            }
+            Access::Pro => self.wardens.get(w.id).is_some_and(|&until| until > now),
         }
     }
 
-    /// The tier in force at `now`: an expired Pro plan is free.
-    pub fn tier_at(&self, now: u64) -> Tier {
-        if self.current(now) { self.tier } else { Tier::Free }
+    /// The ids of every paid warden current at `now`.
+    pub fn paid_at(&self, now: u64) -> Vec<&str> {
+        self.wardens.iter().filter(|&(_, &u)| u > now).map(|(id, _)| id.as_str()).collect()
     }
 
-    /// Read `entitlement.json`. A missing or malformed file is the free tier:
-    /// a broken record must never lock the user out of the free product, and
-    /// must never unlock anything either.
+    /// Read `entitlement.json`. A missing or malformed file unlocks nothing:
+    /// a broken record must never lock the user out of the free wardens, and
+    /// must never unlock a paid one either.
     pub fn load(path: &Path) -> Entitlement {
         match std::fs::read_to_string(path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!("{}: {e}; treating as the free tier", path.display());
+                tracing::warn!("{}: {e}; treating as no paid wardens", path.display());
                 Entitlement::default()
             }),
             Err(_) => Entitlement::default(),
@@ -150,8 +149,8 @@ impl Status {
     pub fn locked(w: &WardenInfo) -> Self {
         Status::new(
             Level::Locked,
-            format!("{} is part of RamWarden Pro", w.name),
-            "Upgrade to Pro, or add this warden on its own, to turn it on.",
+            format!("{} is a Pro warden", w.name),
+            "Get a pass for this warden, or a bundle that includes it, to turn it on.",
             0,
         )
     }
@@ -274,54 +273,58 @@ mod tests {
 
     const NOW: u64 = 1_800_000_000;
 
-    fn ent(tier: Tier, addons: &[&str], until: Option<u64>) -> Entitlement {
-        Entitlement { tier, addons: addons.iter().map(|s| s.to_string()).collect(), until }
+    fn ent(paid: &[(&str, u64)]) -> Entitlement {
+        Entitlement { wardens: paid.iter().map(|&(k, v)| (k.to_string(), v)).collect(), ..Default::default() }
     }
 
     #[test]
-    fn the_free_tier_unlocks_only_free_wardens() {
+    fn no_passes_unlock_only_free_wardens() {
         let e = Entitlement::default();
         assert!(e.allows(&RAM, NOW));
         assert!(!e.allows(&WAZUH, NOW));
-        assert_eq!(e.tier_at(NOW), Tier::Free);
+        assert!(e.paid_at(NOW).is_empty());
     }
 
     #[test]
-    fn pro_unlocks_every_warden() {
-        let e = ent(Tier::Pro, &[], Some(NOW + 60));
-        for w in CATALOGUE {
-            assert!(e.allows(w, NOW), "{}", w.id);
-        }
-        assert_eq!(e.tier_at(NOW), Tier::Pro);
-    }
-
-    #[test]
-    fn an_addon_unlocks_only_its_own_warden() {
-        let e = ent(Tier::Free, &["wazuh"], Some(NOW + 60));
+    fn each_pass_unlocks_only_its_own_warden() {
+        // A RAM (hosted Jev) pass must not unlock Wazuh.
+        let e = ent(&[("ram", NOW + 60)]);
+        assert!(!e.allows(&WAZUH, NOW));
+        let e = ent(&[("wazuh", NOW + 60)]);
         assert!(e.allows(&WAZUH, NOW));
-        assert_eq!(e.tier_at(NOW), Tier::Free);
         let other = WardenInfo { id: "future", ..WAZUH };
         assert!(!e.allows(&other, NOW));
     }
 
     #[test]
-    fn an_expired_or_undated_plan_is_free() {
-        for until in [Some(NOW), Some(NOW - 1), None] {
-            let e = ent(Tier::Pro, &["wazuh"], until);
-            assert!(!e.allows(&WAZUH, NOW), "{until:?}");
+    fn a_bundle_is_both_keys_with_their_own_expiries() {
+        let e = ent(&[("ram", NOW + 10), ("wazuh", NOW + 1000)]);
+        assert_eq!(e.paid_at(NOW), vec!["ram", "wazuh"]);
+        assert_eq!(e.paid_at(NOW + 500), vec!["wazuh"]);
+        assert!(e.allows(&WAZUH, NOW + 500));
+    }
+
+    #[test]
+    fn an_expired_pass_is_locked_and_free_wardens_stay_free() {
+        for until in [NOW, NOW - 1] {
+            let e = ent(&[("wazuh", until)]);
+            assert!(!e.allows(&WAZUH, NOW), "{until}");
             assert!(e.allows(&RAM, NOW));
-            assert_eq!(e.tier_at(NOW), Tier::Free);
         }
     }
 
     #[test]
-    fn a_missing_or_malformed_file_is_the_free_tier() {
+    fn a_missing_or_malformed_file_unlocks_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("entitlement.json");
         assert_eq!(Entitlement::load(&p), Entitlement::default());
         std::fs::write(&p, "{not json").unwrap();
         assert_eq!(Entitlement::load(&p), Entitlement::default());
-        std::fs::write(&p, format!(r#"{{"tier":"pro","until":{}}}"#, NOW + 5)).unwrap();
+        std::fs::write(
+            &p,
+            format!(r#"{{"v":1,"account":"a","device":"d","issued_at":{NOW},"wardens":{{"wazuh":{}}},"sig":"x"}}"#, NOW + 5),
+        )
+        .unwrap();
         assert!(Entitlement::load(&p).allows(&WAZUH, NOW));
     }
 

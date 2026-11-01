@@ -9,8 +9,10 @@ security agent and reports threats. More wardens are added the same way.
 ## Contract
 
 - `GET /wardens` lists every warden the daemon knows, in a fixed order, with:
-  `id`, `name`, `role`, `icon` (a daemon URL for its SVG), `access`
-  (`free`, `pro`), `unlocked`, `enabled`, and `status`.
+  `id`, `name`, `role`, `icon`, `access` (`free`, `pro`), `unlocked`,
+  `enabled`, and `status`; plus `paid`, the ids of paid wardens whose pass
+  is current. `icon` is a daemon URL for the warden's SVG, or `null` for the
+  RAM warden, which the clients already draw as the brand ram.
 - `status` is `{level, headline, detail, checked_at}`. `level` is one of
   `clear`, `watch`, `alert`, `off`, `locked`.
   - `clear`: nothing needs the user.
@@ -24,9 +26,10 @@ security agent and reports threats. More wardens are added the same way.
   the agent, and up to 50 recent alerts at or above the configured level.
   A locked warden's report is `null`: locked wardens do no work at all, so
   they never contact a manager or read the agent's files.
-- `GET /wardens/{id}/icon.svg` returns the warden's icon (`image/svg+xml`).
-  Every client (menu bar, tray, GTK window, extension, website) draws a warden
-  with this icon, so a new warden needs no client release to appear.
+- `GET /wardens/{id}/icon.svg` returns an add-on warden's icon
+  (`image/svg+xml`), so a new warden needs no client release to appear. Icons
+  are 8-bit sprites on the RAM warden's 48x48 grid and palette, drawn by
+  `scripts/warden-sprites.py`. The Wazuh warden is a cyborg ram.
 - An unknown id is `404`.
 
 ## Policy
@@ -42,12 +45,18 @@ security agent and reports threats. More wardens are added the same way.
   system processes, so the RAM warden can never freeze or kill them, whatever
   the watchlist says. A memory manager that can suspend the security agent is
   a way to switch the security agent off.
-- **Access.** Each warden is `free` or `pro`. The RAM warden is free. The
-  Wazuh warden is `pro`: it is unlocked by an active Pro plan, or by the
-  `wazuh` add-on on its own. The entitlement is read from
-  `entitlement.json` beside the history database, written by the account
-  sign-in. No file, a malformed file, or an expired one is the free tier.
-  Signature checking of that file belongs to the account code, not here.
+- **Access.** Each warden is `free` or `pro`. The RAM warden is free. Paid
+  wardens are sold as passes, one per warden with its own expiry, so a pass
+  for one never unlocks another and a bundle is simply several passes. The
+  record is `entitlement.json` beside the history database, as the account
+  server issued it: `{"v":1, "account", "device", "issued_at",
+  "wardens": {"<id>": <unix expiry>}, "sig"}`. A paid warden is unlocked
+  while its expiry is in the future; missing means locked. `"ram"` in that
+  map is the hosted Jev tier and does not affect the local RAM warden. No
+  file, or a malformed one, unlocks nothing. The server signs the canonical
+  JSON without `sig` with Ed25519; the daemon verifies it in
+  `Entitlement::load` against a public key compiled into `ramwarden-core`
+  (until that key exists, unsigned records are accepted).
 - **Levels from Wazuh rule levels.** Wazuh rules carry a level from 0 to 15.
   An alert at level 12 or above in the lookback window is `alert`; any alert at
   or above `min_level` (default 7) is `watch`; none is `clear`. Twelve is
@@ -69,9 +78,9 @@ security agent and reports threats. More wardens are added the same way.
 
 ## Verification
 
-- `ramwarden-core` `wardens` tests: the free tier unlocks only free wardens;
-  Pro unlocks all; an add-on unlocks only its own warden; an expired plan is
-  free; alert levels map to `clear`/`watch`/`alert` at the thresholds above; a
+- `ramwarden-core` `wardens` tests: no passes unlock only free wardens; a
+  pass unlocks only its own warden (a RAM pass never unlocks Wazuh); a bundle
+  keeps separate expiries; an expired pass is locked; alert levels map to `clear`/`watch`/`alert` at the thresholds above; a
   disconnected agent is never `clear`.
 - `ramwarden-core` `roles` test: Wazuh process names on all three platforms
   are structural.
@@ -80,8 +89,9 @@ security agent and reports threats. More wardens are added the same way.
   non-loopback `http` URL is refused; the client authenticates, then queries,
   against a local fake manager.
 - `ramwarden-daemon` `wardens_api` tests: `/wardens` lists `ram` and `wazuh`;
-  `wazuh` is `locked` on the free tier and its report is `null`; icons are
-  served as SVG; an unknown id is 404.
+  `wazuh` is `locked` with no pass and its report is `null`; a RAM pass
+  leaves it locked and a Wazuh pass unlocks it; its icon is served as SVG;
+  an unknown id is 404.
 
 ## Basis and limitations
 
