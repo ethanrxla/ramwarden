@@ -425,3 +425,8 @@ footer a { color: var(--muted); }
 .pet.muted .pet-say { display:none; }
 .app .install { grid-template-columns:1fr; padding:0; border:0; background:none; }
 .app .install-oss { display:none; }
+.or { color:var(--muted); font-size:13px; text-transform:uppercase; letter-spacing:1px; margin:6px 0; }
+.email-form { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; }
+.email-form input { flex:1; min-width:200px; font:inherit; background:var(--bg-2); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 14px; }
+.linkish { background:none; border:0; padding:0; color:var(--accent-2); font:inherit; font-size:14px; text-decoration:underline; cursor:pointer; }
+.row-actions { display:flex; gap:10px; flex-wrap:wrap; }

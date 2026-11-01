@@ -10,12 +10,14 @@ import { ApiError, normaliseUserCode } from "./api.js";
 const DAY = 86_400_000;
 
 // `?mock=1&as=trial|active|lapsed` starts already signed in, in that state,
-// so the landing page's install box can be previewed signed in.
+// so the landing page's install box can be previewed signed in. `signedIn`
+// stands for the server's HttpOnly cookie, which a real page never sees.
 const AS = typeof location === "undefined" ? null : new URLSearchParams(location.search).get("as");
 
 export class MockApi {
   constructor() {
-    this.session = null;
+    this.signedIn = false;
+    this.emailCodes = new Map();
     this.pendingCodes = new Map([["BCDF-GHJK", { device_name: "ethan-desktop", platform: "linux" }]]);
     this.account_ = null;
     this.payments = new Map();
@@ -28,14 +30,16 @@ export class MockApi {
         trial_ends_at: AS === "trial" ? new Date(Date.now() + 14 * DAY).toISOString() : null,
         paid_until: AS === "active" ? new Date(Date.now() + 30 * DAY).toISOString() : AS === "lapsed" ? new Date(Date.now() - 3 * DAY).toISOString() : null,
       });
-      this.session = "mock-session";
+      this.signedIn = true;
     }
   }
 
   #newAccount(chain, address) {
     return {
       id: "acc_mock",
-      identity: { kind: "wallet", chain, address },
+      identity: chain === "email" ? { kind: "email", email: address } : { kind: "wallet", chain, address },
+      trial_available: true,
+      billing: null,
       tier: null,
       interval: null,
       status: null,
@@ -74,21 +78,41 @@ export class MockApi {
     const linked = message.match(/urn:ramwarden:device:([A-Z]{4}-[A-Z]{4})/)?.[1] || null;
     if (linked) this.pendingCodes.delete(linked);
     this.account_ ??= this.#newAccount(chain, address);
-    this.session = "mock-session";
-    return { session: this.session, account: this.account_, linked_device: linked ? this.account_.devices[0] : null };
+    this.signedIn = true;
+    return { account: this.account_, linked_device: linked ? this.account_.devices[0] : null };
+  }
+
+  // Email sign-in: the code is always 123456 in preview.
+  async emailStart({ email, userCode }) {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || "")) throw new ApiError(400, "That doesn't look like an email address.");
+    this.emailCodes.set(email.toLowerCase(), { code: "123456", userCode: userCode ?? null });
+    return { sent: true, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() };
+  }
+  async emailVerify({ email, code }) {
+    const e = this.emailCodes.get((email || "").toLowerCase());
+    if (!e || e.code !== String(code).trim()) throw new ApiError(400, "That code is wrong or has expired. Check the email, or send a new one.");
+    this.emailCodes.delete(email.toLowerCase());
+    if (e.userCode) this.pendingCodes.delete(e.userCode);
+    this.account_ ??= this.#newAccount("email", email);
+    this.signedIn = true;
+    return { account: this.account_, linked_device: e.userCode ? this.account_.devices[0] : null };
+  }
+  async logout() {
+    this.signedIn = false;
+    return { ok: true };
   }
 
   async account() {
-    if (!this.session) throw new ApiError(401, "Sign in first.");
+    if (!this.signedIn) throw new ApiError(401, "Sign in first.");
     return this.account_;
   }
   async savePrefs(prefs) {
-    if (!this.session) throw new ApiError(401, "Sign in first.");
-    this.account_.prefs = { ...this.account_.prefs, ...prefs };
-    return { ok: true };
+    if (!this.signedIn) throw new ApiError(401, "Sign in first.");
+    this.account_.prefs = prefs;
+    return { prefs };
   }
   async installLink() {
-    if (!this.session) throw new ApiError(401, "Sign in first.");
+    if (!this.signedIn) throw new ApiError(401, "Sign in first.");
     if (!["trial", "active", "grace"].includes(this.account_.status)) throw new ApiError(402, "Start a trial or renew to get the installer.");
     const token = "K7Q2-9MXA";
     return {
@@ -109,28 +133,38 @@ export class MockApi {
     this.account_.devices = this.account_.devices.filter((d) => d.id !== id);
     return { ok: true };
   }
-  signOut() {
-    this.session = null;
+  async cancel() {
+    const a = this.account_;
+    if (!a?.status || !["trial", "active", "grace"].includes(a.status)) throw new ApiError(409, "There is nothing to cancel.");
+    if (a.billing?.method === "base") {
+      a.status = "cancelled";
+      return { chain_id: 84532, payer: a.billing.payer, transactions: [{ to: "0x0000000000000000000000000000000000000002", data: "0x40e58ee5", value: "0x0" }] };
+    }
+    a.status = "cancelled";
+    return { cancelled: true, service_until: a.trial_ends_at || a.paid_until };
   }
 
   async checkoutConfig() {
     return {
       // docs/product-spec.md 1.2; the test network sells every plan.
       plans: [
-        { id: 1, tier: "ram", interval: "month", usd: 4 },
-        { id: 2, tier: "pro", interval: "month", usd: 5 },
-        { id: 3, tier: "ram", interval: "year", usd: 20 },
-        { id: 4, tier: "pro", interval: "year", usd: 24 },
+        { id: 1, tier: "ram", name: "RamWarden", usd: 4, interval: "month", days: 30, trial_days: 14, approval_usd: 48, wardens: ["ram"] },
+        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 30, trial_days: 14, approval_usd: 60, wardens: ["ram", "threat"] },
+        { id: 3, tier: "ram", name: "RamWarden", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
+        { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 14, approval_usd: 24, wardens: ["ram", "threat"] },
       ],
-      trial_days: 14,
       base: { chain_id: 84532, network: "Base Sepolia (test)" },
       solana: { network: "Solana devnet (test)" },
       stripe: true,
     };
   }
-  async checkoutBase(plan) {
-    return this.#payment(plan, "base_usdc", {
+  async checkoutBase(plan, payer) {
+    const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
+    this.payer = payer;
+    return this.#payment(plan, "base", {
       chain_id: 84532,
+      trial: this.account_.trial_available,
+      approval_usd: p.approval_usd,
       transactions: [
         { to: "0x0000000000000000000000000000000000000001", data: "0x095ea7b3" },
         { to: "0x0000000000000000000000000000000000000002", data: "0x12345678" },
@@ -140,8 +174,8 @@ export class MockApi {
   async checkoutSolana(plan) {
     return this.#payment(plan, "solana_pay", { message: "3Bxs4Bc3VYuGVB19" });
   }
-  async checkoutStripe() {
-    return { url: "#stripe-mock" };
+  async checkoutStripe(plan) {
+    return this.#payment(plan, "card", { url: "#stripe-mock", trial: this.account_.trial_available });
   }
   async payment(id) {
     const p = this.payments.get(id);
@@ -151,12 +185,17 @@ export class MockApi {
       p.status = "confirmed";
       // Confirming the approval starts the trial; nothing is charged yet.
       const plan = (await this.checkoutConfig()).plans.find((x) => x.id === p.plan);
+      const trial = this.account_.trial_available;
       Object.assign(this.account_, {
         tier: plan.tier,
         interval: plan.interval,
-        status: "trial",
-        trial_ends_at: new Date(Date.now() + 14 * DAY).toISOString(),
+        status: trial ? "trial" : "active",
+        trial_ends_at: trial ? new Date(Date.now() + 14 * DAY).toISOString() : null,
+        paid_until: trial ? null : new Date(Date.now() + plan.days * DAY).toISOString(),
+        trial_available: false,
+        billing: { method: p.method, payer: this.payer },
       });
+      Object.assign(p, { account_status: this.account_.status, tier: plan.tier, trial_ends_at: this.account_.trial_ends_at });
     }
     return p;
   }

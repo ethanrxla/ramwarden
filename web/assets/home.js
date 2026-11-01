@@ -45,10 +45,10 @@ function setUpHeroClip() {
   v.play().catch(() => {});
 }
 
-// Signed in? Only the account's own status is read, to pick the install
-// box's face. No server, or no session: the signed-out face.
+// Signed in? The session is an HttpOnly cookie, so the page asks. Only the
+// account's own status is read, to pick the install box's face. No server,
+// or a 401: the signed-out face.
 async function whoIsHere(api) {
-  if (!api.session) return null;
   try {
     return await api.account();
   } catch {
@@ -76,7 +76,12 @@ async function main() {
   await color.load();
   color.addEventListener("change", (e) => {
     // Signed in, the color follows the account to the apps.
-    if (account) api.savePrefs({ wardens: { [warden]: { color: e.detail.hue } } }).catch(() => {});
+    // Prefs are replaced whole, so the rest of them go back unchanged.
+    if (!account) return;
+    const prefs = { ...(account.prefs || {}) };
+    prefs.wardens = { ...(prefs.wardens || {}), [warden]: { ...(prefs.wardens?.[warden] || {}), color: e.detail.hue } };
+    account.prefs = prefs;
+    api.savePrefs(prefs).catch(() => {});
   });
   const stage = document.querySelector("[data-stage]");
   if (stage) new PetStage(stage, lines, color).start();

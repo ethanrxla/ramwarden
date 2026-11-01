@@ -216,6 +216,25 @@ async function run() {
     }
   });
 
+  t("account page: email sign-in with a code, then cancel the card trial", async () => {
+    const p = await page();
+    p.on("dialog", (d) => d.accept());
+    await p.goto(`${base}/account.html?mock=1`);
+    await p.fill("input[name=email]", "ethan@example.com");
+    await p.click("text=Email me a code");
+    await p.fill("input[name=code]", "000000");
+    await p.click("button:text('Sign in')");
+    await p.waitForSelector("text=That code is wrong");
+    await p.fill("input[name=code]", "123456");
+    await p.click("button:text('Sign in')");
+    await p.waitForSelector("h2:text('Start your 14-day free trial')");
+    await p.getByRole("button", { name: /Card or Apple Pay/ }).click();
+    await p.waitForSelector("text=Your trial has started");
+    await p.click("button:text('Cancel plan')");
+    await p.waitForSelector("text=Cancelled. Nothing more will be charged.");
+    assert.deepEqual(p.errors, []);
+  });
+
   t("account page: removing a device frees its slot", async () => {
     const p = await page();
     p.on("dialog", (d) => d.accept());

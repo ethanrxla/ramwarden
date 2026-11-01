@@ -39,28 +39,35 @@ Both warden tabs share one skeleton, in this order, with the same components:
 ### API routes the site calls
 
 All on `config.apiBase`, JSON in and out, errors as `{"error": "<sentence>"}`
-that the page shows as is. Routes marked *session* take
-`Authorization: Bearer <session>` from `/v1/auth/verify`.
+that the page shows as is. The full list, with every field, is in
+`docs/specs/hosted-api.md` (phase 2). Routes marked *session* use the
+`rw_session` cookie the sign-in routes set (`HttpOnly`, `Secure`,
+`SameSite=Strict`), so every call sends `credentials: "include"` and the page
+never sees the token.
 
 | Route | Body / query | Answer |
 | --- | --- | --- |
 | `GET /v1/device/lookup` | `?user_code=XXXX-XXXX` | `{status, device_name, platform, expires_at}`; 404 when unknown, expired or used |
 | `POST /v1/auth/challenge` | `{chain: "evm"\|"solana", address, user_code: string\|null}` | `{message, expires_at}` |
-| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{session, account, linked_device}` |
+| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{account, linked_device}` and the cookie; 409 when the account has 5 devices |
+| `POST /v1/auth/email/start` | `{email, user_code?}` | `{sent, expires_at}`; 429 within a minute; 503 when email sign-in is off |
+| `POST /v1/auth/email/verify` | `{email, code}` | as `verify` |
+| `POST /v1/auth/logout` | *session* | `{ok}`, cookie cleared |
 | `GET /v1/account` | *session* | `account` (below) |
-| `PATCH /v1/account/prefs` | *session*, `{wardens: {<id>: {color}}, pet_muted?}` | `{ok: true}` |
-| `POST /v1/install/link` | *session*, active plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run |
+| `PUT /v1/account/prefs` | *session*, any object up to 4 KB | `{prefs}` |
+| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4; not in PR #5 yet) |
 | `DELETE /v1/account/devices/{id}` | *session* | `{ok: true}` |
-| `GET /v1/checkout/config` | | `{plans: [{id, tier: "ram"\|"pro", interval: "month"\|"year", usd}], trial_days, base: {chain_id, network}\|null, solana: {network}\|null, stripe: bool}` |
-| `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, transactions: [{to, data, value?}]}` |
-| `POST /v1/checkout/solana` | *session*, `{plan, payer}` | `{payment_id, message}` (base58 serialized transaction message) |
-| `POST /v1/checkout/stripe` | *session*, `{plan}` | `{url}` (a `https://checkout.stripe.com/` URL; success returns to `account.html?paid=stripe`) |
-| `GET /v1/checkout/payments/{id}` | *session* | `{id, plan, method, status: "pending"\|"confirmed"\|"failed", reason?}` |
+| `GET /v1/checkout/config` | | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], base: {chain_id, network, contract, usdc}\|null, solana: null, stripe: bool, stripe_test: bool}` |
+| `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, trial, approval_usd, transactions: [{to, data, value}]}`; 409 while subscribed |
+| `POST /v1/checkout/stripe` | *session*, `{plan}` | `{payment_id, url, trial}`; success returns to `account.html?checkout=done&payment=<id>` |
+| `GET /v1/checkout/payments/{id}` | *session* | `{id, plan, method, status: "pending"\|"confirmed"\|"failed", reason, account_status, tier, trial_ends_at, entitlement_until}` |
+| `POST /v1/checkout/cancel` | *session* | Base: `{chain_id, payer, transactions}` for the paying wallet; card: `{cancelled, service_until}` |
 
-`account` is `{id, identity: {kind: "wallet", chain, address} | {kind: "email",
-email}, tier: "ram"|"pro"|null, interval: "month"|"year"|null, status:
-"trial"|"active"|"grace"|"lapsed"|"cancelled"|null, trial_ends_at, paid_until,
-devices: [{id, name, platform, last_seen_at}], device_limit, prefs}`.
+`account` is `{id, identity, tier: "ram"|"pro"|null, interval, status:
+"trial"|"active"|"grace"|"cancelled"|"lapsed"|null, trial_ends_at, paid_until,
+trial_available, billing: {method}|null, entitlement_until, entitlements,
+used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
+prefs}`.
 
 Plans are the contract's ids: 1 RamWarden monthly ($4), 2 Pro monthly ($5),
 3 RamWarden annual ($20), 4 Pro annual ($24). Both tiers start with a 14-day
@@ -75,23 +82,20 @@ Sign-in:
   message approves the device code as well as returning a web session.
 - EVM signatures are `personal_sign` hex. Solana signatures are base58 of the
   64 signature bytes from Phantom's `signMessage`.
-- The session lives in `sessionStorage` (one tab, gone on close). A 401 clears
-  it and the page asks to sign in again.
+- Email sign-in mails a six-digit code; the page asks for it on the same
+  screen. A 401 on any session route means signed out.
 
 Checkout:
 
-- The server builds every transaction. Base: a USDC `approve` capped at one
-  year of the plan, then `startTrial(account, plan)`. Nothing is charged at
-  sign-up; the contract pulls one period's price at trial end and each renewal.
-  Solana: a USDC transfer with a Solana Pay reference key. The page only asks
-  the wallet to send what it was given.
-- `account.html?plan=<id>` preselects that plan when `checkout/config` sells
-  it (agents link people here to buy a pass); any other value is ignored.
+- The server builds every transaction. Base: a USDC `approve` for one year
+  of the plan (shown to the user as `approval_usd`; nothing if allowance
+  suffices) then `RamWardenCheckout.startTrial(account, plan, price, ref)`.
+  No money moves until the trial ends (`trial: false` means it is charged
+  now). The page only asks the wallet to send what it was given.
 - The payer wallet need not be a wallet on the account.
 - The page polls the payment every 3 s for up to 3 minutes, then tells the
-  user it is safe to close: the server starts the trial on confirmation
-  whether or not the page is open. Once it starts, the same page shows the
-  personal install line and the browser helper step.
+  user it is safe to close: the server records the subscription on
+  confirmation whether or not the page is open.
 - When `checkout/config` fails or lists no method, the page says checkout
   opens soon and sells nothing.
 

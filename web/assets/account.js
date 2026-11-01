@@ -6,7 +6,7 @@
 // charges nothing; the server reports the plan and its status.
 
 import { config, planFor } from "./config.js";
-import { errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show, signIn } from "./common.js";
+import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -38,46 +38,31 @@ class AccountPage {
   }
 
   async start() {
-    if (api.session) {
-      try {
-        this.account = await api.account();
-      } catch (err) {
-        if (err.status !== 401) {
-          show(root, h("h1", {}, "Your account"), notice("error", errorText(err)));
-          return;
-        }
+    // The session is an HttpOnly cookie, so the only way to know is to ask.
+    try {
+      this.account = await api.account();
+    } catch (err) {
+      if (err.status !== 401 && !err.offline) {
+        show(root, h("h1", {}, "Your account"), notice("error", errorText(err)));
+        return;
       }
     }
     if (!this.account) await this.signIn();
     await this.loadCheckout();
     this.render();
-    if (new URLSearchParams(location.search).get("paid") === "stripe") {
-      this.flash(notice("ok", "Card added. Your trial starts as soon as the payment provider confirms it, usually within a minute."));
+    // Back from card checkout: follow the payment until it confirms.
+    const q = new URLSearchParams(location.search);
+    if (q.get("checkout") === "done" && q.get("payment")) {
+      const area = h("div");
+      this.flashArea.replaceChildren(area);
+      this.waitForPayment(q.get("payment"), area);
     }
   }
 
   async signIn() {
     const area = h("div");
-    const problem = h("div");
-    show(
-      root,
-      h("h1", {}, "Your account"),
-      h("p", {}, "Sign in with your wallet or your email."),
-      h("p", { class: "muted" }, "Email sign-in opens soon. A new wallet starts a new account."),
-      problem,
-      area,
-    );
-    for (;;) {
-      const wallet = await pickWallet(area, { purpose: "You sign a short message. It costs nothing." });
-      show(area, notice("info", `Check ${wallet.name} for the sign-in message.`));
-      try {
-        this.account = (await signIn(api, wallet)).account;
-        return;
-      } catch (err) {
-        // Back to the picker with the reason shown above it.
-        show(problem, notice("error", errorText(err)));
-      }
-    }
+    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api)).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -113,7 +98,12 @@ class AccountPage {
             h("h2", {}, config.tiers[a.tier]?.name || "Your plan"),
             h("p", {}, (STATUS[a.status] || (() => ""))(a)),
             h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
-            h("button", { class: "button secondary small", type: "button", onclick: () => { api.signOut(); location.reload(); } }, "Sign out"),
+            h(
+              "div",
+              { class: "row-actions" },
+              h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
+            ),
           )
         : null,
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
@@ -196,9 +186,13 @@ class AccountPage {
     const refresh = () => {
       const p = plan();
       for (const i of picker.querySelectorAll("input")) i.checked = i.value === (i.name === "tier" ? tier : interval);
-      terms.textContent = p
-        ? `Nothing is charged today. After ${config.trialDays} days, $${p.usd} a ${interval} until you cancel. Your wallet approves one year at most.`
-        : "";
+      const approve = p?.approval_usd ?? (p && (p.interval === "month" ? p.usd * 12 : p.usd));
+      const trialDays = p?.trial_days ?? config.trialDays;
+      terms.textContent = !p
+        ? ""
+        : this.account.trial_available === false
+          ? `$${p.usd} a ${interval}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
+          : `Nothing is charged today. After ${trialDays} days, $${p.usd} a ${interval} until you cancel. A wallet approves $${approve} at most (one year).`;
     };
     const choice = (name, value, label, sub) =>
       h(
@@ -223,7 +217,7 @@ class AccountPage {
     return h(
       "section",
       { class: "panel", id: "buy" },
-      h("h2", {}, this.account.status ? "Renew" : `Start your ${config.trialDays}-day free trial`),
+      h("h2", {}, this.account.trial_available === false ? (this.account.status ? "Renew" : "Choose a plan") : `Start your ${config.trialDays}-day free trial`),
       any
         ? [
             picker,
@@ -260,15 +254,38 @@ class AccountPage {
   async payStripe(plan, area) {
     try {
       show(area, notice("info", "Opening card checkout…"));
-      const { url } = await api.checkoutStripe(plan);
+      const { url, payment_id } = await api.checkoutStripe(plan);
       if (isMock) {
         show(area, notice("info", "Preview mode: card checkout would open here."));
+        await this.waitForPayment(payment_id, area);
         return;
       }
       if (!/^https:\/\/checkout\.stripe\.com\//.test(url)) throw new Error("Unexpected checkout address.");
       location.assign(url);
     } catch (err) {
       show(area, notice("error", errorText(err)));
+    }
+  }
+
+  // Card plans cancel server side. Wallet plans are cancelled from the wallet
+  // that pays, so the server hands back that transaction to send.
+  async cancel(button) {
+    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to local mode.")) return;
+    button.disabled = true;
+    try {
+      const r = await api.cancel();
+      if (r.transactions) {
+        const area = h("div");
+        this.flash(area);
+        const wallet = await pickWallet(area, { chain: "evm", purpose: `Confirm the cancel in the wallet that pays (${shortAddress(r.payer)}). It costs a little gas and moves no USDC.` });
+        await wallet.pay(r);
+      }
+      this.account = await api.account();
+      this.render();
+      this.flash(notice("ok", "Cancelled. Nothing more will be charged."));
+    } catch (err) {
+      button.disabled = false;
+      this.flash(notice("error", errorText(err)));
     }
   }
 
@@ -280,7 +297,7 @@ class AccountPage {
       if (p.status === "confirmed") {
         this.account = await api.account();
         this.render();
-        this.flash(notice("ok", `Your trial has started. Install RamWarden below.`));
+        this.flash(notice("ok", this.account.status === "trial" ? "Your trial has started. Install RamWarden below." : "You're all set. Install RamWarden below."));
         return;
       }
       if (p.status === "failed") {
