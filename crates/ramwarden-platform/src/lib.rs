@@ -18,6 +18,7 @@
 //! | [`ProcessControl`] | pidfd | process `HANDLE` |
 //! | [`Pager`] | `process_madvise` | working-set trim |
 //! | [`Background`] | — | memory priority + EcoQoS |
+//! | [`WindowManager`] | sway, i3 (AeroSpace on macOS) | komorebi |
 //!
 //! Nothing here touches an OS. That is what lets [`fake`] drive the whole ladder
 //! in a unit test on either platform.
@@ -33,6 +34,7 @@ mod pager;
 mod platform;
 mod pressure;
 mod process;
+mod wm;
 
 pub use background::{Background, NoBackground};
 pub use desktop::{Desktop, DesktopSource};
@@ -43,4 +45,5 @@ pub use outcome::Outcome;
 pub use pager::{NoPager, Pager};
 pub use platform::{Parts, Platform};
 pub use pressure::{Pressure, PressureSource, PressureWaker};
+pub use wm::{WindowManager, WmCommand, WmKind, WmLayout, WmState, WmWindow, WmWorkspace};
 pub use process::{Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource};

@@ -19,6 +19,7 @@ ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
 ramwarden-ml     = { path = "../ramwarden-ml" }
+ramwarden-wm     = { path = "../ramwarden-wm" }
 # CPU only: the daemon never loads CUDA (see src/worker.rs).
 candle-core      = "0.11"
 axum       = { workspace = true }

@@ -6,6 +6,7 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod desktop;
 pub mod embedder;
 pub mod extras;
 pub mod freeze_journal;
