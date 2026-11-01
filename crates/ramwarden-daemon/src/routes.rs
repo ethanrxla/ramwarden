@@ -8,7 +8,8 @@
 //!
 //! New in v2: `/state` (what the window needs in one call, so the Python UI can
 //! run out of process), `/psi`, `/ladder/plan`, `/ladder/cancel-kill`, and
-//! `/actions`.
+//! `/actions`. `/desktop/*` (tiling window managers) lives in
+//! [`crate::desktop`].
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -81,6 +82,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reclaim/{scope}", post(reclaim_scope))
         .route("/tabs/close", post(close_tabs_route))
         .route("/history/clear", delete(clear_history))
+        .merge(crate::desktop::routes())
         .with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses
         // everything a web page might send. See `guard` for why both.

@@ -4494,6 +4494,7 @@ dependencies = [
  "ramwarden-mac",
  "ramwarden-nt",
  "ramwarden-platform",
+ "ramwarden-wm",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4517,6 +4518,7 @@ dependencies = [
  "ramwarden-ml",
  "ramwarden-nt",
  "ramwarden-platform",
+ "ramwarden-wm",
  "serde",
  "serde_json",
  "tempfile",
@@ -4649,6 +4651,18 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon",
  "windows",
+]
+
+[[package]]
+name = "ramwarden-wm"
+version = "0.2.1"
+dependencies = [
+ "ramwarden-platform",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

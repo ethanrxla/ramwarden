@@ -11,6 +11,13 @@ debounce_minutes = 120    # Only auto-trigger once every 2 hours maximum
 host = "127.0.0.1"
 port = 7823
 
+# Tiling window manager control: AeroSpace (macOS), sway/i3 (Linux), komorebi
+# (Windows). Does nothing unless one is running. Every change is proposed
+# first and applied only on approval; see docs/specs/desktop-arrange.md.
+[desktop]
+enabled = true
+backend = "auto"   # or "aerospace", "sway", "i3", "komorebi"
+
 [processes]
 # Cursor removed: it uses lockfiles, so SIGSTOP blocks new launches with "another instance running".
 # Add only background apps that don't hold lockfiles or IPC sockets (Discord, Slack, etc.).

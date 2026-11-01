@@ -7,6 +7,7 @@
 
 pub mod actuator;
 pub mod apps;
+pub mod arrange;
 pub mod config;
 pub mod describe;
 pub mod detector;

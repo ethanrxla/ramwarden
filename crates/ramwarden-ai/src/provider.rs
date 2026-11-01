@@ -141,29 +141,7 @@ impl Provider {
     ) -> Option<Recommendation> {
         match tier {
             Tier::Local => {
-                let o = self.ollama.as_ref()?;
-                // A model that has to be pulled mid-request turns a one-second
-                // analysis into a multi-gigabyte download, on a machine already
-                // short of memory.
-                let (ready, missing) = o.ready().await;
-                if !ready {
-                    notes.push(format!(
-                        "local model unavailable (missing: {})",
-                        if missing.is_empty() {
-                            "ollama not reachable".to_string()
-                        } else {
-                            missing.join(", ")
-                        }
-                    ));
-                    return None;
-                }
-                if self.respect_vram && vram::room_for_local_model() == Some(false) {
-                    let used = vram::primary().map(|g| g.percent_used()).unwrap_or(0.0);
-                    notes.push(format!(
-                        "skipped the local model — GPU is {used:.0}% full of your work"
-                    ));
-                    return None;
-                }
+                let o = self.usable_local(notes).await?;
                 match o.recommend(prompt::SYSTEM_PROMPT, user).await {
                     Ok(r) => Some(r),
                     Err(e) => {
@@ -173,10 +151,7 @@ impl Provider {
                 }
             }
             Tier::Cloud => {
-                if !self.cloud_enabled {
-                    return None;
-                }
-                let n = self.nim.as_ref()?;
+                let n = self.usable_cloud()?;
                 match n.recommend(prompt::SYSTEM_PROMPT, user).await {
                     Ok(r) => Some(r),
                     Err(e) => {
@@ -187,6 +162,78 @@ impl Provider {
             }
             Tier::Heuristic => None,
         }
+    }
+
+    /// The local model, if it is ready and there is room for it.
+    async fn usable_local(&self, notes: &mut Vec<String>) -> Option<&Ollama> {
+        let o = self.ollama.as_ref()?;
+        // A model that has to be pulled mid-request turns a one-second
+        // analysis into a multi-gigabyte download, on a machine already
+        // short of memory.
+        let (ready, missing) = o.ready().await;
+        if !ready {
+            notes.push(format!(
+                "local model unavailable (missing: {})",
+                if missing.is_empty() {
+                    "ollama not reachable".to_string()
+                } else {
+                    missing.join(", ")
+                }
+            ));
+            return None;
+        }
+        if self.respect_vram && vram::room_for_local_model() == Some(false) {
+            let used = vram::primary().map(|g| g.percent_used()).unwrap_or(0.0);
+            notes.push(format!(
+                "skipped the local model — GPU is {used:.0}% full of your work"
+            ));
+            return None;
+        }
+        Some(o)
+    }
+
+    /// The cloud model, if the user turned it on.
+    fn usable_cloud(&self) -> Option<&Nim> {
+        if !self.cloud_enabled {
+            return None;
+        }
+        self.nim.as_ref()
+    }
+
+    /// Ask for a JSON object in a caller-defined shape, trying tiers in the
+    /// user's preferred order. `None` with notes when no tier answered; there
+    /// is no heuristic fallback for a free-form request.
+    pub async fn ask_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: serde_json::Value,
+    ) -> (Option<serde_json::Value>, Option<&'static str>, Vec<String>) {
+        let order = match self.prefer {
+            Prefer::Local => [Tier::Local, Tier::Cloud],
+            Prefer::Cloud => [Tier::Cloud, Tier::Local],
+        };
+        let mut notes = Vec::new();
+        for tier in order {
+            let reply = match tier {
+                Tier::Local => match self.usable_local(&mut notes).await {
+                    Some(o) => o.complete_json(system, user, schema.clone()).await,
+                    None => continue,
+                },
+                _ => match self.usable_cloud() {
+                    Some(n) => n.complete_json(system, user).await,
+                    None => continue,
+                },
+            };
+            match reply {
+                Ok(v) => return (Some(v), Some(tier.as_str()), notes),
+                Err(e) => notes.push(format!("{} model failed: {e}", tier.as_str())),
+            }
+        }
+        if notes.is_empty() {
+            notes.push("no model is configured: set up Ollama or the cloud tier".into());
+        }
+        (None, None, notes)
     }
 
     /// Tabs that look unrelated to the goal, by embedding similarity.
