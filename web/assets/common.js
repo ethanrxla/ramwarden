@@ -9,7 +9,7 @@ import { Api } from "./api.js";
 import { config } from "./config.js";
 import { EvmWallet, PhantomWallet, discoverEvmWallets, phantomProvider, walletErrorMessage } from "./wallet.js";
 
-export const isMock = new URLSearchParams(location.search).get("mock") === "1";
+export const isMock = typeof location !== "undefined" && new URLSearchParams(location.search).get("mock") === "1";
 
 export async function makeApi() {
   if (isMock) {
@@ -19,7 +19,7 @@ export async function makeApi() {
   return new Api(config.apiBase);
 }
 
-// h("p", {class: "x"}, "text", child) — a tiny element builder.
+// h("p", {class: "x"}, "text", child): a tiny element builder.
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {

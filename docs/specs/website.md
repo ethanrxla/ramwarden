@@ -9,17 +9,32 @@ static files to any host.
 
 ### Pages
 
+The product plan is `docs/product-spec.md` (section 2 is the site). This spec
+is the site's part of it.
+
 | Page | Purpose |
 | --- | --- |
-| `index.html` | RamWarden tab: scroll-scrubbed film hero with the rotating catchline, memory lab, ladder, Jev, install, pricing, FAQ |
-| `threat.html` | ThreatWarden tab (black, purple, green): Wazuh, ClamAV, Suricata, ntopng; status levels; hosted vs self-hosted; pricing; FAQ |
-| `install.sh`, `install.ps1` | One-line installers: download the latest release for the OS, check SHA-256 against `manifest.json`, run the release's own installer |
+| `index.html` | RamWarden tab (crimson, black, silver) |
+| `threat.html` | ThreatWarden tab (black, purple, green) |
+| `account.html` | Sign in, start a trial, status, personal install line, browser helper, devices |
 | `link.html?code=XXXX-XXXX` | Approves a device sign-in (RFC 8628). The daemon opens it after `POST /v1/device/start` |
-| `account.html` | Web sign-in, pass status, today's usage, devices, checkout |
 | `privacy.html` | Privacy policy (draft until launch) |
+| `notices.html` | Open-source notices: the projects the wardens are built on and their licences |
+| `install.sh`, `install.ps1` | Installers that the personal one-liner runs (product spec section 5) |
 
-Any page with `?mock=1` runs against an in-page mock server (`assets/mock.js`)
-and offers demo wallets, behind a banner. The mock follows this contract.
+Both warden tabs share one skeleton, in this order, with the same components:
+
+| # | Section | RamWarden | ThreatWarden |
+| --- | --- | --- | --- |
+| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Media: the looping ram clip (`assets/world/ram-hero.mp4`) | Same, "Catch threats. Keep your peace.". Media: the radar with the cyborg ram |
+| 2 | Install (`#get`) | `assets/install.js`, the same on both | same |
+| 3 | Scroll world | The promo film scrubbed by scroll | The radar scene, threats caught as you scroll |
+| 4 | Pet | The ram, talking, with the color picker | The cyborg ram |
+| 5 | How it works (`#how`) | Measures, Triggers, Protects, Decides; then three questions | Host, Files, Network, Traffic; then Acts, Protected, Plain words |
+| 6 | Pricing (`#pricing`) | `assets/pricing.js`, the same on both | same |
+| 7 | FAQ (`#faq`) | Short | Short |
+| 8 | Try it (`#demo`) | The simulated memory demo | The four status levels |
+| 9 | Footer | Same | Same |
 
 ### API routes the site calls
 
@@ -33,15 +48,23 @@ that the page shows as is. Routes marked *session* take
 | `POST /v1/auth/challenge` | `{chain: "evm"\|"solana", address, user_code: string\|null}` | `{message, expires_at}` |
 | `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{session, account, linked_device}` |
 | `GET /v1/account` | *session* | `account` (below) |
+| `PATCH /v1/account/prefs` | *session*, `{wardens: {<id>: {color}}, pet_muted?}` | `{ok: true}` |
+| `POST /v1/install/link` | *session*, active plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run |
 | `DELETE /v1/account/devices/{id}` | *session* | `{ok: true}` |
-| `GET /v1/checkout/config` | | `{plans: [{id, name, usd, days}], base: {chain_id, network}\|null, solana: {network}\|null, stripe: bool}` |
+| `GET /v1/checkout/config` | | `{plans: [{id, tier: "ram"\|"pro", interval: "month"\|"year", usd}], trial_days, base: {chain_id, network}\|null, solana: {network}\|null, stripe: bool}` |
 | `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, transactions: [{to, data, value?}]}` |
 | `POST /v1/checkout/solana` | *session*, `{plan, payer}` | `{payment_id, message}` (base58 serialized transaction message) |
 | `POST /v1/checkout/stripe` | *session*, `{plan}` | `{url}` (a `https://checkout.stripe.com/` URL; success returns to `account.html?paid=stripe`) |
-| `GET /v1/checkout/payments/{id}` | *session* | `{id, plan, method, status: "pending"\|"confirmed"\|"failed", reason?, entitlement_until?}` |
+| `GET /v1/checkout/payments/{id}` | *session* | `{id, plan, method, status: "pending"\|"confirmed"\|"failed", reason?}` |
 
-`account` is `{id, tier: "free"|"pro", entitlement_until, used_today,
-wallets: [{chain, address}], devices: [{id, name, platform, last_seen_at}]}`.
+`account` is `{id, identity: {kind: "wallet", chain, address} | {kind: "email",
+email}, tier: "ram"|"pro"|null, interval: "month"|"year"|null, status:
+"trial"|"active"|"grace"|"lapsed"|"cancelled"|null, trial_ends_at, paid_until,
+devices: [{id, name, platform, last_seen_at}], device_limit, prefs}`.
+
+Plans are the contract's ids: 1 RamWarden monthly ($4), 2 Pro monthly ($5),
+3 RamWarden annual ($20), 4 Pro annual ($24). Both tiers start with a 14-day
+trial and renew until cancelled.
 
 Sign-in:
 
@@ -57,33 +80,49 @@ Sign-in:
 
 Checkout:
 
-- The server builds every transaction. Base: a USDC `approve` (or nothing,
-  if allowance suffices) then `RamWardenCheckout.purchase(account, plan)`.
+- The server builds every transaction. Base: a USDC `approve` capped at one
+  year of the plan, then `startTrial(account, plan)`. Nothing is charged at
+  sign-up; the contract pulls one period's price at trial end and each renewal.
   Solana: a USDC transfer with a Solana Pay reference key. The page only asks
   the wallet to send what it was given.
 - `account.html?plan=<id>` preselects that plan when `checkout/config` sells
   it (agents link people here to buy a pass); any other value is ignored.
 - The payer wallet need not be a wallet on the account.
 - The page polls the payment every 3 s for up to 3 minutes, then tells the
-  user it is safe to close: the server credits the pass on confirmation
-  whether or not the page is open.
+  user it is safe to close: the server starts the trial on confirmation
+  whether or not the page is open. Once it starts, the same page shows the
+  personal install line and the browser helper step.
 - When `checkout/config` fails or lists no method, the page says checkout
   opens soon and sells nothing.
 
 ## Policy
 
-- **Two tabs, one per warden.** Each page is its own HTML file, linked from
-  the header's warden tabs, so each can carry its own theme and pet.
-- **Scroll drives the film.** The hero scrubs `assets/world/promo-scrub.mp4`
-  by scroll position (scroll-world technique, `assets/world.js`): fetched as a
-  Blob, coalesced seeks, a lighter phone encode, and the closing frame plus
-  all copy under reduced motion.
-- **The pet** speaks each section's `data-pet-say` line; dismissing it
-  sticks.
-- **Free vs Pro is stated plainly.** The open-source release runs local and
-  never uses our backend; Pro is the same install plus sign-in. ThreatWarden
-  hosted is plug-and-play and is shown as coming soon until it is live;
-  `soon` plans are never sold on the account page.
+- **Two tabs, one skeleton.** The table above is the order on both pages;
+  only palette, copy and media differ. Shared components (install, pricing)
+  are built by one module each, so the two pages cannot drift.
+- **Copy is short and abstract.** Each section is a heading, one sentence
+  and cards. Pages never name the engines or providers behind a warden and
+  never say "our server"; attributions live on `notices.html`. No em dashes
+  anywhere under `web/`. A unit test enforces both.
+- **No free tier on the site.** The product is paid with a 14-day trial.
+  The open-source repo is the free option and appears as one line under the
+  pricing cards and a small card beside the install box, never as a tier.
+- **The install box knows who you are.** Signed out: OS tabs and Start free
+  trial, no command. Trial or active: a personal one-liner and installer
+  download from `POST /v1/install/link`. Lapsed or cancelled: Renew. No
+  command from `raw.githubusercontent.com` appears on the site.
+- **Scroll drives the world.** `assets/world.js` scrubs the RamWarden film by
+  scroll position (fetched as a Blob, coalesced seeks, a lighter phone
+  encode) and sets `--p` and `[data-at]` states for the ThreatWarden scene.
+  Reduced motion shows the final state and all copy.
+- **The pets talk, a little.** The corner pet says a line per section and,
+  now and then, a joke: one every 45 to 90 s, at most 6 a visit, never while
+  typing, and one click mutes it (remembered). Lines live in
+  `assets/pets/<warden>-lines.json`. Comments may react to the page (the
+  demo slider), never to the visitor's machine, which the site cannot see.
+- **Warden color.** Six presets and a hue slider recolor the sprite by
+  palette swap, keeping outline and eyes. Kept in `localStorage`; signed in,
+  also saved to the account's `prefs`.
 
 - **No third-party code on pages that sign.** No wallet SDK, analytics or
   CDN. Each page carries a CSP of `script-src 'self'`; its `connect-src`
@@ -94,21 +133,24 @@ Checkout:
   `textContent`.
 - **Degrade, don't fail.** No server: the page says hosted sign-in may not be
   live and that the app works without it. No wallet: links to install
-  MetaMask or Phantom. No release asset: the download goes to the releases
-  page. No store listing: unpacked-install steps.
-- **Prices in one place.** `assets/config.js` holds plans and limits for the
-  landing page; `checkout/config` overrides them on the account page.
+  MetaMask or Phantom. No store listing: unpacked-install steps for the
+  browser helper. No server: the install box stays in its signed-out state.
+- **Prices in one place.** `assets/config.js` holds plans and tiers for the
+  landing pages; `checkout/config` overrides them on the account page.
 
 ## Verification
 
 - `node --test web/tests/*.test.mjs`: user-code normalisation against the
   server's alphabet, base58, hex encoding, wallet error wording, OS detection,
-  the API client's session handling.
+  the API client's session handling, pet recoloring, pricing math, and the
+  copy rules (no em dashes, no engine or provider names, no "our server").
 - `node web/tests/e2e.cjs`: Chromium against the mock with injected fake
-  MetaMask (EIP-6963) and Phantom. Device link signs a message bound to the
+  MetaMask (EIP-6963) and Phantom. Both tabs have the same section order;
+  the install box in signed-out, trial and lapsed states; the pricing toggle;
+  pet jokes, mute and color. Device link signs a message bound to the
   code; bad and expired codes re-prompt; a rejected signature offers a retry;
-  sign in with Phantom and pay on Base with MetaMask (chain switch, approve
-  then purchase, pass extends); revoke; unreachable server.
+  sign in with Phantom and start a trial on Base with MetaMask (chain switch,
+  capped approve then startTrial, install line appears); revoke; unreachable server.
 - Both run in CI (`website` job).
 
 ## Basis and limitations
@@ -116,7 +158,9 @@ Checkout:
 - The routes above are not built yet. `ramwarden-api` (phase 1) has only the
   Jev endpoints; `ramwarden-cloud` has the storage for accounts, device codes
   and payments. This spec is what phase 2 implements.
-- No email or magic-link sign-in yet; the design allows it for card payers.
+- Email sign-in (product spec 3.1) is not built yet; the account page says so.
+- ThreatWarden's acting steps (quarantine, blocking) are not built yet, so
+  their cards carry a Soon tag.
 - The checkout contract is not deployed, so the Base flow is tested only
   against the mock.
 - The domain `ramwarden.app` is a placeholder until one is registered.

@@ -94,6 +94,13 @@ export class Api {
   account() {
     return this.request("GET", "/v1/account");
   }
+  savePrefs(prefs) {
+    return this.request("PATCH", "/v1/account/prefs", prefs);
+  }
+  // A personal install line for a new computer: single use, 30 minutes.
+  installLink() {
+    return this.request("POST", "/v1/install/link", {});
+  }
   revokeDevice(id) {
     return this.request("DELETE", `/v1/account/devices/${encodeURIComponent(id)}`);
   }

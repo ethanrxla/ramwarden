@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { Api, ApiError, normaliseUserCode } from "../assets/api.js";
 import { base58, utf8ToHex, walletErrorMessage } from "../assets/wallet.js";
-import { detectOs } from "../assets/home.js";
+import { detectOs } from "../assets/install.js";
 
 test("user codes are normalised to the server's alphabet", () => {
   assert.equal(normaliseUserCode("bcdf-ghjk"), "BCDF-GHJK");
