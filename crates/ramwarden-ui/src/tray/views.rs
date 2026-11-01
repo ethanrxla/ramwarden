@@ -345,12 +345,12 @@ pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHan
         match &p.action {
             PaneAction::Upgrade { url, price } => {
                 ui.add_space(4.0);
-                let b = egui::Button::new(RichText::new(format!("Get a ThreatWarden pass · {price}")).color(Color32::WHITE))
+                let b = egui::Button::new(RichText::new(crate::wardens::UPGRADE_LABEL).color(Color32::WHITE))
                     .fill(colour(Level::Locked.colour()));
                 if ui.add(b).on_hover_text(url).clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                 }
-                ui.weak("Pay with Phantom, MetaMask or card. Your RAM warden stays free.");
+                ui.weak(format!("{price}. Pay with Phantom, MetaMask or card. Your RAM warden stays free."));
             }
             PaneAction::TurnOn => {
                 ui.add_space(4.0);
@@ -367,7 +367,7 @@ pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHan
 
         if !p.engines.is_empty() {
             ui.separator();
-            ui.strong(if p.action.is_upgrade() { "What the pass turns on" } else { "Engines" });
+            ui.strong(if p.action.is_upgrade() { "What Pro turns on" } else { "Engines" });
             egui::Grid::new("engines").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
                 for e in &p.engines {
                     ui.colored_label(colour(e.colour()), format!("● {}", e.name));

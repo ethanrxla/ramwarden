@@ -29,8 +29,12 @@ use crate::client::{Client, Error, Result, TIMEOUT};
 pub const UPGRADE_URL: &str = "https://ramwarden.app/#pricing";
 
 /// ThreatWarden's price, shown on the locked pane until the daemon reports one.
-/// The account server is the authority; this is only the fallback text.
-pub const THREAT_PRICE: &str = "$6 per 2 months";
+/// ThreatWarden comes with RamWarden Pro ($5 a month or $24 a year, 14-day
+/// trial). The account server is the authority; this is only the fallback.
+pub const THREAT_PRICE: &str = "In RamWarden Pro, from $5 a month";
+
+/// The upgrade button's label, on every platform.
+pub const UPGRADE_LABEL: &str = "Get RamWarden Pro";
 
 pub const THREAT: &str = "threat";
 

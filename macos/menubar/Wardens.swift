@@ -14,7 +14,7 @@ enum Pane: Int { case ram = 0, threat = 1 }
 
 /// Where "Get a pass" goes and what it costs, until the daemon names its own.
 let upgradeFallbackURL = URL(string: "https://ramwarden.app/#pricing")!
-let threatFallbackPrice = "$6 per 2 months"
+let threatFallbackPrice = "In RamWarden Pro, from $5 a month"
 
 struct ThreatEngine { var name: String; var state: String; var detail: String }
 
@@ -321,13 +321,13 @@ extension App {
 
         if let up = p.upgrade {
             menu.addItem(.separator())
-            let m = NSMenuItem(title: "Get a ThreatWarden pass · \(up.price)…", action: #selector(openUpgrade(_:)),
+            let m = NSMenuItem(title: "Get RamWarden Pro…", action: #selector(openUpgrade(_:)),
                                keyEquivalent: "")
             m.target = self
             m.representedObject = up.url
             m.toolTip = up.url.absoluteString
             menu.addItem(m)
-            line("Pay with Phantom, MetaMask or card. Your RAM warden stays free.",
+            line("\(up.price). Pay with Phantom, MetaMask or card. Your RAM warden stays free.",
                  colour: .secondaryLabelColor, small: true)
         } else if p.turnOn {
             menu.addItem(.separator())
@@ -340,7 +340,7 @@ extension App {
 
         if !p.engines.isEmpty {
             menu.addItem(.separator())
-            header(p.upgrade != nil ? "WHAT THE PASS TURNS ON" : "ENGINES")
+            header(p.upgrade != nil ? "WHAT PRO TURNS ON" : "ENGINES")
             for e in p.engines { dotted(engineLevel(e.state), e.name, e.detail) }
         }
 

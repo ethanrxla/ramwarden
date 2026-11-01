@@ -983,7 +983,7 @@ mod live_tests {
                         "/browser/tabs" | "/browser/analyze" => r#"{"browsers_connected":1,"candidates":1,"tabs":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article","title":"Fixture browser tab","inactive_minutes":120,"eligible":true,"status":"candidate","reason":"idle background tab","priority":120}]}"#,
                         "/browser/discard" => r#"{"confirmed":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article"}],"queued":[],"refused":[]}"#,
                         "/watchlist" => r#"{"patterns":[]}"#,
-                        "/wardens/threat" => r#"{"id":"threat","name":"ThreatWarden","role":"Watches for attacks.","icon":"/wardens/threat/icon.svg","access":"pro","unlocked":false,"enabled":true,"status":{"level":"locked","headline":"ThreatWarden is a Pro warden","detail":"","checked_at":0},"price":"$6 per 2 months","upgrade_url":"https://ramwarden.app/#pricing","report":null}"#,
+                        "/wardens/threat" => r#"{"id":"threat","name":"ThreatWarden","role":"Watches for attacks.","icon":"/wardens/threat/icon.svg","access":"pro","unlocked":false,"enabled":true,"status":{"level":"locked","headline":"ThreatWarden is a Pro warden","detail":"","checked_at":0},"price":"In RamWarden Pro, from $5 a month","upgrade_url":"https://ramwarden.app/#pricing","report":null}"#,
                         "/wardens/threat/icon.svg" => r##"<svg viewBox="0 0 2 2"><rect x="0" y="0" width="1" height="1" fill="#ff2b3a"/></svg>"##,
                         _ => "{}",
                     };
@@ -1054,7 +1054,7 @@ mod live_tests {
             // The ThreatWarden pane: locked, with the upgrade and the cyborg icon.
             let threat = tree.iter().find(|w| w.widget_name() == "threatwarden").unwrap().clone();
             let threat_buttons = || widgets(&threat).into_iter().filter_map(|w| w.downcast::<gtk4::Button>().ok()).collect::<Vec<_>>();
-            until(|| threat_buttons().iter().any(|b| b.label().is_some_and(|l| l == "Get a ThreatWarden pass · $6 per 2 months"))).await;
+            until(|| threat_buttons().iter().any(|b| b.label().is_some_and(|l| l == "Get RamWarden Pro"))).await;
             let picture = widgets(&threat).into_iter().find_map(|w| w.downcast::<gtk4::Picture>().ok()).unwrap();
             until(|| picture.paintable().is_some()).await;
         });

@@ -167,7 +167,7 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
     // ── the one thing the user can do ───────────────────────────────────────
     match &p.action {
         PaneAction::Upgrade { url, price } => {
-            let b = gtk4::Button::with_label(&format!("Get a ThreatWarden pass · {price}"));
+            let b = gtk4::Button::with_label(crate::wardens::UPGRADE_LABEL);
             b.add_css_class("suggested-action");
             b.set_tooltip_text(Some(url));
             let url = url.clone();
@@ -185,7 +185,9 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
             });
             c.append(&b);
             c.append(&label(
-                "Pay with Phantom, MetaMask or card. Your RAM warden stays free.",
+                &format!(
+                    "{price}. Pay with Phantom, MetaMask or card. Your RAM warden stays free."
+                ),
                 true,
             ));
         }
@@ -224,7 +226,7 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
     if !p.engines.is_empty() {
         c.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         c.append(&heading(if p.action.is_upgrade() {
-            "What the pass turns on"
+            "What Pro turns on"
         } else {
             "Engines"
         }));

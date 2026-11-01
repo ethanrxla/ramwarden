@@ -22,8 +22,9 @@ each platform already had) and **ThreatWarden**. The API they read is in
   "Locked" brand crimson. An unknown level from a newer daemon shows as
   "Unknown", never as an error.
 - **One button at most**:
-  - not unlocked: "Get a ThreatWarden pass · {price}" opens `upgrade_url`
-    (fallbacks `$6 per 2 months`, `https://ramwarden.app/#pricing`). The
+  - not unlocked: "Get RamWarden Pro" opens `upgrade_url`, with `{price}`
+    under it (ThreatWarden is part of RamWarden Pro; fallbacks
+    `In RamWarden Pro, from $5 a month`, `https://ramwarden.app/#pricing`). The
     locked pane lists the engines the pass turns on and nothing else, because
     a locked warden does no work. Any stale report is ignored while locked.
   - unlocked, enabled, level `off` and the agent not installed: "Turn on"
