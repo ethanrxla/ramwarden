@@ -99,8 +99,8 @@ async function run() {
     assert.ok(await p.isVisible('.tier-pro >> text=$24'));
     assert.match(await p.getAttribute('[data-buy="ram"]', "href"), /plan=3$/);
     assert.ok(await p.isVisible("text=open source on GitHub"));
-    // The hero clip loops.
-    await p.waitForFunction(() => !document.querySelector("[data-hero-clip]").paused);
+    // The memory demo sits in the hero.
+    assert.ok(await p.isVisible("#top [data-memory-lab]"));
     // The film is scrubbed by scroll.
     await p.waitForFunction(() => document.querySelector("[data-scrub]").classList.contains("live"));
     await p.evaluate(() => { const w = document.querySelector("[data-scrub]"); scrollTo(0, w.offsetTop + (w.offsetHeight - innerHeight) * 0.6); });
@@ -122,7 +122,7 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
-  t("ThreatWarden tab: same skeleton, own theme, scene reacts to scroll", async () => {
+  t("ThreatWarden tab: same skeleton, own theme, green clip scrubbed by scroll", async () => {
     const p = await page();
     await p.goto(`${base}/threat.html`);
     assert.equal(await p.getAttribute('.warden-tabs a[aria-current="page"]', "href"), "threat.html");
@@ -132,8 +132,10 @@ async function run() {
     assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     await p.waitForSelector('[data-install][data-state="signed-out"]');
     assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.ok(await p.isVisible("#top .radar"), "the radar stays in the hero");
+    await p.waitForFunction(() => document.querySelector("[data-scrub]").classList.contains("live"));
     await p.evaluate(() => { const w = document.querySelector("[data-scrub]"); scrollTo(0, w.offsetTop + (w.offsetHeight - innerHeight) * 0.8); });
-    await p.waitForFunction(() => document.querySelectorAll(".world .threat b.on").length === 3);
+    await p.waitForFunction(() => document.querySelector(".world-video").currentTime > 3);
     assert.deepEqual(p.errors, []);
   });
 

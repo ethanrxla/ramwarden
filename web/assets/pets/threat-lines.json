@@ -6,8 +6,7 @@
     "meet": "Purple is my color. Probably. Try another.",
     "how": "Real threats go. Everything else stays.",
     "pricing": "Comes with RamWarden Pro. I'm a package deal.",
-    "faq": "Security questions are my favourite kind.",
-    "demo": "Green means relax."
+    "faq": "Security questions are my favourite kind."
   },
   "jokes": [
     "I see you hovering over that link. Don't.",
@@ -25,9 +24,5 @@
     "That installer is signed by its publisher. Allowed.",
     "All clear. Visor at half brightness.",
     "Something looks odd. Asking you before I touch it."
-  ],
-  "demo": {
-    "high": "That would be an Alert. I'd tell you exactly what to do.",
-    "low": "Clear. Nothing needs you."
-  }
+  ]
 }

@@ -47,9 +47,18 @@
             <a class="button secondary" href="#how">How it works</a>
           </div>
         </div>
-        <div class="hero-media">
-          <video data-hero-clip muted loop playsinline preload="none" poster="assets/world/ram-hero-poster.jpg"
-                 data-src="assets/world/ram-hero.mp4" data-src-mobile="assets/world/ram-hero-mobile.mp4" aria-hidden="true"></video>
+        <div class="memory-lab" data-memory-lab data-optimized="false">
+          <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
+          <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
+          <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
+          <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
+          <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
+            <svg viewBox="0 0 348 164" role="img" aria-labelledby="pressure-title pressure-desc"><title id="pressure-title">Memory pressure over time</title><desc id="pressure-desc" data-chart-summary></desc><defs><linearGradient id="pressure-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff697c" stop-opacity=".35"/><stop offset="100%" stop-color="#ff697c" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M20 24H328 M20 82H328 M20 140H328"/><path data-chart-area fill="url(#pressure-fill)"/><path data-chart-line fill="none" stroke="#ff697c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="160">Earlier</text><text x="300" y="160">Now</text></svg>
+          </div>
+          <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
+          <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
+          <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
+          <p class="lab-footnote">This demo uses no live device data.</p>
         </div>
       </div>
     </section>
@@ -155,28 +164,6 @@
       </div>
     </section>
 
-    <!-- 8. Try it -->
-    <section class="block" id="demo" data-section="demo">
-      <div class="wrap demo-layout">
-        <div>
-          <h2>Try it.</h2>
-          <p class="sub">Drag the slider. A full computer isn't always a slow one.</p>
-        </div>
-        <div class="memory-lab" data-memory-lab data-optimized="false">
-          <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
-          <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
-          <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
-          <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
-          <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
-            <svg viewBox="0 0 348 164" role="img" aria-labelledby="pressure-title pressure-desc"><title id="pressure-title">Memory pressure over time</title><desc id="pressure-desc" data-chart-summary></desc><defs><linearGradient id="pressure-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff697c" stop-opacity=".35"/><stop offset="100%" stop-color="#ff697c" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M20 24H328 M20 82H328 M20 140H328"/><path data-chart-area fill="url(#pressure-fill)"/><path data-chart-line fill="none" stroke="#ff697c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="160">Earlier</text><text x="300" y="160">Now</text></svg>
-          </div>
-          <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
-          <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
-          <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
-          <p class="lab-footnote">This demo uses no live device data.</p>
-        </div>
-      </div>
-    </section>
   </main>
 
   <aside class="pet" data-pet aria-live="polite">

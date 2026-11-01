@@ -43,14 +43,14 @@ test("no command from raw.githubusercontent.com on the pages", () => {
 test("both warden tabs have the same section skeleton", () => {
   const skeleton = (f) => [...fs.readFileSync(path.join(WEB, f), "utf8").matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
   const ram = skeleton("index.html");
-  assert.deepEqual(ram, ["hero", "install", "world", "pet", "how", "pricing", "faq", "demo"]);
+  assert.deepEqual(ram, ["hero", "install", "world", "pet", "how", "pricing", "faq"]);
   assert.deepEqual(skeleton("threat.html"), ram);
 });
 
 test("pet lines cover every section of both tabs", () => {
   for (const w of ["ram", "threat"]) {
     const lines = JSON.parse(fs.readFileSync(path.join(WEB, `assets/pets/${w}-lines.json`), "utf8"));
-    assert.deepEqual(Object.keys(lines.sections).sort(), ["demo", "faq", "get", "how", "meet", "pricing", "top", "world"]);
+    assert.deepEqual(Object.keys(lines.sections).sort(), ["faq", "get", "how", "meet", "pricing", "top", "world"]);
     assert.ok(lines.jokes.length >= 6);
   }
 });

@@ -26,15 +26,14 @@ Both warden tabs share one skeleton, in this order, with the same components:
 
 | # | Section | RamWarden | ThreatWarden |
 | --- | --- | --- | --- |
-| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Media: the looping ram clip (`assets/world/ram-hero.mp4`) | Same, "Catch threats. Keep your peace.". Media: the radar with the cyborg ram |
+| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Graphic: the simulated memory demo | Same, "Catch threats. Keep your peace.". Graphic: the radar with the cyborg ram |
 | 2 | Install (`#get`) | `assets/install.js`, the same on both | same |
-| 3 | Scroll world | The promo film scrubbed by scroll | The radar scene, threats caught as you scroll |
+| 3 | Scroll world | The promo film scrubbed by scroll | The green clip (`assets/world/threat-scrub.mp4`) scrubbed by scroll |
 | 4 | Pet | The ram, talking, with the color picker | The cyborg ram |
 | 5 | How it works (`#how`) | Measures, Triggers, Protects, Decides; then three questions | Host, Files, Network, Traffic; then Acts, Protected, Plain words |
 | 6 | Pricing (`#pricing`) | `assets/pricing.js`, the same on both | same |
 | 7 | FAQ (`#faq`) | Short | Short |
-| 8 | Try it (`#demo`) | The simulated memory demo | The four status levels |
-| 9 | Footer | Same | Same |
+| 8 | Footer | Same | Same |
 
 ### API routes the site calls
 
@@ -115,9 +114,9 @@ Checkout:
   trial, no command. Trial or active: a personal one-liner and installer
   download from `POST /v1/install/link`. Lapsed or cancelled: Renew. No
   command from `raw.githubusercontent.com` appears on the site.
-- **Scroll drives the world.** `assets/world.js` scrubs the RamWarden film by
+- **Scroll drives the world.** `assets/world.js` scrubs each tab's clip by
   scroll position (fetched as a Blob, coalesced seeks, a lighter phone
-  encode) and sets `--p` and `[data-at]` states for the ThreatWarden scene.
+  encode with a keyframe every 4 frames).
   Reduced motion shows the final state and all copy.
 - **The pets talk, a little.** The corner pet says a line per section and,
   now and then, a joke: one every 45 to 90 s, at most 6 a visit, never while

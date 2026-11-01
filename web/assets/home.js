@@ -1,4 +1,4 @@
-// Both warden tabs: the rotating catchline, the hero clip, the install box
+// Both warden tabs: the rotating catchline, the install box
 // and pricing (shared components), and the pets.
 
 import { makeApi, mockBanner } from "./common.js";
@@ -35,16 +35,6 @@ export function setUpRotators(root = document, os = detectOs()) {
   }
 }
 
-// The hero clip loops muted. Reduced motion, or a phone on a saver, keeps the
-// poster.
-function setUpHeroClip() {
-  const v = document.querySelector("[data-hero-clip]");
-  if (!v || reduceMotion()) return;
-  const phone = matchMedia("(max-width: 860px)").matches;
-  v.src = (phone && v.dataset.srcMobile) || v.dataset.src;
-  v.play().catch(() => {});
-}
-
 // Signed in? The session is an HttpOnly cookie, so the page asks. Only the
 // account's own status is read, to pick the install box's face. No server,
 // or a 401: the signed-out face.
@@ -59,7 +49,6 @@ async function whoIsHere(api) {
 async function main() {
   mockBanner();
   setUpRotators();
-  setUpHeroClip();
 
   const pricing = document.querySelector("[data-pricing]");
   if (pricing) new Pricing(pricing).render();

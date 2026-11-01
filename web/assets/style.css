@@ -348,7 +348,6 @@ footer a { color: var(--muted); }
 .landing .hero h1 { font-size:clamp(40px,4.4vw,60px); margin:14px 0 16px; }
 .landing .hero .lede { max-width:44ch; margin-bottom:26px; }
 .hero-media { justify-self:center; width:100%; }
-.hero-media video { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:20px; border:1px solid var(--line); background:#000 url("world/ram-hero-poster.jpg") center/cover no-repeat; box-shadow:0 30px 80px #0008; }
 .theme-threat .hero { background:radial-gradient(ellipse at 78% 30%,#5b21b655,transparent 62%), radial-gradient(ellipse at 10% 90%,#39ff8814,transparent 50%); }
 .theme-threat .hero h1 em { color:var(--accent); }
 .theme-threat .hero .eyebrow { color:var(--accent); }
@@ -365,19 +364,10 @@ footer a { color: var(--muted); }
 .install-oss strong { color:var(--text); }
 @media (max-width:760px) { .install { grid-template-columns:1fr; } .cmd-row { flex-wrap:wrap; } }
 
-/* 3. Scroll world, ThreatWarden scene */
-.world-scene { --p:0; background:#050407; }
-.scene { position:absolute; inset:0; display:grid; place-items:center; }
-.scene-radar { position:absolute; right:8%; top:50%; width:min(70vh,46vw); aspect-ratio:1; transform:translateY(-50%) rotate(calc(var(--p) * 540deg)); border-radius:50%; border:1px solid #39ff8833; background:conic-gradient(from 0deg,#39ff8840,transparent 20%), repeating-radial-gradient(circle,transparent 0 58px,#39ff881f 59px 60px); }
-.scene-pet { position:absolute; right:calc(8% + min(70vh,46vw) / 2 - 80px); top:50%; width:160px; transform:translateY(-50%); image-rendering:pixelated; filter:drop-shadow(0 0 24px #8b5cf688); }
-.threat { position:absolute; width:18px; height:18px; border-radius:50%; background:#ff4d6d; box-shadow:0 0 18px #ff4d6d; opacity:0; transform:scale(.4); transition:opacity .4s, transform .4s, background .4s, box-shadow .4s; }
-.threat.on { opacity:1; transform:none; }
-.threat b { position:absolute; inset:-10px; border-radius:50%; border:2px solid var(--accent); opacity:0; transform:scale(1.8); transition:opacity .35s, transform .35s; }
-.threat b.on { opacity:1; transform:none; }
-.threat:has(b.on) { background:var(--accent); box-shadow:0 0 18px var(--accent); }
-.threat.t1 { right:30%; top:28%; } .threat.t2 { right:12%; top:62%; } .threat.t3 { right:38%; top:70%; }
-.world-scene .world-shade { background:linear-gradient(90deg,#050407 0%,#050407cc 35%,#0000 65%); }
-@media (max-width:860px) { .scene-radar { width:80vw; right:-20vw; opacity:.5; } .scene-pet { display:none; } }
+/* 3. Scroll world, ThreatWarden: same component, the green clip */
+.world-threat .world-video { background-image:url("world/threat-poster.jpg"); }
+.world-threat.still .world-video { background-image:url("world/threat-end.jpg"); }
+.world-threat .world-shade { background:linear-gradient(90deg,#050407e6 0%,#05040799 38%,#0000 70%), linear-gradient(0deg,#050407cc,#0000 30%); }
 
 /* 4. Pet stage */
 .stage-layout { display:grid; grid-template-columns:auto 1fr; gap:56px; align-items:center; }
@@ -415,10 +405,6 @@ footer a { color: var(--muted); }
 .price.tier-pro ul { color:#a59cbf; }
 .price .button { background:var(--accent); color:var(--accent-ink); }
 .oss-line { color:var(--muted); font-size:14px; margin:6px 0 0; }
-
-/* 8. Try it */
-.demo-layout { display:grid; grid-template-columns:1fr 1.2fr; gap:48px; align-items:center; }
-@media (max-width:860px) { .demo-layout { grid-template-columns:1fr; } }
 
 /* Corner pet: mute instead of hide */
 .pet-mute { pointer-events:auto; position:absolute; top:-10px; right:-4px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); background:var(--bg-2); color:var(--muted); font:600 11px var(--mono); cursor:pointer; }
