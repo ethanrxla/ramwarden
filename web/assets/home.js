@@ -1,73 +1,92 @@
-// Landing page: point the download buttons at the right files, highlight the
-// visitor's own platform, and fill prices and limits from config.js so they
-// are written down in one place.
+// Both warden tabs: the rotating catchline, the hero clip, the install box
+// and pricing (shared components), and the pets.
 
-import { config } from "./config.js";
+import { makeApi, mockBanner } from "./common.js";
+import { InstallBox, detectOs } from "./install.js";
+import { PetColor, PetStage, WardenPet, loadLines } from "./pets.js";
+import { Pricing } from "./pricing.js";
 
-const NAMES = { windows: "Windows", macos: "Mac", linux: "Linux" };
+export { detectOs };
 
-// Best guess at the visitor's OS. A wrong guess only changes which card is
-// highlighted; every download stays one click away.
-export function detectOs(nav = navigator) {
-  const p = (nav.userAgentData?.platform || nav.platform || nav.userAgent || "").toLowerCase();
-  if (p.includes("win")) return "windows";
-  if (p.includes("mac") || p.includes("darwin")) return "macos";
-  if (p.includes("linux") || p.includes("x11") || p.includes("cros")) return "linux";
-  return null;
-}
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function setUpDownloads() {
-  for (const a of document.querySelectorAll("[data-download]")) {
-    const os = a.dataset.download;
-    a.href = config.downloads[os] || config.releases;
-    if (!config.downloads[os]) a.textContent = `Get it for ${NAMES[os]} on GitHub`;
-  }
-  const os = detectOs();
-  const card = os && document.querySelector(`.download[data-os="${os}"]`);
-  if (card) {
-    card.classList.add("detected");
-    card.querySelector(".tag").textContent = "YOUR COMPUTER";
-    const hero = document.getElementById("hero-download");
-    hero.textContent = `Download for ${NAMES[os]}`;
-  }
-}
-
-function setUpExtension() {
-  const p = document.getElementById("extension-action");
-  if (config.chromeStore) {
-    const a = document.createElement("a");
-    a.className = "button";
-    a.href = config.chromeStore;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = "Add to Chrome";
-    p.replaceChildren(a);
-    return;
-  }
-  // Until the store listing is approved: load it unpacked from the source.
-  p.replaceChildren(
-    "Coming to the Chrome Web Store. Until then, open chrome://extensions, turn on Developer mode, click Load unpacked and choose the ",
-    Object.assign(document.createElement("code"), { textContent: "extension" }),
-    " folder from the ",
-    Object.assign(document.createElement("a"), { href: config.repo, textContent: "source" }),
-    ". It works in Brave and Edge too.",
-  );
-}
-
-function fillPrices() {
-  for (const el of document.querySelectorAll("[data-plan]")) {
-    const plan = config.plans.find((p) => p.id === el.dataset.plan);
-    if (plan) el.textContent = String(plan.usd);
-  }
-  for (const el of document.querySelectorAll("[data-limit]")) {
-    const [tier, key] = el.dataset.limit.split(".");
-    const v = config.limits[tier]?.[key];
-    if (v != null) el.textContent = String(v);
+// The italic catchline cycles through its lines, one every few seconds.
+// "Your PC" reads "Your Mac" for Mac visitors. Reduced motion keeps the first.
+export function setUpRotators(root = document, os = detectOs()) {
+  for (const el of root.querySelectorAll("[data-rotate]")) {
+    let lines;
+    try {
+      lines = JSON.parse(el.dataset.rotate);
+    } catch {
+      continue;
+    }
+    if (os === "macos") lines = lines.map((l) => l.replace(/\bYour PC\b/g, "Your Mac"));
+    if (reduceMotion()) continue;
+    const em = el.querySelector("em") || el;
+    let i = Math.max(0, lines.indexOf(em.textContent));
+    setInterval(() => {
+      em.classList.add("out");
+      setTimeout(() => {
+        i = (i + 1) % lines.length;
+        em.textContent = lines[i];
+        em.classList.remove("out");
+      }, 350);
+    }, 3200);
   }
 }
 
-if (typeof document !== "undefined") {
-  setUpDownloads();
-  setUpExtension();
-  fillPrices();
+// The hero clip loops muted. Reduced motion, or a phone on a saver, keeps the
+// poster.
+function setUpHeroClip() {
+  const v = document.querySelector("[data-hero-clip]");
+  if (!v || reduceMotion()) return;
+  const phone = matchMedia("(max-width: 860px)").matches;
+  v.src = (phone && v.dataset.srcMobile) || v.dataset.src;
+  v.play().catch(() => {});
 }
+
+// Signed in? The session is an HttpOnly cookie, so the page asks. Only the
+// account's own status is read, to pick the install box's face. No server,
+// or a 401: the signed-out face.
+async function whoIsHere(api) {
+  try {
+    return await api.account();
+  } catch {
+    return null;
+  }
+}
+
+async function main() {
+  mockBanner();
+  setUpRotators();
+  setUpHeroClip();
+
+  const pricing = document.querySelector("[data-pricing]");
+  if (pricing) new Pricing(pricing).render();
+
+  const api = await makeApi();
+  const account = await whoIsHere(api);
+  const install = document.querySelector("[data-install]");
+  if (install) await new InstallBox(install, { api, account }).render();
+
+  const warden = document.body.dataset.warden || "ram";
+  const lines = await loadLines(warden);
+  const color = new PetColor(warden, `assets/pets/${warden}.svg`);
+  if (account && account.prefs?.wardens?.[warden]?.color != null && color.hue == null) color.hue = account.prefs.wardens[warden].color;
+  await color.load();
+  color.addEventListener("change", (e) => {
+    // Signed in, the color follows the account to the apps.
+    // Prefs are replaced whole, so the rest of them go back unchanged.
+    if (!account) return;
+    const prefs = { ...(account.prefs || {}) };
+    prefs.wardens = { ...(prefs.wardens || {}), [warden]: { ...(prefs.wardens?.[warden] || {}), color: e.detail.hue } };
+    account.prefs = prefs;
+    api.savePrefs(prefs).catch(() => {});
+  });
+  const stage = document.querySelector("[data-stage]");
+  if (stage) new PetStage(stage, lines, color).start();
+  const pet = document.querySelector("[data-pet]");
+  if (pet) new WardenPet(pet, lines).start();
+}
+
+if (typeof document !== "undefined") main();

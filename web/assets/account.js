@@ -1,16 +1,29 @@
-// /account: sign in on the web, see the pass and today's usage, revoke
-// devices, and buy or extend Pro.
+// /account: sign in, start a trial, see the plan, get the personal install
+// line and the browser helper, and manage devices (docs/product-spec.md 3).
 //
-// Payments only ever extend `entitlement_until` on the server, whichever way
-// they are made, so this page shows one date and never needs to know how the
-// last pass was paid for. A pass bought early stacks on the current one.
+// Signing in with a new wallet goes straight to choosing a plan: there is no
+// "account with nothing bought" state worth showing. Starting a trial
+// charges nothing; the server reports the plan and its status.
 
-import { config } from "./config.js";
-import { errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show, signIn } from "./common.js";
+import { config, planFor } from "./config.js";
+import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
 const POLL_MS = isMock ? 400 : 3000;
 const POLL_LIMIT = 60; // three minutes: Base confirms in seconds, Solana faster
+const STATUS = {
+  trial: (a) => `Free trial, ends ${formatDate(a.trial_ends_at)}. Then ${priceText(a)} until you cancel.`,
+  active: (a) => `Renews ${formatDate(a.paid_until)} at ${priceText(a)}.`,
+  grace: () => "The last payment did not go through. Top up your wallet or card within 3 days to keep hosted features.",
+  lapsed: () => "Your plan has ended. RamWarden keeps running in local mode until you renew.",
+  cancelled: (a) => (a.paid_until && Date.parse(a.paid_until) > Date.now() ? `Cancelled. Runs until ${formatDate(a.paid_until)}.` : "Cancelled."),
+};
+
+function priceText(a) {
+  const plan = planFor(config.plans, a.tier, a.interval);
+  return plan ? `$${plan.usd} a ${a.interval}` : "your plan's price";
+}
 
 const root = document.getElementById("flow");
 mockBanner();
@@ -24,45 +37,31 @@ class AccountPage {
   }
 
   async start() {
-    if (api.session) {
-      try {
-        this.account = await api.account();
-      } catch (err) {
-        if (err.status !== 401) {
-          show(root, h("h1", {}, "Your account"), notice("error", errorText(err)));
-          return;
-        }
+    // The session is an HttpOnly cookie, so the only way to know is to ask.
+    try {
+      this.account = await api.account();
+    } catch (err) {
+      if (err.status !== 401 && !err.offline) {
+        show(root, h("h1", {}, "Your account"), notice("error", errorText(err)));
+        return;
       }
     }
     if (!this.account) await this.signIn();
     await this.loadCheckout();
     this.render();
-    if (new URLSearchParams(location.search).get("paid") === "stripe") {
-      this.flash(notice("ok", "Card payment received. Your pass updates as soon as Stripe confirms it, usually within a minute."));
+    // Back from card checkout: follow the payment until it confirms.
+    const q = new URLSearchParams(location.search);
+    if (q.get("checkout") === "done" && q.get("payment")) {
+      const area = h("div");
+      this.flashArea.replaceChildren(area);
+      this.waitForPayment(q.get("payment"), area);
     }
   }
 
   async signIn() {
     const area = h("div");
-    const problem = h("div");
-    show(
-      root,
-      h("h1", {}, "Your account"),
-      h("p", {}, "Sign in with the wallet you used in the app, or any wallet to make a new account."),
-      problem,
-      area,
-    );
-    for (;;) {
-      const wallet = await pickWallet(area, { purpose: "You will sign a short message. It costs no gas and moves no funds." });
-      show(area, notice("info", `Check ${wallet.name} for the sign-in message.`));
-      try {
-        this.account = (await signIn(api, wallet)).account;
-        return;
-      } catch (err) {
-        // Back to the picker with the reason shown above it.
-        show(problem, notice("error", errorText(err)));
-      }
-    }
+    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api)).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -83,39 +82,62 @@ class AccountPage {
 
   render() {
     const a = this.account;
-    const pro = a.tier === "pro" && a.entitlement_until && Date.parse(a.entitlement_until) > Date.now();
-    const limits = pro ? config.limits.pro : config.limits.free;
+    const live = installState(a) === "ready";
     this.flashArea = h("div");
+    const install = live ? h("div", { class: "install" }) : null;
 
     show(
       root,
       h("h1", {}, "Your account"),
       this.flashArea,
-      h(
-        "section",
-        { class: "panel" },
-        h("h2", {}, pro ? "RamWarden Pro" : "Free"),
-        pro
-          ? h("p", {}, `Your pass runs until ${formatDate(a.entitlement_until)}. Buying another adds to that date.`)
-          : h("p", {}, `${limits.perDay} hosted Jev decisions a day on ${limits.devices} device. Local decisions are always unlimited.`),
-        typeof a.used_today === "number" ? h("p", { class: "muted" }, `Hosted decisions used today: ${a.used_today} of ${limits.perDay}.`) : null,
-        h("p", { class: "muted" }, "Signed in with ", (a.wallets || []).map((w) => shortAddress(w.address)).join(", ") || "a wallet", "."),
-        h("button", { class: "button secondary small", type: "button", onclick: () => { api.signOut(); location.reload(); } }, "Sign out"),
-      ),
-      this.devicesPanel(limits),
-      this.buyPanel(pro),
+      a.tier
+        ? h(
+            "section",
+            { class: "panel" },
+            h("h2", {}, config.tiers[a.tier]?.name || "Your plan"),
+            h("p", {}, (STATUS[a.status] || (() => ""))(a)),
+            h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h(
+              "div",
+              { class: "row-actions" },
+              h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
+            ),
+          )
+        : null,
+      live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
+      live ? this.extensionPanel() : null,
+      live ? this.devicesPanel() : null,
+      live ? null : this.buyPanel(),
+    );
+    if (install) new InstallBox(install, { api, account: a }).render();
+  }
+
+  // Browsers do not let a site add an extension on its own, so this is one
+  // click to the store (or the unpacked steps until the listing is live).
+  extensionPanel() {
+    const action = config.chromeStore
+      ? h("a", { class: "button", href: config.chromeStore, target: "_blank", rel: "noopener" }, "Add to Chrome")
+      : h("p", { class: "muted" }, "Coming to the Chrome Web Store. Until then: open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the ", h("code", {}, "extension"), " folder from the ", h("a", { href: config.repo }, "source"), ". Works in Brave and Edge too.");
+    return h(
+      "section",
+      { class: "panel", id: "extension" },
+      h("h2", {}, "Add the browser helper"),
+      h("p", {}, "Lets your warden unload tabs you aren't using. It pairs with RamWarden on this computer by itself."),
+      action,
     );
   }
 
-  devicesPanel(limits) {
+  devicesPanel() {
     const devices = this.account.devices || [];
+    const limit = this.account.device_limit || config.tiers[this.account.tier]?.devices || 5;
     return h(
       "section",
       { class: "panel", id: "devices" },
       h("h2", {}, "Devices"),
-      h("p", { class: "muted" }, `${devices.length} of ${limits.devices} in use. Revoke a machine you no longer use, or one you have lost.`),
+      h("p", { class: "muted" }, `${devices.length} of ${limit} in use. Remove a computer to free its slot.`),
       devices.length === 0
-        ? h("p", {}, "No devices yet. Click Sign in inside RamWarden to link this computer.")
+        ? h("p", {}, "No devices yet. Run your install line to add this computer.")
         : h(
             "ul",
             { class: "devices" },
@@ -130,7 +152,7 @@ class AccountPage {
                     class: "button secondary small",
                     type: "button",
                     onclick: async (e) => {
-                      if (!confirm(`Revoke ${d.name || "this device"}? It falls back to local decisions until you sign in on it again.`)) return;
+                      if (!confirm(`Remove ${d.name || "this device"}? It drops to local mode until you sign in on it again.`)) return;
                       e.target.disabled = true;
                       try {
                         await api.revokeDevice(d.id);
@@ -142,7 +164,7 @@ class AccountPage {
                       }
                     },
                   },
-                  "Revoke",
+                  "Remove",
                 ),
               ),
             ),
@@ -150,40 +172,65 @@ class AccountPage {
     );
   }
 
-  buyPanel(pro) {
+  buyPanel() {
     const any = this.methods.base || this.methods.solana || this.methods.stripe;
     const area = h("div");
-    let plan = this.plans[0]?.id;
-    const planButtons = this.plans.map((p) =>
+    // `?plan=<id>` (sent by agents and the pricing cards) preselects a plan
+    // the server sells; any other value is ignored.
+    const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
+    let tier = wanted?.tier || "ram";
+    let interval = wanted?.interval || "month";
+    const plan = () => planFor(this.plans, tier, interval);
+    const terms = h("p", { class: "muted" });
+    const refresh = () => {
+      const p = plan();
+      for (const i of picker.querySelectorAll("input")) i.checked = i.value === (i.name === "tier" ? tier : interval);
+      const approve = p?.approval_usd ?? (p && (p.interval === "month" ? p.usd * 12 : p.usd));
+      const trialDays = p?.trial_days ?? config.trialDays;
+      terms.textContent = !p
+        ? ""
+        : this.account.trial_available === false
+          ? `$${p.usd} a ${interval}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
+          : `Nothing is charged today. After ${trialDays} days, $${p.usd} a ${interval} until you cancel. A wallet approves $${approve} at most (one year).`;
+    };
+    const choice = (name, value, label, sub) =>
       h(
         "label",
         { class: "plan-choice" },
-        h("input", { type: "radio", name: "plan", value: p.id, checked: p.id === plan, onchange: () => (plan = p.id) }),
-        h("strong", {}, p.name),
-        h("span", {}, `$${p.usd} USDC`),
-      ),
+        h("input", { type: "radio", name, value, onchange: () => { if (name === "tier") tier = value; else interval = value; refresh(); } }),
+        h("strong", {}, label),
+        sub ? h("span", {}, sub) : null,
+      );
+    const m = (t) => planFor(this.plans, t, "month");
+    const y = (t) => planFor(this.plans, t, "year");
+    const picker = h(
+      "div",
+      {},
+      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / month`))),
+      h("div", { class: "plans" }, choice("interval", "month", "Monthly"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
     );
     const method = (key, label, sub, run) =>
-      this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan, area) }, h("strong", {}, label), h("span", {}, sub)) : null;
+      this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan().id, area) }, h("strong", {}, label), h("span", {}, sub)) : null;
+    refresh();
 
     return h(
       "section",
       { class: "panel", id: "buy" },
-      h("h2", {}, pro ? "Extend Pro" : "Get Pro"),
-      h("p", {}, `${config.limits.pro.perDay} hosted Jev decisions a day on up to ${config.limits.pro.devices} devices. A prepaid pass, not a subscription: nothing renews or charges you later.`),
+      h("h2", {}, this.account.trial_available === false ? (this.account.status ? "Renew" : "Choose a plan") : `Start your ${config.trialDays}-day free trial`),
       any
         ? [
-            h("div", { class: "plans" }, planButtons),
+            picker,
+            terms,
             h(
               "div",
               { class: "wallets" },
               method("base", "USDC on Base", this.networks?.base || "MetaMask, Phantom or any EVM wallet", (p, a) => this.payCrypto("evm", p, a)),
               method("solana", "USDC on Solana", this.networks?.solana || "Phantom", (p, a) => this.payCrypto("solana", p, a)),
-              method("stripe", "Card", "Stripe checkout", (p, a) => this.payStripe(p, a)),
+              method("stripe", "Card or Apple Pay", "Card, Apple Pay or Google Pay", (p, a) => this.payStripe(p, a)),
             ),
             area,
           ]
-        : notice("info", "Checkout opens soon. RamWarden's local decisions are free and unlimited in the meantime."),
+        : notice("info", "Checkout opens soon."),
     );
   }
 
@@ -193,9 +240,9 @@ class AccountPage {
       purpose: "Pick the wallet to pay from. It does not have to be the one you signed in with.",
     });
     try {
-      show(area, notice("info", "Preparing the payment…"));
+      show(area, notice("info", "Preparing your trial…"));
       const order = chain === "evm" ? await api.checkoutBase(plan, wallet.address) : await api.checkoutSolana(plan, wallet.address);
-      show(area, notice("info", chain === "evm" ? "Confirm in your wallet. There are two steps: allow the USDC amount, then pay." : "Confirm the payment in Phantom."));
+      show(area, notice("info", chain === "evm" ? "Confirm in your wallet: allow up to one year of the plan, then start the trial. Nothing is charged today." : "Confirm in Phantom. Nothing is charged today."));
       await wallet.pay(order);
       await this.waitForPayment(order.payment_id, area);
     } catch (err) {
@@ -205,10 +252,11 @@ class AccountPage {
 
   async payStripe(plan, area) {
     try {
-      show(area, notice("info", "Opening Stripe checkout…"));
-      const { url } = await api.checkoutStripe(plan);
+      show(area, notice("info", "Opening card checkout…"));
+      const { url, payment_id } = await api.checkoutStripe(plan);
       if (isMock) {
-        show(area, notice("info", "Preview mode: Stripe checkout would open here."));
+        show(area, notice("info", "Preview mode: card checkout would open here."));
+        await this.waitForPayment(payment_id, area);
         return;
       }
       if (!/^https:\/\/checkout\.stripe\.com\//.test(url)) throw new Error("Unexpected checkout address.");
@@ -218,23 +266,45 @@ class AccountPage {
     }
   }
 
+  // Card plans cancel server side. Wallet plans are cancelled from the wallet
+  // that pays, so the server hands back that transaction to send.
+  async cancel(button) {
+    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to local mode.")) return;
+    button.disabled = true;
+    try {
+      const r = await api.cancel();
+      if (r.transactions) {
+        const area = h("div");
+        this.flash(area);
+        const wallet = await pickWallet(area, { chain: "evm", purpose: `Confirm the cancel in the wallet that pays (${shortAddress(r.payer)}). It costs a little gas and moves no USDC.` });
+        await wallet.pay(r);
+      }
+      this.account = await api.account();
+      this.render();
+      this.flash(notice("ok", "Cancelled. Nothing more will be charged."));
+    } catch (err) {
+      button.disabled = false;
+      this.flash(notice("error", errorText(err)));
+    }
+  }
+
   async waitForPayment(id, area) {
-    show(area, notice("info", "Payment sent. Waiting for the network to confirm it…"));
+    show(area, notice("info", "Sent. Waiting for the network to confirm it…"));
     for (let i = 0; i < POLL_LIMIT; i++) {
       await new Promise((r) => setTimeout(r, POLL_MS));
       const p = await api.payment(id);
       if (p.status === "confirmed") {
         this.account = await api.account();
         this.render();
-        this.flash(notice("ok", `Thank you. Pro now runs until ${formatDate(this.account.entitlement_until)}.`));
+        this.flash(notice("ok", this.account.status === "trial" ? "Your trial has started. Install RamWarden below." : "You're all set. Install RamWarden below."));
         return;
       }
       if (p.status === "failed") {
-        show(area, notice("error", p.reason || "The payment did not go through. No pass was added, and a failed transaction moves no USDC."));
+        show(area, notice("error", p.reason || "That did not go through. Nothing was started, and a failed transaction moves no USDC."));
         return;
       }
     }
-    show(area, notice("info", "Still waiting for confirmation. It is safe to close this page: your pass is added as soon as the payment confirms."));
+    show(area, notice("info", "Still waiting for confirmation. It is safe to close this page: your trial starts as soon as it confirms."));
   }
 }
 

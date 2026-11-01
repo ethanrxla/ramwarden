@@ -3,48 +3,164 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>RamWarden: closes what you won't miss, keeps what you're working on</title>
-  <meta name="description" content="RamWarden is a memory manager for Windows, macOS and Linux. It reclaims memory the cheap way first, and uses Jev to decide which apps and browser tabs you won't come back to.">
+  <title>RamWarden: free your RAM, keep your peace</title>
+  <meta name="description" content="RamWarden is an AI-powered memory manager for Windows, macOS and Linux. It frees memory you won't miss and protects what you're using.">
   <meta property="og:title" content="RamWarden">
-  <meta property="og:description" content="Free your RAM without losing your place. Reversible reclaim first; Jev decides what you won't miss.">
+  <meta property="og:description" content="Free your RAM. Keep your peace.">
   <link rel="icon" href="assets/ramwarden-mark.png">
   <link rel="stylesheet" href="assets/style.css">
   <script type="module" src="assets/home.js"></script>
   <script type="module" src="assets/lab.js"></script>
+  <script type="module" src="assets/world.js"></script>
 </head>
-<body class="landing">
+<body class="landing" data-warden="ram">
   <header class="site-header">
     <div class="wrap">
       <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
+      <nav class="warden-tabs" aria-label="Wardens">
+        <a href="./" aria-current="page"><img src="assets/pets/ram.svg" alt="">RamWarden</a>
+        <a href="threat.html"><img src="assets/pets/threat.svg" alt="">ThreatWarden</a>
+      </nav>
       <nav>
         <a class="hide-sm" href="#how">How it works</a>
         <a class="hide-sm" href="#pricing">Pricing</a>
         <a class="hide-sm" href="#faq">FAQ</a>
         <a href="account.html">Account</a>
-        <a class="button small" href="#download">Download</a>
+        <a class="button small" href="#pricing">Start free trial</a>
       </nav>
     </div>
   </header>
 
   <main>
-    <section class="hero">
+    <!-- 1. Hero -->
+    <section class="hero" id="top" data-section="hero">
       <div class="wrap hero-layout">
         <div class="hero-copy">
-        <img class="hero-emblem" src="assets/logo.png" alt="RamWarden red ram with white eyes and silver WARDEN lettering" width="136" height="136">
-        <span class="eyebrow">Your computer. Under a watchful eye.</span>
-        <span class="platform-note">Memory manager · Windows · macOS · Linux</span>
-        <h1>Free your RAM.<br><em>Keep your place.</em></h1>
-        <p class="lede">
-          A small guardian for a crowded computer. It watches memory pressure, tries reversible fixes first, and protects what you’re using. Your ram explains the decisions—and asks before applying a fix from chat.
-        </p>
-        <div class="actions">
-          <a class="button" id="hero-download" href="#download">Download for your computer</a>
-          <a class="button secondary" href="#how">See how it decides</a>
-          <small>Free and local by default. No account needed to use it.</small>
+          <span class="eyebrow">Memory manager · Windows · macOS · Linux</span>
+          <p class="catchline" data-rotate='["For people who never close their tabs.","For people who have 100 tabs.","Your PC has 32GB of RAM. So why does it still feel slow?","If you&apos;re one of those people who never close your tabs…","Please close your tabs.","Cut your tabs in half.","Optimize your RAM usage."]'><em>For people who never close their tabs.</em></p>
+          <h1>Free your RAM.<br><em>Keep your peace.</em></h1>
+          <p class="lede">A small guardian for a crowded computer. It frees memory you won't miss and protects what you're using.</p>
+          <div class="actions">
+            <a class="button" href="#pricing">Start free trial</a>
+            <a class="button secondary" href="#how">How it works</a>
+          </div>
         </div>
+        <div class="hero-media">
+          <video data-hero-clip muted loop playsinline preload="none" poster="assets/world/ram-hero-poster.jpg"
+                 data-src="assets/world/ram-hero.mp4" data-src-mobile="assets/world/ram-hero-mobile.mp4" aria-hidden="true"></video>
+        </div>
+      </div>
+    </section>
 
+    <!-- 2. Install -->
+    <section class="block install-block" id="get" data-section="install">
+      <div class="wrap">
+        <h2>Get RamWarden</h2>
+        <p class="sub">Install, sign in, done. It runs quietly in your menu bar or tray.</p>
+        <div class="install" data-install>
+          <noscript><p>This box needs JavaScript. <a href="account.html">Your account</a> has your install line.</p></noscript>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Scroll world -->
+    <section class="world" id="world" data-scrub data-section="world" aria-label="RamWarden at work, driven by scrolling">
+      <div class="world-sticky">
+        <video class="world-video" muted playsinline preload="none" poster="assets/world/promo-poster.jpg"
+               data-src="assets/world/promo-scrub.mp4" data-src-mobile="assets/world/promo-scrub-mobile.mp4" aria-hidden="true"></video>
+        <div class="world-shade"></div>
+        <div class="world-copy wrap">
+          <div class="beat" data-from="0" data-to="0.38">
+            <p class="world-line">Every tab you never closed<br>is <em>still holding memory.</em></p>
+          </div>
+          <div class="beat" data-from="0.38" data-to="0.72">
+            <p class="world-line">Your warden finds what you won't come back to,<br>and clears it. <em>Reversibly first.</em></p>
+          </div>
+          <div class="beat" data-from="0.72" data-to="1.01">
+            <p class="world-line">Free your RAM. <em>Keep your peace.</em></p>
+            <div class="actions"><a class="button" href="#pricing">Start free trial</a></div>
+          </div>
+        </div>
+        <div class="world-progress"><i data-progress></i></div>
+        <span class="world-hint">Scroll</span>
+      </div>
+    </section>
+
+    <!-- 4. Pet -->
+    <section class="block stage" id="meet" data-stage data-section="pet">
+      <div class="wrap stage-layout">
+        <div class="stage-pet">
+          <p class="stage-say" data-stage-say aria-live="polite"></p>
+          <img data-sprite="ram" src="assets/pets/ram.svg" alt="RamWarden's pixel ram" width="192" height="192">
+        </div>
+        <div>
+          <h2>Meet your warden.</h2>
+          <p class="sub">It explains every call, cracks the odd joke, and wears any color you like.</p>
+          <div class="colors" data-colors>
+            <div class="swatches" data-swatches></div>
+            <label class="hue">Any color <input type="range" min="0" max="359" value="354" aria-label="Warden hue"></label>
+            <button type="button" class="button secondary small" data-reset>Original</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. How it works -->
+    <section class="block" id="how" data-section="how">
+      <div class="wrap">
+        <h2>Your task manager isn't telling you the whole story.</h2>
+        <p class="sub">RamWarden counts memory the way your computer actually pays for it.</p>
+        <div class="grid four">
+          <div class="card"><span class="num">MEASURES</span><h3>The real number</h3><p>Shared browser memory is counted once, not five times.</p></div>
+          <div class="card"><span class="num">TRIGGERS</span><h3>Acts on slowdowns</h3><p>Steps in when your computer waits on memory, not when a meter looks full.</p></div>
+          <div class="card"><span class="num">PROTECTS</span><h3>Hands off what matters</h3><p>Games, terminals, VMs and security tools are never touched.</p></div>
+          <div class="card"><span class="num">DECIDES</span><h3>Cheapest fix first</h3><p>Closing an app is the last resort, and only for apps you list.</p></div>
+        </div>
+        <h3 class="subhead">Your warden asks three quick questions about everything it might close.</h3>
+        <div class="grid three">
+          <div class="card"><span class="num">ASKS</span><h3>Will you be back within a day?</h3><p>Last week's recipe goes. The docs you keep reopening stay.</p></div>
+          <div class="card"><span class="num">ASKS</span><h3>Could it hold unsaved work?</h3><p>A half-filled form or a draft is left alone.</p></div>
+          <div class="card"><span class="num">ASKS</span><h3>Does it need to keep running?</h3><p>Servers, builds and syncs look idle but aren't.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Pricing -->
+    <section class="block" id="pricing" data-section="pricing">
+      <div class="wrap">
+        <h2>Two intelligent desktop companions.</h2>
+        <p class="sub">Performance and security, starting at $24 a year.</p>
+        <div class="pricing" data-pricing></div>
+      </div>
+    </section>
+
+    <!-- 7. FAQ -->
+    <section class="block faq" id="faq" data-section="faq">
+      <div class="wrap narrow">
+        <h2>Questions</h2>
+        <details><summary>Is there a free version?</summary>
+          <p>RamWarden is open source: build it from GitHub and set it up yourself. The app here is the ready-to-go version, free for 14 days.</p></details>
+        <details><summary>What happens after the trial?</summary>
+          <p>Your plan starts and renews monthly or yearly until you cancel. Cancel any time from your account or your wallet.</p></details>
+        <details><summary>Will it close something I'm using?</summary>
+          <p>No. Active, pinned and playing tabs are protected, and apps only close if you put them on your list.</p></details>
+        <details><summary>Is it safe for games and anti-cheat?</summary>
+          <p>Yes. Games, anti-cheat, security tools and system processes are never touched.</p></details>
+        <details><summary>How do I sign in?</summary>
+          <p>Sign in with your wallet or your email.</p></details>
+        <details><summary>What leaves my computer?</summary>
+          <p>Only a short description of something your warden might close, to get a decision. Never page contents. See the <a href="privacy.html">privacy policy</a>.</p></details>
+      </div>
+    </section>
+
+    <!-- 8. Try it -->
+    <section class="block" id="demo" data-section="demo">
+      <div class="wrap demo-layout">
+        <div>
+          <h2>Try it.</h2>
+          <p class="sub">Drag the slider. A full computer isn't always a slow one.</p>
         </div>
         <div class="memory-lab" data-memory-lab data-optimized="false">
           <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
@@ -57,182 +173,22 @@
           <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
           <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
           <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
-          <p class="lab-footnote">Drag the slider. A full computer isn’t always a struggling computer. This demo uses no live device data.</p>
+          <p class="lab-footnote">This demo uses no live device data.</p>
         </div>
-      </div>
-    </section>
-
-    <section class="block" id="how">
-      <div class="wrap">
-        <h2>Cheapest fix first. Closing things last.</h2>
-        <p class="sub">
-          Most memory pressure never needs anything closed. RamWarden climbs a ladder ordered by what a wrong
-          call would cost you, and steps back down, undoing what it can, as soon as pressure passes.
-        </p>
-        <div class="decision-flow" aria-label="Decision flow: observe, reclaim, page out, unload idle tabs, pause eligible apps">
-          <div data-step><span>01</span><strong>Observe</strong><small>Measure real pressure</small></div><b>→</b>
-          <div data-step><span>02</span><strong>Reclaim</strong><small>Ask for cold memory</small></div><b>→</b>
-          <div data-step><span>03</span><strong>Page out</strong><small>Reduce the active load</small></div><b>→</b>
-          <div data-step><span>04</span><strong>Unload</strong><small>Keep idle tabs open</small></div><b>→</b>
-          <div data-step><span>05</span><strong>Pause</strong><small>Eligible, allowed apps</small></div>
-        </div>
-        <ol class="ladder">
-          <li><span>1 · reclaim</span><strong>The OS compresses cold memory</strong><span>Costs you a few page faults</span></li>
-          <li><span>2 · page-out</span><strong>Idle apps' unused pages move out</strong><span>Costs you a few page faults</span></li>
-          <li><span>3 · tabs</span><strong>Idle browser tabs unload</strong><span>The tab reloads when you click it</span></li>
-          <li><span>4 · suspend</span><strong>Apps on your watchlist pause</strong><span>Resumed the moment you're back</span></li>
-          <li><span>5 · close</span><strong>Watchlisted apps close, coldest first</strong><span>A countdown you can cancel</span></li>
-        </ol>
-
-        <div class="grid three mt-lg">
-          <div class="card"><span class="num">MEASURES</span><h3>The real number</h3><p>RamWarden counts memory the way the OS charges it, not summed RSS, which double-counts what a browser shares between its processes. On one machine that difference was 15 GB against 6.5 GB.</p></div>
-          <div class="card"><span class="num">TRIGGERS</span><h3>On stalls, not "percent used"</h3><p>A full but healthy machine is fine. RamWarden acts on the time your computer actually loses waiting for memory, so it stays out of the way until it matters.</p></div>
-          <div class="card"><span class="num">PROTECTS</span><h3>Some things are never touched</h3><p>Your desktop, terminals, VMs, security software, games and anti-cheat are off limits whatever any setting says. Pausing and closing only ever apply to apps you put on the watchlist.</p></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="block" id="jev">
-      <div class="wrap">
-        <h2>Jev decides what you won't miss.</h2>
-        <p class="sub">
-          Knowing what's idle is easy. Knowing what you'll come back to isn't. RamWarden asks
-          <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noopener">Jev</a>,
-          TypeSafe's "system one" model, a few narrow questions about each candidate and gets a calibrated
-          answer in a fraction of a second.
-        </p>
-        <div class="grid two">
-          <div class="card"><span class="num">ASKS</span><h3>Will you be back within 24 hours?</h3><p>Asked of every tab and app RamWarden is thinking of closing. A recipe from last week goes; the docs page you keep returning to stays.</p></div>
-          <div class="card"><span class="num">ASKS</span><h3>Could this hold unsaved work?</h3><p>A half-filled form, a draft, an editor with changes. If there's a real chance, it isn't closed.</p></div>
-          <div class="card"><span class="num">ASKS</span><h3>Does it need to keep running?</h3><p>Servers, builds, syncs and terminal sessions look idle but aren't. In testing, the hosted tier spared a localhost dev server that a small local model would have closed.</p></div>
-          <div class="card"><span class="num">FALLS BACK</span><h3>Works without it, too</h3><p>Offline, signed out or over your daily allowance, RamWarden uses its local estimate. Nothing stops working; decisions are just less sharp.</p></div>
-        </div>
-
-        <div class="table-scroll mt-lg">
-          <table class="compare">
-            <thead><tr><th></th><th>RamWarden</th><th>"RAM cleaner" apps</th><th>Browser memory saver</th></tr></thead>
-            <tbody>
-              <tr><td>Covers apps and tabs together</td><td class="yes">Yes, one decision across both</td><td class="no">Apps only</td><td class="no">Its own tabs only</td></tr>
-              <tr><td>Knows what you're working on</td><td class="yes">Yes, Jev asks</td><td class="no">No</td><td class="no">Recency only</td></tr>
-              <tr><td>Tries reversible reclaim first</td><td class="yes">Yes, always</td><td class="no">Often a blanket flush</td><td class="no">n/a</td></tr>
-              <tr><td>Acts only when memory is short</td><td class="yes">Yes, on stall time</td><td class="no">On a timer or a button</td><td class="no">On a timer</td></tr>
-              <tr><td>Never touches games, terminals, security</td><td class="yes">Hard rule</td><td class="no">Varies</td><td class="no">n/a</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="block" id="download">
-      <div class="wrap">
-        <h2>Download</h2>
-        <p class="sub">The app runs a small background service and shows a tray or menu-bar icon. It works fully offline; signing in only adds hosted Jev decisions.</p>
-        <div class="grid three">
-          <div class="download card" data-os="windows">
-            <span class="tag"></span>
-            <h3>Windows 11</h3>
-            <p class="muted">Background service, tray app and reversible debloat profiles. Uses Windows memory compression.</p>
-            <a class="button" data-download="windows" href="#">Download for Windows</a>
-            <details><summary>Build from source</summary><code class="code-block">cargo build --release -p ramwarden-daemon -p ramwarden-service
-cargo build --release -p ramwarden-ui --features tray --bin ramwarden-tray
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1</code></details>
-          </div>
-          <div class="download card" data-os="macos">
-            <span class="tag"></span>
-            <h3>macOS</h3>
-            <p class="muted">Apple silicon. A launchd agent and a native menu-bar app. Closing apps stays off until you opt them in.</p>
-            <a class="button" data-download="macos" href="#">Download for Mac</a>
-            <details><summary>Build from source</summary><code class="code-block">cargo build --release -p ramwarden-daemon
-./scripts/install-macos.sh
-cd macos/menubar &amp;&amp; ./build.sh</code></details>
-          </div>
-          <div class="download card" data-os="linux">
-            <span class="tag"></span>
-            <h3>Linux</h3>
-            <p class="muted">systemd desktops with cgroup v2. Pages cold memory to zram with no root needed. GTK window.</p>
-            <a class="button" data-download="linux" href="#">Download .deb</a>
-            <details><summary>Install or build</summary><code class="code-block">sudo dpkg -i ramwarden_*.deb
-systemctl --user enable --now ramwarden
-
-# or from source
-bash scripts/build-deb.sh</code></details>
-          </div>
-        </div>
-
-        <div class="card mt" id="extension">
-          <h3>Browser extension</h3>
-          <p>Lets RamWarden see which tabs you use and unload the ones you don't. It talks only to RamWarden on your own computer, never to our server.</p>
-          <p id="extension-action" class="mt"></p>
-        </div>
-      </div>
-    </section>
-
-    <section class="block" id="pricing">
-      <div class="wrap">
-        <h2>Pricing</h2>
-        <p class="sub">Everything RamWarden does on your computer is free. Pro pays for Jev running on our server, so you don't need your own key or a local model.</p>
-        <div class="grid three">
-          <div class="price card">
-            <h3>Local</h3>
-            <div class="amount">$0</div>
-            <ul>
-              <li>The whole reclaim ladder</li>
-              <li>Tab unloading with the extension</li>
-              <li>Local decisions, unlimited</li>
-              <li>Bring your own Jev key if you have one</li>
-              <li>No account, nothing leaves your machine</li>
-            </ul>
-            <a class="button secondary" href="#download">Download</a>
-          </div>
-          <div class="price card">
-            <h3>Free account</h3>
-            <div class="amount">$0 <small>sign in with a wallet</small></div>
-            <ul>
-              <li>Everything in Local</li>
-              <li><span data-limit="free.perDay">5</span> hosted Jev decisions a day</li>
-              <li><span data-limit="free.devices">1</span> device</li>
-            </ul>
-            <a class="button secondary" href="account.html">Create an account</a>
-          </div>
-          <div class="price card featured">
-            <h3>Pro</h3>
-            <div class="amount">$<span data-plan="pro_30d">4</span> <small>per 30 days, or $<span data-plan="pro_365d">36</span> a year</small></div>
-            <ul>
-              <li>Everything in Local</li>
-              <li><span data-limit="pro.perDay">200</span> hosted Jev decisions a day</li>
-              <li>Up to <span data-limit="pro.devices">3</span> devices</li>
-              <li>A prepaid pass: nothing renews or charges you later</li>
-            </ul>
-            <a class="button" href="account.html#buy">Get Pro</a>
-          </div>
-        </div>
-        <p class="pay-methods">Pay in USDC on Base (MetaMask, Phantom or any EVM wallet) or on Solana (Phantom), or by card through Stripe. Buying early adds to the pass you have.</p>
-      </div>
-    </section>
-
-    <section class="block faq" id="faq">
-      <div class="wrap narrow">
-        <h2>Questions</h2>
-        <details><summary>What gets sent to your server?</summary>
-          <p>Only with a hosted plan, and only when RamWarden is deciding what to close: a short description of the candidate (app or site name, how long it's been idle, its memory) and the fixed question being asked. The server passes it to Jev and forgets it. Request contents are never stored or logged. On the free local tier nothing is sent anywhere. See the <a href="privacy.html">privacy policy</a>.</p></details>
-        <details><summary>Will it close something I'm using?</summary>
-          <p>It's built not to. It acts only when memory is actually short, tries compression first, spares anything you used recently, asks whether you'll be back, and only ever pauses or closes apps you've put on the watchlist. Closing starts a countdown you can cancel, and paused apps resume as soon as pressure passes.</p></details>
-        <details><summary>Is it safe for games and anti-cheat?</summary>
-          <p>Yes. Games, anti-cheat (Vanguard, EasyAntiCheat), security software and system processes are structurally protected. RamWarden never touches them, and it never weakens security settings to free memory.</p></details>
-        <details><summary>Why sign in with a wallet?</summary>
-          <p>It's an account without a password or an email. Signing the sign-in message costs no gas and moves no funds. Your RamWarden account is separate from the wallet, so you can pay from a different wallet or by card.</p></details>
-        <details><summary>Do I need the browser extension?</summary>
-          <p>Only for tab unloading. Without it RamWarden still manages apps; with it, tabs and apps are weighed together.</p></details>
-        <details><summary>Is it open source?</summary>
-          <p>Yes, under the MIT license. The source is on <a href="https://github.com/ethanrxla/ramwarden">GitHub</a>, so you can read it or build any version yourself.</p></details>
       </div>
     </section>
   </main>
 
+  <aside class="pet" data-pet aria-live="polite">
+    <p class="pet-say" data-say>Hi. I'm your warden.</p>
+    <img data-sprite="ram" src="assets/pets/ram.svg" alt="RamWarden's pixel ram" width="72" height="72">
+    <button type="button" class="pet-mute" data-mute aria-pressed="false">Mute</button>
+  </aside>
+
   <footer>
     <div class="wrap">
-      <span>RamWarden</span>
-      <span><a href="privacy.html">Privacy</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
+      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $24 a year.</span>
+      <span><a href="privacy.html">Privacy</a> · <a href="notices.html">Open-source notices</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
     </div>
   </footer>
 </body>

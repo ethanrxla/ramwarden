@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>ThreatWarden: catch threats, keep your peace</title>
+  <meta name="description" content="ThreatWarden watches your computer for threats, removes the real ones, and explains every call in plain words. Included with RamWarden Pro.">
+  <meta property="og:title" content="ThreatWarden">
+  <meta property="og:description" content="Catch threats. Keep your peace.">
+  <link rel="icon" href="assets/pets/threat.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/style.css">
+  <script type="module" src="assets/home.js"></script>
+  <script type="module" src="assets/world.js"></script>
+</head>
+<body class="landing theme-threat" data-warden="threat">
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
+      <nav class="warden-tabs" aria-label="Wardens">
+        <a href="./"><img src="assets/pets/ram.svg" alt="">RamWarden</a>
+        <a href="threat.html" aria-current="page"><img src="assets/pets/threat.svg" alt="">ThreatWarden</a>
+      </nav>
+      <nav>
+        <a class="hide-sm" href="#how">How it works</a>
+        <a class="hide-sm" href="#pricing">Pricing</a>
+        <a class="hide-sm" href="#faq">FAQ</a>
+        <a href="account.html">Account</a>
+        <a class="button small" href="#pricing">Start free trial</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- 1. Hero -->
+    <section class="hero" id="top" data-section="hero">
+      <div class="wrap hero-layout">
+        <div class="hero-copy">
+          <span class="eyebrow">Security companion · Windows · macOS · Linux</span>
+          <p class="catchline" data-rotate='["For people who click every link.","See threats before they see you.","If you&apos;re one of those people who download first and ask later…","Please stop running random installers.","For people with 100 tabs and zero idea what&apos;s on their network.","Know what&apos;s talking to your computer."]'><em>For people who click every link.</em></p>
+          <h1>Catch threats.<br><em>Keep your peace.</em></h1>
+          <p class="lede">Watches this computer for threats and removes the real ones. Explains every call in plain words.</p>
+          <div class="actions">
+            <a class="button" href="#pricing">Start free trial</a>
+            <a class="button secondary" href="#how">How it works</a>
+          </div>
+        </div>
+        <div class="hero-media radar" aria-hidden="true">
+          <img data-sprite="threat" src="assets/pets/threat.svg" alt="">
+          <i class="blip b1"></i><i class="blip b2"></i><i class="blip b3"></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Install -->
+    <section class="block install-block" id="get" data-section="install">
+      <div class="wrap">
+        <h2>Get ThreatWarden</h2>
+        <p class="sub">Comes with RamWarden Pro. Install, sign in, and it's on watch.</p>
+        <div class="install" data-install>
+          <noscript><p>This box needs JavaScript. <a href="account.html">Your account</a> has your install line.</p></noscript>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Scroll world: the same component, a scene instead of a film -->
+    <section class="world world-scene" id="world" data-scrub data-section="world" aria-label="ThreatWarden at work, driven by scrolling">
+      <div class="world-sticky">
+        <div class="scene" aria-hidden="true">
+          <div class="scene-radar"></div>
+          <span class="threat t1" data-at="0.18"><b data-at="0.5"></b></span>
+          <span class="threat t2" data-at="0.28"><b data-at="0.58"></b></span>
+          <span class="threat t3" data-at="0.36"><b data-at="0.66"></b></span>
+          <img class="scene-pet" data-sprite="threat" src="assets/pets/threat.svg" alt="">
+        </div>
+        <div class="world-shade"></div>
+        <div class="world-copy wrap">
+          <div class="beat" data-from="0" data-to="0.38">
+            <p class="world-line">Something new just landed<br>in <em>Downloads.</em></p>
+          </div>
+          <div class="beat" data-from="0.38" data-to="0.72">
+            <p class="world-line">Your warden checks it. If it's real,<br>it's <em>quarantined, and you can undo it.</em></p>
+          </div>
+          <div class="beat" data-from="0.72" data-to="1.01">
+            <p class="world-line">Catch threats. <em>Keep your peace.</em></p>
+            <div class="actions"><a class="button" href="#pricing">Start free trial</a></div>
+          </div>
+        </div>
+        <div class="world-progress"><i data-progress></i></div>
+        <span class="world-hint">Scroll</span>
+      </div>
+    </section>
+
+    <!-- 4. Pet -->
+    <section class="block stage" id="meet" data-stage data-section="pet">
+      <div class="wrap stage-layout">
+        <div class="stage-pet">
+          <p class="stage-say" data-stage-say aria-live="polite"></p>
+          <img data-sprite="threat" src="assets/pets/threat.svg" alt="ThreatWarden's pixel cyborg ram" width="192" height="192">
+        </div>
+        <div>
+          <h2>Meet your security warden.</h2>
+          <p class="sub">It explains every call, cracks the odd joke, and wears any color you like.</p>
+          <div class="colors" data-colors>
+            <div class="swatches" data-swatches></div>
+            <label class="hue">Any color <input type="range" min="0" max="359" value="265" aria-label="Warden hue"></label>
+            <button type="button" class="button secondary small" data-reset>Original</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. How it works -->
+    <section class="block" id="how" data-section="how">
+      <div class="wrap">
+        <h2>What it watches</h2>
+        <p class="sub">One warden for this computer, its files and its network.</p>
+        <div class="grid four">
+          <div class="card"><span class="num">HOST</span><h3>This computer</h3><p>Spots break-ins, tampering and risky software.</p></div>
+          <div class="card"><span class="num">FILES <i class="soon">Soon</i></span><h3>Downloads</h3><p>Catches malware in downloads and hiding places.</p></div>
+          <div class="card"><span class="num">NETWORK <i class="soon">Soon</i></span><h3>Connections</h3><p>Blocks known-bad connections.</p></div>
+          <div class="card"><span class="num">TRAFFIC <i class="soon">Soon</i></span><h3>Who talks to whom</h3><p>Shows which apps talk to whom.</p></div>
+        </div>
+        <h3 class="subhead">It acts on real threats. You stay in charge.</h3>
+        <div class="grid three">
+          <div class="card"><span class="num">ACTS <i class="soon">Soon</i></span><h3>Removes real threats</h3><p>Quarantine first, always undoable. Your allowlist wins.</p></div>
+          <div class="card"><span class="num">PROTECTED</span><h3>Hands off your system</h3><p>System, security and anti-cheat files are never touched.</p></div>
+          <div class="card"><span class="num">PLAIN WORDS</span><h3>One status</h3><p>Clear, Watch or Alert, with what to do about it.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Pricing -->
+    <section class="block" id="pricing" data-section="pricing">
+      <div class="wrap">
+        <h2>Two intelligent desktop companions.</h2>
+        <p class="sub">Performance and security, starting at $24 a year.</p>
+        <div class="pricing" data-pricing></div>
+      </div>
+    </section>
+
+    <!-- 7. FAQ -->
+    <section class="block faq" id="faq" data-section="faq">
+      <div class="wrap narrow">
+        <h2>Questions</h2>
+        <details><summary>Does it replace my antivirus?</summary>
+          <p>No. It works alongside it and never turns your existing protection off.</p></details>
+        <details><summary>Will it delete my files?</summary>
+          <p>Only confirmed threats are quarantined, and every quarantine can be undone. Anything you allow is left alone.</p></details>
+        <details><summary>Can I allow something it flags?</summary>
+          <p>Yes. One tap on any finding allows that file, folder, app or site.</p></details>
+        <details><summary>How do I get it?</summary>
+          <p>It comes with RamWarden Pro, on the same 5 devices, with a 14-day free trial.</p></details>
+      </div>
+    </section>
+
+    <!-- 8. Try it -->
+    <section class="block" id="demo" data-section="demo">
+      <div class="wrap demo-layout">
+        <div>
+          <h2>One status, in plain words.</h2>
+          <p class="sub">Every finding rolls up into one level and what to do next.</p>
+        </div>
+        <div class="levels">
+          <div class="clear"><strong>Clear</strong><span>Nothing needs you.</span></div>
+          <div class="watch"><strong>Watch</strong><span>Worth a look.</span></div>
+          <div class="alert"><strong>Alert</strong><span>Act now. Here's how.</span></div>
+          <div class="off"><strong>Off</strong><span>Not set up yet.</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="pet" data-pet aria-live="polite">
+    <p class="pet-say" data-say>Eyes open. Antenna up.</p>
+    <img data-sprite="threat" src="assets/pets/threat.svg" alt="ThreatWarden's pixel cyborg ram" width="72" height="72">
+    <button type="button" class="pet-mute" data-mute aria-pressed="false">Mute</button>
+  </aside>
+
+  <footer>
+    <div class="wrap">
+      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $24 a year.</span>
+      <span><a href="privacy.html">Privacy</a> · <a href="notices.html">Open-source notices</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
+    </div>
+  </footer>
+</body>
+</html>

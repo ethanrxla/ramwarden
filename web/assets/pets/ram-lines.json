@@ -1,0 +1,33 @@
+{
+  "sections": {
+    "top": "Hi. I'm your warden. I eat idle tabs for breakfast.",
+    "get": "One line and I'm on guard.",
+    "world": "Scroll. I'll clear the clutter.",
+    "meet": "Pick me a color. I've been crimson all week.",
+    "how": "Cheapest fix first. Closing things is my last resort.",
+    "pricing": "Two weeks free. I'll earn my keep.",
+    "faq": "Ask away. I explain every call I make.",
+    "demo": "That slider is my day job. Try it."
+  },
+  "jokes": [
+    "I've seen your tab count. We need to talk.",
+    "Fun fact: that recipe tab from March is still in memory.",
+    "I don't judge. I just count tabs. Quietly.",
+    "Ram. Warden. Ram warden. I named myself.",
+    "Somewhere a browser is using 4 GB to show one GIF.",
+    "If you close three tabs right now, I'll do a little hop.",
+    "My horns are load-bearing. So is your RAM.",
+    "Your fans called. They'd like a break."
+  ],
+  "stage": [
+    "Freed 1.2 GB from 14 tabs you hadn't touched since Tuesday.",
+    "Your editor is busy. I'm leaving it alone.",
+    "That game is protected. Go win.",
+    "Paused a sync app nobody was watching. It's back when you are.",
+    "Memory is calm. I'm just standing here looking heroic."
+  ],
+  "demo": {
+    "high": "Ooh, that's a lot of waiting on memory. My turn.",
+    "low": "Calm again. Nothing for me to do."
+  }
+}

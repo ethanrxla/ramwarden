@@ -1,0 +1,33 @@
+{
+  "sections": {
+    "top": "Eyes open. Antenna up.",
+    "get": "One line and I'm on watch.",
+    "world": "Scroll. Watch me catch it.",
+    "meet": "Purple is my color. Probably. Try another.",
+    "how": "Real threats go. Everything else stays.",
+    "pricing": "Comes with RamWarden Pro. I'm a package deal.",
+    "faq": "Security questions are my favourite kind.",
+    "demo": "Green means relax."
+  },
+  "jokes": [
+    "I see you hovering over that link. Don't.",
+    "\"free_movie_FINAL_real.exe\"? Bold choice.",
+    "Your password is not \"password\". Right?",
+    "I scanned this joke. It's clean.",
+    "Beep boop. That's cyborg for \"close that pop-up\".",
+    "If a site says you won a prize, you did not win a prize.",
+    "Update your apps. I'll wait.",
+    "Fun fact: I never sleep. I just dim my visor."
+  ],
+  "stage": [
+    "Quarantined one file from Downloads. Tap to review.",
+    "Blocked a connection to a known-bad host. You didn't miss anything.",
+    "That installer is signed by its publisher. Allowed.",
+    "All clear. Visor at half brightness.",
+    "Something looks odd. Asking you before I touch it."
+  ],
+  "demo": {
+    "high": "That would be an Alert. I'd tell you exactly what to do.",
+    "low": "Clear. Nothing needs you."
+  }
+}
