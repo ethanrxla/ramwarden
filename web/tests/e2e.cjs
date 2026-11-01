@@ -87,8 +87,30 @@ async function run() {
     const p = await page();
     await p.goto(`${base}/index.html`);
     await p.waitForSelector("#extension-action >> text=Load unpacked");
-    assert.equal(await p.textContent('[data-plan="pro_30d"]'), "4");
-    assert.match(await p.getAttribute('[data-download="linux"]', "href"), /github\.com\/ethanrxla\/ramwarden\/releases/);
+    assert.equal(await p.textContent('[data-plan="ram_60d"]'), "4");
+    assert.match(await p.getAttribute('[data-download="releases"]', "href"), /github\.com\/ethanrxla\/ramwarden\/releases/);
+    // Exactly one install line is shown: the visitor's OS (Linux in CI).
+    assert.deepEqual(await p.$$eval("[data-os-panel]", (ps) => ps.filter((x) => x.offsetParent !== null).map((x) => x.dataset.osPanel)), ["linux"]);
+    assert.match(await p.textContent('[data-os-panel="windows"] .cmd'), /^irm https:.*install\.ps1 \| iex$/);
+    // The film is scrubbed by scroll: scrolling into the section moves its clock.
+    await p.waitForFunction(() => document.querySelector("[data-scrub]").classList.contains("live"));
+    await p.evaluate(() => { const w = document.querySelector("[data-scrub]"); scrollTo(0, w.offsetTop + (w.offsetHeight - innerHeight) * 0.6); });
+    await p.waitForFunction(() => document.querySelector(".world-video").currentTime > 2);
+    assert.ok(await p.isVisible(".world .beat.on .world-line"), "second beat shows mid-film");
+    // The pet speaks for the section in view.
+    await p.evaluate(() => document.getElementById("pricing").scrollIntoView());
+    await p.waitForFunction(() => /Phantom/.test(document.querySelector("[data-say]").textContent));
+    assert.deepEqual(p.errors, []);
+  });
+
+  t("ThreatWarden tab renders in its own theme with its catchline and pet", async () => {
+    const p = await page();
+    await p.goto(`${base}/threat.html`);
+    assert.equal(await p.getAttribute('.warden-tabs a[aria-current="page"]', "href"), "threat.html");
+    const bg = await p.evaluate(() => getComputedStyle(document.body).getPropertyValue("--bg").trim());
+    assert.equal(bg, "#050407");
+    assert.match(await p.textContent(".catchline em"), /\S/);
+    assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     assert.deepEqual(p.errors, []);
   });
 

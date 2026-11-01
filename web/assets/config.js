@@ -29,9 +29,12 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
+  // Each warden is its own prepaid pass. The server's /v1/checkout/config
+  // wins on the account page; these fill the landing pages. `soon` plans are
+  // shown but not sold until the warden's hosted tier is live.
   plans: [
-    { id: "pro_30d", name: "Pro, 30 days", usd: 4, days: 30 },
-    { id: "pro_365d", name: "Pro, 1 year", usd: 36, days: 365 },
+    { id: "ram_60d", name: "RamWarden Pro, 2 months", usd: 4, days: 60, wardens: ["ram"] },
+    { id: "threat_60d", name: "ThreatWarden, 2 months", usd: 6, days: 60, wardens: ["threat"], soon: true },
   ],
   limits: {
     free: { perDay: 5, devices: 1 },

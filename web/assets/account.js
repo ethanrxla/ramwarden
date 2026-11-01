@@ -153,8 +153,11 @@ class AccountPage {
   buyPanel(pro) {
     const any = this.methods.base || this.methods.solana || this.methods.stripe;
     const area = h("div");
-    let plan = this.plans[0]?.id;
-    const planButtons = this.plans.map((p) =>
+    // A warden whose hosted tier is not live yet is shown on the landing page
+    // but never sold here.
+    const plans = this.plans.filter((p) => !p.soon);
+    let plan = plans[0]?.id;
+    const planButtons = plans.map((p) =>
       h(
         "label",
         { class: "plan-choice" },

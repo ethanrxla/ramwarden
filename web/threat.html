@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>ThreatWarden: four security engines, one warden that explains them</title>
+  <meta name="description" content="ThreatWarden is RamWarden's security warden: Wazuh, ClamAV, Suricata and ntopng in one place, explained in plain words. Hosted and plug-and-play, or self-hosted and open source.">
+  <meta property="og:title" content="ThreatWarden by RamWarden">
+  <meta property="og:description" content="See threats before they see you.">
+  <link rel="icon" href="assets/pets/threat.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/style.css">
+  <script type="module" src="assets/home.js"></script>
+  <script type="module" src="assets/world.js"></script>
+</head>
+<body class="landing theme-threat">
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
+      <nav class="warden-tabs" aria-label="Wardens">
+        <a href="./"><img src="assets/pets/ram.svg" alt="">RamWarden</a>
+        <a href="threat.html" aria-current="page"><img src="assets/pets/threat.svg" alt="">ThreatWarden</a>
+      </nav>
+      <nav>
+        <a class="hide-sm" href="#stack">What it watches</a>
+        <a class="hide-sm" href="#pricing">Pricing</a>
+        <a class="hide-sm" href="#faq">FAQ</a>
+        <a href="account.html">Account</a>
+        <a class="button small" href="#get">Get it</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="threat-hero" data-pet-say="Beep. Scanning. You're safe with me.">
+      <div class="wrap hero-layout">
+        <div>
+          <span class="eyebrow">ThreatWarden · a RamWarden warden</span>
+          <p class="catchline" data-rotate='["See threats before they see you.","For people who click every link.","If you&apos;re one of those people who download first and ask later…","Please stop running random installers.","For people with 100 tabs and zero idea what&apos;s on their network.","Know what&apos;s talking to your computer."]'><em>See threats before they see you.</em></p>
+          <h1>Four open-source security engines. One warden that explains them.</h1>
+          <p class="lede">ThreatWarden watches your computer with Wazuh, ClamAV, Suricata and ntopng, and tells you in plain words what it saw and whether you need to do anything. It observes; it never switches anything off.</p>
+          <div class="actions">
+            <a class="button" href="#get">Get ThreatWarden</a>
+            <a class="button secondary" href="#stack">What it watches</a>
+          </div>
+        </div>
+        <div class="radar" aria-hidden="true">
+          <img src="assets/pets/threat.svg" alt="">
+          <i class="blip b1"></i><i class="blip b2"></i><i class="blip b3"></i>
+        </div>
+      </div>
+    </section>
+
+    <section class="block stack" id="stack" data-pet-say="Four engines, one report. I translate.">
+      <div class="wrap">
+        <h2>What it watches</h2>
+        <p class="sub">Each engine is the official, unmodified open-source project. ThreatWarden reads what they find and puts it in one place.</p>
+        <div class="grid two">
+          <div class="card"><span class="num">HOST</span><h3>Wazuh <small>intrusion detection</small></h3><p>Log analysis, file integrity monitoring, vulnerable software and known attack patterns on this computer, scored by Wazuh's own rules.</p></div>
+          <div class="card"><span class="num">FILES</span><h3>ClamAV <small>malware scanning</small></h3><p>Scans downloads and the places malware likes to hide against a signature database that updates on its own.</p></div>
+          <div class="card"><span class="num">NETWORK</span><h3>Suricata <small>network intrusion detection</small></h3><p>Inspects traffic for exploit attempts, command-and-control callbacks and known-bad hosts.</p></div>
+          <div class="card"><span class="num">TRAFFIC</span><h3>ntopng <small>network visibility</small></h3><p>Shows what is talking to what: which apps use the network, how much, and with whom.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="levels" data-pet-say="Green means relax. Red means I'll tell you exactly what to do.">
+      <div class="wrap">
+        <h2>One status, in plain words</h2>
+        <p class="sub">Every finding rolls up into one level, with a headline and what to do about it. Silence from a disconnected agent never counts as all-clear.</p>
+        <div class="levels">
+          <div class="clear"><strong>Clear</strong><span>Nothing needs you.</span></div>
+          <div class="watch"><strong>Watch</strong><span>Worth a look, nothing urgent. Also shown when an engine stops reporting.</span></div>
+          <div class="alert"><strong>Alert</strong><span>Act now. High-severity detections (Wazuh level 12 and up).</span></div>
+          <div class="off"><strong>Off</strong><span>Not set up or not reachable, and which one.</span></div>
+        </div>
+        <div class="grid three mt-lg">
+          <div class="card"><span class="num">OBSERVES</span><h3>Read-only by design</h3><p>ThreatWarden never quarantines, blocks or kills anything. Any automatic response stays with the security tools themselves, configured by you.</p></div>
+          <div class="card"><span class="num">PROTECTED</span><h3>Untouchable by RamWarden</h3><p>The security agents are structurally protected: RamWarden's memory warden can never freeze or close them, whatever the watchlist says.</p></div>
+          <div class="card"><span class="num">PRIVATE</span><h3>Credentials stay encrypted</h3><p>Connections to the security servers must use HTTPS with certificate checks. There is no switch to turn that off.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="get" data-pet-say="Hosted: plug me in and go. Self-hosted: bring your own server.">
+      <div class="wrap">
+        <h2>Get ThreatWarden</h2>
+        <p class="sub">ThreatWarden is added from RamWarden. Install RamWarden with the line for your system, then turn ThreatWarden on in the app.</p>
+        <div class="install" data-install>
+          <div class="os-tabs" role="tablist" aria-label="Your system">
+            <button type="button" role="tab" data-os-tab="macos">macOS</button>
+            <button type="button" role="tab" data-os-tab="windows">Windows</button>
+            <button type="button" role="tab" data-os-tab="linux">Linux</button>
+          </div>
+          <div class="os-panel" data-os-panel="macos"><span class="shell">Terminal</span><code class="cmd">curl -fsSL https://raw.githubusercontent.com/ethanrxla/ramwarden/main/web/install.sh | sh</code><button class="copy" type="button" data-copy>Copy</button></div>
+          <div class="os-panel" data-os-panel="windows"><span class="shell">PowerShell</span><code class="cmd">irm https://raw.githubusercontent.com/ethanrxla/ramwarden/main/web/install.ps1 | iex</code><button class="copy" type="button" data-copy>Copy</button></div>
+          <div class="os-panel" data-os-panel="linux"><span class="shell">Terminal</span><code class="cmd">curl -fsSL https://raw.githubusercontent.com/ethanrxla/ramwarden/main/web/install.sh | sh</code><button class="copy" type="button" data-copy>Copy</button></div>
+        </div>
+        <div class="grid two mt-lg">
+          <div class="card path featured">
+            <span class="num">HOSTED · PLUG AND PLAY · COMING SOON</span>
+            <h3>We run the servers. You get the answers.</h3>
+            <p>Sign in, turn ThreatWarden on, done. We run the Wazuh manager and indexer for you and keep the engines updated, so your computer's security events go to RamWarden's servers to be analysed. $6 every 2 months.</p>
+            <a class="button mt" href="#pricing">See pricing</a>
+          </div>
+          <div class="card path">
+            <span class="num">SELF-HOSTED · OPEN SOURCE</span>
+            <h3>Your own server, your own setup.</h3>
+            <p>Install the official Wazuh, ClamAV, Suricata and ntopng packages yourself, run your own Wazuh manager on an always-on Linux box, and point ThreatWarden at it with read-only accounts. Nothing reaches our servers.</p>
+            <a class="button secondary mt" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/wazuh-setup.md">Setup guide</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="pricing" data-pet-say="Phantom, MetaMask or card. I'm not picky.">
+      <div class="wrap">
+        <h2>Pricing</h2>
+        <p class="sub">ThreatWarden is an add-on to RamWarden, which is free. <strong>Pay with crypto</strong> from Phantom or MetaMask (USDC on Base or Solana), or by card.</p>
+        <div class="grid two">
+          <div class="price card">
+            <h3>Self-hosted</h3>
+            <div class="amount">$0</div>
+            <ul>
+              <li>Open source, MIT licensed</li>
+              <li>You run and configure the security servers</li>
+              <li>Nothing leaves your network</li>
+            </ul>
+            <a class="button secondary" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/wazuh-setup.md">Setup guide</a>
+          </div>
+          <div class="price card featured">
+            <h3>ThreatWarden hosted</h3>
+            <div class="amount">$<span data-plan="threat_60d">6</span> <small>every 2 months</small></div>
+            <ul>
+              <li>Wazuh, ClamAV, Suricata and ntopng, managed for you</li>
+              <li>Plain-words alerts in the RamWarden app</li>
+              <li>A prepaid pass: nothing renews or charges you later</li>
+              <li>Stacks with RamWarden Pro ($<span data-plan="ram_60d">4</span> every 2 months)</li>
+            </ul>
+            <span class="button" aria-disabled="true">Coming soon</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block faq" id="faq" data-pet-say="Ask away. Explaining is half my job.">
+      <div class="wrap narrow">
+        <h2>Questions</h2>
+        <details><summary>Does it replace my antivirus?</summary>
+          <p>No. It adds visibility on top of what you already run, and it never turns your existing protection off. RamWarden never weakens security settings to free memory.</p></details>
+        <details><summary>Are Wazuh, ClamAV, Suricata and ntopng modified?</summary>
+          <p>No. ThreatWarden uses the official, unmodified projects from their own packages and reads what they report. They are separate open-source projects with their own licences; RamWarden is not affiliated with them.</p></details>
+        <details><summary>What does the hosted version send to your servers?</summary>
+          <p>The security events your engines produce, so the hosted manager can analyse them and send the results back. Self-hosting keeps all of it on your own server.</p></details>
+        <details><summary>Will it slow my computer down?</summary>
+          <p>The heavy parts (the Wazuh manager and indexer) run on the server, not on your computer: hosted, on ours; self-hosted, on yours. RamWarden's memory warden keeps an eye on the rest.</p></details>
+      </div>
+    </section>
+  </main>
+
+  <aside class="pet" data-pet aria-live="polite">
+    <p class="pet-say" data-say>Beep. Scanning. You're safe with me.</p>
+    <img src="assets/pets/threat.svg" alt="ThreatWarden's pixel cyborg ram" width="72" height="72">
+    <button type="button" class="pet-hide" data-hide aria-label="Hide the pet">×</button>
+  </aside>
+
+  <footer>
+    <div class="wrap">
+      <span>RamWarden</span>
+      <span><a href="privacy.html">Privacy</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
+    </div>
+  </footer>
+</body>
+</html>

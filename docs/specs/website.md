@@ -11,7 +11,9 @@ static files to any host.
 
 | Page | Purpose |
 | --- | --- |
-| `index.html` | Pitch, the reclaim ladder, Jev, comparison, downloads, extension, pricing, FAQ |
+| `index.html` | RamWarden tab: scroll-scrubbed film hero with the rotating catchline, memory lab, ladder, Jev, install, pricing, FAQ |
+| `threat.html` | ThreatWarden tab (black, purple, green): Wazuh, ClamAV, Suricata, ntopng; status levels; hosted vs self-hosted; pricing; FAQ |
+| `install.sh`, `install.ps1` | One-line installers: download the latest release for the OS, check SHA-256 against `manifest.json`, run the release's own installer |
 | `link.html?code=XXXX-XXXX` | Approves a device sign-in (RFC 8628). The daemon opens it after `POST /v1/device/start` |
 | `account.html` | Web sign-in, pass status, today's usage, devices, checkout |
 | `privacy.html` | Privacy policy (draft until launch) |
@@ -67,6 +69,19 @@ Checkout:
   opens soon and sells nothing.
 
 ## Policy
+
+- **Two tabs, one per warden.** Each page is its own HTML file, linked from
+  the header's warden tabs, so each can carry its own theme and pet.
+- **Scroll drives the film.** The hero scrubs `assets/world/promo-scrub.mp4`
+  by scroll position (scroll-world technique, `assets/world.js`): fetched as a
+  Blob, coalesced seeks, a lighter phone encode, and the closing frame plus
+  all copy under reduced motion.
+- **The pet** speaks each section's `data-pet-say` line; dismissing it
+  sticks.
+- **Free vs Pro is stated plainly.** The open-source release runs local and
+  never uses our backend; Pro is the same install plus sign-in. ThreatWarden
+  hosted is plug-and-play and is shown as coming soon until it is live;
+  `soon` plans are never sold on the account page.
 
 - **No third-party code on pages that sign.** No wallet SDK, analytics or
   CDN. Each page carries a CSP of `script-src 'self'`; its `connect-src`

@@ -16,24 +16,66 @@ export function detectOs(nav = navigator) {
   return null;
 }
 
-function setUpDownloads() {
-  for (const a of document.querySelectorAll("[data-download]")) {
-    const os = a.dataset.download;
-    a.href = config.downloads[os] || config.releases;
-    if (!config.downloads[os]) a.textContent = `Get it for ${NAMES[os]} on GitHub`;
+// The install block: one tab per OS, the visitor's own picked by default.
+// A wrong guess costs one click.
+function setUpInstall() {
+  const box = document.querySelector("[data-install]");
+  if (!box) return;
+  const tabs = [...box.querySelectorAll("[data-os-tab]")];
+  const pick = (os) => {
+    for (const t of tabs) t.setAttribute("aria-selected", String(t.dataset.osTab === os));
+    for (const p of box.querySelectorAll("[data-os-panel]")) p.hidden = p.dataset.osPanel !== os;
+  };
+  tabs.forEach((t) => t.addEventListener("click", () => pick(t.dataset.osTab)));
+  pick(detectOs() || "macos");
+  for (const b of box.querySelectorAll("[data-copy]")) {
+    b.addEventListener("click", async () => {
+      const cmd = b.parentElement.querySelector(".cmd").textContent;
+      try {
+        await navigator.clipboard.writeText(cmd);
+        b.textContent = "Copied";
+      } catch {
+        b.textContent = "Select and copy";
+      }
+      setTimeout(() => (b.textContent = "Copy"), 1600);
+    });
   }
+  const hero = document.getElementById("hero-download");
   const os = detectOs();
-  const card = os && document.querySelector(`.download[data-os="${os}"]`);
-  if (card) {
-    card.classList.add("detected");
-    card.querySelector(".tag").textContent = "YOUR COMPUTER";
-    const hero = document.getElementById("hero-download");
-    hero.textContent = `Download for ${NAMES[os]}`;
+  if (hero && os) hero.textContent = `Install for ${NAMES[os]}`;
+}
+
+function setUpDownloads() {
+  for (const a of document.querySelectorAll('[data-download="releases"]')) a.href = config.releases;
+}
+
+// The italic catchline cycles through its lines, one every few seconds.
+// Respects reduced motion by showing the first line only.
+export function setUpRotators(root = document) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const el of root.querySelectorAll("[data-rotate]")) {
+    let lines;
+    try {
+      lines = JSON.parse(el.dataset.rotate);
+    } catch {
+      continue;
+    }
+    const em = el.querySelector("em") || el;
+    let i = Math.max(0, lines.indexOf(em.textContent));
+    setInterval(() => {
+      em.classList.add("out");
+      setTimeout(() => {
+        i = (i + 1) % lines.length;
+        em.textContent = lines[i];
+        em.classList.remove("out");
+      }, 350);
+    }, 3200);
   }
 }
 
 function setUpExtension() {
   const p = document.getElementById("extension-action");
+  if (!p) return;
   if (config.chromeStore) {
     const a = document.createElement("a");
     a.className = "button";
@@ -67,6 +109,8 @@ function fillPrices() {
 }
 
 if (typeof document !== "undefined") {
+  setUpInstall();
+  setUpRotators();
   setUpDownloads();
   setUpExtension();
   fillPrices();
