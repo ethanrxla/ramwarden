@@ -62,3 +62,57 @@ test('a sign-in word deep in the path no longer blocks an unload, but a sign-in 
     assert.equal(f.discards.length,0, url);
   }
 });
+test('Firefox tabs without autoDiscardable are still unloadable', async()=>{
+  const f=fixture({autoDiscardable:undefined});
+  assert.deepEqual(Array.from(await f.context.discardTabs(command)),[7]);
+  f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+  assert.equal((await f.context.buildTabReport({}))[0].autoDiscardable,true);
+});
+test('closing answers every command, skips guarded tabs and saves what closed', async()=>{
+  for (const [override, expected] of [[{}, [7]], [{pinned:true}, []], [{url:'https://accounts.google.com/x'}, []]]) {
+    const f=fixture(override); let saved=null; const removed=[];
+    f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>{if (v.releasedTabs) saved=v.releasedTabs; cb?.();};
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    assert.deepEqual(Array.from(await f.context.closeTabs([7])), expected);
+    assert.deepEqual(removed, expected);
+    assert.equal(saved?.[0]?.url, expected.length ? f.tab.url : undefined);
+  }
+});
+test('unloaded tabs are gathered into one collapsed Idle group, leaving user groups and pinned tabs', async()=>{
+  const f=fixture(); const grouped=[]; const updates=[];
+  const tabs=[
+    {id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
+    {id:2,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
+    {id:3,windowId:9,discarded:true,pinned:true,active:false,groupId:-1},
+    {id:4,windowId:9,discarded:true,pinned:false,active:false,groupId:55},
+    {id:5,windowId:9,discarded:false,pinned:false,active:true,groupId:-1},
+  ];
+  f.chrome.runtime.lastError=undefined;
+  f.chrome.tabGroups={query:(_,cb)=>cb([{id:55,title:'DNS migration'}]), update:(id,p)=>updates.push([id,p])};
+  f.chrome.tabs.group=(opts,cb)=>{grouped.push(opts);cb(77);};
+  await f.context._tidyIdleGroups(tabs);
+  assert.deepEqual(Array.from(grouped[0].tabIds),[1,2]);
+  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,true); assert.equal(updates[0][1].title,'Idle · 2');
+});
+test('a single unloaded tab does not get a group of its own', async()=>{
+  const f=fixture(); let grouped=0;
+  f.chrome.tabGroups={query:(_,cb)=>cb([]), update:()=>{}};
+  f.chrome.tabs.group=()=>{grouped++;};
+  await f.context._tidyIdleGroups([{id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1}]);
+  assert.equal(grouped,0);
+});
+test('a protected page left alone 4h can close; private hosts and in-tab editors never', async()=>{
+  const old = Date.now() - 300*60000;
+  for (const [url, lastAccessed, expected] of [
+    ['https://console.tailscale.com/admin', old, [7]],
+    ['https://login.microsoftonline.com/x', old, [7]],
+    ['https://console.tailscale.com/admin', Date.now() - 30*60000, []],
+    ['http://10.0.0.1/', old, []],
+    ['https://vscode.dev/', old, []],
+  ]) {
+    const f=fixture({url, lastAccessed}); const removed=[];
+    f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>cb?.();
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    assert.deepEqual(Array.from(await f.context.closeTabs([7])), expected, url);
+  }
+});
