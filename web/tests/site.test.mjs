@@ -121,3 +121,18 @@ test("install box state follows the account", () => {
   assert.equal(installState({ status: "cancelled", paid_until: "2026-10-20T00:00:00Z" }, now), "renew");
   assert.equal(installState({ status: "lapsed" }, now), "renew");
 });
+
+// The owner's marketing hooks are used word for word, never paraphrased,
+// and "Your PC" is never rewritten for Mac visitors.
+test("marketing hooks appear verbatim", () => {
+  const index = fs.readFileSync(path.join(WEB, "index.html"), "utf8");
+  for (const hook of [
+    "Your PC has 32GB of RAM. So why does it still feel slow?",
+    "Your task manager isn't telling you the whole story.",
+    "Two intelligent desktop companions.",
+    "Performance and security, starting at $24 a year.",
+    "Free your RAM.<br><em>Keep your peace.</em>",
+    "A small guardian for a crowded computer. It watches memory pressure, tries reversible fixes first, and protects what you're using.",
+  ]) assert.ok(index.includes(hook), hook);
+  assert.doesNotMatch(fs.readFileSync(path.join(WEB, "assets/home.js"), "utf8"), /Your Mac/);
+});

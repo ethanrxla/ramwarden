@@ -11,8 +11,9 @@ export { detectOs };
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // The italic catchline cycles through its lines, one every few seconds.
-// "Your PC" reads "Your Mac" for Mac visitors. Reduced motion keeps the first.
-export function setUpRotators(root = document, os = detectOs()) {
+// The lines are shown as written ("Your PC" stays "Your PC" on a Mac, by the
+// owner's choice). Reduced motion keeps the first.
+export function setUpRotators(root = document) {
   for (const el of root.querySelectorAll("[data-rotate]")) {
     let lines;
     try {
@@ -20,7 +21,6 @@ export function setUpRotators(root = document, os = detectOs()) {
     } catch {
       continue;
     }
-    if (os === "macos") lines = lines.map((l) => l.replace(/\bYour PC\b/g, "Your Mac"));
     if (reduceMotion()) continue;
     const em = el.querySelector("em") || el;
     let i = Math.max(0, lines.indexOf(em.textContent));
