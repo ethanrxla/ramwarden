@@ -24,6 +24,7 @@ pub mod appquit;
 pub mod tabintel;
 pub mod tabrank;
 pub mod tabs;
+pub mod wardens;
 pub mod worker;
 pub mod ws;
 

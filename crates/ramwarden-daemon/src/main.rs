@@ -150,6 +150,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());
 
+    // Add-on wardens poll in the background; each does nothing until unlocked
+    // and enabled.
+    ramwarden_daemon::wardens::Wardens::global(&state.cfg).spawn(&tokio::runtime::Handle::current());
+
     // CORS and the origin guard are part of the router; see `guard`.
     let app = routes::router(state.clone());
     if !ramwarden_daemon::guard::is_loopback(&state.cfg.server.host) {

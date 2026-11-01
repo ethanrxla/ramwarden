@@ -23,6 +23,7 @@ ramwarden-kernel     Linux mechanism   — implements platform traits
 ramwarden-nt         Windows mechanism — implements platform traits
 ramwarden-core       policy: detector, ladder, actuator, history
 ramwarden-ai         embeddings, reranking, VRAM, GPU scoring, predictor
+ramwarden-wazuh      Wazuh warden mechanism: agent state + manager/indexer REST (read-only)
 ramwarden-daemon     :7823 HTTP/WS API and the loop that drives the ladder
 ramwarden-helper     Linux setcap page-out shim
 ramwarden-service    Windows SYSTEM service (privileged ops over a named pipe)
