@@ -64,10 +64,10 @@ pub fn audio_pids(assertions: &str) -> HashSet<i32> {
             current = rest.split('(').next().and_then(|p| p.parse().ok());
             let l = line.to_lowercase();
             audio = l.contains("audio") || l.contains("camera") || l.contains("microphone");
-        } else if let Some(p) = t.split("Created for PID:").nth(1) {
-            if let Ok(p) = p.trim().trim_end_matches('.').parse() {
-                current = Some(p);
-            }
+        } else if let Some(p) = t.split("Created for PID:").nth(1)
+            && let Ok(p) = p.trim().trim_end_matches('.').parse()
+        {
+            current = Some(p);
         }
     }
     flush(&mut current, &mut audio, &mut out);

@@ -2,8 +2,9 @@
 //! of text with calibrated probabilities, instead of generating prose.
 //!
 //! One request carries a `state` (the text to judge) and a set of named
-//! questions. Only `noul` questions (yes/no, answered as P(yes)) are used here.
-//! Verified against the live service:
+//! questions: `noul` (yes/no, answered as P(yes)) and `choice` (one of a fixed
+//! set of labels, with a probability for each). Verified against the live
+//! service:
 //!
 //! ```text
 //! POST {base}/v1/systemone      Authorization: Bearer <key>
@@ -21,6 +22,10 @@
 //!
 //! The caller decides what goes in `state`. RamWarden sends feature descriptions
 //! (site type, idle hours, visit count) and never a URL or a title.
+//!
+//! Three callers share this client: the tab tier (`tabintel`), the quit tier
+//! (`appintel`), and the ladder's judge (`ladderjudge` in the daemon), which
+//! asks about the coldest apps on the LRU before a suspend or kill.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -36,20 +41,41 @@ const SERVICE: &str = "jev";
 pub struct Question {
     pub name: String,
     pub instructions: String,
+    /// `None` for a noul. For a choice, each label and what it means.
+    pub criteria: Option<Vec<(String, String)>>,
 }
 
 impl Question {
+    /// A yes/no question, answered as P(yes).
     pub fn new(name: &str, instructions: &str) -> Self {
-        Question { name: name.into(), instructions: instructions.into() }
+        Question { name: name.into(), instructions: instructions.into(), criteria: None }
     }
+
+    /// Pick one of `criteria` (label, meaning).
+    pub fn choice(name: &str, instructions: &str, criteria: &[(&str, &str)]) -> Self {
+        Question {
+            name: name.into(),
+            instructions: instructions.into(),
+            criteria: Some(criteria.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
+        }
+    }
+}
+
+/// The answer to a choice question.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    pub choice: String,
+    pub confidence: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Answers {
     /// The versioned model that answered (`jev-1.13.0`, not `jev-latest`).
     pub model: String,
-    /// P(yes) per question, clamped to `[0, 1]`.
+    /// P(yes) per noul question, clamped to `[0, 1]`.
     pub noul: HashMap<String, f64>,
+    /// The picked label per choice question.
+    pub choice: HashMap<String, Choice>,
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
@@ -124,7 +150,17 @@ async fn read_ok(resp: reqwest::Response) -> Result<String> {
 pub fn build_request(model: &str, state: &str, questions: &[Question]) -> Value {
     let qs: serde_json::Map<String, Value> = questions
         .iter()
-        .map(|q| (q.name.clone(), json!({"type": "noul", "instructions": q.instructions})))
+        .map(|q| {
+            let body = match &q.criteria {
+                None => json!({"type": "noul", "instructions": q.instructions}),
+                Some(c) => {
+                    let criteria: serde_json::Map<String, Value> =
+                        c.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
+                    json!({"type": "choice", "instructions": q.instructions, "criteria": criteria})
+                }
+            };
+            (q.name.clone(), body)
+        })
         .collect();
     json!({"model": model, "state": state, "questions": qs})
 }
@@ -136,9 +172,18 @@ pub fn parse_response(body: &str) -> Result<Answers> {
         .iter()
         .filter_map(|(name, a)| Some((name.clone(), a["noul"].as_f64()?.clamp(0.0, 1.0))))
         .collect();
+    let choice = answers
+        .iter()
+        .filter_map(|(name, a)| {
+            let c = a["choice"].as_str()?;
+            let confidence = a["confidence"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
+            Some((name.clone(), Choice { choice: c.to_string(), confidence }))
+        })
+        .collect();
     Ok(Answers {
         model: v["model"].as_str().unwrap_or("").to_string(),
         noul,
+        choice,
         input_tokens: v["usage"]["input_tokens"].as_u64().unwrap_or(0),
         output_tokens: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
     })
@@ -168,7 +213,9 @@ mod tests {
         assert!(parse_response(r#"{"model":"x"}"#).is_err(), "no answers object");
         let a = parse_response(r#"{"answers":{"a":{"type":"noul","noul":1.7},"b":{"type":"choice","choice":"x"}}}"#).unwrap();
         assert_eq!(a.noul["a"], 1.0, "clamped");
-        assert!(!a.noul.contains_key("b"), "non-noul answers are ignored");
+        assert!(!a.noul.contains_key("b"), "a choice is not a noul");
+        assert_eq!(a.choice["b"].choice, "x");
+        assert!(!a.choice.contains_key("a"), "a noul is not a choice");
     }
 
     #[test]
@@ -177,6 +224,12 @@ mod tests {
         assert_eq!(r["model"], "jev-latest");
         assert_eq!(r["state"], "Browser tab.");
         assert_eq!(r["questions"]["q"], json!({"type": "noul", "instructions": "Will it return?"}));
+
+        let r = build_request("jev-latest", "s", &[Question::choice("k", "Which?", &[("a", "first"), ("b", "second")])]);
+        assert_eq!(
+            r["questions"]["k"],
+            json!({"type": "choice", "instructions": "Which?", "criteria": {"a": "first", "b": "second"}})
+        );
     }
 
     #[test]

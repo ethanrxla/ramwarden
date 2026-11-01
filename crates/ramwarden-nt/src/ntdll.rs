@@ -58,7 +58,7 @@ pub struct UnicodeString {
 impl UnicodeString {
     /// # Safety
     /// `buffer` must point to `length` bytes of valid UTF-16, or be null.
-    pub unsafe fn to_string_lossy(&self) -> String {
+    pub unsafe fn to_string_lossy(self) -> String {
         if self.buffer.is_null() || self.length == 0 {
             return String::new();
         }
