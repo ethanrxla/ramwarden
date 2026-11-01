@@ -534,11 +534,11 @@ mod tests {
         assert_eq!(s.account_by_chain_key(&a.chain_key()).await.unwrap().unwrap().id, a.id);
 
         let later = BTreeMap::from([("ram".to_string(), NOW + 100)]);
-        let earlier = BTreeMap::from([("ram".to_string(), NOW + 50), ("wazuh".to_string(), NOW + 10)]);
+        let earlier = BTreeMap::from([("ram".to_string(), NOW + 50), ("threat".to_string(), NOW + 10)]);
         s.extend_entitlements(&a.id, &later).await.unwrap();
         let a = s.extend_entitlements(&a.id, &earlier).await.unwrap().unwrap();
         assert_eq!(a.entitlements["ram"], NOW + 100, "a replayed older payment cannot shorten a pass");
-        assert!(a.active("wazuh", NOW) && !a.active("wazuh", NOW + 10));
+        assert!(a.active("threat", NOW) && !a.active("threat", NOW + 10));
     }
 
     #[tokio::test]

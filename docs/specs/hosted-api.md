@@ -88,7 +88,7 @@ the daemon's and the launcher's.
 | website routes | see `website.md` | `account` also carries `entitlements: {slug: iso time}` |
 
 Passes are per warden (`contracts/plans.json`): `ram` is RamWarden Pro
-($4 for 60 days), `wazuh` is ThreatWarden ($6 for 60 days), and a bundle covers
+($4 for 60 days), `threat` is ThreatWarden ($6 for 60 days), and a bundle covers
 both. `entitlement_until` and `tier` in `account` describe `ram` only.
 
 **Entitlement record.** `{"v":1, "account", "device", "issued_at",

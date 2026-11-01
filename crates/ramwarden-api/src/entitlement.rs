@@ -118,12 +118,12 @@ mod tests {
     #[test]
     fn a_signed_record_verifies_and_any_edit_breaks_it() {
         let s = EntitlementSigner::from_base64(TEST_SEED).unwrap();
-        let w = BTreeMap::from([("ram".to_string(), 1_795_000_000), ("wazuh".to_string(), 1_796_000_000)]);
+        let w = BTreeMap::from([("ram".to_string(), 1_795_000_000), ("threat".to_string(), 1_796_000_000)]);
         let r = s.sign("acct1", "dev1", 1_793_000_000, w);
         assert!(verify(&r, &s.public_key()));
 
         let mut longer = r.clone();
-        longer.wardens.insert("wazuh".into(), 4_000_000_000);
+        longer.wardens.insert("threat".into(), 4_000_000_000);
         let mut added = r.clone();
         added.wardens.insert("future".into(), 4_000_000_000);
         let mut moved = r.clone();
@@ -137,10 +137,10 @@ mod tests {
 
     #[test]
     fn the_signed_text_is_stable() {
-        let w = BTreeMap::from([("wazuh".to_string(), 2), ("ram".to_string(), 1)]);
+        let w = BTreeMap::from([("threat".to_string(), 2), ("ram".to_string(), 1)]);
         assert_eq!(
             signed_text("a", "d", 9, &w),
-            "ramwarden-entitlement-v1\naccount=a\ndevice=d\nissued_at=9\nwarden:ram=1\nwarden:wazuh=2"
+            "ramwarden-entitlement-v1\naccount=a\ndevice=d\nissued_at=9\nwarden:ram=1\nwarden:threat=2"
         );
     }
 

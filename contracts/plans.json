@@ -6,7 +6,7 @@
       "name": "RamWarden Pro (hosted decisions)"
     },
     "1": {
-      "slug": "wazuh",
+      "slug": "threat",
       "name": "ThreatWarden (hosted threat detection)"
     }
   },

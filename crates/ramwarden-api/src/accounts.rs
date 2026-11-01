@@ -664,7 +664,7 @@ mod tests {
 
         let (_, cfg) = a.call("GET", "/v1/checkout/config", None, None).await;
         assert_eq!(cfg["base"]["chain_id"], BASE_SEPOLIA);
-        let bundle = cfg["plans"].as_array().unwrap().iter().find(|p| p["wardens"] == json!(["ram", "wazuh"])).unwrap();
+        let bundle = cfg["plans"].as_array().unwrap().iter().find(|p| p["wardens"] == json!(["ram", "threat"])).unwrap();
         let plan = bundle["id"].as_u64().unwrap() as u32;
 
         let (s, co) = a.call("POST", "/v1/checkout/base", Some(&session), Some(json!({"plan": plan, "payer": w.address()}))).await;
@@ -699,12 +699,12 @@ mod tests {
         let (_, acct) = a.call("GET", "/v1/account", Some(&session), None).await;
         assert_eq!(acct["tier"], "pro");
         assert_eq!(acct["entitlement_until"], iso8601(NOW + 30 * 86_400));
-        assert_eq!(acct["entitlements"]["wazuh"], iso8601(NOW + 30 * 86_400));
+        assert_eq!(acct["entitlements"]["threat"], iso8601(NOW + 30 * 86_400));
 
         // The daemon's signed record names both wardens and verifies.
         let (_, ent) = a.call("GET", "/v1/entitlement", Some(&device_token), None).await;
         let rec: crate::entitlement::Record = serde_json::from_value(ent).unwrap();
-        assert_eq!(rec.wardens["wazuh"], NOW + 30 * 86_400);
+        assert_eq!(rec.wardens["threat"], NOW + 30 * 86_400);
         let key = EntitlementSigner::from_base64(SEED).unwrap().public_key();
         assert!(crate::entitlement::verify(&rec, &key));
 
@@ -717,26 +717,26 @@ mod tests {
     #[tokio::test]
     async fn paid_downloads_need_that_wardens_pass_and_a_plain_name() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("wazuh")).unwrap();
-        std::fs::write(dir.path().join("wazuh/wazuh-warden-linux-x86_64.tar.gz"), b"installer").unwrap();
+        std::fs::create_dir_all(dir.path().join("threat")).unwrap();
+        std::fs::write(dir.path().join("threat/threatwarden-linux-x86_64.tar.gz"), b"installer").unwrap();
         let a = app(Some(dir.path().to_path_buf()));
         let (tok, v) = a.sign_in_device(&EvmWallet::new(9)).await;
-        let uri = "/v1/downloads/wazuh/wazuh-warden-linux-x86_64.tar.gz";
+        let uri = "/v1/downloads/threat/threatwarden-linux-x86_64.tar.gz";
 
         assert_eq!(a.call("GET", uri, None, None).await.0, StatusCode::UNAUTHORIZED);
-        assert_eq!(a.call("GET", uri, Some(&tok), None).await.0, StatusCode::FORBIDDEN, "no wazuh pass");
+        assert_eq!(a.call("GET", uri, Some(&tok), None).await.0, StatusCode::FORBIDDEN, "no ThreatWarden pass");
 
         let id = v["account"]["id"].as_str().unwrap();
         a.store.extend_entitlements(id, &BTreeMap::from([("ram".to_string(), NOW + 100)])).await.unwrap();
-        assert_eq!(a.call("GET", uri, Some(&tok), None).await.0, StatusCode::FORBIDDEN, "a RAM pass is not a Wazuh pass");
+        assert_eq!(a.call("GET", uri, Some(&tok), None).await.0, StatusCode::FORBIDDEN, "a RAM pass is not a ThreatWarden pass");
 
-        a.store.extend_entitlements(id, &BTreeMap::from([("wazuh".to_string(), NOW + 100)])).await.unwrap();
+        a.store.extend_entitlements(id, &BTreeMap::from([("threat".to_string(), NOW + 100)])).await.unwrap();
         let req = Request::get(uri).header(header::AUTHORIZATION, format!("Bearer {tok}")).body(Body::empty()).unwrap();
         let resp = a.router.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(&to_bytes(resp.into_body(), 1024).await.unwrap()[..], b"installer");
 
-        for bad in ["/v1/downloads/wazuh/..%2Fsecret", "/v1/downloads/wazuh/.env", "/v1/downloads/wazuh/missing.exe"] {
+        for bad in ["/v1/downloads/threat/..%2Fsecret", "/v1/downloads/threat/.env", "/v1/downloads/threat/missing.exe"] {
             assert_eq!(a.call("GET", bad, Some(&tok), None).await.0, StatusCode::NOT_FOUND, "{bad}");
         }
 

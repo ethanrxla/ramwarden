@@ -8,10 +8,10 @@ deploy script writes on-chain and the API serves to the website.
 | Warden id | Slug | Warden | Plan |
 | --- | --- | --- | --- |
 | 0 | `ram` | RamWarden Pro: hosted Jev decisions | $4 for 60 days |
-| 1 | `wazuh` | ThreatWarden: hosted Wazuh threat detection | $6 for 60 days |
+| 1 | `threat` | ThreatWarden: hosted threat detection | $6 for 60 days |
 
 A bundle plan covers both for $10. Slugs are internal ids shared with the
-daemon, the launcher and the release manifest, so ThreatWarden keeps `wazuh`.
+daemon, the launcher and the release manifest, so they never change once the contract is deployed.
 
 A new warden is a new id in `plans.json` plus plans that include it. The
 contract needs no change for up to 32 wardens.

@@ -414,7 +414,7 @@ pub(crate) mod tests {
     fn the_built_in_plans_load_and_name_their_wardens() {
         let p = Plans::built_in();
         let bundle = p.plans.iter().find(|p| p.wardens.len() == 2).unwrap();
-        assert_eq!(p.slugs(bundle), vec!["ram", "wazuh"]);
+        assert_eq!(p.slugs(bundle), vec!["ram", "threat"]);
         assert!(Plans::from_json(r#"{"wardens":{},"plans":[{"id":1,"name":"x","usd":1,"days":1,"wardens":[3]}]}"#).is_err());
     }
 
@@ -489,7 +489,7 @@ pub(crate) mod tests {
         assert_eq!(paid.len(), 1);
         let p = &paid[0];
         assert_eq!((p.plan, p.payment_ref, p.account_key), (5, [7; 32], chain_key("a")));
-        assert_eq!(p.until, BTreeMap::from([("ram".into(), 100), ("wazuh".into(), 200)]));
+        assert_eq!(p.until, BTreeMap::from([("ram".into(), 100), ("threat".into(), 200)]));
         assert_eq!(p.payer, format!("0x{}", "11".repeat(20)));
         assert_eq!(p.external_id, "0xt1:2");
     }
