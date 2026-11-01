@@ -29,7 +29,7 @@ registry; until then they answer 404 and the skill treats that as "not on this
 install".
 
 From the hosted API and website, the checkout of `docs/specs/website.md`, plus
-three additions this skill needs (1 and 2 are in PR #5):
+three additions this skill needs (1 and 2 are in PR #5, 3 in PR #15):
 
 1. `GET /v1/checkout/config` plans carry `wardens` (the warden ids each plan
    extends, as in `contracts/plans.json`), so an agent can find "the
