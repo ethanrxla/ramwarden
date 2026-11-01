@@ -63,13 +63,41 @@ function isProtected(url) {
   return false;
 }
 
+// Protections that hold however long a tab sits: browser pages, private hosts
+// (dev servers, the router) and editors whose state lives in the tab. Every other
+// protection lifts once the tab has been left alone for RELEASE_MINUTES, the same
+// rule as the daemon's tabpolicy::is_protected_for.
+const RELEASE_MINUTES = 240;
+const HARD_PATTERNS = [
+  /^https?:\/\/localhost/i, /^https?:\/\/127\./, /^https?:\/\/192\.168\./, /^https?:\/\/10\.\d/,
+  /^https?:\/\/172\.(1[6-9]|2\d|3[01])\./,
+  /^https?:\/\/([^/]*\.)?(vscode\.dev|github\.dev|codesandbox\.io|stackblitz\.com|replit\.com|colab\.research\.google\.com)(\/|$|:)/i,
+];
+
+function isHardProtected(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return true;
+  return HARD_PATTERNS.some(r => r.test(url));
+}
+
+function isProtectedFor(url, idleMinutes) {
+  if (isHardProtected(url)) return true;
+  return isProtected(url) && idleMinutes < RELEASE_MINUTES;
+}
+
+function _idleMinutes(tab) {
+  const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
+  return last ? (Date.now() - last) / 60000 : 0;
+}
+
 // ── Tab activity tracking ─────────────────────────────────────────────────────
 
 let tabActivity = {};
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab || isProtected(tab.url)) return;
+    if (chrome.runtime.lastError || !tab) return;
+    _leaveIdleGroup(tab);
+    if (isProtected(tab.url)) return;
     // Keep the last 24 activations: the daemon turns them into a frecency score
     // (how often, and how recently, this tab is actually visited).
     const prior = tabActivity[tabId]?.activations ?? [];
@@ -186,74 +214,124 @@ function buildTabReport(activity) {
           pinned: tab.pinned,
           audible: tab.audible ?? false,
           discarded: tab.discarded ?? false,
-          autoDiscardable: tab.autoDiscardable ?? false,
+          // Firefox has no per-tab opt-out and leaves this undefined; reporting
+          // that as false marked every Firefox tab "browser opted out".
+          autoDiscardable: tab.autoDiscardable !== false,
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
           activations: known?.activations ?? [],
         });
       }
+      _unloaded = report.filter(t => t.discarded).length;
+      _tidyIdleGroups(liveTabs);
+      _badge(_connected);
       resolve(report);
     });
   });
 }
 
-// chrome.tabs.remove() fails the WHOLE batch if any single ID is invalid, and its
-// callback fires either way. Ignoring lastError meant a batch that closed nothing
-// still reported every ID as closed. Confirm only what actually went away.
-function closeTabs(tabIds) {
-  if (!tabIds?.length) return;
-  const safeIds = tabIds.filter(id => {
-    const entry = tabActivity[id];
-    return entry && !isProtected(entry.url);
-  });
-  if (!safeIds.length) return;
+// Closes are checked against the live tab, not tabActivity: that map can miss
+// tabs after a service-worker restart, and a silently filtered batch never
+// answered, so the daemon waited out its timeout and nothing closed. Every close
+// command now gets a reply, even an empty one. Each closed tab is saved to
+// releasedTabs, which the popup lists for one-click reopening.
+const RELEASED_LIMIT = 200;
 
-  chrome.tabs.remove(safeIds, () => {
-    if (!chrome.runtime.lastError) {
-      _confirmClosed(safeIds);
-      return;
-    }
-    console.warn("[RamWarden] batch close failed:", chrome.runtime.lastError.message,
-                 "— retrying individually");
-    _closeOneByOne(safeIds);
-  });
+async function closeTabs(tabIds) {
+  const tabs = [];
+  for (const id of (tabIds || [])) {
+    const tab = await new Promise(r => chrome.tabs.get(id, t => r(chrome.runtime.lastError ? null : t)));
+    if (tab && !isProtectedFor(tab.url, _idleMinutes(tab)) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito) tabs.push(tab);
+  }
+  const closed = [];
+  for (const tab of tabs) {
+    const ok = await new Promise(r => chrome.tabs.remove(tab.id, () => r(!chrome.runtime.lastError)));
+    if (ok) closed.push(tab);
+  }
+  if (closed.length) await _rememberReleased(closed);
+  _confirmClosed(closed.map(t => t.id));
+  return closed.map(t => t.id);
 }
 
-// Remove tabs one at a time so a single dead ID cannot block the rest, and collect
-// the ones that genuinely closed.
-function _closeOneByOne(ids) {
-  const closed = [];
-  let remaining = ids.length;
-
-  for (const id of ids) {
-    chrome.tabs.remove(id, () => {
-      if (chrome.runtime.lastError) {
-        // Already gone — drop it from tracking so it stops being re-reported.
-        delete tabActivity[id];
-      } else {
-        closed.push(id);
-      }
-      if (--remaining === 0) {
-        persistActivity();
-        _confirmClosed(closed);
-      }
-    });
-  }
+async function _rememberReleased(tabs) {
+  const r = await new Promise(res => chrome.storage.local.get("releasedTabs", res));
+  const now = Date.now();
+  const added = tabs.map(t => ({ url: t.url, title: t.title || t.url, closedAt: now }));
+  const releasedTabs = [...added, ...(r?.releasedTabs || [])].slice(0, RELEASED_LIMIT);
+  await new Promise(res => chrome.storage.local.set({ releasedTabs }, res));
 }
 
 function _confirmClosed(ids) {
   for (const id of ids) delete tabActivity[id];
   persistActivity();
   if (IS_FIREFOX) {
-    _poll();
+    if (ids.length) _poll();
   } else {
     _send({ action: "tabs_closed", tabIds: ids });
   }
 }
 
+// ── Idle group ─────────────────────────────────────────────────────────────────
+
+// Unloaded tabs are gathered into one collapsed "Idle" group per window, so the
+// tab strip shows the tabs in use and one chip for the rest. Nothing is closed:
+// expanding the group shows them all, and a tab opened from it leaves the group.
+// The group is found again by its title, so a service-worker restart needs no
+// stored state. The user's own groups and pinned tabs are never touched.
+const IDLE_PREFIX = "Idle";
+const NO_GROUP = -1;
+
+function _idleTitle(n) { return `${IDLE_PREFIX} · ${n}`; }
+
+async function _idleGroupIn(windowId) {
+  const groups = await new Promise(r => chrome.tabGroups.query({ windowId }, g => r(chrome.runtime.lastError ? [] : g)));
+  return groups.find(g => (g.title || "").startsWith(IDLE_PREFIX + " ·"));
+}
+
+async function _tidyIdleGroups(liveTabs) {
+  if (!chrome.tabGroups?.query || typeof chrome.tabs.group !== "function") return;
+  const byWindow = new Map();
+  for (const t of liveTabs) {
+    if (!byWindow.has(t.windowId)) byWindow.set(t.windowId, []);
+    byWindow.get(t.windowId).push(t);
+  }
+  for (const [windowId, tabs] of byWindow) {
+    const group = await _idleGroupIn(windowId);
+    const gid = group?.id ?? NO_GROUP;
+    const loose = tabs.filter(t => t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
+    const members = tabs.filter(t => gid !== NO_GROUP && t.groupId === gid).length;
+    // One tab is not worth a group of its own.
+    if (!loose.length || (gid === NO_GROUP && loose.length < 2)) {
+      if (group && group.title !== _idleTitle(members)) chrome.tabGroups.update(gid, { title: _idleTitle(members) });
+      continue;
+    }
+    const ids = loose.map(t => t.id);
+    const opts = gid === NO_GROUP ? { tabIds: ids, createProperties: { windowId } } : { tabIds: ids, groupId: gid };
+    const newId = await new Promise(r => chrome.tabs.group(opts, id => r(chrome.runtime.lastError ? NO_GROUP : id)));
+    if (newId === NO_GROUP) continue;
+    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: true });
+  }
+}
+
+// A tab opened from the Idle group goes back to the strip.
+async function _leaveIdleGroup(tab) {
+  if (!chrome.tabGroups?.get || tab.groupId === undefined || tab.groupId === NO_GROUP) return;
+  const group = await new Promise(r => chrome.tabGroups.get(tab.groupId, g => r(chrome.runtime.lastError ? null : g)));
+  if (group && (group.title || "").startsWith(IDLE_PREFIX + " ·")) chrome.tabs.ungroup(tab.id, () => void chrome.runtime.lastError);
+}
+
+// The badge shows how many tabs RamWarden has unloaded: Chrome keeps them in
+// the tab strip looking the same, so without it nothing seems to happen.
+let _connected = false;
+let _unloaded = 0;
+
 function _badge(connected) {
-  chrome.action.setBadgeText({ text: connected ? "" : "!" });
+  _connected = connected;
+  chrome.action.setBadgeText({ text: !connected ? "!" : _unloaded ? String(_unloaded) : "" });
   chrome.action.setBadgeBackgroundColor({ color: connected ? "#22c55e" : "#ef4444" });
+  chrome.action.setTitle?.({ title: connected
+    ? `RamWarden: ${_unloaded} tab(s) unloaded (they stay in the tab strip and reload when clicked)`
+    : "RamWarden: daemon offline" });
 }
 
 // ── Load config, then start the right transport ───────────────────────────────
@@ -308,7 +386,7 @@ async function _poll() {
     _badge(true);
     const data = await resp.json();
     for (const cmd of (data.commands || [])) {
-      if (cmd.action === "close") closeTabs(cmd.tabIds);
+      if (cmd.action === "close") await closeTabs(cmd.tabIds);
       if (cmd.action === "discard") await discardTabs(cmd);
     }
   } catch (e) {
@@ -387,8 +465,8 @@ async function discardTabs(command) {
     const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
       resolve(chrome.runtime.lastError ? null : tab);
     }));
-    if (!tab || tab.url !== target.url || isProtected(tab.url) || tab.active || tab.pinned || tab.audible
-        || tab.incognito || tab.discarded || tab.autoDiscardable !== true || tab.status !== "complete") continue;
+    if (!tab || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
+        || tab.incognito || tab.discarded || tab.autoDiscardable === false || tab.status !== "complete") continue;
     const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
     if (!last || (Date.now() - last) / 60000 < minimum) continue;
     // Check stored activity again: activation may have arrived while get awaited.

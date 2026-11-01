@@ -262,7 +262,9 @@ mod tests {
                 "missing {field}"
             );
         }
-        let mut t = tab(1, 999);
+        // A document in use stays protected; its protection lifts only once it
+        // has been left alone (tabpolicy::PROTECTION_RELEASE_MINUTES).
+        let mut t = tab(1, 100);
         t.url = "https://docs.google.com/document/d/a/edit".into();
         assert!(!rank("b", &[t], 45)[0].eligible);
     }
@@ -348,8 +350,107 @@ mod selection_tests {
 }
 
 /// Manual close does not require automatic eviction eligibility.
+/// Tabs the sweep may close outright. Only rows that already passed every unload
+/// guard (`candidate`) or were unloaded earlier qualify, so a protected, recent,
+/// loading or model-vetoed tab is never closed. Two reasons qualify one:
+///
+/// * idle at least `close_after_hours` and unlikely to be wanted back
+///   (`p_return`, Jev-adjusted where Jev has answered, below `close_below_return`);
+/// * an older tab on the same site (see [`site_of`]) as a more recently used one,
+///   idle at least `close_duplicates_after_hours`. The newer tab already covers
+///   the site, and three Google searches or two copies of a dashboard are most of
+///   what makes a tab strip unreadable.
+/// * outside the tab budget: not among the `keep_tabs` most recently used tabs in
+///   its browser, and untouched for `budget_idle_minutes`. The budget also takes
+///   tabs that are only "recent" or a duplicate's keeper, since the user's own
+///   measure of "in use" is a handful of tabs, not an hour. Protected rows (active,
+///   pinned, audible, private, loading, vetoed by the model, or a protection not
+///   yet lifted by idle) still never qualify.
+///
+/// Most-redundant first: copies, then the longest-idle over-budget tabs, then
+/// the stale ones by return chance.
+pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
+    let min_idle = (cfg.close_after_hours.max(1.0) * 60.0) as i64;
+    let dup_idle = (cfg.close_duplicates_after_hours * 60.0) as i64;
+    // Freshest tab per (browser, site): every other tab on that site is a copy.
+    let mut freshest: std::collections::HashMap<(&str, String), (i64, i64)> = std::collections::HashMap::new();
+    for r in rows {
+        if let Some(site) = site_of(&r.target.url) {
+            let e = freshest.entry((r.target.browser.as_str(), site)).or_insert((r.inactive_minutes, r.target.id));
+            *e = (*e).min((r.inactive_minutes, r.target.id));
+        }
+    }
+    let older_copy = |r: &Row| {
+        dup_idle > 0
+            && r.inactive_minutes >= dup_idle
+            && site_of(&r.target.url).is_some_and(|site| {
+                freshest.get(&(r.target.browser.as_str(), site)) != Some(&(r.inactive_minutes, r.target.id))
+            })
+    };
+    let in_budget = budget(rows, cfg.keep_tabs);
+    let budget_idle = cfg.budget_idle_minutes.max(5.0) as i64;
+    let over_budget = |r: &Row| {
+        cfg.keep_tabs > 0
+            && r.inactive_minutes >= budget_idle
+            && !in_budget.contains(&r.target)
+            && matches!(r.status, "recent" | "retained")
+    };
+    // (row, rank): 0 = copy, 1 = over budget, 2 = stale.
+    let mut picked: Vec<(&Row, u8)> = rows
+        .iter()
+        .filter(|r| r.closeable)
+        .filter_map(|r| {
+            let usual = matches!(r.status, "candidate" | "unloaded");
+            if usual && older_copy(r) {
+                Some((r, 0))
+            } else if (usual && cfg.keep_tabs > 0 && r.inactive_minutes >= budget_idle && !in_budget.contains(&r.target))
+                || over_budget(r)
+            {
+                Some((r, 1))
+            } else if usual && r.inactive_minutes >= min_idle && r.p_return < cfg.close_below_return {
+                Some((r, 2))
+            } else {
+                None
+            }
+        })
+        .collect();
+    picked.sort_by(|(a, a_rank), (b, b_rank)| {
+        a_rank.cmp(b_rank)
+            .then(b.inactive_minutes.cmp(&a.inactive_minutes))
+            .then(a.p_return.total_cmp(&b.p_return))
+    });
+    picked.into_iter().take(cfg.max_close_per_sweep).map(|(r, _)| r.target.clone()).collect()
+}
+
+/// The `keep` most recently used tabs of each browser: what the user is working
+/// in right now. Ties go to the lower tab id, so the choice is stable.
+fn budget(rows: &[Row], keep: usize) -> std::collections::HashSet<Target> {
+    let mut by_browser: std::collections::HashMap<&str, Vec<&Row>> = std::collections::HashMap::new();
+    for r in rows {
+        by_browser.entry(r.target.browser.as_str()).or_default().push(r);
+    }
+    let mut kept = std::collections::HashSet::new();
+    for (_, mut tabs) in by_browser {
+        tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
+        kept.extend(tabs.into_iter().take(keep).map(|r| r.target.clone()));
+    }
+    kept
+}
+
+/// The site a tab is "on" for duplicate closing: its host, plus a Google-style
+/// account slot (`/u/1/`), so two signed-in accounts are not one site.
+fn site_of(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    let mut segments = parsed.path_segments().into_iter().flatten();
+    let account = segments.by_ref().skip_while(|s| *s != "u").nth(1)
+        .filter(|n| n.chars().all(|c| c.is_ascii_digit()));
+    Some(match account { Some(n) => format!("{host}/u/{n}"), None => host })
+}
+
 pub fn can_close(tab: &Tab) -> bool {
-    !tabpolicy::is_protected(&tab.url)
+    !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes)
         && !tab.incognito
         && tab.active != Some(true)
         && tab.pinned != Some(true)
@@ -360,6 +461,93 @@ pub fn can_close(tab: &Tab) -> bool {
 #[cfg(test)]
 mod manual_close_tests {
     use super::*;
+
+    fn idle(id: i64, url: &str, minutes: i64, discarded: bool) -> Tab {
+        serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":minutes,
+            "active":false,"pinned":false,"audible":false,"discarded":discarded,"autoDiscardable":true,
+            "status":"complete","discardSupported":true})).unwrap()
+    }
+
+    #[test]
+    fn the_sweep_closes_long_idle_tabs_and_keeps_recent_or_pinned_ones() {
+        let cfg = ramwarden_core::config::Tabs::default();
+        let mut pinned = idle(4, "https://example.org/pinned", 10_000, false);
+        pinned.pinned = Some(true);
+        let tabs = vec![
+            idle(1, "https://example.org/old", 10_000, false),
+            idle(2, "https://example.org/unloaded-long-ago", 10_000, true),
+            idle(3, "https://example.org/yesterday-morning", 120, false),
+            pinned,
+            idle(5, "https://accounts.google.com/x", 10_000, false), // a login page left for a week
+            idle(6, "https://accounts.google.com/y", 30, false),     // one in use stays
+        ];
+        let rows = rank("b", &tabs, 30);
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2, 5]);
+    }
+
+    #[test]
+    fn older_tabs_on_the_same_site_close_but_the_freshest_and_other_accounts_stay() {
+        let cfg = ramwarden_core::config::Tabs::default();
+        let tabs = vec![
+            idle(1, "https://www.google.com/search?q=a", 300, false),
+            idle(2, "https://www.google.com/search?q=b", 600, true),
+            idle(3, "https://google.com/search?q=c", 90, false),
+            idle(4, "https://mail.google.com/mail/u/0/#inbox", 300, false),
+            idle(5, "https://mail.google.com/mail/u/1/#inbox", 300, false),
+            idle(6, "https://example.org/one", 300, false),
+        ];
+        let rows = rank("b", &tabs, 30);
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "tab 3 is the freshest Google tab; the two Gmail accounts are different sites");
+        assert_eq!(site_of("https://mail.google.com/mail/u/1/#inbox").as_deref(), Some("mail.google.com/u/1"));
+    }
+
+    #[test]
+    fn the_budget_keeps_the_most_recent_tabs_and_closes_the_rest_once_left_alone() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 2, ..Default::default() };
+        let mut pinned = idle(7, "https://example.org/pinned", 900, false);
+        pinned.pinned = Some(true);
+        let tabs = vec![
+            idle(1, "https://a.example/one", 2, false),
+            idle(2, "https://b.example/two", 20, false),
+            idle(3, "https://c.example/three", 50, false),     // outside the budget, but not left alone long enough
+            idle(4, "https://mail.google.com/mail/u/0/", 300, false),
+            idle(5, "https://console.tailscale.com/admin", 400, true), // protection lifted after 4 h
+            idle(6, "https://console.tailscale.com/x", 100, false),    // still protected: used 100 min ago... but a copy of 5
+            pinned,
+            idle(8, "http://10.0.0.1/", 900, false),            // the router: never
+            idle(9, "https://vscode.dev/", 900, false),         // local-state editor: never
+        ];
+        let rows = rank("b", &tabs, 30);
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![4, 5]);
+    }
+
+    #[test]
+    fn a_zero_budget_turns_the_budget_off() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_duplicates_after_hours: 0.0, ..Default::default() };
+        let tabs: Vec<Tab> = (1..=9).map(|i| idle(i, &format!("https://site{i}.example/"), 200, false)).collect();
+        assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
+    }
+
+    #[test]
+    fn duplicate_closing_can_be_turned_off() {
+        let cfg = ramwarden_core::config::Tabs { close_duplicates_after_hours: 0.0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 90, false)];
+        assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
+    }
+
+    #[test]
+    fn the_sweep_respects_its_per_sweep_cap() {
+        let cfg = ramwarden_core::config::Tabs { max_close_per_sweep: 2, ..Default::default() };
+        let tabs: Vec<Tab> = (1..=6).map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false)).collect();
+        assert_eq!(close_candidates(&rank("b", &tabs, 30), &cfg).len(), 2);
+    }
+
     #[test]
     fn legacy_and_recent_tabs_can_be_selected_for_explicit_closing() {
         let mut tab: Tab = serde_json::from_value(

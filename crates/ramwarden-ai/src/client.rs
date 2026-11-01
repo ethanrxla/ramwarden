@@ -115,6 +115,24 @@ struct OllamaTag {
 }
 
 impl Ollama {
+
+    /// Read-only conversational explanation. No tools or action execution.
+    pub async fn explain(&self, messages: &[serde_json::Value]) -> Result<String> {
+        let r = self.http.post(format!("{}/api/chat", self.host))
+            .json(&serde_json::json!({"model":self.model,"stream":false,"format":"json","messages":messages,"options":{"temperature":0.3,"num_predict":700}})).send().await.map_err(transport)?;
+        let status = r.status();
+        let text = r.text().await.map_err(transport)?;
+        if !status.is_success() {
+            // Do not return upstream bodies: these may echo user context or keys.
+            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+        }
+        let parsed: OllamaChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let content = parsed.message.content;
+        let answer = prompt::strip_thinking(&content).trim();
+        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        Ok(answer.chars().take(6000).collect())
+    }
+
     pub fn new(host: &str, model: &str, embed_model: &str, timeout: Duration) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -352,6 +370,24 @@ struct OpenAiEmbedding {
 }
 
 impl Nim {
+
+    /// Read-only conversational explanation. No tools or action execution.
+    pub async fn explain(&self, messages: &[serde_json::Value], model: Option<&str>) -> Result<String> {
+        let r = self.http.post(format!("{}/v1/chat/completions", self.base)).bearer_auth(self.key.expose())
+            .json(&serde_json::json!({"model":model.filter(|s| !s.trim().is_empty()).unwrap_or(&self.model),"messages":messages,"response_format":{"type":"json_object"},"temperature":0.3,"max_tokens":900,"chat_template_kwargs":{"thinking":false}})).send().await.map_err(transport)?;
+        let status = r.status();
+        let text = r.text().await.map_err(transport)?;
+        if !status.is_success() {
+            // Do not return upstream bodies: these may echo user context or keys.
+            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+        }
+        let parsed: OpenAiChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let content = parsed.choices.first().map(|c|c.message.content.clone()).unwrap_or_default();
+        let answer = prompt::strip_thinking(&content).trim();
+        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        Ok(answer.chars().take(6000).collect())
+    }
+
     pub fn new(
         base: &str,
         key: Secret,
