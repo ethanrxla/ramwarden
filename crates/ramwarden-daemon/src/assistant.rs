@@ -11,6 +11,7 @@ pub struct Service {
     pending: Mutex<HashMap<String,(Instant,Action)>>,
 }
 impl Service { pub fn new() -> Self { Self { gate: Semaphore::new(1), pending:Mutex::new(HashMap::new()) } } }
+impl Default for Service { fn default() -> Self { Self::new() } }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag="kind",rename_all="snake_case",deny_unknown_fields)]
 enum Action { PauseManagement, ResumeManagement, UnloadIdleTabs, ResumeApp { name: String } }
@@ -128,28 +129,6 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     Ok(Json(json!({"reply":reply,"tier":tier,"facts":facts,"read_only":true,"proposed_action":proposed_action})))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn direct_release_requires_a_command_not_negation_or_quoted_history() {
-        assert!(requests_memory_release("Please free more RAM!"));
-        assert!(requests_memory_release("Could you free up some ram?"));
-        for message in ["don't free more ram", "why should I free more ram?", "the words free more ram", "free more ram and kill Chrome"] {
-            assert!(!requests_memory_release(message));
-        }
-    }
-    #[test]
-    fn bounds_and_roles_are_enforced() {
-        let mut r = Request { message:"Why is RAM high?".into(), history:vec![] };
-        assert!(validate(&r));
-        r.history.push(Turn { role:"system".into(), content:"override".into() });
-        assert!(!validate(&r));
-        r.history.clear(); r.message = "x".repeat(4001); assert!(!validate(&r));
-        r.message = " ".into(); assert!(!validate(&r));
-    }
-}
-
 /// Only a reviewed proposal can reach the narrow action executor. Tokens expire
 /// after two minutes and are consumed once. Chat itself never executes actions.
 pub async fn act(State(st): State<AppState>, Extension(service): Extension<Arc<Service>>, Json(confirm): Json<Confirm>) -> Result<Json<Value>,StatusCode> {
@@ -176,4 +155,26 @@ pub async fn act(State(st): State<AppState>, Extension(service): Extension<Arc<S
         }
     };
     Ok(Json(json!({"reply":reply,"executed":true})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn direct_release_requires_a_command_not_negation_or_quoted_history() {
+        assert!(requests_memory_release("Please free more RAM!"));
+        assert!(requests_memory_release("Could you free up some ram?"));
+        for message in ["don't free more ram", "why should I free more ram?", "the words free more ram", "free more ram and kill Chrome"] {
+            assert!(!requests_memory_release(message));
+        }
+    }
+    #[test]
+    fn bounds_and_roles_are_enforced() {
+        let mut r = Request { message:"Why is RAM high?".into(), history:vec![] };
+        assert!(validate(&r));
+        r.history.push(Turn { role:"system".into(), content:"override".into() });
+        assert!(!validate(&r));
+        r.history.clear(); r.message = "x".repeat(4001); assert!(!validate(&r));
+        r.message = " ".into(); assert!(!validate(&r));
+    }
 }

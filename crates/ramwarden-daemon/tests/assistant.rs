@@ -110,6 +110,8 @@ async fn chat_opt_in_uses_key_without_enabling_automated_cloud_analysis() {
 }
 
 #[tokio::test]
+// Holding the detector lock across the requests is the point of the test.
+#[allow(clippy::await_holding_lock)]
 async fn lightweight_status_and_health_do_not_wait_for_a_sampling_lock() {
     let st=state();
     let locked=st.det.write().unwrap();
@@ -172,10 +174,12 @@ async fn free_ram_proposes_only_eligible_tabs_without_executing() {
     assert!(v["proposed_action"]["token"].is_string());
     assert!(v["reply"].as_str().unwrap().contains("up to 1"));
     assert_eq!(st.hub.lock().unwrap().reg.queued_count("test-browser"),0);
-    let mut hub=st.hub.lock().unwrap();
-    let mut tabs=hub.reg.tabs_for("test-browser").to_vec();
-    for tab in &mut tabs { tab.active=Some(true); }
-    hub.reg.report("test-browser",Transport::Poll,tabs); drop(hub);
+    {
+        let mut hub=st.hub.lock().unwrap();
+        let mut tabs=hub.reg.tabs_for("test-browser").to_vec();
+        for tab in &mut tabs { tab.active=Some(true); }
+        hub.reg.report("test-browser",Transport::Poll,tabs);
+    }
     let response=request(st,json!({"message":"free more ram"}),None).await;
     let v:Value=serde_json::from_slice(&to_bytes(response.into_body(),100000).await.unwrap()).unwrap();
     assert!(v["proposed_action"].is_null());
