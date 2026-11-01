@@ -5,7 +5,7 @@
     {
       "name": "ramwarden",
       "source": "./agent",
-      "description": "RamWarden and ThreatWarden for AI agents: free memory, unload idle tabs, read security alerts, and buy passes with the user confirming in their wallet."
+      "description": "RamWarden and ThreatWarden for AI agents: free memory, unload idle tabs, read security alerts, and subscribe with the user confirming in their wallet."
     }
   ]
 }

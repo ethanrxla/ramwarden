@@ -2,7 +2,7 @@
 
 RamWarden packaged so a user's own AI agent (Claude Code, Codex, Cursor, Gemini
 CLI and others) can install it, explain and free memory through the daemon,
-read ThreatWarden, and help the user buy a pass in crypto.
+read ThreatWarden, and help the user subscribe (or cancel) in crypto.
 
 ## Contract
 
@@ -13,7 +13,7 @@ read ThreatWarden, and help the user buy a pass in crypto.
 | `agent/skills/ramwarden/SKILL.md` | The skill, in the [Agent Skills](https://agentskills.io) format: frontmatter `name: ramwarden` and a `description` agents match requests against |
 | `agent/skills/ramwarden/references/api.md` | The daemon routes an agent may call, split into read and act |
 | `agent/skills/ramwarden/references/install.md` | Per-OS install from the release assets of `docs/specs/updates.md`, checksum first |
-| `agent/skills/ramwarden/references/buying.md` | How a pass is bought, and the rules that keep the agent from spending on its own |
+| `agent/skills/ramwarden/references/buying.md` | How a subscription is started and cancelled, and the rules that keep the agent from spending on its own |
 | `agent/.claude-plugin/plugin.json` | The Claude Code plugin; `version` equals the workspace version |
 | `.claude-plugin/marketplace.json` | Makes the repository a plugin marketplace: `/plugin marketplace add ethanrxla/ramwarden` |
 
@@ -28,36 +28,46 @@ warden routes (`GET /wardens`, `GET /wardens/{id}`) come with the warden
 registry; until then they answer 404 and the skill treats that as "not on this
 install".
 
-From the hosted API and website, the checkout of `docs/specs/website.md`, plus
-three additions this skill needs (1 and 2 are in PR #5, 3 in PR #15):
+From the hosted API (`docs/specs/hosted-api.md`, PR #5) and the website:
 
-1. `GET /v1/checkout/config` plans carry `wardens` (the warden ids each plan
-   extends, as in `contracts/plans.json`), so an agent can find "the
-   ThreatWarden plan" without matching on names.
+1. `GET /v1/checkout/config` plans carry `tier`, `interval`, `trial_days`,
+   `approval_usd` and `wardens`, so an agent can pick a plan and tell the user
+   exactly what they agree to without matching on names.
 2. `base` in that answer carries `contract` and `usdc` (the checkout contract
    and USDC addresses), so an agent with a wallet tool can check that it only
    sends transactions to them.
 3. `account.html?plan=<id>` preselects that plan. An unknown id is ignored and
    the page behaves as without it.
 
-Warden ids are `ram` (hosted Jev tier, RamWarden Pro) and `threat`
-(ThreatWarden). Plan ids are the contract's numbers. Prices are whatever
-`checkout/config` says; at the time of writing plan 1 is Pro at $4 for 60
-days, plan 2 ThreatWarden at $6 for 60 days, and plan 3 both at $10. Solana
-answers 503 until it opens, so agents pay on Base.
+4. `POST /v1/auth/verify` with `"session": "bearer"` returns the session
+   token in the body, for wallet tools without a cookie jar.
+5. `POST /v1/checkout/cancel` returns the wallet's `cancel` transaction (Base)
+   or cancels at Stripe (card).
+
+Warden ids are `ram` (hosted Jev) and `threat` (ThreatWarden). Plan ids are
+the contract's numbers. Prices are whatever `checkout/config` says; at the
+time of writing plan 1 is RamWarden $4/month, plan 2 RamWarden Pro (adds
+ThreatWarden) $5/month, plan 3 RamWarden $20/year and plan 4 Pro $24/year,
+each with a 14-day trial and renewing until cancelled. Native Solana answers
+503 until it opens, so agents pay on Base.
 
 ## Policy
 
-- **No autonomous spending.** A purchase starts only from the user's request
-  in the conversation, after the agent has shown the warden, price, duration and
-  chain and the user said yes to that plan. Every signature and transaction is
-  approved by the user in their own wallet. The agent never holds or asks for
-  keys or seed phrases, and never uses a session key, delegated permission or
-  auto-approving wallet. Passes never renew on their own.
-- **Exact amounts only.** The USDC approval equals the plan price (never
-  unlimited), `maxPrice` equals the agreed price, and transactions go only to
-  the addresses `checkout/config` names. This mirrors the contract's own
-  `maxPrice` guard from the agent's side.
+- **No autonomous spending.** A subscription starts only from the user's
+  request in the conversation, after the agent has told them the tier, price
+  and interval, the trial (or that they are charged now), that it renews until
+  cancelled, the chain, and the one-year USDC approval, and the user said yes
+  to that plan. Every signature and transaction is approved by the user in
+  their own wallet. The agent never holds or asks for keys or seed phrases,
+  and never uses a session key, delegated permission or auto-approving
+  wallet. Renewals are the contract's, from the allowance the user approved;
+  the agent never re-approves, upgrades or subscribes again on its own, and
+  always cancels when asked.
+- **Exact amounts only.** The USDC approval equals the plan's `approval_usd`
+  (one year of the plan, never unlimited), the `startTrial` price equals the
+  plan's `usd`, and transactions go only to `base.usdc` and `base.contract`.
+- **One subscription at a time.** The agent checks `GET /v1/account` before
+  checkout and never starts a second one.
 - **The checkout page is the default path.** It works for every agent, needs
   no wallet tool, and is the page that already carries the site's
   `script-src 'self'` and show-before-sign policies. Driving the API from a
@@ -94,7 +104,7 @@ operating systems:
   then the skill tells the user checkout is not open, which is what
   `checkout/config` failing means.
 - Daemon-side account sign-in (linking this computer to the account that holds
-  the pass) is done in the menu-bar or tray app. The skill asks the user to do
+  the subscription) is done in the menu-bar or tray app. The skill asks the user to do
   it there rather than calling a route, because no such daemon route exists yet.
 - An agent cannot be forced to follow the skill. The guarantees that hold
   regardless are on-chain (`maxPrice`, funds straight to the treasury) and in
