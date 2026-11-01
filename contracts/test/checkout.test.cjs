@@ -113,6 +113,33 @@ describe("RamWardenCheckout", function () {
     expect(await checkout.isDue(ACCOUNT)).to.equal(true, "still due, so the keeper retries");
   });
 
+  it("changePlan moves Plus to Pro in one call: the trial ends and Pro's first period is charged", async function () {
+    const { treasury, buyer, other, usdc, checkout } = await deploy();
+    await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
+    const trialEnds = await checkout.paidUntil(ACCOUNT, RAM);
+    await expect(checkout.connect(other).changePlan(ACCOUNT, PRO_MONTH, USDC(5), REF)).to.be.revertedWithCustomError(
+      checkout,
+      "NotPayer",
+    );
+    await expect(checkout.connect(buyer).changePlan(ACCOUNT, PRO_MONTH, USDC(4), REF)).to.be.revertedWithCustomError(
+      checkout,
+      "PriceAboveMax",
+    );
+    const tx = await checkout.connect(buyer).changePlan(ACCOUNT, PRO_MONTH, USDC(5), REF);
+    const t = await now();
+    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, PRO_MONTH, buyer.address, 0, REF);
+    await expect(tx).to.emit(checkout, "Charged").withArgs(ACCOUNT, PRO_MONTH, buyer.address, USDC(5), t + MONTH);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(5));
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(BigInt(t + MONTH));
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(BigInt(t + MONTH) > trialEnds ? BigInt(t + MONTH) : trialEnds);
+    const sub = await checkout.subscriptions(ACCOUNT);
+    expect([sub.planId, sub.price, sub.nextCharge]).to.deep.equal([BigInt(PRO_MONTH), USDC(5), BigInt(t + MONTH)]);
+    // Renewals now charge Pro's price.
+    await forward(MONTH);
+    await checkout.charge(ACCOUNT);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(10));
+  });
+
   it("only the paying wallet can cancel; service runs to the end of the period", async function () {
     const { buyer, other, checkout } = await deploy();
     await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);

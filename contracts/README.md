@@ -24,6 +24,10 @@ Plan ids are fixed: the agent skill uses them.
    moves, and every warden in the plan is unlocked for 14 days. A plan without
    one (Pro), or an account that already had its trial, emits `TrialStarted`
    with `trialEnds = 0` and is charged its first period at once.
+   **Upgrade.** `changePlan(account, plan, maxPrice, ref)`, from the paying
+   wallet only, moves a live subscription to another plan in one call: any
+   trial ends, the new plan's first period is charged now, and renewals use
+   the new price. Wardens already paid for keep their dates.
 2. **Charge.** When the trial ends, and every period after, anyone may call
    `charge(account)`. `scripts/keeper.cjs` does it. The contract pulls exactly
    the price fixed at start, from the wallet that started the subscription,

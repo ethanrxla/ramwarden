@@ -213,6 +213,24 @@ impl BaseConfig {
         txs
     }
 
+    /// Moving a live subscription up (Plus to Pro, monthly to annual): an
+    /// approval for one year of the new plan if needed, then
+    /// `changePlan(account, plan, maxPrice, ref)`.
+    pub fn change_transactions(&self, account_id: &str, plan: &PlanDef, payment_ref: &[u8; 32], needs_approve: bool) -> Vec<Value> {
+        let mut txs = Vec::new();
+        if needs_approve {
+            let cap = usdc_minor(plan.approval_usd());
+            let data = abi_call("approve(address,uint256)", &[word_address(&self.checkout), word_uint(cap)]);
+            txs.push(json!({"to": self.usdc_hex(), "data": data, "value": "0x0"}));
+        }
+        let data = abi_call(
+            "changePlan(bytes32,uint32,uint256,bytes32)",
+            &[chain_key(account_id), word_uint(u128::from(plan.id)), word_uint(usdc_minor(plan.usd)), *payment_ref],
+        );
+        txs.push(json!({"to": self.checkout_hex(), "data": data, "value": "0x0"}));
+        txs
+    }
+
     /// `cancel(account)`, for the account page's cancel button. Only the
     /// paying wallet can send it successfully.
     pub fn cancel_transaction(&self, account_id: &str) -> Value {
@@ -301,8 +319,9 @@ impl ChainEvent {
         match self {
             // No trial (Pro, or the trial was used): the `Charged` in the same
             // transaction sets the dates.
+            // `trial_ends_at: 0` ends a trial an upgrade cut short.
             ChainEvent::TrialStarted { plan, payer, trial_ends: 0, .. } => {
-                BillingUpdate { cancelled: Some(false), ..plan_update(*plan, payer) }
+                BillingUpdate { cancelled: Some(false), trial_ends_at: Some(0), ..plan_update(*plan, payer) }
             }
             ChainEvent::TrialStarted { plan, payer, trial_ends, .. } => BillingUpdate {
                 trial_ends_at: Some(*trial_ends),
@@ -589,6 +608,6 @@ pub(crate) mod tests {
         // Pro, or a used trial: no trial dates, and the trial stays available.
         let paid_now = decode_logs(&[trial_log(&c, chain_key("b"), 2, 0, [8; 32])], &c);
         let u = paid_now[0].0.update(&plans);
-        assert_eq!((u.tier, u.paid_until, u.trial_ends_at, u.trial_used), (Some(Tier::Pro), None, None, None));
+        assert_eq!((u.tier, u.paid_until, u.trial_ends_at, u.trial_used), (Some(Tier::Pro), None, Some(0), None));
     }
 }

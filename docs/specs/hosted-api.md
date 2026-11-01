@@ -81,14 +81,29 @@ development). The website's side is in `docs/specs/website.md`.
 
 ### Contract
 
-**Tiers and plans** (`contracts/plans.json`, the contract's numbers):
+**Tiers and plans** (`contracts/plans.json`, the contract's numbers; cards
+confirmed by the user 2026-11-01):
 
-| Plan | Tier | Price | Wardens |
-| --- | --- | --- | --- |
-| 1 | RamWarden | $4 / month | `ram` |
-| 2 | RamWarden Pro | $5 / month | `ram`, `threat` |
-| 3 | RamWarden | $20 / year | `ram` |
-| 4 | RamWarden Pro | $24 / year | `ram`, `threat` |
+| Card | Plan | Tier id | Price | Trial | Wardens | Devices |
+| --- | --- | --- | --- | --- | --- | --- |
+| RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI | 1 |
+| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 5 |
+| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
+
+Lite is a signed-in account (wallet or email, no card) with no plan, or one
+whose plan lapsed. It gets the install line and the entitlement (tier
+`none`) for one device; the Jev routes answer 402. Devices linked while on a
+plan stay linked if it lapses; adding one is refused past the Lite limit.
+
+**Upgrades** (Lite to Plus, Plus to Pro, monthly to annual) are the same
+checkout routes. Lite starts a new subscription. A live one moves up in
+place: on Base, `changePlan(account, plan, maxPrice, ref)` from the paying
+wallet (any trial ends, the new plan's first period is charged and starts
+now, wardens already paid keep their dates, unused time on the old plan is
+not refunded); by card, the Stripe subscription's item moves to the new
+price with `trial_end=now` and the prorated difference invoiced at once.
+Moving down is refused (409): cancel, then subscribe when it ends. A live
+subscription upgrades with the method that pays for it.
 
 RamWarden plans (1 and 3) start with a 14-day trial; Pro plans (2 and 4) are
 charged at once (user decision, 2026-11-01). Every plan then renews every
@@ -117,8 +132,8 @@ unless cancelled.
 | `PUT /v1/account/prefs` `{...}` | session | `{prefs}`; any JSON object up to 4 KB, replacing the old one |
 | `DELETE /v1/account/devices/{id}` | session | `{ok}`; that device's token stops working at once |
 | `GET /v1/checkout/config` | none | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], wardens, base: {chain_id, network, contract, usdc} \| null, solana: null, stripe, stripe_test}` |
-| `POST /v1/checkout/base` `{plan, payer?}` | session | `{payment_id, chain_id, trial, approval_usd, transactions}`; 409 while a subscription is live |
-| `POST /v1/checkout/stripe` `{plan}` | session | `{payment_id, url, trial}`: open `url` (Stripe Checkout); 409 while live; 503 without Stripe keys |
+| `POST /v1/checkout/base` `{plan, payer?}` | session | `{payment_id, chain_id, upgrade, payer, trial, approval_usd, transactions}`; for an upgrade the transactions end in `changePlan` and `payer` names the wallet that must send them; 409 for a downgrade or the same plan |
+| `POST /v1/checkout/stripe` `{plan}` | session | `{payment_id, upgrade, url, trial}`: open `url` (Stripe Checkout); for an upgrade `url` is null and the change is already made; 409 for a downgrade; 503 without Stripe keys |
 | `POST /v1/checkout/solana` | session | 503 until Solana opens |
 | `GET /v1/checkout/payments/{id}` | session | `{id, plan, method, status: pending \| confirmed \| failed, reason, account_status, tier, trial_ends_at, entitlement_until}` |
 | `POST /v1/checkout/cancel` | session | Base: `{chain_id, payer, transactions: [cancel(account)]}` for the paying wallet to send. Card: cancels at Stripe, `{cancelled, service_until}`. 409 with nothing to cancel |
@@ -140,7 +155,7 @@ on the link page).
 **Account.** `{id, identity: {kind: "wallet", chain, address} | {kind:
 "email", email}, tier: "ram" | "pro" | null, interval: "month" | "year" |
 null, status, trial_ends_at, paid_until, trial_available, billing: {method:
-"base" | "card"} | null, entitlement_until, entitlements: {slug: iso time},
+"base" | "card"} | null, plan: "lite" | "plus" | "pro", entitlement_until, entitlements: {slug: iso time},
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`. Times are ISO 8601 UTC.
 
@@ -215,10 +230,10 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
   set tier and dates, from the contract's or Stripe's own numbers. `paid_until`
   only moves forward, so a replayed log, a rescan or a retried webhook cannot
   shorten or double anything.
-- **No free tier.** A device whose account has no `ram` warden in date gets
-  402 from the Jev routes and the daemon uses its local estimate.
-- **5 devices per account**, checked when the link page approves and again
-  when the daemon claims.
+- **Lite has no hosted AI.** A device whose account has no `ram` warden in
+  date gets 402 from the Jev routes and the daemon uses its fixed rules.
+- **Devices: 1 on Lite, 5 on Plus and Pro**, checked when the link page
+  approves, when an install line is issued and when the daemon claims.
 - **Real money waits for the audit.** Base mainnet and live Stripe keys are
   refused at start unless `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1`.
 - **Downloads decide who, not what.** File names must be plain; the launcher
@@ -273,9 +288,8 @@ on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
 
 ### Basis and limitations
 
-- Changing tier or interval is cancel, then subscribe again; the remaining
-  paid time is not credited. In-place plan changes (Stripe proration, a
-  contract `changePlan`) come later.
+- On Base an upgrade doesn't credit unused time on the old plan (at most one
+  Plus month, $4). Card upgrades are prorated by Stripe.
 - One trial per account only. Per-device-fingerprint trials (spec 4.2) need
   the `trials` collection and a device key, which come with device key pairs.
 - Stripe events are applied in arrival order. Stripe can deliver out of

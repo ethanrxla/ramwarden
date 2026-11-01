@@ -26,7 +26,10 @@ use ramwarden_cloud::store::{email_code, normalise_user_code, random_bytes};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::accounts::{Cloud, Reply, SESSION_COOKIE, account_json, cloud, session_token, storage};
+use crate::accounts::{
+    Cloud, Reply, SESSION_COOKIE, account_json, at_device_limit, cloud, device_limit, device_limit_reached, session_token,
+    storage,
+};
 use crate::routes::{AppState, error};
 use crate::wallet::{self, Chain, MessageParts, iso8601};
 
@@ -85,11 +88,8 @@ async fn signed_in(c: &Cloud, account: Account, user_code: Option<&str>, bearer:
         };
         // Refused here, on the page the person is looking at, rather than
         // when the daemon claims the code.
-        if c.store.devices(&account.id).await.map_err(storage)?.len() >= account.device_limit as usize {
-            return Err(error(
-                StatusCode::CONFLICT,
-                "This account already has 5 devices. Remove one on your account page, then start sign-in again.",
-            ));
+        if at_device_limit(c, &account, now).await? {
+            return Err(device_limit_reached(device_limit(&account, now)));
         }
         if !c.store.approve_device_code(code, &account.id, now).await.map_err(storage)? {
             return Err(error(StatusCode::GONE, "The device code expired while you were signing in. Start sign-in again in RamWarden."));
@@ -162,6 +162,10 @@ async fn device_token(State(state): State<Arc<AppState>>, Json(b): Json<DeviceTo
                 .filter(|n: &String| !n.is_empty());
             let device_name = named.unwrap_or(device_name);
             let platform = b.platform.unwrap_or(platform);
+            let account = c.store.account(&account_id).await.map_err(storage)?.ok_or_else(|| storage("account vanished"))?;
+            if at_device_limit(c, &account, now).await? {
+                return Err(error(StatusCode::FORBIDDEN, "device_limit"));
+            }
             let Some((d, token)) =
                 c.store.register_device(&account_id, &device_name, platform, now).await.map_err(storage)?
             else {

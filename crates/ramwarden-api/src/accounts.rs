@@ -43,6 +43,43 @@ use crate::mail::Mailer;
 use crate::routes::{AppState, error};
 use crate::wallet::{self, iso8601};
 
+/// Devices on RamWarden Lite, the free tier (an account with no plan, or a
+/// lapsed one).
+pub const FREE_DEVICE_LIMIT: u32 = 1;
+
+/// How many devices this account may have now: its plan's limit while the
+/// plan is in good standing, else the free tier's. Devices already linked
+/// stay linked when a plan lapses; only adding one is refused.
+pub fn device_limit(a: &Account, now: u64) -> u32 {
+    if a.active(crate::routes::HOSTED_WARDEN, now) { a.device_limit } else { FREE_DEVICE_LIMIT.min(a.device_limit) }
+}
+
+/// The card the account is on: `lite`, `plus` or `pro`.
+pub fn plan_name(a: &Account, now: u64) -> &'static str {
+    match a.tier {
+        Some(t) if a.active(crate::routes::HOSTED_WARDEN, now) => match t {
+            ramwarden_cloud::model::Tier::Ram => "plus",
+            ramwarden_cloud::model::Tier::Pro => "pro",
+        },
+        _ => "lite",
+    }
+}
+
+/// A refusal naming the limit, for the page the person is looking at.
+pub fn device_limit_reached(limit: u32) -> Response {
+    let msg = if limit <= FREE_DEVICE_LIMIT {
+        "RamWarden Lite covers 1 device. Remove it on your account page, or upgrade to Plus for 5.".to_string()
+    } else {
+        format!("This account already has {limit} devices. Remove one on your account page first.")
+    };
+    error(StatusCode::CONFLICT, &msg)
+}
+
+/// True when the account can't take another device now.
+pub async fn at_device_limit(c: &Cloud, a: &Account, now: u64) -> Result<bool, Response> {
+    Ok(c.store.devices(&a.id).await.map_err(storage)?.len() >= device_limit(a, now) as usize)
+}
+
 /// The web session cookie.
 pub const SESSION_COOKIE: &str = "rw_session";
 /// Largest `prefs` object accepted, as JSON.
@@ -177,14 +214,15 @@ pub async fn account_json(c: &Cloud, a: &Account, now: u64) -> Result<Value, Res
         "tier": a.tier.map(|t| t.as_str()),
         "interval": a.interval,
         "status": a.status(now).map(|s| s.as_str()),
-        "trial_ends_at": a.trial_ends_at.map(iso8601),
+        "trial_ends_at": a.trial_ends_at.filter(|&t| t > 0).map(iso8601),
         "paid_until": a.paid_until.map(iso8601),
         "trial_available": !a.trial_used,
         "billing": a.billing.as_ref().map(|b| json!({"method": b.method})),
         "entitlement_until": (until > now).then(|| iso8601(until)),
         "entitlements": wardens.iter().map(|(w, &t)| (w.clone(), json!(iso8601(t)))).collect::<Map<_, _>>(),
         "used_today": used,
-        "device_limit": a.device_limit,
+        "plan": plan_name(a, now),
+        "device_limit": device_limit(a, now),
         "devices": devices.iter().map(device_json).collect::<Vec<_>>(),
         "prefs": a.prefs,
     }))

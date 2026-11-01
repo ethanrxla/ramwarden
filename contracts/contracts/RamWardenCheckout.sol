@@ -133,6 +133,32 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
         }
     }
 
+    /// Move a live subscription to another plan in one transaction: Lite to
+    /// Plus is a new subscription, this is Plus to Pro (or monthly to
+    /// annual). Only the paying wallet may call it. Any trial ends, and the new
+    /// plan's first period is charged now and starts now; the wardens already
+    /// paid for keep their dates, so nothing is taken away, but unused time on
+    /// the old plan is not refunded.
+    function changePlan(bytes32 account, uint32 planId, uint256 maxPrice, bytes32 ref) external whenNotPaused {
+        Subscription storage s = subscriptions[account];
+        if (!s.active) revert NotSubscribed();
+        if (msg.sender != s.payer) revert NotPayer();
+        Plan memory p = plans[planId];
+        if (!p.active) revert UnknownPlan(planId);
+        if (p.price > maxPrice) revert PriceAboveMax(p.price, maxPrice);
+        uint256 allowance = token.allowance(msg.sender, address(this));
+        if (allowance < p.price) revert AllowanceTooLow(allowance, p.price);
+
+        uint64 nowTs = uint64(block.timestamp);
+        s.planId = planId;
+        s.price = p.price;
+        s.period = p.period;
+        s.wardens = p.wardens;
+        s.nextCharge = nowTs;
+        emit TrialStarted(account, planId, msg.sender, 0, ref);
+        _charge(account);
+    }
+
     /// Stop future charges. Service runs to the end of the paid period.
     function cancel(bytes32 account) external {
         Subscription storage s = subscriptions[account];

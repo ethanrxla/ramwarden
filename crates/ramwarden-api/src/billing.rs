@@ -25,7 +25,7 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use ramwarden_cloud::model::{
-    Account, BillingMethod, BillingUpdate, Identity, Payment, PaymentStatus, Status,
+    Account, BillingMethod, BillingUpdate, Identity, Interval, Payment, PaymentStatus, Status, Tier,
 };
 use ramwarden_cloud::store::{new_id, random_bytes};
 use serde::Deserialize;
@@ -69,25 +69,54 @@ struct CheckoutReq {
     payer: Option<String>,
 }
 
-/// The signed-in account and the plan it picked, unless it already has a
-/// live subscription. Changing tier or interval is cancel, then subscribe:
-/// in-place plan changes come later (see the spec's limitations).
+/// What a checkout does for this account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// Lite (or lapsed or cancelled): a new subscription.
+    New,
+    /// A live subscription moving up: Plus to Pro, or monthly to annual.
+    Upgrade,
+}
+
+/// Whether moving from the account's live plan to `plan` is an upgrade:
+/// more wardens, or the same wardens for a longer period.
+pub fn is_upgrade(a: &Account, plan: &PlanDef) -> bool {
+    let (Some(tier), Some(interval)) = (a.tier, a.interval) else { return false };
+    let rank = |t: Tier| if t == Tier::Pro { 1 } else { 0 };
+    let longer = interval == Interval::Month && plan.interval() == Interval::Year;
+    rank(plan.tier()) > rank(tier) || (plan.tier() == tier && longer)
+}
+
+/// The signed-in account, the plan it picked, and whether that starts or
+/// upgrades a subscription. A live subscription can only move up, with the
+/// method that pays for it; moving down is cancel, then subscribe when it ends.
 async fn start<'a>(
     c: &'a Cloud,
     method: &Method,
     headers: &HeaderMap,
     plan: u32,
+    pays_with: BillingMethod,
     now: u64,
-) -> Result<(Account, &'a PlanDef), Response> {
+) -> Result<(Account, &'a PlanDef, Start), Response> {
     let a = session(c, method, headers, now).await?;
     let plan = c.plans.plan(plan).ok_or_else(|| error(StatusCode::NOT_FOUND, "No such plan."))?;
-    if matches!(a.status(now), Some(Status::Trial | Status::Active | Status::Grace)) {
+    if !matches!(a.status(now), Some(Status::Trial | Status::Active | Status::Grace)) {
+        return Ok((a, plan, Start::New));
+    }
+    if !is_upgrade(&a, plan) {
         return Err(error(
             StatusCode::CONFLICT,
-            "This account already has a subscription. To switch plans, cancel it first; it runs to the end of what you paid for.",
+            "You're already on this plan or a bigger one. To move down, cancel; it runs to the end of what you paid for, then pick the new plan.",
         ));
     }
-    Ok((a, plan))
+    if a.billing.as_ref().map(|b| b.method) != Some(pays_with) {
+        let how = match a.billing.as_ref().map(|b| b.method) {
+            Some(BillingMethod::Card) => "by card",
+            _ => "from your wallet on Base",
+        };
+        return Err(error(StatusCode::CONFLICT, &format!("Your subscription is paid {how}. Upgrade the same way.")));
+    }
+    Ok((a, plan, Start::Upgrade))
 }
 
 fn pending(id: String, a: &Account, plan: &PlanDef, method: BillingMethod, payer: Option<String>, now: u64) -> Payment {
@@ -113,7 +142,7 @@ async fn checkout_base(
     let c = cloud(&state)?;
     let now = (state.now)();
     let base = c.billing.base.as_ref().ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Paying on Base opens soon."))?;
-    let (a, plan) = start(c, &method, &headers, b.plan, now).await?;
+    let (a, plan, kind) = start(c, &method, &headers, b.plan, BillingMethod::Base, now).await?;
     let payer = match &b.payer {
         Some(p) => Some(wallet::normalise(Chain::Evm, p).map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, &e))?),
         None => None,
@@ -126,12 +155,19 @@ async fn checkout_base(
     let payment_ref = random_bytes::<32>();
     let id = hex::encode(payment_ref);
     c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Base, payer, now)).await.map_err(storage)?;
+    let (trial, transactions) = match kind {
+        Start::New => (plan.trial_for(a.trial_used), base.cfg.transactions(&a.id, plan, &payment_ref, needs_approve)),
+        // Only the wallet paying today can send changePlan.
+        Start::Upgrade => (false, base.cfg.change_transactions(&a.id, plan, &payment_ref, needs_approve)),
+    };
     Ok(Json(json!({
         "payment_id": id,
         "chain_id": base.cfg.chain_id,
-        "trial": plan.trial_for(a.trial_used),
+        "upgrade": kind == Start::Upgrade,
+        "payer": (kind == Start::Upgrade).then(|| a.billing.as_ref().map(|b| b.reference.clone())).flatten(),
+        "trial": trial,
         "approval_usd": plan.approval_usd(),
-        "transactions": base.cfg.transactions(&a.id, plan, &payment_ref, needs_approve),
+        "transactions": transactions,
     }))
     .into_response())
 }
@@ -149,8 +185,18 @@ async fn checkout_stripe(
         .stripe
         .as_ref()
         .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Card payments open soon. Pay with USDC on Base."))?;
-    let (a, plan) = start(c, &method, &headers, b.plan, now).await?;
+    let (a, plan, kind) = start(c, &method, &headers, b.plan, BillingMethod::Card, now).await?;
     let id = new_id();
+    if kind == Start::Upgrade {
+        // The card on file pays the difference now; the webhook moves the tier.
+        let sub = a.billing.as_ref().map(|b| b.reference.clone()).unwrap_or_default();
+        s.change_plan(&sub, plan, &a.id, &id).await.map_err(|e| {
+            tracing::error!("{e}");
+            error(StatusCode::BAD_GATEWAY, "The upgrade did not go through. Try again in a minute.")
+        })?;
+        c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
+        return Ok(Json(json!({"payment_id": id, "upgrade": true, "url": null, "trial": false})).into_response());
+    }
     let email = match &a.identity {
         Identity::Email { email } => Some(email.as_str()),
         Identity::Wallet { .. } => None,
@@ -171,7 +217,7 @@ async fn checkout_stripe(
         error(StatusCode::BAD_GATEWAY, "Card checkout could not start. Try again in a minute.")
     })?;
     c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
-    Ok(Json(json!({"payment_id": id, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
+    Ok(Json(json!({"payment_id": id, "upgrade": false, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
 }
 
 async fn solana(State(state): State<Arc<AppState>>) -> Reply {
@@ -201,7 +247,7 @@ async fn payment(State(state): State<Arc<AppState>>, method: Method, headers: He
         "reason": p.reason,
         "account_status": a.status(now).map(|s| s.as_str()),
         "tier": a.tier.map(|t| t.as_str()),
-        "trial_ends_at": a.trial_ends_at.map(iso8601),
+        "trial_ends_at": a.trial_ends_at.filter(|&t| t > 0).map(iso8601),
         "entitlement_until": (until > now).then(|| iso8601(until)),
     }))
     .into_response())

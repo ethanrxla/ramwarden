@@ -104,6 +104,57 @@ impl Stripe {
         v["url"].as_str().map(str::to_string).ok_or_else(|| "stripe returned no url".into())
     }
 
+    /// Moves a live subscription to `plan`: a new price on its one item, any
+    /// trial ended, and the prorated difference invoiced now. The webhook
+    /// that follows moves the tier.
+    pub async fn change_plan(&self, subscription_id: &str, plan: &PlanDef, account_id: &str, payment_id: &str) -> Result<(), String> {
+        if !subscription_id.starts_with("sub_") || !subscription_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err("not a subscription id".into());
+        }
+        let get = |path: String| self.http.get(format!("{}{path}", self.api_base)).basic_auth(self.key.expose(), Some(""));
+        let post = |path: String| self.http.post(format!("{}{path}", self.api_base)).basic_auth(self.key.expose(), Some(""));
+        let sub: Value = get(format!("/v1/subscriptions/{subscription_id}"))
+            .send()
+            .await
+            .map_err(|e| format!("stripe: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("stripe: {e}"))?;
+        let item = sub["items"]["data"][0]["id"].as_str().ok_or("stripe: subscription has no item")?.to_string();
+        let interval = if plan.interval == "year" { "year" } else { "month" };
+        let cents = (plan.usd * 100).to_string();
+        let price: Value = post("/v1/prices".into())
+            .form(&[
+                ("currency", "usd"),
+                ("unit_amount", cents.as_str()),
+                ("recurring[interval]", interval),
+                ("product_data[name]", plan.name.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("stripe: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("stripe: {e}"))?;
+        let price = price["id"].as_str().ok_or("stripe: no price id")?.to_string();
+        let plan_id = plan.id.to_string();
+        let resp = post(format!("/v1/subscriptions/{subscription_id}"))
+            .form(&[
+                ("items[0][id]", item.as_str()),
+                ("items[0][price]", price.as_str()),
+                ("trial_end", "now"),
+                ("proration_behavior", "always_invoice"),
+                ("cancel_at_period_end", "false"),
+                ("metadata[account_id]", account_id),
+                ("metadata[plan]", plan_id.as_str()),
+                ("metadata[payment_id]", payment_id),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("stripe: {e}"))?;
+        if resp.status().is_success() { Ok(()) } else { Err(format!("stripe answered {}", resp.status())) }
+    }
+
     /// Stops renewal; the subscription runs to the end of the period it is
     /// in, as on Base (spec 3.3 step 4).
     pub async fn cancel_at_period_end(&self, subscription_id: &str) -> Result<(), String> {
@@ -198,6 +249,9 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     }
     if status == "trialing" {
         u.trial_ends_at = trial_end;
+    } else if status == "active" {
+        // A trial an upgrade ended early, or one long over.
+        u.trial_ends_at = Some(trial_end.unwrap_or(0));
     }
     Some((account_id, u))
 }

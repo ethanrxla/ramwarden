@@ -10,7 +10,7 @@ use axum::Json;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use ramwarden_ai::secret::Secret;
-use ramwarden_cloud::model::{BillingUpdate, Platform, Tier, chain_key};
+use ramwarden_cloud::model::{BillingUpdate, Interval, Platform, Tier, chain_key};
 use ramwarden_cloud::store::{MemoryStore, Store};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -195,7 +195,7 @@ async fn a_daemon_signs_in_through_the_link_page_with_metamask() {
     let acct = &v["account"];
     assert_eq!((acct["tier"].clone(), acct["status"].clone()), (Value::Null, Value::Null), "nothing bought yet");
     assert_eq!(acct["identity"]["address"], w.address(), "shown checksummed");
-    assert_eq!((acct["device_limit"].as_u64(), acct["trial_available"].as_bool()), (Some(5), Some(true)));
+    assert_eq!((acct["device_limit"].as_u64(), acct["trial_available"].as_bool()), (Some(1), Some(true)), "Lite until a plan starts");
 
     let (s, tok) = a.call("POST", "/v1/device/token", Auth::None, Some(json!({"device_code": dc}))).await;
     assert_eq!(s, StatusCode::OK);
@@ -307,6 +307,8 @@ async fn the_sixth_device_is_refused_on_the_link_page() {
     let a = app();
     let w = EvmWallet::new(12);
     let (cookie, id) = a.web(&w).await;
+    let plus = BillingUpdate { tier: Some(Tier::Ram), interval: Some(Interval::Month), paid_until: Some(NOW + 30 * DAY), ..Default::default() };
+    a.store.update_billing(&id, &plus).await.unwrap();
     for i in 0..5 {
         a.store.register_device(&id, &format!("pc{i}"), Platform::Linux, NOW).await.unwrap().unwrap();
     }
@@ -442,6 +444,60 @@ async fn pro_on_base_is_charged_at_once_and_keeps_the_trial_unused() {
     assert!(rec.wardens.contains_key("threat"));
 }
 
+#[tokio::test]
+async fn lite_is_a_free_account_on_one_device_with_no_hosted_ai() {
+    let a = app();
+    let w = EvmWallet::new(17);
+    let (tok, cookie, _) = a.sign_in_device(&w).await;
+    let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
+    assert_eq!((acct["plan"].as_str(), acct["device_limit"].as_u64()), (Some("lite"), Some(1)));
+    assert_eq!(a.call("GET", "/v1/models", Auth::Bearer(&tok), None).await.0, StatusCode::PAYMENT_REQUIRED, "no Jev on Lite");
+
+    // A second device is refused on the link page and for the install line.
+    let (_, code) = a.start_device().await;
+    let (s, v, _) = a.sign_in_evm(&w, Some(&code)).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert!(v["error"].as_str().unwrap().contains("Lite covers 1 device"), "{v}");
+    assert_eq!(a.call("POST", "/v1/install/link", Auth::Cookie(&cookie), None).await.0, StatusCode::CONFLICT);
+
+    // With no device yet, Lite gets its install line.
+    let (fresh, _) = a.web(&EvmWallet::new(18)).await;
+    assert_eq!(a.call("POST", "/v1/install/link", Auth::Cookie(&fresh), None).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn plus_upgrades_to_pro_on_base_in_one_wallet_call() {
+    let a = app();
+    let w = EvmWallet::new(19);
+    let (cookie, account_id) = a.web(&w).await;
+    let key = chain_key(&account_id);
+    let (_, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1}))).await;
+    let mut r = [0u8; 32];
+    r.copy_from_slice(&hex::decode(co["payment_id"].as_str().unwrap()).unwrap());
+    a.chain(&[trial_log(&base().checkout, key, 1, NOW + 14 * DAY, r)]).await;
+
+    // Down or sideways is refused; up returns changePlan for the paying wallet.
+    let (s, _) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1}))).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (s, up) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2}))).await;
+    assert_eq!(s, StatusCode::OK, "{up}");
+    assert_eq!((up["upgrade"].as_bool(), up["trial"].as_bool()), (Some(true), Some(false)));
+    let txs = up["transactions"].as_array().unwrap();
+    let selector = hex::encode(crate::checkout::selector("changePlan(bytes32,uint32,uint256,bytes32)"));
+    assert!(txs.last().unwrap()["data"].as_str().unwrap()[2..].starts_with(&selector));
+    assert!(a.call("POST", "/v1/checkout/stripe", Auth::Cookie(&cookie), Some(json!({"plan": 2}))).await.0 != StatusCode::OK);
+
+    let mut r = [0u8; 32];
+    r.copy_from_slice(&hex::decode(up["payment_id"].as_str().unwrap()).unwrap());
+    a.chain(&[trial_log(&base().checkout, key, 2, 0, r), crate::checkout::tests::charged_log(&base().checkout, key, 2, NOW + 30 * DAY)]).await;
+    let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
+    assert_eq!((acct["plan"].as_str(), acct["status"].as_str()), (Some("pro"), Some("active")), "the trial ended with the upgrade");
+    assert_eq!(acct["trial_ends_at"], Value::Null);
+    assert_eq!(acct["device_limit"], 5);
+    let (s, _) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "Pro to Plus is cancel, then subscribe");
+}
+
 // ------------------------------------------------------------- Stripe
 
 type Seen = Arc<Mutex<Vec<(String, String)>>>;
@@ -465,8 +521,10 @@ async fn fake_stripe() -> (String, Seen) {
             post(move |axum::extract::Path(id): axum::extract::Path<String>, body: String| async move {
                 s2.lock().unwrap().push((id, body));
                 Json(json!({"id": "sub_123"}))
-            }),
-        );
+            })
+            .get(|| async { Json(json!({"id": "sub_123", "items": {"data": [{"id": "si_1"}]}})) }),
+        )
+        .route("/v1/prices", post(|| async { Json(json!({"id": "price_pro"})) }));
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", l.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
@@ -521,6 +579,16 @@ async fn a_card_trial_starts_from_a_signed_webhook() {
     assert_eq!(acct["billing"]["method"], "card");
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
     assert_eq!(p["status"], "confirmed");
+
+    // Upgrading to Pro changes the same subscription, no new checkout page.
+    let (s, up) = a.call("POST", "/v1/checkout/stripe", Auth::Cookie(&cookie), Some(json!({"plan": 4}))).await;
+    assert_eq!(s, StatusCode::OK, "{up}");
+    assert_eq!((up["upgrade"].as_bool(), up["url"].clone()), (Some(true), Value::Null));
+    let change = seen.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(change.0, "sub_123");
+    for part in ["items%5B0%5D%5Bid%5D=si_1", "items%5B0%5D%5Bprice%5D=price_pro", "trial_end=now", "metadata%5Bplan%5D=4"] {
+        assert!(change.1.contains(part), "{part} in {}", change.1);
+    }
 
     // Cancelling a card subscription stops renewal at Stripe.
     let (s, c) = a.call("POST", "/v1/checkout/cancel", Auth::Cookie(&cookie), None).await;
@@ -581,9 +649,6 @@ async fn the_install_line_links_the_new_device_once() {
     let a = app();
     let w = EvmWallet::new(15);
     let (cookie, id) = a.web(&w).await;
-    let (s, _) = a.call("POST", "/v1/install/link", Auth::Cookie(&cookie), None).await;
-    assert_eq!(s, StatusCode::PAYMENT_REQUIRED, "no line before a trial");
-
     let trial = BillingUpdate { tier: Some(Tier::Ram), paid_until: Some(NOW + 14 * DAY), trial_ends_at: Some(NOW + 14 * DAY), ..Default::default() };
     a.store.update_billing(&id, &trial).await.unwrap();
     let (s, v) = a.call("POST", "/v1/install/link", Auth::Cookie(&cookie), None).await;

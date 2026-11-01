@@ -26,8 +26,8 @@ use axum::routing::{get, post};
 use ramwarden_cloud::model::Platform;
 use serde_json::json;
 
-use crate::accounts::{Reply, cloud, session, storage};
-use crate::routes::{AppState, HOSTED_WARDEN, error};
+use crate::accounts::{Reply, at_device_limit, cloud, device_limit, device_limit_reached, session, storage};
+use crate::routes::{AppState, error};
 use crate::wallet::iso8601;
 
 /// How long a personal install line works.
@@ -52,11 +52,10 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
     let c = cloud(&state)?;
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
-    if !a.active(HOSTED_WARDEN, now) {
-        return Err(error(StatusCode::PAYMENT_REQUIRED, "Start a trial or renew to get your install line."));
-    }
-    if c.store.devices(&a.id).await.map_err(storage)?.len() >= a.device_limit as usize {
-        return Err(error(StatusCode::CONFLICT, "This account already has 5 devices. Remove one on your account page first."));
+    // Lite accounts get the line too: RamWarden Lite is the fixed rules on
+    // one device, with no hosted AI (product cards, 2026-11-01).
+    if at_device_limit(c, &a, now).await? {
+        return Err(device_limit_reached(device_limit(&a, now)));
     }
     let (token, dc) = c
         .store
