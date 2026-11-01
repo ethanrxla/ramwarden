@@ -16,8 +16,8 @@ browser tabs next, freezing or closing apps last. Its agents are called
 | ThreatWarden | security alerts from the machine's Wazuh agent, read-only | paid pass |
 
 Current prices (the server's `/v1/checkout/config` is the authority, always
-quote from it): **RamWarden Pro $4 for 2 months, ThreatWarden $6 for 2 months**,
-paid in USDC on Base (MetaMask) or Solana (Phantom).
+quote from it): **RamWarden Pro $4 for 2 months, ThreatWarden $6 for 2 months,
+both $10**, paid in USDC on Base with MetaMask or Phantom.
 
 The daemon listens on `http://127.0.0.1:7823`. Every call below is plain HTTP
 from the user's own machine, for example `curl -s http://127.0.0.1:7823/health`

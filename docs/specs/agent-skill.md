@@ -29,20 +29,22 @@ registry; until then they answer 404 and the skill treats that as "not on this
 install".
 
 From the hosted API and website, the checkout of `docs/specs/website.md`, plus
-three additions this skill needs:
+three additions this skill needs (1 and 2 are in PR #5):
 
 1. `GET /v1/checkout/config` plans carry `wardens` (the warden ids each plan
    extends, as in `contracts/plans.json`), so an agent can find "the
    ThreatWarden plan" without matching on names.
-2. `base` in that answer carries `contract` and `token` (the checkout contract
+2. `base` in that answer carries `contract` and `usdc` (the checkout contract
    and USDC addresses), so an agent with a wallet tool can check that it only
    sends transactions to them.
 3. `account.html?plan=<id>` preselects that plan. An unknown id is ignored and
    the page behaves as without it.
 
 Warden ids are `ram` (hosted Jev tier, RamWarden Pro) and `threat`
-(ThreatWarden). Prices are whatever `checkout/config` says; at the time of
-writing $4 for 60 days and $6 for 60 days.
+(ThreatWarden). Plan ids are the contract's numbers. Prices are whatever
+`checkout/config` says; at the time of writing plan 1 is Pro at $4 for 60
+days, plan 2 ThreatWarden at $6 for 60 days, and plan 3 both at $10. Solana
+answers 503 until it opens, so agents pay on Base.
 
 ## Policy
 

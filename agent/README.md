@@ -31,7 +31,7 @@ checksum), and how to talk to it on `127.0.0.1:7823`.
 
 ## Paying
 
-RamWarden Pro is $4 for 2 months and ThreatWarden $6 for 2 months, in USDC on
-Base or Solana. The agent never spends on its own: the user asks, the agent
+RamWarden Pro is $4 for 2 months, ThreatWarden $6 for 2 months, and both $10,
+in USDC on Base (MetaMask, or Phantom's EVM account). The agent never spends on its own: the user asks, the agent
 shows the exact plan and price, and the user approves every signature and
 payment in their own wallet. See `skills/ramwarden/references/buying.md`.
