@@ -69,67 +69,141 @@ per-candidate wording lives in `Template::ladder_judge`, copied from
 `crates/ramwarden-daemon/src/ladderjudge.rs`. A question the
 server does not know is refused with 422, and the daemon falls back as above.
 
-## Phase 2: accounts, sign-in, passes
+## Phase 2: accounts, sign-in, subscriptions
 
-On when `RAMWARDEN_SITE_ORIGIN` is set. Code: `accounts.rs` (routes),
-`wallet.rs` (SIWE/SIWS), `store.rs`, `checkout.rs`, `entitlement.rs`. The
-website's routes are specified in `docs/specs/website.md`; this section adds
-the daemon's and the launcher's.
+On when `RAMWARDEN_SITE_ORIGIN` is set. Implements `docs/product-spec.md`
+sections 1.2, 3 and 4. Code: `accounts.rs` (shared pieces, account,
+entitlement, downloads), `signin.rs` (device flow, wallet, email, logout),
+`billing.rs` (checkout, cancel, Stripe webhook), `checkout.rs` (plans, Base
+transactions, chain watcher), `stripe.rs`, `mail.rs`, `entitlement.rs`,
+`wallet.rs`. Storage is `ramwarden_cloud::Store` (MongoDB Atlas, or memory for
+development). The website's side is in `docs/specs/website.md`.
 
 ### Contract
+
+**Tiers and plans** (`contracts/plans.json`, the contract's numbers):
+
+| Plan | Tier | Price | Wardens |
+| --- | --- | --- | --- |
+| 1 | RamWarden | $4 / month | `ram` |
+| 2 | RamWarden Pro | $5 / month | `ram`, `threat` |
+| 3 | RamWarden | $20 / year | `ram` |
+| 4 | RamWarden Pro | $24 / year | `ram`, `threat` |
+
+Every plan starts with a 14-day trial, then renews every month or year until
+cancelled. One trial per account: an account that had one is charged at
+once. There is no free tier.
+
+**Account status**, from `tier`, `paid_until`, `trial_ends_at`, `cancelled`:
+`trial` (inside the trial), `active` (paid period), `grace` (3 days after an
+unpaid renewal), `cancelled` (stopped renewing, still inside what was paid),
+`lapsed` (none of those: the apps run in local mode). `null` before anything
+was bought. A warden is unlocked until `paid_until`, plus the 3-day grace
+unless cancelled.
 
 | Route | Auth | Answer |
 | --- | --- | --- |
 | `POST /v1/device/start` `{device_name, platform}` | none | `{device_code, user_code, verification_uri, verification_uri_complete, expires_in: 600, interval: 5}` |
-| `POST /v1/device/token` `{device_code}` | none | `{device_token, account_id, device_id}` once approved; 400 `{"error":"authorization_pending"}` while waiting; 400 `{"error":"expired_token"}` when unknown, expired or already claimed |
-| `GET /v1/entitlement` | device | signed record, saved by the daemon as `entitlement.json` |
-| `GET /v1/downloads/{warden}/{file}` | device | the file from `RAMWARDEN_DOWNLOADS_DIR/<warden>/<file>`; 401 no or revoked device, 403 no pass for that warden, 404 otherwise |
-| `GET /v1/models`, `POST /v1/systemone` | device or phase 1 token | as phase 1 |
-| website routes | see `website.md` | `account` also carries `entitlements: {slug: iso time}` |
+| `POST /v1/device/token` `{device_code}` | none | `{device_token, account_id, device_id}` once approved; 400 `authorization_pending` while waiting; 400 `expired_token` when unknown, expired or claimed; 403 `device_limit` if the account filled up meanwhile |
+| `GET /v1/device/lookup?user_code=` | none | `{status, device_name, platform, expires_at}` for a pending code, else 404 |
+| `POST /v1/auth/challenge` `{chain, address, user_code?}` | none | `{message, expires_at}`: the SIWE/SIWS text to sign |
+| `POST /v1/auth/verify` `{chain, address, message, signature, session?}` | none | sign-in reply (below) |
+| `POST /v1/auth/email/start` `{email, user_code?}` | none | `{sent, expires_at}`; mails a 6-digit code. 429 within 60 s of the last; 503 when mail is not configured |
+| `POST /v1/auth/email/verify` `{email, code, session?}` | none | sign-in reply. 401 for a wrong code; 5 wrong guesses or 10 minutes burn it |
+| `POST /v1/auth/logout` | session | ends the session, clears the cookie |
+| `GET /v1/account` | session | account (below) |
+| `PUT /v1/account/prefs` `{...}` | session | `{prefs}`; any JSON object up to 4 KB, replacing the old one |
+| `DELETE /v1/account/devices/{id}` | session | `{ok}`; that device's token stops working at once |
+| `GET /v1/checkout/config` | none | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], wardens, base: {chain_id, network, contract, usdc} \| null, solana: null, stripe, stripe_test}` |
+| `POST /v1/checkout/base` `{plan, payer?}` | session | `{payment_id, chain_id, trial, approval_usd, transactions}`; 409 while a subscription is live |
+| `POST /v1/checkout/stripe` `{plan}` | session | `{payment_id, url, trial}`: open `url` (Stripe Checkout); 409 while live; 503 without Stripe keys |
+| `POST /v1/checkout/solana` | session | 503 until Solana opens |
+| `GET /v1/checkout/payments/{id}` | session | `{id, plan, method, status: pending \| confirmed \| failed, reason, account_status, tier, trial_ends_at, entitlement_until}` |
+| `POST /v1/checkout/cancel` | session | Base: `{chain_id, payer, transactions: [cancel(account)]}` for the paying wallet to send. Card: cancels at Stripe, `{cancelled, service_until}`. 409 with nothing to cancel |
+| `POST /v1/stripe/webhook` | Stripe signature | 200 when recorded or ignored; 400 for a bad or stale signature |
+| `GET /v1/entitlement` | device | signed record (below) |
+| `GET /v1/downloads/{warden}/{file}` | device | `RAMWARDEN_DOWNLOADS_DIR/<warden>/<file>`; 401 no or revoked device, 403 tier lacks that warden or lapsed, 404 otherwise |
+| `GET /v1/models`, `POST /v1/systemone` | device or phase 1 token | as phase 1; 402 `subscription_inactive` for a device whose account is lapsed or never subscribed |
 
-Passes are per warden (`contracts/plans.json`): `ram` is RamWarden Pro
-($4 for 60 days), `threat` is ThreatWarden ($6 for 60 days), and a bundle covers
-both. `entitlement_until` and `tier` in `account` describe `ram` only.
+**Sign-in reply.** `{account, linked_device: {name, platform} | null}` and a
+`Set-Cookie: rw_session=<token>; Path=/; Max-Age=43200; HttpOnly; Secure;
+SameSite=Strict`. With `"session": "bearer"` in the body the token comes back
+as `session` instead of the cookie, for tools without a cookie jar, and is
+then sent as `Authorization: Bearer`. With `user_code`, the device code is
+approved, unless the account already has `device_limit` devices (409, shown
+on the link page).
 
-**Entitlement record.** `{"v":1, "account", "device", "issued_at",
-"wardens": {slug: unix seconds}, "sig"}`. `sig` is standard base64 of an
-Ed25519 signature, by `RAMWARDEN_ENTITLEMENT_KEY`, over this text (one line
-each, `\n`-joined, no trailing newline):
+**Account.** `{id, identity: {kind: "wallet", chain, address} | {kind:
+"email", email}, tier: "ram" | "pro" | null, interval: "month" | "year" |
+null, status, trial_ends_at, paid_until, trial_available, billing: {method:
+"base" | "card"} | null, entitlement_until, entitlements: {slug: iso time},
+used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
+prefs}`. Times are ISO 8601 UTC.
+
+**Entitlement record.** `{"v": 2, "account", "device", "issued_at", "tier",
+"status", "wardens": {slug: unix seconds}, "sig"}`. `tier` and `status` read
+`none` before anything was bought. `sig` is standard base64 of an Ed25519
+signature, by `RAMWARDEN_ENTITLEMENT_KEY`, over this text (one line each,
+`\n`-joined, no trailing newline):
 
 ```text
-ramwarden-entitlement-v1
+ramwarden-entitlement-v2
 account=<account>
 device=<device>
 issued_at=<issued_at>
+tier=<tier>
+status=<status>
 warden:<slug>=<expiry>        one per warden, sorted by slug
 ```
 
 The daemon verifies against the public key compiled into `ramwarden-core`
 (logged by the server at start) and unlocks a warden only while its expiry is
-in the future. A record that fails to verify unlocks nothing.
+in the future. `tier` and `status` are for display ("trial ends in 3 days",
+"lapsed: local mode") and never widen access. ThreatWarden needs `tier=pro`
+and a `warden:threat` line in the future. A record that fails to verify
+unlocks nothing; v1 never shipped and is refused.
 
-**Base checkout.** `POST /v1/checkout/base` returns `approve(checkout, price)`
-on USDC (only when the payer's allowance is short, or the server can't tell)
-then `purchase(keccak256(account id), plan, price, ref)`, where `ref` is the
-payment id's 32 bytes. The watcher reads `Purchased` and `Extended` logs
-`RAMWARDEN_BASE_CONFIRMATIONS` blocks behind the head and sets each warden's
-expiry to the `Extended` value. Agents buy the same way: wallet sign-in, then
-send the returned transactions; or call the contract directly for an account
-key, which the watcher credits too.
+**Base.** `POST /v1/checkout/base` returns USDC `approve(checkout, one
+year)` (12 x the monthly price, or the annual price; never unlimited), left
+out when the payer's allowance already covers it, then
+`startTrial(keccak256(account id), plan, price, ref)`, where `ref` is the
+payment id. The contract (`contracts/README.md`) starts the trial, or charges
+at once if the account had one; afterwards anyone may call `charge(account)`
+when due and the keeper (`contracts/scripts/keeper.cjs`) does. The watcher
+reads `TrialStarted`, `Charged` and `Cancelled`
+`RAMWARDEN_BASE_CONFIRMATIONS` blocks behind the head and copies the
+contract's own dates onto the account.
+
+**Card.** Stripe Checkout in subscription mode, prices inline from
+`plans.json`, `trial_period_days=14` unless the trial was used, and
+`metadata: {account_id, plan, payment_id}`. `customer.subscription.*`
+webhooks set tier, interval and cancellation; `paid_until` moves only for a
+`trialing` or `active` subscription.
 
 ### Policy
 
-- **Three credentials, never interchangeable.** A web session (`rwse_`, 12 h)
-  opens the account and checkout; a device token (`rwdt_`) opens Jev, the
-  entitlement and downloads; a phase 1 token opens Jev only. All are stored as
-  SHA-256.
+- **Three credentials, never interchangeable.** A web session (`rwse_`, 12 h,
+  normally the cookie) opens the account and checkout; a device token
+  (`rwdt_`) opens Jev, the entitlement and downloads; a phase 1 token opens Jev
+  only. All are stored as SHA-256. Revoking one never signs out another.
+- **Cookie sessions can't be driven by another site.** `HttpOnly`, `Secure`,
+  `SameSite=Strict`; CORS names only `RAMWARDEN_SITE_ORIGIN`, with
+  credentials; and a cookie request that changes something must carry that
+  `Origin` (403 otherwise).
 - **The server words every signed message** and accepts only that exact text
   back, once, within five minutes, from the address it was written for.
-- **The chain is the source of truth for passes.** Expiries only move forward,
-  so a replayed log or a rescan cannot shorten or double a pass.
-- **Free tier:** a device without a `ram` pass gets `RAMWARDEN_FREE_PER_DAY`
-  hosted decisions a day; with one, `RAMWARDEN_API_PER_DAY`.
-- **CORS** names only `RAMWARDEN_SITE_ORIGIN`.
+  Email codes are single use, 10 minutes, 5 guesses, one per minute.
+- **Only what happened changes an account.** Checkout routes create a pending
+  payment and nothing else. The chain watcher and the signed Stripe webhook
+  set tier and dates, from the contract's or Stripe's own numbers. `paid_until`
+  only moves forward, so a replayed log, a rescan or a retried webhook cannot
+  shorten or double anything.
+- **No free tier.** A device whose account has no `ram` warden in date gets
+  402 from the Jev routes and the daemon uses its local estimate.
+- **5 devices per account**, checked when the link page approves and again
+  when the daemon claims.
+- **Real money waits for the audit.** Base mainnet and live Stripe keys are
+  refused at start unless `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1`.
 - **Downloads decide who, not what.** File names must be plain; the launcher
   checks size and SHA-256 from the signed release manifest
   (`docs/specs/updates.md`).
@@ -139,34 +213,58 @@ key, which the watcher credits too.
 | Variable | Default |
 | --- | --- |
 | `RAMWARDEN_SITE_ORIGIN` | unset (phase 2 off). `https://` origin; `http://localhost:<port>` for development |
+| `MONGODB_URI` / `MONGODB_DATABASE` | read as in `docs/cloud-database.md`; unset: accounts in memory (development only, a restart signs everyone out) |
 | `RAMWARDEN_ENTITLEMENT_KEY` | unset: no entitlements. Base64 of 32 random bytes (`openssl rand -base64 32`), from the secret store |
 | `RAMWARDEN_DOWNLOADS_DIR` | unset: no downloads |
-| `RAMWARDEN_FREE_PER_DAY` | `5` |
 | `RAMWARDEN_CHECKOUT_ADDRESS` | unset: Base checkout off |
-| `RAMWARDEN_BASE_CHAIN_ID` | `8453` (Base); `84532` for Base Sepolia |
+| `RAMWARDEN_BASE_CHAIN_ID` | `84532` (Base Sepolia); `8453` needs `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1` |
 | `RAMWARDEN_BASE_USDC` | Circle's USDC on those two chains |
-| `RAMWARDEN_BASE_RPC_URL` | unset: always `approve`, and nothing is confirmed |
+| `RAMWARDEN_BASE_RPC_URL` | unset: always `approve`, and nothing is recorded |
 | `RAMWARDEN_BASE_CONFIRMATIONS` / `_FROM_BLOCK` | `5` / 2000 blocks back from the head |
+| `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | unset: card checkout off. Both or neither; `sk_test_` unless live payments are allowed |
+| `RESEND_API_KEY` + `RAMWARDEN_MAIL_FROM` | unset: email sign-in off |
+| `RAMWARDEN_DEV_MAIL_LOG` | `1` writes sign-in codes to the log instead of mailing them. Development only |
+| `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |
 
 With phase 2 on, `RAMWARDEN_API_TOKENS` becomes optional.
+`RAMWARDEN_FREE_PER_DAY` is gone with the free tier.
 
 ### Verification
 
-`cargo test -p ramwarden-api`: SIWE message shape, EIP-55 vectors, MetaMask
-and Phantom signatures accepted for their own address only; forged, replayed,
-edited or foreign messages refused; device sign-in through the link page,
-claimed once; Phantom web sign-in reuses one account; Base calldata (selector,
-account key, exact price, ref); log decoding ignores other contracts; a
-purchase credits every warden in the plan and confirms the payment; the
-signed record verifies and any edit breaks it; downloads need that warden's
-pass, refuse path tricks and stop when the device is removed; CORS.
+`cargo test -p ramwarden-api` (`src/flows.rs` drives the router end to end):
+device sign-in through the link page with MetaMask, claimed once; Phantom
+sign-in reuses one account and can take a bearer; forged, replayed, edited or
+foreign signatures refused; email sign-in mails a single-use code, rate
+limited, and links a device; logout; the sixth device refused on the link
+page and allowed after one is removed; prefs round-trip, 4 KB cap,
+cross-origin cookie writes refused; a Base trial (from contract logs) moves
+the account to `pro`/`trial`, confirms the payment, signs a v2 entitlement
+with both wardens and opens Jev, which answered 402 before; one subscription
+at a time; cancel returns the wallet's transaction and the `Cancelled` log
+ends grace; a card trial starts only from a correctly signed, fresh webhook
+and cancels at Stripe; ThreatWarden downloads need Pro; CORS with
+credentials for the site only. Unit tests cover SIWE, EIP-55, Base calldata
+(one-year approval, `startTrial` arguments), log decoding, Stripe signatures
+and event mapping, the entitlement text and config validation.
+`cargo test -p ramwarden-cloud` runs the shared store contract on memory, and
+on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
+`contracts/` covers the subscription contract and the keeper.
 
 ### Basis and limitations
 
-- Accounts are in memory until the Atlas store (`ramwarden-cloud`, PR #6)
-  implements `Store`; a restart signs every device out. Passes survive, since
-  the watcher re-reads the chain.
-- Native Solana Pay and Stripe answer 503; Phantom pays on Base through its
-  EVM account.
-- The contract is not deployed, so Base checkout has run only against the
-  test logs.
+- Changing tier or interval is cancel, then subscribe again; the remaining
+  paid time is not credited. In-place plan changes (Stripe proration, a
+  contract `changePlan`) come later.
+- One trial per account only. Per-device-fingerprint trials (spec 4.2) need
+  the `trials` collection and a device key, which come with device key pairs.
+- Stripe events are applied in arrival order. Stripe can deliver out of
+  order, so a late `updated` could clear a cancellation; the next event
+  corrects it. Ordering by event time is a follow-up.
+- After a year of monthly charges the approval runs out and the wallet must
+  approve again (spec 3.3 step 5). The account page offers it when
+  `isDue` and the charge fails; the notice email is not built yet.
+- Native Solana answers 503; Phantom pays on Base through its EVM account.
+- The contract is not deployed. Base checkout has run against Hardhat and the
+  test logs only; Stripe against a fake. Going live needs a deployed contract
+  on Base Sepolia, Stripe test keys, a Resend key, then an outside audit
+  before mainnet.

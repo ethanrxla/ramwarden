@@ -10,7 +10,7 @@ use std::time::Duration;
 use ramwarden_ai::secret::Secret;
 use sha2::{Digest, Sha256};
 
-use crate::checkout::{BASE_MAINNET, BaseConfig, parse_address};
+use crate::checkout::{BASE_MAINNET, BASE_SEPOLIA, BaseConfig, parse_address};
 
 /// A client token, kept only as its SHA-256.
 pub type TokenHash = [u8; 32];
@@ -59,8 +59,26 @@ pub struct CloudConfig {
     /// Base64 Ed25519 seed for signing entitlements. A secret.
     pub entitlement_key: Option<Secret>,
     pub downloads_dir: Option<String>,
-    pub free_per_day: u32,
     pub base: Option<BaseConfig>,
+    pub stripe: Option<StripeKeys>,
+    pub mail: MailConfig,
+}
+
+/// Stripe's two secrets. Both or neither.
+#[derive(Clone)]
+pub struct StripeKeys {
+    pub secret_key: Secret,
+    pub webhook_secret: Secret,
+}
+
+/// How email sign-in codes are sent.
+#[derive(Clone)]
+pub enum MailConfig {
+    /// Email sign-in is off; wallets still work.
+    Off,
+    Resend { key: Secret, from: String },
+    /// Development only (`RAMWARDEN_DEV_MAIL_LOG=1`): codes go to the log.
+    Log,
 }
 
 impl std::fmt::Debug for CloudConfig {
@@ -69,8 +87,16 @@ impl std::fmt::Debug for CloudConfig {
             .field("site_origin", &self.site_origin)
             .field("entitlement_key", &self.entitlement_key.as_ref().map(|_| "<set>"))
             .field("downloads_dir", &self.downloads_dir)
-            .field("free_per_day", &self.free_per_day)
             .field("base", &self.base)
+            .field("stripe", &self.stripe.as_ref().map(|_| "<set>"))
+            .field(
+                "mail",
+                &match &self.mail {
+                    MailConfig::Off => "off",
+                    MailConfig::Resend { .. } => "resend",
+                    MailConfig::Log => "log",
+                },
+            )
             .finish()
     }
 }
@@ -148,10 +174,17 @@ impl Config {
         let num = |k: &str, default: u64| -> Result<u64, String> {
             var(k).map_or(Ok(default), |v| v.parse().map_err(|_| format!("{k} must be a number, got `{v}`")))
         };
+        // Real money waits for the contract's outside audit (spec 10.4): Base
+        // mainnet and live Stripe keys are refused unless the operator says
+        // so in as many words.
+        let live_ok = var("RAMWARDEN_ALLOW_LIVE_PAYMENTS").as_deref() == Some("1");
         let base = match var("RAMWARDEN_CHECKOUT_ADDRESS") {
             None => None,
             Some(addr) => {
-                let chain_id = num("RAMWARDEN_BASE_CHAIN_ID", BASE_MAINNET)?;
+                let chain_id = num("RAMWARDEN_BASE_CHAIN_ID", BASE_SEPOLIA)?;
+                if chain_id == BASE_MAINNET && !live_ok {
+                    return Err("Base mainnet takes real money; set RAMWARDEN_ALLOW_LIVE_PAYMENTS=1 once the contract is audited".into());
+                }
                 let usdc = match var("RAMWARDEN_BASE_USDC") {
                     Some(a) => parse_address(&a)?,
                     None => BaseConfig::default_usdc(chain_id)
@@ -167,13 +200,30 @@ impl Config {
                 })
             }
         };
+        let stripe = match (var("STRIPE_SECRET_KEY"), var("STRIPE_WEBHOOK_SECRET")) {
+            (None, None) => None,
+            (Some(k), Some(w)) => {
+                if (k.starts_with("sk_live_") || k.starts_with("rk_live_")) && !live_ok {
+                    return Err("STRIPE_SECRET_KEY is a live key; use a test key, or set RAMWARDEN_ALLOW_LIVE_PAYMENTS=1".into());
+                }
+                Some(StripeKeys { secret_key: Secret::new(k), webhook_secret: Secret::new(w) })
+            }
+            _ => return Err("set both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, or neither".into()),
+        };
+        let mail = match (var("RESEND_API_KEY"), var("RAMWARDEN_MAIL_FROM")) {
+            (Some(key), Some(from)) => MailConfig::Resend { key: Secret::new(key), from },
+            (Some(_), None) => return Err("RESEND_API_KEY needs RAMWARDEN_MAIL_FROM, like RamWarden <hello@ramwarden.app>".into()),
+            _ if var("RAMWARDEN_DEV_MAIL_LOG").as_deref() == Some("1") => MailConfig::Log,
+            _ => MailConfig::Off,
+        };
         Ok(Some(CloudConfig {
             site_origin: origin,
             site_domain: domain,
             entitlement_key: var("RAMWARDEN_ENTITLEMENT_KEY").map(Secret::new),
             downloads_dir: var("RAMWARDEN_DOWNLOADS_DIR"),
-            free_per_day: num("RAMWARDEN_FREE_PER_DAY", 5)? as u32,
             base,
+            stripe,
+            mail,
         }))
     }
 }
@@ -227,10 +277,10 @@ mod tests {
             ("JEV_API_KEY", "k"),
             ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app"),
             ("RAMWARDEN_CHECKOUT_ADDRESS", "0x00000000000000000000000000000000000000cc"),
-            ("RAMWARDEN_BASE_CHAIN_ID", "84532"),
         ])
         .unwrap();
         let base = c.cloud.unwrap().base.unwrap();
+        assert_eq!(base.chain_id, BASE_SEPOLIA, "testnet unless told otherwise");
         assert_eq!(base.usdc, BaseConfig::default_usdc(84532).unwrap(), "USDC filled in for Base Sepolia");
         assert_eq!(base.confirmations, 5);
 
@@ -239,6 +289,39 @@ mod tests {
             cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_SITE_ORIGIN", "https://a.b"), ("RAMWARDEN_CHECKOUT_ADDRESS", "0x12")])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn real_money_needs_saying_so() {
+        let site = ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app");
+        let mainnet = [("JEV_API_KEY", "k"), site, ("RAMWARDEN_CHECKOUT_ADDRESS", "0x00000000000000000000000000000000000000cc"), ("RAMWARDEN_BASE_CHAIN_ID", "8453")];
+        assert!(cfg(&mainnet).unwrap_err().contains("RAMWARDEN_ALLOW_LIVE_PAYMENTS"));
+        let mut ok = mainnet.to_vec();
+        ok.push(("RAMWARDEN_ALLOW_LIVE_PAYMENTS", "1"));
+        assert_eq!(cfg(&ok).unwrap().cloud.unwrap().base.unwrap().chain_id, BASE_MAINNET);
+
+        let live = [("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_live_x"), ("STRIPE_WEBHOOK_SECRET", "whsec_x")];
+        assert!(cfg(&live).is_err());
+        let test = [("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_test_x"), ("STRIPE_WEBHOOK_SECRET", "whsec_x")];
+        assert!(cfg(&test).unwrap().cloud.unwrap().stripe.is_some());
+        assert!(cfg(&[("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_test_x")]).is_err(), "no webhook secret");
+    }
+
+    #[test]
+    fn email_sign_in_needs_a_sender_or_the_dev_flag() {
+        let site = ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app");
+        let mail = |extra: &[(&'static str, &'static str)]| {
+            let mut v = vec![("JEV_API_KEY", "k"), site];
+            v.extend_from_slice(extra);
+            cfg(&v).map(|c| c.cloud.unwrap().mail)
+        };
+        assert!(matches!(mail(&[]).unwrap(), MailConfig::Off));
+        assert!(matches!(mail(&[("RAMWARDEN_DEV_MAIL_LOG", "1")]).unwrap(), MailConfig::Log));
+        assert!(matches!(
+            mail(&[("RESEND_API_KEY", "re_x"), ("RAMWARDEN_MAIL_FROM", "RamWarden <a@b.c>")]).unwrap(),
+            MailConfig::Resend { .. }
+        ));
+        assert!(mail(&[("RESEND_API_KEY", "re_x")]).is_err());
     }
 
     #[test]

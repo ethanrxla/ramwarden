@@ -12,47 +12,36 @@
 //! is refused before any signature maths runs.
 
 use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey as EcdsaKey};
-use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Chain {
-    /// Any EVM chain: MetaMask, and Phantom's EVM accounts. One address works
-    /// on all of them.
-    Evm,
-    Solana,
+pub use ramwarden_cloud::model::Chain;
+
+/// The address in the one form it is stored and compared in, or why it is not
+/// an address. EVM addresses are case-insensitive hex (EIP-55 case is only a
+/// checksum), so they are lowercased or one wallet would become two accounts.
+/// Solana addresses are base58 of a 32-byte key and keep their case.
+pub fn normalise(chain: Chain, address: &str) -> Result<String, String> {
+    let a = address.trim();
+    match chain {
+        Chain::Evm => {
+            let hex = a.strip_prefix("0x").or_else(|| a.strip_prefix("0X")).unwrap_or("");
+            if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("not an Ethereum address".into());
+            }
+            Ok(format!("0x{}", hex.to_ascii_lowercase()))
+        }
+        Chain::Solana => match bs58::decode(a).into_vec() {
+            Ok(k) if k.len() == 32 => Ok(a.to_string()),
+            _ => Err("not a Solana address".into()),
+        },
+    }
 }
 
-impl Chain {
-    /// The address in the one form it is stored and compared in, or why it is
-    /// not an address. EVM addresses are case-insensitive hex (EIP-55 case is
-    /// only a checksum), so they are lowercased or one wallet would become two
-    /// accounts. Solana addresses are base58 of a 32-byte key and keep their
-    /// case.
-    pub fn normalise(self, address: &str) -> Result<String, String> {
-        let a = address.trim();
-        match self {
-            Chain::Evm => {
-                let hex = a.strip_prefix("0x").or_else(|| a.strip_prefix("0X")).unwrap_or("");
-                if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Err("not an Ethereum address".into());
-                }
-                Ok(format!("0x{}", hex.to_ascii_lowercase()))
-            }
-            Chain::Solana => match bs58::decode(a).into_vec() {
-                Ok(k) if k.len() == 32 => Ok(a.to_string()),
-                _ => Err("not a Solana address".into()),
-            },
-        }
-    }
-
-    /// The address as wallets display it: EIP-55 checksummed for EVM.
-    pub fn display(self, normalised: &str) -> String {
-        match self {
-            Chain::Evm => checksum(normalised),
-            Chain::Solana => normalised.to_string(),
-        }
+/// The address as wallets display it: EIP-55 checksummed for EVM.
+pub fn display(chain: Chain, normalised: &str) -> String {
+    match chain {
+        Chain::Evm => checksum(normalised),
+        Chain::Solana => normalised.to_string(),
     }
 }
 
@@ -105,7 +94,7 @@ pub fn message(chain: Chain, address: &str, p: &MessageParts) -> String {
         "{domain} wants you to sign in with your {who} account:\n{address}\n\n{STATEMENT}\n\n\
          URI: {uri}\nVersion: 1\n{chain_line}Nonce: {nonce}\nIssued At: {issued}\nExpiration Time: {expires}",
         domain = p.domain,
-        address = chain.display(address),
+        address = display(chain, address),
         uri = p.uri,
         nonce = p.nonce,
         issued = iso8601(p.issued_at),
@@ -153,7 +142,7 @@ fn verify_evm(address: &str, message: &str, signature: &str) -> Result<(), Strin
     }
     let hash = personal_hash(message);
     let key = EcdsaKey::recover_from_prehash(&hash, &s, rec).map_err(|_| "signature does not verify".to_string())?;
-    if evm_address(&key) == Chain::Evm.normalise(address)? {
+    if evm_address(&key) == normalise(Chain::Evm, address)? {
         Ok(())
     } else {
         Err("signature is from a different wallet".into())
@@ -279,18 +268,18 @@ mod tests {
     #[test]
     fn addresses_normalise_or_are_refused() {
         let w = EvmWallet::new(7);
-        assert_eq!(Chain::Evm.normalise(&w.address()).unwrap(), w.address().to_ascii_lowercase());
-        assert!(Chain::Evm.normalise("0x1234").is_err());
-        assert!(Chain::Evm.normalise("1234567890123456789012345678901234567890").is_err());
+        assert_eq!(normalise(Chain::Evm, &w.address()).unwrap(), w.address().to_ascii_lowercase());
+        assert!(normalise(Chain::Evm, "0x1234").is_err());
+        assert!(normalise(Chain::Evm, "1234567890123456789012345678901234567890").is_err());
         let s = SolWallet::new(7);
-        assert_eq!(Chain::Solana.normalise(&s.address()).unwrap(), s.address());
-        assert!(Chain::Solana.normalise("0OIl").is_err());
+        assert_eq!(normalise(Chain::Solana, &s.address()).unwrap(), s.address());
+        assert!(normalise(Chain::Solana, "0OIl").is_err());
     }
 
     #[test]
     fn the_siwe_message_has_the_eip4361_shape_and_the_device_resource() {
         let w = EvmWallet::new(1);
-        let addr = Chain::Evm.normalise(&w.address()).unwrap();
+        let addr = normalise(Chain::Evm, &w.address()).unwrap();
         let m = message(Chain::Evm, &addr, &parts(Some("ABCD-EFGH")));
         let lines: Vec<&str> = m.lines().collect();
         assert_eq!(lines[0], "ramwarden.app wants you to sign in with your Ethereum account:");

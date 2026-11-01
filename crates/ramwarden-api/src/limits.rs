@@ -62,12 +62,7 @@ impl Limits {
     /// Take one request slot for `token` at `now` (Unix seconds). On success,
     /// returns how many requests the token has left today.
     pub fn take(&self, token: &TokenHash, now: u64) -> Result<u32, Refusal> {
-        self.take_capped(token, now, self.per_day)
-    }
-
-    /// [`Limits::take`] with this token's own daily quota, e.g. the free
-    /// tier's, which is smaller than a pass holder's.
-    pub fn take_capped(&self, token: &TokenHash, now: u64, per_day: u32) -> Result<u32, Refusal> {
+        let per_day = self.per_day;
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         roll_day(&mut g, now);
         if g.input_tokens >= self.daily_input_tokens {
@@ -88,10 +83,6 @@ impl Limits {
         u.in_minute += 1;
         u.in_day += 1;
         Ok(per_day - u.in_day)
-    }
-
-    pub fn per_day(&self) -> u32 {
-        self.per_day
     }
 
     /// Count upstream input tokens against today's budget.

@@ -5216,8 +5216,10 @@ dependencies = [
  "bs58",
  "ed25519-dalek",
  "hex",
+ "hmac 0.12.1",
  "k256",
  "ramwarden-ai",
+ "ramwarden-cloud",
  "ramwarden-core",
  "ramwarden-daemon",
  "rand 0.9.5",
@@ -5240,6 +5242,7 @@ dependencies = [
 name = "ramwarden-cloud"
 version = "0.2.1"
 dependencies = [
+ "async-trait",
  "dotenvy",
  "futures",
  "mongodb",
@@ -5247,6 +5250,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 
-use crate::accounts::{self, Cloud, PRO_WARDEN};
+use crate::accounts::{self, Cloud};
 use crate::catalog::Catalog;
 use crate::config::{TokenHash, hash_token, token_label};
 use crate::limits::{Limits, Refusal};
@@ -44,8 +44,15 @@ pub fn router(state: Arc<AppState>) -> Router {
     let cors = state.cloud.as_ref().and_then(|c| c.site.origin.parse::<HeaderValue>().ok()).map(|origin| {
         tower_http::cors::CorsLayer::new()
             .allow_origin(origin)
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+            ])
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+            // The session is a cookie; the page sends `credentials: "include"`.
+            .allow_credentials(true)
             .max_age(std::time::Duration::from_secs(600))
     });
     let app = Router::new()
@@ -65,30 +72,38 @@ pub(crate) fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error": message}))).into_response()
 }
 
-/// Who is asking, and how much they may ask today.
+/// Who is asking.
 struct Caller {
     /// What quotas are counted against.
     key: TokenHash,
-    per_day: u32,
     /// Set for a signed-in device, so usage shows on the account page.
     account: Option<String>,
 }
 
-/// A phase 1 token, or a signed-in device's token. A device whose account
-/// holds a RAM warden pass gets the full daily quota; without one, the free
-/// tier's.
+/// The warden hosted decisions belong to. Both tiers include it.
+pub const HOSTED_WARDEN: &str = "ram";
+
+/// A phase 1 token, or the token of a device whose account's subscription is
+/// in good standing (trial, active, grace, or cancelled but paid up). There
+/// is no free tier (product spec 1.1): a lapsed account gets 402, and the
+/// daemon goes back to local mode as it does when Jev is off.
 async fn authorize(state: &AppState, headers: &HeaderMap) -> Result<Caller, Box<Response>> {
     let refuse = |why| Box::new(error(StatusCode::UNAUTHORIZED, why));
     let token = accounts::bearer(headers).ok_or_else(|| refuse("missing bearer token"))?;
     let key = hash_token(token);
     if state.tokens.contains(&key) {
-        return Ok(Caller { key, per_day: state.limits.per_day(), account: None });
+        return Ok(Caller { key, account: None });
     }
     let Some(c) = &state.cloud else { return Err(refuse("unknown token")) };
     let now = (state.now)();
     let (_, a) = accounts::device(c, headers, now).await.map_err(|_| refuse("unknown token"))?;
-    let per_day = if a.active(PRO_WARDEN, now) { state.limits.per_day() } else { c.free_per_day };
-    Ok(Caller { key, per_day, account: Some(a.id) })
+    if !a.active(HOSTED_WARDEN, now) {
+        return Err(Box::new(error(
+            StatusCode::PAYMENT_REQUIRED,
+            "subscription_inactive: hosted decisions need an active RamWarden subscription",
+        )));
+    }
+    Ok(Caller { key, account: Some(a.id) })
 }
 
 /// Doubles as the daemon's key check, exactly as on TypeSafe. Sends nothing
@@ -144,7 +159,7 @@ async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body:
     };
 
     let now = (state.now)();
-    let remaining = match state.limits.take_capped(&caller.key, now, caller.per_day) {
+    let remaining = match state.limits.take(&caller.key, now) {
         Ok(n) => n,
         Err(r) => {
             tracing::info!(token = %label, "limited: {r:?}");

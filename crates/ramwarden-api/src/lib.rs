@@ -26,15 +26,21 @@
 //! logs carry the token's fingerprint, the question names, sizes and timings.
 
 pub mod accounts;
+pub mod billing;
 pub mod catalog;
 pub mod checkout;
-pub mod entitlement;
 pub mod config;
+pub mod entitlement;
 pub mod limits;
+pub mod mail;
 pub mod routes;
-pub mod store;
+pub mod signin;
+pub mod stripe;
 pub mod upstream;
 pub mod wallet;
+
+#[cfg(test)]
+mod flows;
 
 pub use config::Config;
 pub use routes::{AppState, router};

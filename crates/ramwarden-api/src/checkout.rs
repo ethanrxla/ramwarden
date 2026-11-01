@@ -1,38 +1,37 @@
-//! Selling warden passes: the plan list, the Base transactions the website
-//! asks the wallet to send, and the watcher that credits a pass once the
-//! chain shows it paid.
+//! Selling subscriptions on Base: the plan list, the transactions the website
+//! asks the wallet to send, and the watcher that records what the contract
+//! did.
 //!
 //! # The server builds every transaction
 //!
-//! The page never composes calldata. `POST /v1/checkout/base` returns a USDC
-//! `approve` (skipped when the payer's allowance already covers the price)
-//! and `RamWardenCheckout.purchase(account, plan, maxPrice, ref)`, where
-//! `account` is keccak-256 of the account id, `maxPrice` is the price the user
-//! was shown, and `ref` is the payment id. The contract moves the USDC
-//! straight to the treasury (see `contracts/README.md`).
+//! `POST /v1/checkout/base` returns a USDC `approve` for one year of the plan
+//! (12 × the monthly price, or the annual price; spec 3.3, never unlimited),
+//! skipped when the allowance already covers it, then
+//! `RamWardenCheckout.startTrial(account, plan, maxPrice, ref)`. `account` is
+//! keccak-256 of the account id; `ref` is the payment id.
 //!
 //! # The chain is the source of truth
 //!
-//! The watcher reads `Purchased` and `Extended` logs from the contract a few
-//! blocks behind the head, and sets each warden's expiry to what `Extended`
-//! says. It does not add days itself, so a log seen twice, a restart that
-//! rescans, or a payment made straight to the contract without the website
-//! (a gift) all land on the same expiry the contract holds.
+//! The watcher reads `TrialStarted`, `Charged` and `Cancelled` from the
+//! contract a few blocks behind the head and turns each into a
+//! [`BillingUpdate`]: tier and interval from the plan, `paid_until` from the
+//! contract's own numbers. It never adds time itself, so a log seen twice, a
+//! rescan after a restart, or a subscription started straight on the contract
+//! (by an agent) all land on what the contract holds.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use ramwarden_cloud::model::{Billing, BillingMethod, BillingUpdate, Interval, Tier, chain_key};
+use ramwarden_cloud::store::Store;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::store::{Store, chain_key};
 use crate::wallet::keccak;
 
-/// `contracts/plans.json`: the one list of wardens and plans. The deploy
-/// script writes the same file on-chain, and a contract test checks every
-/// plan in it is valid for `setPlan`.
+/// `contracts/plans.json`: the one list of plans. The deploy script writes
+/// the same file on-chain, and a contract test checks it against the spec.
 pub const PLANS_JSON: &str = include_str!("../../../contracts/plans.json");
 
 #[derive(Clone, Debug, Deserialize)]
@@ -44,15 +43,37 @@ pub struct WardenDef {
 #[derive(Clone, Debug, Deserialize)]
 pub struct PlanDef {
     pub id: u32,
+    /// `ram` or `pro`.
+    pub tier: String,
     pub name: String,
     pub usd: u64,
+    /// `month` or `year`.
+    pub interval: String,
     pub days: u64,
     pub wardens: Vec<u8>,
 }
 
+impl PlanDef {
+    pub fn tier(&self) -> Tier {
+        if self.tier == "pro" { Tier::Pro } else { Tier::Ram }
+    }
+
+    pub fn interval(&self) -> Interval {
+        if self.interval == "year" { Interval::Year } else { Interval::Month }
+    }
+
+    /// What the wallet is asked to approve: one year of this plan.
+    pub fn approval_usd(&self) -> u64 {
+        match self.interval() {
+            Interval::Month => self.usd * 12,
+            Interval::Year => self.usd,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Plans {
-    pub wardens: BTreeMap<String, WardenDef>,
+    pub wardens: std::collections::BTreeMap<String, WardenDef>,
     pub plans: Vec<PlanDef>,
 }
 
@@ -64,6 +85,9 @@ impl Plans {
     pub fn from_json(text: &str) -> Result<Self, String> {
         let p: Plans = serde_json::from_str(text).map_err(|e| format!("plans.json: {e}"))?;
         for plan in &p.plans {
+            if !matches!(plan.tier.as_str(), "ram" | "pro") || !matches!(plan.interval.as_str(), "month" | "year") {
+                return Err(format!("plan {} has an unknown tier or interval", plan.id));
+            }
             for w in &plan.wardens {
                 if !p.wardens.contains_key(&w.to_string()) {
                     return Err(format!("plan {} names unknown warden {w}", plan.id));
@@ -77,7 +101,6 @@ impl Plans {
         self.plans.iter().find(|p| p.id == id)
     }
 
-    /// The slug of on-chain warden id `w`.
     pub fn slug(&self, w: u8) -> Option<&str> {
         self.wardens.get(&w.to_string()).map(|d| d.slug.as_str())
     }
@@ -87,23 +110,24 @@ impl Plans {
     }
 
     /// `GET /v1/checkout/config`.
-    pub fn config_json(&self, base: Option<&BaseConfig>) -> Value {
+    pub fn config_json(&self, base: Option<&BaseConfig>, card: Option<bool>) -> Value {
         let plans: Vec<Value> = self
             .plans
             .iter()
-            .map(|p| json!({"id": p.id, "name": p.name, "usd": p.usd, "days": p.days, "wardens": self.slugs(p)}))
+            .map(|p| {
+                json!({"id": p.id, "tier": p.tier, "name": p.name, "usd": p.usd, "interval": p.interval,
+                       "days": p.days, "trial_days": 14, "approval_usd": p.approval_usd(), "wardens": self.slugs(p)})
+            })
             .collect();
-        let wardens: Vec<Value> =
-            self.wardens.values().map(|w| json!({"slug": w.slug, "name": w.name})).collect();
+        let wardens: Vec<Value> = self.wardens.values().map(|w| json!({"slug": w.slug, "name": w.name})).collect();
         json!({
             "plans": plans,
             "wardens": wardens,
             "base": base.map(|b| json!({"chain_id": b.chain_id, "network": b.network(),
                                         "contract": b.checkout_hex(), "usdc": b.usdc_hex()})),
-            // Phantom pays on Base too, through its EVM account. Native Solana
-            // Pay and Stripe are listed once the server can verify them.
             "solana": Value::Null,
-            "stripe": false,
+            "stripe": card.is_some(),
+            "stripe_test": card.unwrap_or(false),
         })
     }
 }
@@ -164,22 +188,26 @@ impl BaseConfig {
         format!("0x{}", hex::encode(self.usdc))
     }
 
-    /// The transactions for one purchase, in the order to send them.
+    /// The transactions that start a subscription, in the order to send them.
     pub fn transactions(&self, account_id: &str, plan: &PlanDef, payment_ref: &[u8; 32], needs_approve: bool) -> Vec<Value> {
-        let price = usdc_minor(plan.usd);
         let mut txs = Vec::new();
         if needs_approve {
-            // Exactly the price, not unlimited: a wallet shows the amount, and
-            // a later bug in the contract could not pull more.
-            let data = abi_call("approve(address,uint256)", &[word_address(&self.checkout), word_uint(price)]);
+            let cap = usdc_minor(plan.approval_usd());
+            let data = abi_call("approve(address,uint256)", &[word_address(&self.checkout), word_uint(cap)]);
             txs.push(json!({"to": self.usdc_hex(), "data": data, "value": "0x0"}));
         }
         let data = abi_call(
-            "purchase(bytes32,uint32,uint256,bytes32)",
-            &[chain_key(account_id), word_uint(u128::from(plan.id)), word_uint(price), *payment_ref],
+            "startTrial(bytes32,uint32,uint256,bytes32)",
+            &[chain_key(account_id), word_uint(u128::from(plan.id)), word_uint(usdc_minor(plan.usd)), *payment_ref],
         );
         txs.push(json!({"to": self.checkout_hex(), "data": data, "value": "0x0"}));
         txs
+    }
+
+    /// `cancel(account)`, for the account page's cancel button. Only the
+    /// paying wallet can send it successfully.
+    pub fn cancel_transaction(&self, account_id: &str) -> Value {
+        json!({"to": self.checkout_hex(), "data": abi_call("cancel(bytes32)", &[chain_key(account_id)]), "value": "0x0"})
     }
 }
 
@@ -209,12 +237,16 @@ pub fn abi_call(signature: &str, words: &[[u8; 32]]) -> String {
     out
 }
 
-pub fn purchased_topic() -> [u8; 32] {
-    keccak(b"Purchased(bytes32,uint32,address,uint256,uint32,bytes32)")
+pub fn trial_started_topic() -> [u8; 32] {
+    keccak(b"TrialStarted(bytes32,uint32,address,uint64,bytes32)")
 }
 
-pub fn extended_topic() -> [u8; 32] {
-    keccak(b"Extended(bytes32,uint8,uint64)")
+pub fn charged_topic() -> [u8; 32] {
+    keccak(b"Charged(bytes32,uint32,address,uint256,uint64)")
+}
+
+pub fn cancelled_topic() -> [u8; 32] {
+    keccak(b"Cancelled(bytes32,uint64)")
 }
 
 fn hex32(v: &Value) -> Option<[u8; 32]> {
@@ -229,62 +261,107 @@ fn tail_u64(w: &[u8]) -> u64 {
     u64::from_be_bytes(w[w.len() - 8..].try_into().expect("8 bytes"))
 }
 
-/// One paid purchase, decoded from a transaction's logs.
+/// One thing the contract did to a subscription.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Paid {
-    pub account_key: [u8; 32],
-    pub plan: u32,
-    pub payment_ref: [u8; 32],
-    pub payer: String,
-    /// Warden slug → the expiry the contract now holds.
-    pub until: BTreeMap<String, u64>,
-    /// `<tx hash>:<log index>` of the `Purchased` log.
-    pub external_id: String,
+pub enum ChainEvent {
+    TrialStarted { account_key: [u8; 32], plan: u32, payer: String, trial_ends: u64, payment_ref: [u8; 32] },
+    Charged { account_key: [u8; 32], plan: u32, payer: String, paid_until: u64 },
+    Cancelled { account_key: [u8; 32] },
 }
 
-/// `Purchased` logs with their transaction's `Extended` logs for the same
-/// account. Logs from anything but the checkout contract are ignored even if
-/// the node returned them.
-pub fn decode_logs(logs: &[Value], checkout: &Address, plans: &Plans) -> Vec<Paid> {
-    let contract = format!("0x{}", hex::encode(checkout));
-    let (purchased, extended) = (purchased_topic(), extended_topic());
-    let ours = |l: &&Value| l["address"].as_str().is_some_and(|a| a.eq_ignore_ascii_case(&contract));
-    let mut out = Vec::new();
-    for l in logs.iter().filter(ours) {
-        let topics: Vec<[u8; 32]> =
-            l["topics"].as_array().map(|t| t.iter().filter_map(hex32).collect()).unwrap_or_default();
-        if topics.len() != 4 || topics[0] != purchased {
-            continue;
+impl ChainEvent {
+    pub fn account_key(&self) -> &[u8; 32] {
+        match self {
+            ChainEvent::TrialStarted { account_key, .. }
+            | ChainEvent::Charged { account_key, .. }
+            | ChainEvent::Cancelled { account_key } => account_key,
         }
-        let data = hex::decode(l["data"].as_str().unwrap_or("").trim_start_matches("0x")).unwrap_or_default();
-        if data.len() != 96 {
-            continue;
-        }
-        let (tx, account) = (l["transactionHash"].as_str().unwrap_or(""), topics[1]);
-        let mut until = BTreeMap::new();
-        for e in logs.iter().filter(ours).filter(|e| e["transactionHash"].as_str() == Some(tx)) {
-            let t: Vec<[u8; 32]> =
-                e["topics"].as_array().map(|t| t.iter().filter_map(hex32).collect()).unwrap_or_default();
-            let d = hex::decode(e["data"].as_str().unwrap_or("").trim_start_matches("0x")).unwrap_or_default();
-            if t.len() == 3
-                && t[0] == extended
-                && t[1] == account
-                && d.len() == 32
-                && let Some(slug) = plans.slug(t[2][31])
-            {
-                until.insert(slug.to_string(), tail_u64(&d));
+    }
+
+    /// What the event means for the account.
+    pub fn update(&self, plans: &Plans) -> BillingUpdate {
+        let plan_update = |plan: u32, payer: &str| {
+            let p = plans.plan(plan);
+            BillingUpdate {
+                tier: p.map(PlanDef::tier),
+                interval: p.map(PlanDef::interval),
+                billing: Some(Billing { method: BillingMethod::Base, reference: payer.to_string() }),
+                ..Default::default()
             }
+        };
+        match self {
+            ChainEvent::TrialStarted { plan, payer, trial_ends, .. } => BillingUpdate {
+                trial_ends_at: Some(*trial_ends),
+                paid_until: Some(*trial_ends),
+                cancelled: Some(false),
+                trial_used: Some(true),
+                ..plan_update(*plan, payer)
+            },
+            ChainEvent::Charged { plan, payer, paid_until, .. } => {
+                BillingUpdate { paid_until: Some(*paid_until), ..plan_update(*plan, payer) }
+            }
+            ChainEvent::Cancelled { .. } => BillingUpdate { cancelled: Some(true), ..Default::default() },
         }
-        out.push(Paid {
-            account_key: account,
-            plan: tail_u64(&topics[2]) as u32,
-            payment_ref: data[64..96].try_into().expect("32 bytes"),
-            payer: format!("0x{}", hex::encode(&topics[3][12..])),
-            until,
-            external_id: format!("{tx}:{}", hex_u64(&l["logIndex"]).unwrap_or(0)),
-        });
+    }
+}
+
+/// A decoded log and where it was seen (`<tx hash>:<log index>`).
+pub type Seen = (ChainEvent, String);
+
+/// The contract's subscription events, in log order. Logs from any other
+/// address are ignored even if the node returned them.
+pub fn decode_logs(logs: &[Value], checkout: &Address) -> Vec<Seen> {
+    let contract = format!("0x{}", hex::encode(checkout));
+    let (trial, charged, cancelled) = (trial_started_topic(), charged_topic(), cancelled_topic());
+    let mut out = Vec::new();
+    for l in logs {
+        if !l["address"].as_str().is_some_and(|a| a.eq_ignore_ascii_case(&contract)) {
+            continue;
+        }
+        let t: Vec<[u8; 32]> = l["topics"].as_array().map(|t| t.iter().filter_map(hex32).collect()).unwrap_or_default();
+        let d = hex::decode(l["data"].as_str().unwrap_or("").trim_start_matches("0x")).unwrap_or_default();
+        let at = format!("{}:{}", l["transactionHash"].as_str().unwrap_or(""), hex_u64(&l["logIndex"]).unwrap_or(0));
+        let payer = |w: &[u8; 32]| format!("0x{}", hex::encode(&w[12..]));
+        let e = match t.first() {
+            Some(s) if *s == trial && t.len() == 4 && d.len() == 64 => ChainEvent::TrialStarted {
+                account_key: t[1],
+                plan: tail_u64(&t[2]) as u32,
+                payer: payer(&t[3]),
+                trial_ends: tail_u64(&d[..32]),
+                payment_ref: d[32..64].try_into().expect("32 bytes"),
+            },
+            Some(s) if *s == charged && t.len() == 4 && d.len() == 64 => ChainEvent::Charged {
+                account_key: t[1],
+                plan: tail_u64(&t[2]) as u32,
+                payer: payer(&t[3]),
+                paid_until: tail_u64(&d[32..64]),
+            },
+            Some(s) if *s == cancelled && t.len() == 2 => ChainEvent::Cancelled { account_key: t[1] },
+            _ => continue,
+        };
+        out.push((e, at));
     }
     out
+}
+
+/// Applies one event to its account, and confirms the website's payment
+/// record when a trial start carries its ref. False for an account this
+/// server never issued.
+pub async fn record(store: &dyn Store, plans: &Plans, (event, at): &Seen) -> Result<bool, String> {
+    let Some(account) = store.account_by_chain_key(event.account_key()).await.map_err(|e| e.to_string())? else {
+        tracing::warn!(%at, "subscription event for an unknown account");
+        return Ok(false);
+    };
+    store.update_billing(&account.id, &event.update(plans)).await.map_err(|e| e.to_string())?;
+    if let ChainEvent::TrialStarted { payment_ref, .. } = event {
+        let id = hex::encode(payment_ref);
+        if let Some(p) = store.payment(&id).await.map_err(|e| e.to_string())?
+            && p.account_id == account.id
+        {
+            store.confirm_payment(&id, at).await.map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(true)
 }
 
 /// Talks JSON-RPC to a Base node.
@@ -323,20 +400,18 @@ impl BaseChain {
         Ok(r["result"].clone())
     }
 
-    /// Whether `payer` must approve before paying `price`. Any doubt (no RPC,
-    /// node down, bad address) answers yes: an extra approval costs a click, a
-    /// missing one fails the purchase.
-    pub async fn needs_approve(&self, payer: &str, price: u128) -> bool {
+    /// Whether `payer` must approve before subscribing at `cap`. Any doubt
+    /// answers yes: an extra approval costs a click, a missing one fails.
+    pub async fn needs_approve(&self, payer: &str, cap: u128) -> bool {
         let Ok(payer) = parse_address(payer) else { return true };
         let data = abi_call("allowance(address,address)", &[word_address(&payer), word_address(&self.cfg.checkout)]);
         match self.rpc("eth_call", json!([{"to": self.cfg.usdc_hex(), "data": data}, "latest"])).await {
-            Ok(v) => hex32(&v).map(|w| u128::from_be_bytes(w[16..].try_into().expect("16")) < price).unwrap_or(true),
+            Ok(v) => hex32(&v).map(|w| u128::from_be_bytes(w[16..].try_into().expect("16")) < cap).unwrap_or(true),
             Err(_) => true,
         }
     }
 
-    /// Scans the next range of settled blocks and credits what it finds.
-    /// Returns how many purchases were credited.
+    /// Scans the next range of settled blocks and records what it finds.
     pub async fn poll(&self, store: &dyn Store, plans: &Plans) -> Result<usize, String> {
         let head = hex_u64(&self.rpc("eth_blockNumber", json!([])).await?).ok_or("bad block number")?;
         let to = head.saturating_sub(self.cfg.confirmations);
@@ -348,55 +423,36 @@ impl BaseChain {
             return Ok(0);
         }
         let to = to.min(from + MAX_RANGE - 1);
+        let topics = [trial_started_topic(), charged_topic(), cancelled_topic()].map(|t| format!("0x{}", hex::encode(t)));
         let filter = json!([{
             "address": self.cfg.checkout_hex(),
             "fromBlock": format!("0x{from:x}"),
             "toBlock": format!("0x{to:x}"),
-            "topics": [[format!("0x{}", hex::encode(purchased_topic())), format!("0x{}", hex::encode(extended_topic()))]],
+            "topics": [topics],
         }]);
         let logs = self.rpc("eth_getLogs", filter).await?;
         let logs = logs.as_array().cloned().unwrap_or_default();
-        let mut credited = 0;
-        for paid in decode_logs(&logs, &self.cfg.checkout, plans) {
-            if credit(store, &paid).await? {
-                credited += 1;
+        let mut n = 0;
+        for seen in decode_logs(&logs, &self.cfg.checkout) {
+            if record(store, plans, &seen).await? {
+                n += 1;
             }
         }
         self.next_block.store(to + 1, Ordering::Relaxed);
-        Ok(credited)
+        Ok(n)
     }
 
-    /// Polls forever. Errors are logged and retried; the block cursor only
-    /// moves after a range is fully credited.
+    /// Polls forever. The block cursor moves only after a range is recorded.
     pub async fn run(self: Arc<Self>, store: Arc<dyn Store>, plans: Arc<Plans>, every: Duration) {
         loop {
             match self.poll(store.as_ref(), &plans).await {
                 Ok(0) => {}
-                Ok(n) => tracing::info!("credited {n} Base purchase(s)"),
+                Ok(n) => tracing::info!("recorded {n} subscription event(s) from Base"),
                 Err(e) => tracing::warn!("base watcher: {e}"),
             }
             tokio::time::sleep(every).await;
         }
     }
-}
-
-/// Applies one purchase: expiries from the chain onto the account, and the
-/// payment record (when the website made one) to confirmed.
-pub async fn credit(store: &dyn Store, paid: &Paid) -> Result<bool, String> {
-    let Some(account) = store.account_by_chain_key(&paid.account_key).await.map_err(|e| e.to_string())? else {
-        // Paid for an account this server never issued. The USDC is in the
-        // treasury; support can match it by the payer and the log.
-        tracing::warn!(external_id = %paid.external_id, payer = %paid.payer, "purchase for an unknown account");
-        return Ok(false);
-    };
-    store.extend_entitlements(&account.id, &paid.until).await.map_err(|e| e.to_string())?;
-    let id = hex::encode(paid.payment_ref);
-    if let Some(p) = store.payment(&id).await.map_err(|e| e.to_string())?
-        && p.account_id == account.id
-    {
-        store.confirm_payment(&id, &paid.external_id, &paid.until).await.map_err(|e| e.to_string())?;
-    }
-    Ok(true)
 }
 
 #[cfg(test)]
@@ -411,14 +467,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_built_in_plans_load_and_name_their_wardens() {
+    fn the_built_in_plans_are_the_approved_ones() {
         let p = Plans::built_in();
-        let bundle = p.plans.iter().find(|p| p.wardens.len() == 2).unwrap();
-        assert_eq!(p.slugs(bundle), vec!["ram", "threat"]);
-        assert!(Plans::from_json(r#"{"wardens":{},"plans":[{"id":1,"name":"x","usd":1,"days":1,"wardens":[3]}]}"#).is_err());
+        let pro = p.plan(2).unwrap();
+        assert_eq!((pro.tier(), pro.interval(), pro.usd, pro.approval_usd()), (Tier::Pro, Interval::Month, 5, 60));
+        assert_eq!(p.slugs(pro), vec!["ram", "threat"]);
+        assert_eq!(p.plan(3).unwrap().approval_usd(), 20, "annual approves one year, once");
+        assert!(Plans::from_json(r#"{"wardens":{},"plans":[{"id":1,"tier":"ram","name":"x","usd":1,"interval":"month","days":1,"wardens":[3]}]}"#).is_err());
     }
 
-    fn base() -> BaseConfig {
+    pub fn base() -> BaseConfig {
         BaseConfig {
             chain_id: BASE_SEPOLIA,
             checkout: [0xcc; 20],
@@ -430,23 +488,22 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn purchase_transactions_carry_the_account_key_price_and_ref() {
+    fn trial_transactions_approve_one_year_and_start_the_plan() {
         let plans = Plans::built_in();
         let plan = plans.plan(1).unwrap();
         let txs = base().transactions("acct1", plan, &[0xab; 32], true);
         assert_eq!(txs.len(), 2);
         let approve = txs[0]["data"].as_str().unwrap();
         assert!(approve.starts_with("0x095ea7b3"));
-        assert!(approve.ends_with(&format!("{:064x}", usdc_minor(plan.usd))), "approves exactly the price");
+        assert!(approve.ends_with(&format!("{:064x}", 48_000_000)), "12 x $4, never unlimited");
         assert_eq!(txs[0]["to"], base().usdc_hex());
 
-        let purchase = txs[1]["data"].as_str().unwrap();
-        assert_eq!(&purchase[2..10], hex::encode(selector("purchase(bytes32,uint32,uint256,bytes32)")));
-        let args = &purchase[10..];
-        assert_eq!(args.len(), 4 * 64);
+        let start = txs[1]["data"].as_str().unwrap();
+        assert_eq!(&start[2..10], hex::encode(selector("startTrial(bytes32,uint32,uint256,bytes32)")));
+        let args = &start[10..];
         assert_eq!(&args[..64], hex::encode(chain_key("acct1")));
         assert_eq!(&args[64..128], format!("{:064x}", 1));
-        assert_eq!(&args[128..192], format!("{:064x}", 4_000_000));
+        assert_eq!(&args[128..192], format!("{:064x}", 4_000_000), "maxPrice is one period");
         assert_eq!(&args[192..], hex::encode([0xab; 32]));
         assert_eq!(base().transactions("acct1", plan, &[0; 32], false).len(), 1, "no approve when allowed");
     }
@@ -461,36 +518,56 @@ pub(crate) mod tests {
         })
     }
 
-    pub fn purchase_logs(checkout: &Address, account: [u8; 32], plan: u32, payment_ref: [u8; 32], until: &[(u8, u64)], tx: &str) -> Vec<Value> {
-        let mut logs = Vec::new();
-        for (i, (w, t)) in until.iter().enumerate() {
-            let mut warden = [0u8; 32];
-            warden[31] = *w;
-            logs.push(log(checkout, &[extended_topic(), account, warden], &word_uint(u128::from(*t)), tx, i as u64));
-        }
-        let mut payer = [0u8; 32];
-        payer[12..].copy_from_slice(&[0x11; 20]);
-        let mut data = Vec::new();
-        data.extend_from_slice(&word_uint(4_000_000));
-        data.extend_from_slice(&word_uint(3));
+    fn payer_word() -> [u8; 32] {
+        let mut w = [0u8; 32];
+        w[12..].copy_from_slice(&[0x11; 20]);
+        w
+    }
+
+    pub fn trial_log(checkout: &Address, account: [u8; 32], plan: u32, trial_ends: u64, payment_ref: [u8; 32]) -> Value {
+        let mut data = word_uint(u128::from(trial_ends)).to_vec();
         data.extend_from_slice(&payment_ref);
-        logs.push(log(checkout, &[purchased_topic(), account, word_uint(u128::from(plan)), payer], &data, tx, until.len() as u64));
-        logs
+        log(checkout, &[trial_started_topic(), account, word_uint(u128::from(plan)), payer_word()], &data, "0xt1", 0)
+    }
+
+    pub fn charged_log(checkout: &Address, account: [u8; 32], plan: u32, paid_until: u64) -> Value {
+        let mut data = word_uint(4_000_000).to_vec();
+        data.extend_from_slice(&word_uint(u128::from(paid_until)));
+        log(checkout, &[charged_topic(), account, word_uint(u128::from(plan)), payer_word()], &data, "0xt2", 3)
+    }
+
+    pub fn cancelled_log(checkout: &Address, account: [u8; 32]) -> Value {
+        log(checkout, &[cancelled_topic(), account], &word_uint(1), "0xt3", 1)
     }
 
     #[test]
-    fn logs_decode_into_purchases_with_the_contracts_expiries() {
-        let plans = Plans::built_in();
+    fn logs_decode_into_subscription_events_and_ignore_other_contracts() {
         let c = [0xcc; 20];
-        let mut logs = purchase_logs(&c, chain_key("a"), 5, [7; 32], &[(0, 100), (1, 200)], "0xt1");
-        // A forged event from another contract in the same transaction.
-        logs.extend(purchase_logs(&[0xdd; 20], chain_key("a"), 5, [7; 32], &[(0, 999)], "0xt1"));
-        let paid = decode_logs(&logs, &c, &plans);
-        assert_eq!(paid.len(), 1);
-        let p = &paid[0];
-        assert_eq!((p.plan, p.payment_ref, p.account_key), (5, [7; 32], chain_key("a")));
-        assert_eq!(p.until, BTreeMap::from([("ram".into(), 100), ("threat".into(), 200)]));
-        assert_eq!(p.payer, format!("0x{}", "11".repeat(20)));
-        assert_eq!(p.external_id, "0xt1:2");
+        let logs = vec![
+            trial_log(&c, chain_key("a"), 2, 500, [7; 32]),
+            trial_log(&[0xdd; 20], chain_key("a"), 2, 9_999, [7; 32]),
+            charged_log(&c, chain_key("a"), 2, 600),
+            cancelled_log(&c, chain_key("a")),
+        ];
+        let seen = decode_logs(&logs, &c);
+        assert_eq!(seen.len(), 3);
+        assert_eq!(
+            seen[0],
+            (
+                ChainEvent::TrialStarted {
+                    account_key: chain_key("a"),
+                    plan: 2,
+                    payer: format!("0x{}", "11".repeat(20)),
+                    trial_ends: 500,
+                    payment_ref: [7; 32]
+                },
+                "0xt1:0".to_string()
+            )
+        );
+        let plans = Plans::built_in();
+        let u = seen[0].0.update(&plans);
+        assert_eq!((u.tier, u.paid_until, u.trial_ends_at, u.trial_used), (Some(Tier::Pro), Some(500), Some(500), Some(true)));
+        assert_eq!(seen[1].0.update(&plans).paid_until, Some(600));
+        assert_eq!(seen[2].0.update(&plans).cancelled, Some(true));
     }
 }

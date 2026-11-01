@@ -5,11 +5,16 @@
 use std::sync::Arc;
 
 use ramwarden_api::accounts::{Cloud, Site};
+use ramwarden_api::billing::Billing;
 use ramwarden_api::catalog::Catalog;
 use ramwarden_api::checkout::{BaseChain, Plans};
+use ramwarden_api::config::MailConfig;
 use ramwarden_api::entitlement::EntitlementSigner;
-use ramwarden_api::store::{MemoryStore, Store};
 use ramwarden_api::limits::Limits;
+use ramwarden_api::mail::{LogMailer, Mailer, ResendMailer};
+use ramwarden_api::stripe::Stripe;
+use ramwarden_cloud::config::ConfigError;
+use ramwarden_cloud::{MemoryStore, MongoStore, Store};
 use ramwarden_api::routes::unix_now;
 use ramwarden_api::upstream::Upstream;
 use ramwarden_api::{AppState, Config, router};
@@ -58,11 +63,7 @@ async fn run() -> Result<(), String> {
             None
         }
         Some(cc) => {
-            // Until the Atlas store is wired, accounts live in memory and a
-            // restart signs everyone out. Passes are safe: the watcher
-            // rescans from RAMWARDEN_BASE_FROM_BLOCK and the chain holds them.
-            let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
-            tracing::warn!("accounts are held in memory; a restart signs every device out");
+            let store = open_store().await?;
             let plans = Arc::new(Plans::built_in());
             let signer = match &cc.entitlement_key {
                 Some(k) => {
@@ -71,7 +72,7 @@ async fn run() -> Result<(), String> {
                     Some(s)
                 }
                 None => {
-                    tracing::warn!("RAMWARDEN_ENTITLEMENT_KEY not set: paid wardens cannot unlock on devices");
+                    tracing::warn!("RAMWARDEN_ENTITLEMENT_KEY not set: wardens cannot unlock on devices");
                     None
                 }
             };
@@ -81,18 +82,34 @@ async fn run() -> Result<(), String> {
                 if b.cfg.rpc_url.is_some() {
                     tokio::spawn(b.clone().run(store.clone(), plans.clone(), std::time::Duration::from_secs(4)));
                 } else {
-                    tracing::warn!("RAMWARDEN_BASE_RPC_URL not set: purchases will not be confirmed");
+                    tracing::warn!("RAMWARDEN_BASE_RPC_URL not set: subscriptions on Base will not be recorded");
                 }
             }
+            let stripe = cc.stripe.as_ref().map(|k| Stripe::new(k.secret_key.clone(), k.webhook_secret.clone()));
+            match &stripe {
+                Some(s) => tracing::info!("card checkout on ({} mode)", if s.test_mode() { "test" } else { "live" }),
+                None => tracing::info!("card checkout off (STRIPE_SECRET_KEY not set)"),
+            }
+            let mailer: Option<Arc<dyn Mailer>> = match &cc.mail {
+                MailConfig::Off => {
+                    tracing::info!("email sign-in off (RESEND_API_KEY not set)");
+                    None
+                }
+                MailConfig::Resend { key, from } => Some(Arc::new(ResendMailer::new(key.clone(), from.clone()))),
+                MailConfig::Log => {
+                    tracing::warn!("RAMWARDEN_DEV_MAIL_LOG=1: sign-in codes go to this log. Never in production.");
+                    Some(Arc::new(LogMailer))
+                }
+            };
             Some(Cloud {
                 store,
                 plans,
                 site: Site { domain: cc.site_domain.clone(), origin: cc.site_origin.clone() },
-                siwe_chain_id: base.as_ref().map_or(ramwarden_api::checkout::BASE_MAINNET, |b| b.cfg.chain_id),
-                base,
+                siwe_chain_id: base.as_ref().map_or(ramwarden_api::checkout::BASE_SEPOLIA, |b| b.cfg.chain_id),
+                billing: Billing { base, stripe },
                 signer,
+                mailer,
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),
-                free_per_day: cc.free_per_day,
             })
         }
     };
@@ -116,4 +133,21 @@ async fn run() -> Result<(), String> {
         })
         .await
         .map_err(|e| e.to_string())
+}
+
+/// MongoDB Atlas when a connection string is configured (`MONGODB_URI`,
+/// `.env` or `secrets.toml`); otherwise memory, for local development only.
+async fn open_store() -> Result<Arc<dyn Store>, String> {
+    match ramwarden_cloud::CloudConfig::load() {
+        Ok(cfg) => {
+            let m = MongoStore::connect(&cfg).await.map_err(|e| e.to_string())?;
+            m.ensure_indexes().await.map_err(|e| e.to_string())?;
+            Ok(Arc::new(m))
+        }
+        Err(ConfigError::Missing(_)) => {
+            tracing::warn!("no MONGODB_URI: accounts are held in memory and a restart signs everyone out");
+            Ok(Arc::new(MemoryStore::new()))
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
