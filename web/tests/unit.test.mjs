@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { Api, ApiError, normaliseUserCode } from "../assets/api.js";
 import { base58, utf8ToHex, walletErrorMessage } from "../assets/wallet.js";
-import { detectOs } from "../assets/install.js";
+import { detectOs } from "../assets/home.js";
 
 test("user codes are normalised to the server's alphabet", () => {
   assert.equal(normaliseUserCode("bcdf-ghjk"), "BCDF-GHJK");
@@ -45,6 +45,13 @@ test("the OS guess covers the three platforms", () => {
   assert.equal(detectOs({ platform: "" , userAgent: "" }), null);
 });
 
+class MemoryStorage {
+  constructor() { this.m = new Map(); }
+  getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
+  setItem(k, v) { this.m.set(k, String(v)); }
+  removeItem(k) { this.m.delete(k); }
+}
+
 function fakeFetch(routes) {
   const calls = [];
   const f = async (url, init) => {
@@ -57,39 +64,34 @@ function fakeFetch(routes) {
   return f;
 }
 
-test("every call sends the session cookie, never a bearer token", async () => {
+test("verify stores the session and later calls send it", async () => {
   const fetchImpl = fakeFetch({
-    "POST /v1/auth/verify": { body: { account: { id: "a" } } },
+    "POST /v1/auth/verify": { body: { session: "s1", account: { id: "a" } } },
     "GET /v1/account": { body: { id: "a" } },
   });
-  const api = new Api("https://api.example/", { fetchImpl });
+  const api = new Api("https://api.example/", { fetchImpl, storage: new MemoryStorage() });
   await api.verify({ chain: "evm", address: "0xabc", message: "m", signature: "0x1" });
   await api.account();
   const last = fetchImpl.calls.at(-1);
   assert.equal(last.url, "https://api.example/v1/account");
-  assert.equal(last.init.headers.Authorization, undefined);
-  assert.equal(last.init.credentials, "include");
+  assert.equal(last.init.headers.Authorization, "Bearer s1");
+  assert.equal(last.init.credentials, "omit");
 });
 
-test("a 401 is reported as such; an unreachable server is reported as offline", async () => {
-  const api = new Api("https://api.example", { fetchImpl: fakeFetch({ "GET /v1/account": { status: 401, body: { error: "expired" } } }) });
+test("a 401 clears the session; an unreachable server is reported as offline", async () => {
+  const storage = new MemoryStorage();
+  storage.setItem("rw.session", "old");
+  const api = new Api("https://api.example", { fetchImpl: fakeFetch({ "GET /v1/account": { status: 401, body: { error: "expired" } } }), storage });
   await assert.rejects(api.account(), (e) => e instanceof ApiError && e.status === 401 && e.message === "expired");
-  const down = new Api("https://api.example", { fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
-  await assert.rejects(down.checkoutConfig(), (e) => e.offline);
-});
+  assert.equal(api.session, null);
 
-test("prefs are replaced with PUT and email sign-in carries the device code", async () => {
-  const fetchImpl = fakeFetch({ "PUT /v1/account/prefs": { body: { prefs: {} } }, "POST /v1/auth/email/start": { body: { sent: true } } });
-  const api = new Api("https://api.example", { fetchImpl });
-  await api.savePrefs({ wardens: { ram: { color: 200 } } });
-  await api.emailStart({ email: "a@b.c", userCode: "BCDF-GHJK" });
-  assert.equal(fetchImpl.calls[0].init.method, "PUT");
-  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { email: "a@b.c", user_code: "BCDF-GHJK" });
+  const down = new Api("https://api.example", { fetchImpl: async () => { throw new TypeError("Failed to fetch"); }, storage });
+  await assert.rejects(down.checkoutConfig(), (e) => e.offline);
 });
 
 test("challenge sends a null user code for a plain web sign-in", async () => {
   const fetchImpl = fakeFetch({ "POST /v1/auth/challenge": { body: { message: "m" } } });
-  const api = new Api("https://api.example", { fetchImpl });
+  const api = new Api("https://api.example", { fetchImpl, storage: new MemoryStorage() });
   await api.challenge({ chain: "solana", address: "So1" });
   assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { chain: "solana", address: "So1", user_code: null });
 });

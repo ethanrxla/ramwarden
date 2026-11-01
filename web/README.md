@@ -9,8 +9,7 @@ are in [`docs/specs/website.md`](../docs/specs/website.md).
 cd web && python3 -m http.server 8000
 ```
 
-- <http://localhost:8000/> RamWarden tab, <http://localhost:8000/threat.html> ThreatWarden tab
-- <http://localhost:8000/?mock=1&as=trial> signed in on a trial (personal install line); `as=lapsed` shows Renew
+- <http://localhost:8000/> landing page
 - <http://localhost:8000/link.html?mock=1&code=BCDF-GHJK> device sign-in, against the mock server
 - <http://localhost:8000/account.html?mock=1> account and checkout, against the mock server
 
@@ -31,9 +30,8 @@ GitHub Pages). Before going live:
 
 1. Set `apiBase` in `assets/config.js`, and the same origin in each page's
    `connect-src`.
-2. Fill `chromeStore` in `assets/config.js` when the store listing goes up.
-   Until then the account page shows unpacked-install steps. Install lines
-   come from the API (`POST /v1/install/link`), so there is nothing to fill
-   per release.
+2. Fill `downloads` and `chromeStore` in `assets/config.js` as releases and
+   the store listing go up. Until then the buttons fall back to the releases
+   page and unpacked-install steps.
 3. The API must allow CORS from the site's origin for the routes in the spec.
 4. Finish `privacy.html` (it is marked draft) and add terms.

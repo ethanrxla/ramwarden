@@ -5,7 +5,7 @@
 // flow is tricking someone into approving a code that is not theirs.
 
 import { normaliseUserCode } from "./api.js";
-import { chooseSignIn, errorText, h, makeApi, mockBanner, notice, pageHref, show } from "./common.js";
+import { errorText, h, makeApi, mockBanner, notice, pageHref, pickWallet, shortAddress, show, signIn } from "./common.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
 
@@ -78,8 +78,17 @@ async function start(code) {
     walletArea,
   );
 
-  // A 409 (the account already has 5 devices) is shown in place.
-  await chooseSignIn(walletArea, api, { userCode: code, purpose: "Sign in with your wallet or your email. Signing costs nothing." });
+  const wallet = await pickWallet(walletArea, {
+    purpose: "Sign in with a wallet. You will sign a short message; it costs no gas and moves no funds.",
+  });
+
+  show(walletArea, notice("info", `Check ${wallet.name}: it shows the sign-in message for ${shortAddress(wallet.address)}.`));
+  try {
+    await signIn(api, wallet, code);
+  } catch (err) {
+    show(walletArea, notice("error", errorText(err)), h("button", { class: "button secondary", type: "button", onclick: () => start(code) }, "Try again"));
+    return;
+  }
 
   show(
     root,

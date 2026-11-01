@@ -9,7 +9,7 @@ import { Api } from "./api.js";
 import { config } from "./config.js";
 import { EvmWallet, PhantomWallet, discoverEvmWallets, phantomProvider, walletErrorMessage } from "./wallet.js";
 
-export const isMock = typeof location !== "undefined" && new URLSearchParams(location.search).get("mock") === "1";
+export const isMock = new URLSearchParams(location.search).get("mock") === "1";
 
 export async function makeApi() {
   if (isMock) {
@@ -19,7 +19,7 @@ export async function makeApi() {
   return new Api(config.apiBase);
 }
 
-// h("p", {class: "x"}, "text", child): a tiny element builder.
+// h("p", {class: "x"}, "text", child) — a tiny element builder.
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -132,87 +132,6 @@ export async function signIn(api, wallet, userCode) {
   const { message } = await api.challenge({ chain: wallet.chain, address: wallet.address, userCode });
   const signature = await wallet.sign(message);
   return api.verify({ chain: wallet.chain, address: wallet.address, message, signature });
-}
-
-// Wallet or email, one account either way (docs/product-spec.md 3.1).
-// Resolves with the server's `{account, linked_device}` once one of them
-// succeeds; a failure is shown in place and the visitor can try again.
-export function chooseSignIn(container, api, { userCode = null, purpose = "You sign a short message. It costs nothing." } = {}) {
-  return new Promise((resolve) => {
-    const problem = h("div");
-    const walletArea = h("div");
-    const emailArea = h("div");
-    show(container, problem, walletArea, h("p", { class: "or" }, "or"), emailArea);
-
-    const wallets = async () => {
-      const wallet = await pickWallet(walletArea, { purpose });
-      show(walletArea, notice("info", `Check ${wallet.name}: it shows the sign-in message for ${shortAddress(wallet.address)}.`));
-      try {
-        resolve(await signIn(api, wallet, userCode));
-      } catch (err) {
-        show(problem, notice("error", errorText(err)), h("button", { class: "button secondary small", type: "button", onclick: () => { show(problem); wallets(); } }, "Try again"));
-        show(walletArea);
-      }
-    };
-
-    const email = () => {
-      const input = h("input", { type: "email", name: "email", autocomplete: "email", placeholder: "you@example.com", "aria-label": "Email", required: true });
-      const status = h("div");
-      show(
-        emailArea,
-        h(
-          "form",
-          {
-            class: "email-form",
-            onsubmit: async (e) => {
-              e.preventDefault();
-              try {
-                show(status, notice("info", "Sending a code…"));
-                await api.emailStart({ email: input.value.trim(), userCode });
-                askCode(input.value.trim());
-              } catch (err) {
-                show(status, notice("error", errorText(err)));
-              }
-            },
-          },
-          input,
-          h("button", { class: "button secondary", type: "submit" }, "Email me a code"),
-        ),
-        status,
-      );
-    };
-
-    const askCode = (address) => {
-      const input = h("input", { name: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", placeholder: "123456", "aria-label": "Six-digit code" });
-      const status = h("div");
-      show(
-        emailArea,
-        h("p", {}, `We sent a six-digit code to ${address}.`),
-        h(
-          "form",
-          {
-            class: "email-form",
-            onsubmit: async (e) => {
-              e.preventDefault();
-              try {
-                resolve(await api.emailVerify({ email: address, code: input.value.trim() }));
-              } catch (err) {
-                show(status, notice("error", errorText(err)));
-              }
-            },
-          },
-          input,
-          h("button", { class: "button", type: "submit" }, "Sign in"),
-        ),
-        h("button", { class: "linkish", type: "button", onclick: email }, "Use a different email"),
-        status,
-      );
-      input.focus();
-    };
-
-    wallets();
-    email();
-  });
 }
 
 // One sentence for any failure, whether the server refused, could not be
