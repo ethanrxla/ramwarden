@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>ThreatWarden: four security engines, one warden that explains them</title>
+  <title>ThreatWarden: security findings, explained</title>
   <meta name="description" content="ThreatWarden is RamWarden's security warden: Wazuh, with ClamAV, Suricata and a lightweight network view planned in one place, explained in plain words. Hosted and plug-and-play, or self-hosted and open source.">
   <meta property="og:title" content="ThreatWarden by RamWarden">
   <meta property="og:description" content="See threats before they see you.">
@@ -33,12 +33,12 @@
   </header>
 
   <main>
-    <section class="threat-hero" data-pet-say="Beep. Scanning. You're safe with me.">
+    <section class="threat-hero" data-pet-say="Eyes open. Let's see what's reporting.">
       <div class="wrap hero-layout">
         <div>
           <span class="eyebrow">ThreatWarden · a RamWarden warden</span>
           <p class="catchline" data-rotate='["See threats before they see you.","For people who click every link.","If you&apos;re one of those people who download first and ask later…","Please stop running random installers.","For people with 100 tabs and zero idea what&apos;s on their network.","Know what&apos;s talking to your computer."]'><em>See threats before they see you.</em></p>
-          <h1>Four open-source security engines. One warden that explains them.</h1>
+          <h1>Security findings. One warden that explains them.</h1>
           <p class="lede">ThreatWarden starts with Wazuh and explains its findings in plain words. ClamAV scans, optional Suricata detection, and a lightweight network view are planned. It observes; it never switches anything off.</p>
           <div class="actions">
             <a class="button" href="#get">Get ThreatWarden</a>
@@ -52,7 +52,7 @@
       </div>
     </section>
 
-    <section class="block stack" id="stack" data-pet-say="Four engines, one report. I translate.">
+    <section class="block stack" id="stack" data-pet-say="Wazuh first. More eyes on the forest are planned.">
       <div class="wrap">
         <h2>What it watches</h2>
         <p class="sub">Each engine is the official, unmodified open-source project. ThreatWarden reads what they find and puts it in one place.</p>
@@ -108,7 +108,7 @@
             <span class="num">SELF-HOSTED · OPEN SOURCE</span>
             <h3>Your own server, your own setup.</h3>
             <p>Install the official Wazuh agent yourself, run your own Wazuh manager on an always-on Linux box, and point ThreatWarden at it with read-only accounts. Nothing reaches our servers.</p>
-            <a class="button secondary mt" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/wazuh-setup.md">Setup guide</a>
+            <a class="button secondary mt" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/threatwarden-self-hosting.md">Setup guide</a>
           </div>
         </div>
       </div>
@@ -117,17 +117,17 @@
     <section class="block" id="pricing" data-pet-say="Phantom, MetaMask or card. I'm not picky.">
       <div class="wrap">
         <h2>Pricing</h2>
-        <p class="sub">ThreatWarden is an add-on to RamWarden, which is free. <strong>Pay with crypto</strong> from Phantom or MetaMask (USDC on Base or Solana), or by card.</p>
+        <p class="sub">ThreatWarden is an add-on to RamWarden, which is free. <strong>Checkout methods will appear here when hosted enrollment launches.</strong></p>
         <div class="grid two">
           <div class="price card">
             <h3>Self-hosted</h3>
-            <div class="amount">$0</div>
+            <div class="amount">Your server</div>
             <ul>
               <li>Open source, MIT licensed</li>
-              <li>You run and configure the security servers</li>
+              <li>You run and configure the security servers; the current app still requires a ThreatWarden pass</li>
               <li>Nothing leaves your network</li>
             </ul>
-            <a class="button secondary" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/wazuh-setup.md">Setup guide</a>
+            <a class="button secondary" href="https://github.com/ethanrxla/ramwarden/blob/main/docs/threatwarden-self-hosting.md">Setup guide</a>
           </div>
           <div class="price card featured">
             <h3>ThreatWarden hosted</h3>
@@ -160,7 +160,7 @@
   </main>
 
   <aside class="pet" data-pet aria-live="polite">
-    <p class="pet-say" data-say>Beep. Scanning. You're safe with me.</p>
+    <p class="pet-say" data-say>Eyes open. Let's see what's reporting.</p>
     <img src="assets/pets/threat.svg" alt="ThreatWarden's pixel cyborg ram" width="72" height="72">
     <button type="button" class="pet-hide" data-hide aria-label="Hide the pet">×</button>
   </aside>
