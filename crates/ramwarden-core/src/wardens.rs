@@ -36,13 +36,23 @@ pub struct WardenInfo {
     /// One line on what it watches, for the UI's warden list.
     pub role: &'static str,
     pub access: Access,
+    /// What a pass costs, for the UI's "Get a pass" line. `None` when free.
+    pub price: Option<&'static str>,
+    /// Where "Get a pass" opens. `None` when free.
+    pub upgrade_url: Option<&'static str>,
 }
+
+/// The pricing page. Prices live on the site and in the checkout; the
+/// `price` strings here are display copies, kept in step with them.
+pub const PRICING_URL: &str = "https://ramwarden.app/#pricing";
 
 pub const RAM: WardenInfo = WardenInfo {
     id: "ram",
     name: "RAM Warden",
     role: "Watches memory pressure, tries reversible fixes first, and protects what you're using.",
     access: Access::Free,
+    price: None,
+    upgrade_url: None,
 };
 
 pub const THREAT: WardenInfo = WardenInfo {
@@ -50,6 +60,8 @@ pub const THREAT: WardenInfo = WardenInfo {
     name: "ThreatWarden",
     role: "Watches for attacks, malware and intrusions, explains what it finds, and asks before acting.",
     access: Access::Pro,
+    price: Some("$6 per 2 months"),
+    upgrade_url: Some(PRICING_URL),
 };
 
 /// Every warden, in the order the UI shows them. Adding a warden starts here.

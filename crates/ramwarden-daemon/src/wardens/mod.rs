@@ -113,6 +113,8 @@ impl Wardens {
             "name": w.name,
             "role": w.role,
             "access": w.access,
+            "price": w.price,
+            "upgrade_url": w.upgrade_url,
             "icon": icon(w.id).map(|_| format!("/wardens/{}/icon.svg", w.id)),
             "unlocked": self.unlocked(w),
             "enabled": self.enabled(w),

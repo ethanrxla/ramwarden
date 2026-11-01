@@ -13,7 +13,10 @@ built on open-source engines starting with [Wazuh](https://wazuh.com)
   `id`, `name`, `role`, `icon`, `access` (`free`, `pro`), `unlocked`,
   `enabled`, and `status`; plus `paid`, the ids of paid wardens whose pass
   is current. `icon` is a daemon URL for the warden's SVG, or `null` for the
-  RAM warden, which the clients already draw as the brand ram.
+  RAM warden, which the clients already draw as the brand ram. A paid
+  warden also carries `price` (a display string, e.g. `$6 per 2 months`) and
+  `upgrade_url` (where "Get a pass" opens); both are `null` for free wardens.
+  Clients fall back to their own defaults when either is missing.
 - `status` is `{level, headline, detail, checked_at}`. `level` is one of
   `clear`, `watch`, `alert`, `off`, `locked`, `setup`.
   - `clear`: nothing needs the user.
@@ -25,7 +28,11 @@ built on open-source engines starting with [Wazuh](https://wazuh.com)
   - `setup`: the warden is installing what it needs (the Wazuh agent).
 - `GET /wardens/{id}` returns the same entry plus a warden-specific `report`.
   For `threat` the report holds the local agent's state, the manager's view of
-  the agent, and up to 50 recent alerts at or above the configured level.
+  the agent, and up to 50 recent alerts at or above the configured level,
+  plus `engines`: one `{id, name, state, detail}` per ThreatWarden engine
+  (`wazuh`, `clamav`, `suricata`, `network`), where `state` is `on`, `off`,
+  `planned` or `error`. Engines not shipped yet are `planned`, so the pane
+  can show the roadmap without guessing.
   A locked warden's report is `null`: locked wardens do no work at all, so
   they never contact a manager or read the agent's files.
 - `GET /wardens/{id}/icon.svg` returns an add-on warden's icon

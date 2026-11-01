@@ -100,6 +100,9 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     assert_eq!(threat["unlocked"], false);
     assert_eq!(threat["status"]["level"], "locked");
     assert_eq!(threat["icon"], "/wardens/threat/icon.svg");
+    assert_eq!(threat["price"], "$6 per 2 months");
+    assert_eq!(threat["upgrade_url"], "https://ramwarden.app/#pricing");
+    assert!(ram["price"].is_null() && ram["upgrade_url"].is_null());
     assert!(json(&st, "/wardens/threat").await["report"].is_null());
 
     // A locked warden cannot be set up.
