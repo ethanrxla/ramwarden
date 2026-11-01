@@ -35,6 +35,7 @@ fn state(dir: &std::path::Path) -> AppState {
         )),
         started: std::time::Instant::now(),
         hold_until: Default::default(),
+        desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
     }
 }
 

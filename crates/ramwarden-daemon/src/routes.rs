@@ -1,14 +1,15 @@
 //! The HTTP surface, reproducing v1's `:7823` API.
 //!
 //! The browser extensions are shipped, installed, and out of reach, so
-//! `POST /api/tabs` and the `/ws` protocol are fixed contracts — they are
+//! `POST /api/tabs` and the `/ws` protocol are fixed contracts â€” they are
 //! reproduced exactly. The rest of v1's endpoints were consumed by `curl` and by
 //! the GTK window, so they keep their shapes but report PSS where v1 reported
 //! RSS, which is the whole point of the rewrite.
 //!
 //! New in v2: `/state` (what the window needs in one call, so the Python UI can
 //! run out of process), `/psi`, `/ladder/plan`, `/ladder/cancel-kill`, and
-//! `/actions`.
+//! `/actions`. `/desktop/*` (tiling window managers) lives in
+//! [`crate::desktop`].
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -29,10 +30,10 @@ use crate::tabs::{Tab, Transport};
 pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     let router = Router::new()
-        // ── Contracts the shipped extensions depend on ──────────────────────
+        // â”€â”€ Contracts the shipped extensions depend on â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))
-        // ── v1 endpoints ────────────────────────────────────────────────────
+        // â”€â”€ v1 endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         .route("/", get(index))
         .route("/health", get(health))
         .route("/stats", get(stats))
@@ -56,7 +57,7 @@ pub fn router(state: AppState) -> Router {
         .route("/browser/close", post(browser_close))
         .route("/history", get(history).delete(clear_history))
         .route("/debug/tabs", get(debug_tabs))
-        // ── v2 additions ────────────────────────────────────────────────────
+        // â”€â”€ v2 additions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         .route("/state", get(window_state))
         .route("/psi", get(pressure))
         .route("/ladder/plan", get(ladder_plan))
@@ -86,6 +87,7 @@ pub fn router(state: AppState) -> Router {
         .route("/wardens/{id}", get(crate::wardens::one))
         .route("/wardens/{id}/icon.svg", get(crate::wardens::icon_svg))
         .route("/wardens/{id}/setup", post(crate::wardens::setup))
+        .merge(crate::desktop::routes())
         ;
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {
@@ -105,7 +107,7 @@ pub(crate) fn mb(bytes: u64) -> f64 {
     (bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
 }
 
-// ── Extension contracts ─────────────────────────────────────────────────────
+// â”€â”€ Extension contracts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[derive(Deserialize)]
 struct TabPollBody {
@@ -183,7 +185,7 @@ async fn debug_tabs(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
-// ── Memory and activity ─────────────────────────────────────────────────────
+// â”€â”€ Memory and activity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async fn stats(State(st): State<AppState>) -> Json<Value> {
     let m = st.memory();
@@ -248,7 +250,7 @@ async fn ram_report(State(st): State<AppState>) -> Json<Value> {
                 (summed_rss as f64 / summed_pss as f64 * 100.0).round() / 100.0
             } else { 1.0 },
             // False means PSS could not be read and these figures ARE summed
-            // RSS — the overcount this rewrite exists to remove.
+            // RSS â€” the overcount this rewrite exists to remove.
             "pss_available": det.pss_available(),
         },
         "top": procs.iter().take(20).map(|s| json!({
@@ -312,7 +314,7 @@ async fn activity(State(st): State<AppState>) -> Json<Value> {
 /// One process's signals, in v1's `as_dict` shape.
 ///
 /// `rss_mb` carries PSS. The name is kept because the GTK window reads it, and
-/// renaming the field would be a change to `window.py` — but the number is now
+/// renaming the field would be a change to `window.py` â€” but the number is now
 /// the honest one.
 fn signal_json(s: &ramwarden_core::signals::Signals) -> Value {
     json!({
@@ -373,10 +375,10 @@ async fn pressure(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
-// ── Actions ─────────────────────────────────────────────────────────────────
+// â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// `force=true` skips the watchlist and in-use checks, for a user who clicked a
-/// specific row and meant it. It never skips structural protection — there is no
+/// specific row and meant it. It never skips structural protection â€” there is no
 /// gesture in any UI that should be able to freeze the compositor.
 #[derive(Deserialize, Default)]
 struct ForceQuery {
@@ -498,7 +500,7 @@ async fn get_workspaces(State(st): State<AppState>) -> Json<Value> {
         })),
         None => Json(json!({
             "available": false,
-            "why": "wmctrl is unavailable — COSMIC exposes no workspace API",
+            "why": "wmctrl is unavailable â€” COSMIC exposes no workspace API",
         })),
     }
 }
@@ -523,7 +525,7 @@ struct AnalyzeBody {
 /// Collect tabs and report what should be reclaimed.
 ///
 /// v1 called the Claude API here. v2 asks a local Nemotron, optionally escalates
-/// to NVIDIA NIM, and falls back to the heuristic — which is the floor, not a
+/// to NVIDIA NIM, and falls back to the heuristic â€” which is the floor, not a
 /// failure. The reply names the tier so the user can see which answered.
 async fn analyze(State(st): State<AppState>, Json(body): Json<AnalyzeBody>) -> Json<Value> {
     let tabs = st.request_all_tabs().await;
@@ -676,7 +678,7 @@ async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) ->
     )
 }
 
-// ── Ladder ──────────────────────────────────────────────────────────────────
+// â”€â”€ Ladder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// How the reuse predictor did on held-out data, against the LRU baseline,
 /// and whether it is allowed to influence anything.
@@ -832,7 +834,7 @@ async fn undo_last(State(st): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Applications from least to most recently used — the order the ladder
+/// Applications from least to most recently used â€” the order the ladder
 /// considers them in.
 async fn lru(State(st): State<AppState>) -> Json<Value> {
     let det = st.det.read().unwrap();
@@ -853,7 +855,7 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
     Json(json!({"cancelled": cancelled}))
 }
 
-// ── History ─────────────────────────────────────────────────────────────────
+// â”€â”€ History â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Pause freezing for `secs` seconds (max 600) and thaw what is frozen, so a
 /// window arranger can talk to every app. `DELETE /hold` ends it early.
@@ -982,7 +984,7 @@ async fn signals(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
-// ── The window's state, in one call ─────────────────────────────────────────
+// â”€â”€ The window's state, in one call â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Everything v1's `_window_state()` returned, so the GTK window can run out of
 /// process against this daemon without being modified.

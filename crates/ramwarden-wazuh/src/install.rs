@@ -200,7 +200,7 @@ pub fn command(os: &str, e: &Enrollment, pkg: &Path) -> Result<(String, Vec<Stri
             // Runs elevated. -EncodedCommand carries it without any quoting
             // surviving two command lines.
             let inner = format!(
-                "$p = Start-Process -FilePath msiexec.exe -ArgumentList {} -Wait -PassThru; \
+                "$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath msiexec.exe -ArgumentList {} -Wait -PassThru; \
                  if ($p.ExitCode -ne 0) {{ exit $p.ExitCode }}; \
                  $dir = Join-Path ${{env:ProgramFiles(x86)}} 'ossec-agent'; \
                  Set-Content -Path (Join-Path $dir 'client.keys') -Value {} -Encoding ascii; \
@@ -210,7 +210,7 @@ pub fn command(os: &str, e: &Enrollment, pkg: &Path) -> Result<(String, Vec<Stri
             );
             let encoded = utf16le_base64(&inner);
             let outer = format!(
-                "$p = Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru \
+                "$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru \
                  -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'; exit $p.ExitCode"
             );
             Ok((
@@ -260,7 +260,7 @@ pub fn command(os: &str, e: &Enrollment, pkg: &Path) -> Result<(String, Vec<Stri
             };
             let script = format!(
                 "{} {install} && printf '%s\\n' '{line}' > /var/ossec/etc/client.keys && \
-                 systemctl daemon-reload && systemctl enable wazuh-agent && systemctl restart wazuh-agent",
+                 chmod 600 /var/ossec/etc/client.keys && systemctl daemon-reload && systemctl enable wazuh-agent && systemctl restart wazuh-agent",
                 envs.join(" ")
             );
             Ok((
@@ -304,17 +304,31 @@ pub async fn install(e: &Enrollment) -> Result<()> {
     let dir = tempfile::tempdir().map_err(|err| Error::Install(err.to_string()))?;
     let pkg = download(e, dir.path()).await?;
     let (program, args) = command(std::env::consts::OS, e, &pkg)?;
-    let status = tokio::process::Command::new(&program)
-        .args(&args)
-        .status()
-        .await
-        .map_err(|err| Error::Install(format!("{program}: {err}")));
+    let status = wait_for_installer(
+        tokio::process::Command::new(&program).args(&args),
+        std::time::Duration::from_secs(600),
+    ).await;
     let _ = std::fs::remove_file(&pkg);
     match status? {
         s if s.success() => Ok(()),
         s => Err(Error::Install(format!(
             "the agent was not installed (the admin prompt was declined or the installer failed: {s})"
         ))),
+    }
+}
+
+async fn wait_for_installer(
+    command: &mut tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::ExitStatus> {
+    let mut child = command.kill_on_drop(true).spawn()
+        .map_err(|err| Error::Install(format!("could not start installer: {err}")))?;
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => result.map_err(|err| Error::Install(format!("installer: {err}"))),
+        Err(_) => {
+            let _ = child.start_kill();
+            Err(Error::Install("Installer timed out. An elevated installer may still be running; check the OS installer before trying again.".into()))
+        }
     }
 }
 
@@ -326,6 +340,20 @@ mod tests {
 
     /// base64 of "042 acct1a2b-desk any " + 64 hex.
     const KEY: &str = "MDQyIGFjY3QxYTJiLWRlc2sgYW55IDAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+
+    #[tokio::test]
+    async fn installer_wait_is_bounded() {
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", "install::tests::sleeping_installer_child", "--ignored"]);
+        let result = wait_for_installer(&mut command, std::time::Duration::from_millis(100)).await;
+        assert!(result.unwrap_err().to_string().contains("Installer timed out"));
+    }
+
+    #[test]
+    #[ignore = "child process for timeout regression test"]
+    fn sleeping_installer_child() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
 
     fn enrollment() -> Enrollment {
         Enrollment {
@@ -411,6 +439,7 @@ mod tests {
         .unwrap();
         assert_eq!(prog, "powershell.exe");
         let outer = args.last().unwrap();
+        assert!(outer.starts_with("$ErrorActionPreference = 'Stop';"));
         assert!(outer.contains("-Verb RunAs"), "{outer}");
         let encoded = outer
             .split("'-EncodedCommand','")
@@ -421,6 +450,7 @@ mod tests {
             .unwrap();
         // Decode to check the inner script.
         let inner = decode_utf16le_base64(encoded);
+        assert!(inner.starts_with("$ErrorActionPreference = 'Stop';"));
         assert!(
             inner.contains("'WAZUH_MANAGER=agents.ramwarden.app'"),
             "{inner}"

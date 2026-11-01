@@ -144,7 +144,7 @@ impl ThreatWarden {
                 "Installing the security agent. Approve the permission prompt if your computer shows one.",
                 wardens::now(),
             ),
-            Setup::Failed(why) => Status::off("Setup didn't finish", format!("{why} Click Turn on to try again."), wardens::now()),
+            Setup::Failed(why) => Status::off("Setup didn't finish", format!("{why} Check the installer's result before trying again."), wardens::now()),
             Setup::Idle => self.view.read().unwrap().0.clone(),
         }
     }
@@ -329,7 +329,8 @@ impl ThreatWarden {
             let outcome = async {
                 let e = cloud.enroll(&EnrollRequest::here()).await?;
                 ramwarden_wazuh::install::install(&e).await?;
-                let _ = std::fs::write(&me.name_file, &e.agent_name);
+                std::fs::write(&me.name_file, &e.agent_name)
+                    .map_err(|err| Error::Install(format!("Agent installed, but saving its enrollment failed: {err}")))?;
                 Ok::<_, Error>(e.agent_name)
             }
             .await;

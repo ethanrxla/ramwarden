@@ -259,6 +259,39 @@ impl Default for Tidy {
     }
 }
 
+/// Rearranging windows through a tiling window manager. See
+/// `docs/specs/desktop-arrange.md` and [`crate::arrange`].
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Desktop {
+    /// Off means every `/desktop` route answers "disabled" and nothing is
+    /// detected. On does nothing for someone without a tiling window manager.
+    pub enabled: bool,
+    /// `auto`, or one of `aerospace`, `sway`, `i3`, `komorebi`.
+    pub backend: String,
+}
+
+impl Default for Desktop {
+    fn default() -> Self {
+        Desktop { enabled: true, backend: "auto".into() }
+    }
+}
+
+impl Desktop {
+    /// The pinned backend, or `None` for auto-detection. An unknown name is
+    /// auto rather than an error: a typo should not turn the feature off.
+    pub fn pinned(&self) -> Option<ramwarden_platform::WmKind> {
+        use ramwarden_platform::WmKind;
+        match self.backend.trim().to_ascii_lowercase().as_str() {
+            "aerospace" => Some(WmKind::AeroSpace),
+            "sway" => Some(WmKind::Sway),
+            "i3" => Some(WmKind::I3),
+            "komorebi" => Some(WmKind::Komorebi),
+            _ => None,
+        }
+    }
+}
+
 /// Tab housekeeping that runs at any pressure, not only on the ladder's tab rung.
 ///
 /// The ladder unloads tabs only once memory is short, and a laptop with spare RAM
@@ -568,6 +601,7 @@ pub struct Config {
     pub quit: Quit,
     pub logging: Logging,
     pub tidy: Tidy,
+    pub desktop: Desktop,
     pub gpu: Gpu,
     pub wardens: Wardens,
     pub tabs: Tabs,
@@ -595,6 +629,7 @@ struct Raw {
     quit: Quit,
     logging: Logging,
     tidy: Tidy,
+    desktop: Desktop,
     gpu: Gpu,
     wardens: Wardens,
     tabs: Tabs,
@@ -673,6 +708,7 @@ impl Default for Config {
             quit: Quit::default(),
             logging: Logging::default(),
             tidy: Tidy::default(),
+            desktop: Desktop::default(),
             gpu: Gpu::default(),
             wardens: Wardens::default(),
             tabs: Tabs::default(),
@@ -885,6 +921,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         quit: raw.quit,
         logging: raw.logging,
         tidy: raw.tidy,
+        desktop: raw.desktop,
         gpu: raw.gpu,
         wardens: raw.wardens,
         tabs: raw.tabs,

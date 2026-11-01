@@ -8,6 +8,7 @@ description = "RamWarden policy: activity detection, the reclaim gate, and the r
 
 [dependencies]
 ramwarden-platform = { path = "../ramwarden-platform" }
+ramwarden-wm       = { path = "../ramwarden-wm" }
 thiserror = { workspace = true }
 tracing   = { workspace = true }
 serde     = { workspace = true }

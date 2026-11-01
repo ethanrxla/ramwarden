@@ -80,6 +80,10 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   pattern (hostname, `[A-Za-z0-9._-]` names, a key that decodes to
   `<digits> <this agent's name> <any|ip> <64 hex>`, a package only from
   `https://packages.wazuh.com`) before it reaches an elevated command line.
+  The installer wait is capped at ten minutes. On timeout, setup reports an
+  error and warns that an elevated installer may still be running; the user
+  should check its result before retrying. Windows elevation, key-write and
+  service errors must fail setup rather than reporting success.
 - Status comes from `GET /v1/wardens/threat/status` with the same token:
 
   ```json

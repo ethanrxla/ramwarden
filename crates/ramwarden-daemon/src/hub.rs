@@ -144,6 +144,8 @@ pub struct AppState {
     /// While set and in the future, RamWarden freezes nothing and has thawed what
     /// it froze: for window arrangers and scripts, which cannot talk to a frozen app.
     pub hold_until: Arc<Mutex<Option<Instant>>>,
+    /// Tiling window manager control (`/desktop`); off or undetected is normal.
+    pub desktop: Arc<crate::desktop::DesktopCtl>,
 }
 
 impl AppState {

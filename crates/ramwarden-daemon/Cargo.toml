@@ -21,6 +21,7 @@ ramwarden-ai     = { path = "../ramwarden-ai" }
 ramwarden-ml     = { path = "../ramwarden-ml" }
 # The Wazuh warden: talks to Wazuh over its files and REST APIs only.
 ramwarden-wazuh  = { path = "../ramwarden-wazuh" }
+ramwarden-wm     = { path = "../ramwarden-wm" }
 # CPU only: the daemon never loads CUDA (see src/worker.rs).
 candle-core      = "0.11"
 axum       = { workspace = true }

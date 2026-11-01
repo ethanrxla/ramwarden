@@ -1,0 +1,19 @@
+[package]
+name    = "ramwarden-wm"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Tiling window manager backends for RamWarden: AeroSpace (macOS), sway and i3 (Linux), komorebi (Windows)."
+
+# Every backend is a CLI, so the crate builds and its parsers are tested on all
+# three operating systems. Which backend is tried first depends on the OS.
+[dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+toml       = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

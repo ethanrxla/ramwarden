@@ -121,7 +121,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider = ai::provider(&cfg);
     ramwarden_daemon::embedder::attach(&provider);
+    let desktop = Arc::new(ramwarden_daemon::desktop::DesktopCtl::from_config(&cfg));
     let state = AppState {
+        desktop,
         cfg: Arc::new(cfg),
         platform,
         det: Arc::new(RwLock::new(detector)),
