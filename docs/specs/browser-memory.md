@@ -24,6 +24,29 @@ explicit; Unload selected keeps tabs open and reloadable.
 - The automatic pressure ladder uses bounded discard in its existing tab rung,
   after cgroup reclaim and cold-page paging. Preserve pressure hysteresis and
   add a 30-second browser-batch cooldown. No model is required to save memory.
+- A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
+  pressure, so a machine with spare RAM still releases idle tabs. It may also
+  close tabs, the one exception to "keep tabs open": only rows that passed every
+  unload guard or were already unloaded, idle at least `close_after_hours`, with
+  a Jev-adjusted return chance below `close_below_return`, at most
+  `max_close_per_sweep` per sweep. `close` is `off`, `dry-run` (default: log
+  only) or `live`. The extension rechecks each tab live before closing, answers
+  every close command, and saves closed URLs to a reopen list in the popup.
+  An older tab on the same site (host, plus a `/u/N` account slot) as a more
+  recently used one is also closed after `close_duplicates_after_hours` idle,
+  under the same guards. A tab budget (`keep_tabs`, default 6) keeps the most
+  recently used tabs per browser and closes any other tab untouched for
+  `budget_idle_minutes` (60), including tabs only "recent" by the inactivity
+  threshold.
+- Protections other than the hard ones (non-web pages, private hosts, editors
+  whose state lives in the tab) lift once a tab has been idle 4 hours
+  (`tabpolicy::PROTECTION_RELEASE_MINUTES`): consoles, dashboards, login pages,
+  school sites, open PRs and autosaving documents. The extension applies the
+  same rule before it closes or unloads anything.
+  The badge counts unloaded tabs, since the browser draws them unchanged, and
+  the extension gathers unloaded tabs into one collapsed "Idle · N" group per
+  window (never the user's own groups or pinned tabs); a tab opened from it
+  leaves the group.
 - Confirm only successful browser API results. Poll delivery remains explicitly
   queued, never labelled reclaimed. No per-tab bytes are estimated from RSS.
 

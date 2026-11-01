@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "RamWarden",
-  "version": "0.2.1",
+  "version": "0.2.5",
   "description": "Tracks tab activity and connects to the local RamWarden daemon to save RAM.",
   "permissions": [
     "tabs",
     "storage",
     "notifications",
-    "alarms"
+    "alarms",
+    "tabGroups"
   ],
   "host_permissions": [
     "http://localhost:7823/*",
@@ -18,7 +19,9 @@
   ],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
   "action": {
     "default_popup": "popup.html",
@@ -34,5 +37,10 @@
       "id": "ramwarden@local",
       "strict_min_version": "109.0"
     }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   }
 }

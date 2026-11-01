@@ -9,3 +9,6 @@ description = "The seam between RamWarden's policy and each operating system's m
 [dependencies]
 thiserror = { workspace = true }
 serde     = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

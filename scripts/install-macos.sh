@@ -20,7 +20,9 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/bin"
 install -m 0755 "$ROOT/target/release/ramwarden-daemon"   "$STAGE/bin/"
 install -m 0755 "$ROOT/target/release/ramwarden-launcher" "$STAGE/bin/"
-cp "$ROOT/packaging/macos/"{install.sh,config.toml,com.ramwarden.daemon.plist,com.ramwarden.updater.plist} "$STAGE/"
+cp "$ROOT/packaging/macos/"{install.sh,config.toml,com.ramwarden.daemon.plist,com.ramwarden.updater.plist,com.ramwarden.menubar.plist} "$STAGE/"
+# The menu-bar app; install.sh puts it in ~/Applications and starts its agent.
+RAMWARDEN_APP_DEST="$STAGE/RamWarden.app" bash "$ROOT/macos/menubar/build.sh"
 
 # Provider keys live in the repo-local, git-ignored .env; the launchd daemon
 # reads the per-user copy (mode 600), since it never sources a shell env.

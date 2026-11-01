@@ -115,6 +115,24 @@ struct OllamaTag {
 }
 
 impl Ollama {
+
+    /// Read-only conversational explanation. No tools or action execution.
+    pub async fn explain(&self, messages: &[serde_json::Value]) -> Result<String> {
+        let r = self.http.post(format!("{}/api/chat", self.host))
+            .json(&serde_json::json!({"model":self.model,"stream":false,"format":"json","messages":messages,"options":{"temperature":0.3,"num_predict":700}})).send().await.map_err(transport)?;
+        let status = r.status();
+        let text = r.text().await.map_err(transport)?;
+        if !status.is_success() {
+            // Do not return upstream bodies: these may echo user context or keys.
+            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+        }
+        let parsed: OllamaChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let content = parsed.message.content;
+        let answer = prompt::strip_thinking(&content).trim();
+        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        Ok(answer.chars().take(6000).collect())
+    }
+
     pub fn new(host: &str, model: &str, embed_model: &str, timeout: Duration) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -212,10 +230,26 @@ impl Ollama {
     }
 
     pub async fn recommend(&self, system: &str, user: &str) -> Result<Recommendation> {
+        let content = self.chat_text(system, user, prompt::reply_schema()).await?;
+        let mut rec = prompt::extract_json(&content).map_err(Error::Reply)?;
+        rec.tier = "local".into();
+        Ok(rec)
+    }
+
+    /// A JSON object constrained to `schema`, for callers with their own
+    /// reply shape (desktop arrangement).
+    pub async fn complete_json(&self, system: &str, user: &str, schema: serde_json::Value) -> Result<serde_json::Value> {
+        let content = self.chat_text(system, user, schema).await?;
+        prompt::extract_object(&content).map_err(Error::Reply)
+    }
+
+    /// One schema-constrained chat turn; the reply text with any reasoning
+    /// preamble removed.
+    async fn chat_text(&self, system: &str, user: &str, format: serde_json::Value) -> Result<String> {
         let body = serde_json::json!({
             "model": self.model,
             "stream": false,
-            "format": prompt::reply_schema(),
+            "format": format,
             // `think: false` is deliberately NOT sent. Measured on Ollama
             // 0.20.2: passing it alongside `format` silently disables schema
             // enforcement, and nemotron-3-nano:4b then answers in prose. With it
@@ -247,10 +281,7 @@ impl Ollama {
 
         let parsed: OllamaChat =
             serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
-        let mut rec = prompt::extract_json(prompt::strip_thinking(&parsed.message.content))
-            .map_err(Error::Reply)?;
-        rec.tier = "local".into();
-        Ok(rec)
+        Ok(prompt::strip_thinking(&parsed.message.content).to_string())
     }
 
     /// Embed documents (tab descriptions).
@@ -339,6 +370,24 @@ struct OpenAiEmbedding {
 }
 
 impl Nim {
+
+    /// Read-only conversational explanation. No tools or action execution.
+    pub async fn explain(&self, messages: &[serde_json::Value], model: Option<&str>) -> Result<String> {
+        let r = self.http.post(format!("{}/v1/chat/completions", self.base)).bearer_auth(self.key.expose())
+            .json(&serde_json::json!({"model":model.filter(|s| !s.trim().is_empty()).unwrap_or(&self.model),"messages":messages,"response_format":{"type":"json_object"},"temperature":0.3,"max_tokens":900,"chat_template_kwargs":{"thinking":false}})).send().await.map_err(transport)?;
+        let status = r.status();
+        let text = r.text().await.map_err(transport)?;
+        if !status.is_success() {
+            // Do not return upstream bodies: these may echo user context or keys.
+            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+        }
+        let parsed: OpenAiChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let content = parsed.choices.first().map(|c|c.message.content.clone()).unwrap_or_default();
+        let answer = prompt::strip_thinking(&content).trim();
+        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        Ok(answer.chars().take(6000).collect())
+    }
+
     pub fn new(
         base: &str,
         key: Secret,
@@ -400,6 +449,21 @@ impl Nim {
     }
 
     pub async fn recommend(&self, system: &str, user: &str) -> Result<Recommendation> {
+        let content = self.chat_text(system, user).await?;
+        let mut rec = prompt::extract_json(&content).map_err(Error::Reply)?;
+        rec.tier = "cloud".into();
+        Ok(rec)
+    }
+
+    /// A JSON object, for callers with their own reply shape. The schema is
+    /// described in the prompt: this endpoint is in `json_object` mode.
+    pub async fn complete_json(&self, system: &str, user: &str) -> Result<serde_json::Value> {
+        let content = self.chat_text(system, user).await?;
+        prompt::extract_object(&content).map_err(Error::Reply)
+    }
+
+    /// One JSON-mode chat turn; the reply text with any reasoning removed.
+    async fn chat_text(&self, system: &str, user: &str) -> Result<String> {
         let body = serde_json::json!({
             "model": self.model,
             "temperature": 0,
@@ -440,10 +504,7 @@ impl Nim {
             .first()
             .map(|c| c.message.content.as_str())
             .unwrap_or("");
-        let mut rec =
-            prompt::extract_json(prompt::strip_thinking(content)).map_err(Error::Reply)?;
-        rec.tier = "cloud".into();
-        Ok(rec)
+        Ok(prompt::strip_thinking(content).to_string())
     }
 
     /// Embed with NVIDIA's retrieval models.

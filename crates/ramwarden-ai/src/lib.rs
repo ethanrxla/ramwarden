@@ -16,6 +16,7 @@
 //! Every tier degrades: no cloud key falls back to the local model, no local
 //! model falls back to the heuristic, and the heuristic always works.
 
+pub mod arrange;
 pub mod client;
 pub mod embedder;
 pub mod jev;

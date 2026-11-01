@@ -61,21 +61,26 @@ const EDITOR_HOSTS: &[&str] = &[
     "canvas.instructure.com",
 ];
 
-/// Editors that autosave to the cloud. Idle here is not a sign of unsaved work,
-/// so these may unload once they have been untouched for [`CLOUD_DOC_IDLE_MINUTES`].
-/// Local-state editors (vscode.dev, replit, colab, ...) are deliberately absent.
-const CLOUD_DOC_HOSTS: &[&str] = &[
-    "docs.google.com",
-    "sheets.google.com",
-    "slides.google.com",
-    "sharepoint.com",
-    "office.com",
-    "office365.com",
-    "onedrive.live.com",
+/// Editors whose state lives in the tab itself. Nothing autosaves them anywhere
+/// RamWarden can see, so no amount of idle releases them.
+const LOCAL_STATE_EDITORS: &[&str] = &[
+    "vscode.dev",
+    "github.dev",
+    "codesandbox.io",
+    "stackblitz.com",
+    "replit.com",
+    "colab.research.google.com",
+    "jupyter",
 ];
 
-/// A cloud document untouched this long (24 h) is safe to unload.
-pub const CLOUD_DOC_IDLE_MINUTES: i64 = 1_440;
+/// How long every other protection lasts once a tab is left alone (4 h).
+///
+/// A console, a dashboard, a school page or a login page protects what the user
+/// is in the middle of. Untouched for hours, it no longer is: on the MacBook a
+/// Tailscale console idle six hours, a Microsoft login page idle three days and
+/// five SharePoint tabs idle a day and a half all sat in the strip, protected,
+/// while the user asked for four to six tabs at most (2026-11-01).
+pub const PROTECTION_RELEASE_MINUTES: i64 = 240;
 
 /// Domains where an old tab is almost certainly forgotten rather than pending.
 const STALE_DOMAINS: &[&str] = &[
@@ -110,19 +115,31 @@ pub fn is_protected(url: &str) -> bool {
         && NEVER_CLOSE_PATHS.iter().any(|p|path.contains(p))
 }
 
-/// [`is_protected`], except that an autosaving cloud document idle for
-/// [`CLOUD_DOC_IDLE_MINUTES`] or more is released from the editor protection.
-/// Every other protection (login flows, private hosts, open PRs) still applies.
+/// Protections that hold however long the tab sits: non-web pages, private
+/// hosts (dev servers, the router) and editors whose state lives in the tab.
+pub fn is_hard_protected(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else { return true; };
+    if !matches!(parsed.scheme(), "http" | "https") { return true; }
+    let host = parsed.host_str().unwrap_or("").trim_matches(['[',']']).to_lowercase();
+    if host.is_empty() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") { return true; }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let private = match ip {
+            std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified(),
+            std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local(),
+        };
+        if private { return true; }
+    }
+    LOCAL_STATE_EDITORS.iter().any(|h| domain_matches(&host, h) || host.contains(h))
+}
+
+/// [`is_protected`], with every protection except the hard ones
+/// ([`is_hard_protected`]) lifted once the tab has been idle
+/// [`PROTECTION_RELEASE_MINUTES`].
 pub fn is_protected_for(url: &str, idle_minutes: i64) -> bool {
     if !is_protected(url) {
         return false;
     }
-    let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_lowercase)) else {
-        return true;
-    };
-    let cloud_doc = CLOUD_DOC_HOSTS.iter().any(|d| domain_matches(&host, d));
-    let only_editor_rule = !NEVER_CLOSE.iter().any(|p| host.contains(p));
-    !(cloud_doc && only_editor_rule && idle_minutes >= CLOUD_DOC_IDLE_MINUTES)
+    is_hard_protected(url) || idle_minutes < PROTECTION_RELEASE_MINUTES
 }
 
 /// Whether an old tab on this domain is likely forgotten.
@@ -376,25 +393,32 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_cloud_document_may_unload_but_a_recent_one_may_not() {
-        let doc = "https://docs.google.com/document/d/abc/edit";
-        assert!(is_protected_for(doc, 60));
-        assert!(is_protected_for(doc, CLOUD_DOC_IDLE_MINUTES - 1));
-        assert!(!is_protected_for(doc, CLOUD_DOC_IDLE_MINUTES));
-        assert!(!is_protected_for("https://contoso.sharepoint.com/sites/x/Doc.docx", 3_000));
-        assert!(!is_protected_for("https://onedrive.live.com/edit?id=1", 2_000));
+    fn soft_protections_hold_while_in_use_and_lift_after_the_release_window() {
+        for url in [
+            "https://docs.google.com/document/d/abc/edit",
+            "https://contoso.sharepoint.com/sites/x/Doc.docx",
+            "https://login.microsoftonline.com/common/oauth2",
+            "https://console.tailscale.com/admin/machines",
+            "https://dashboard.stripe.com/payments",
+            "https://accounts.google.com/signin",
+            "https://github.com/me/p/pull/3",
+            "https://canvas.instructure.com/courses/1",
+        ] {
+            assert!(is_protected_for(url, 60), "{url} is protected while recent");
+            assert!(is_protected_for(url, PROTECTION_RELEASE_MINUTES - 1), "{url}");
+            assert!(!is_protected_for(url, PROTECTION_RELEASE_MINUTES), "{url} is released once left alone");
+        }
     }
 
     #[test]
-    fn local_state_editors_and_other_protections_never_release() {
+    fn local_state_editors_private_hosts_and_browser_pages_never_release() {
         for url in [
             "https://vscode.dev/",
             "https://replit.com/@me/x",
             "https://colab.research.google.com/drive/1",
             "http://localhost:3000/",
-            "https://accounts.google.com/signin",
+            "http://10.0.0.1/",
             "chrome://extensions",
-            "https://github.com/me/p/pull/3",
         ] {
             assert!(is_protected_for(url, 100_000), "{url}");
         }

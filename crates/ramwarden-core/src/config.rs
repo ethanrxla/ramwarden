@@ -138,6 +138,14 @@ impl Ladder {
     }
 }
 
+/// Conversational cloud use is separate from automated cloud analysis.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Assistant {
+    pub cloud_enabled: bool,
+    pub cloud_model: Option<String>,
+}
+
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -247,6 +255,87 @@ impl Default for Tidy {
             after_minutes: 10.0,
             background_hints: true,
             trim: true,
+        }
+    }
+}
+
+/// Rearranging windows through a tiling window manager. See
+/// `docs/specs/desktop-arrange.md` and [`crate::arrange`].
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Desktop {
+    /// Off means every `/desktop` route answers "disabled" and nothing is
+    /// detected. On does nothing for someone without a tiling window manager.
+    pub enabled: bool,
+    /// `auto`, or one of `aerospace`, `sway`, `i3`, `komorebi`.
+    pub backend: String,
+}
+
+impl Default for Desktop {
+    fn default() -> Self {
+        Desktop { enabled: true, backend: "auto".into() }
+    }
+}
+
+impl Desktop {
+    /// The pinned backend, or `None` for auto-detection. An unknown name is
+    /// auto rather than an error: a typo should not turn the feature off.
+    pub fn pinned(&self) -> Option<ramwarden_platform::WmKind> {
+        use ramwarden_platform::WmKind;
+        match self.backend.trim().to_ascii_lowercase().as_str() {
+            "aerospace" => Some(WmKind::AeroSpace),
+            "sway" => Some(WmKind::Sway),
+            "i3" => Some(WmKind::I3),
+            "komorebi" => Some(WmKind::Komorebi),
+            _ => None,
+        }
+    }
+}
+
+/// Tab housekeeping that runs at any pressure, not only on the ladder's tab rung.
+///
+/// The ladder unloads tabs only once memory is short, and a laptop with spare RAM
+/// may never get there: the extension shows as connected and nothing is ever
+/// released. The sweep unloads idle tabs on a timer, and closes the ones the
+/// user is unlikely to return to (Jev's adjusted return chance, under the
+/// browser-memory guards). Closed tabs are kept in the extension's "Released
+/// tabs" list, where one click reopens them.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Tabs {
+    /// Minutes between sweeps. 0 turns the sweep off.
+    pub sweep_minutes: f64,
+    /// `off`, `dry-run` (log what would close) or `live`.
+    pub close: String,
+    /// A tab must have been idle at least this long to be closed.
+    pub close_after_hours: f64,
+    /// Close only below this chance of the user returning.
+    pub close_below_return: f64,
+    /// An older tab on the same site as a more recently used one is closed after
+    /// this long idle, whatever its return chance: the newer tab already covers
+    /// the site. 0 turns this off.
+    pub close_duplicates_after_hours: f64,
+    /// The tab budget: the most recently used tabs kept open per browser. Any
+    /// other tab untouched for `budget_idle_minutes` is closed, whatever its
+    /// return chance. 0 turns the budget off.
+    pub keep_tabs: usize,
+    /// How long a tab outside the budget may sit before it is closed.
+    pub budget_idle_minutes: f64,
+    /// At most this many closes per sweep.
+    pub max_close_per_sweep: usize,
+}
+
+impl Default for Tabs {
+    fn default() -> Self {
+        Tabs {
+            sweep_minutes: 5.0,
+            close: "dry-run".into(),
+            close_after_hours: 24.0,
+            close_below_return: 0.3,
+            close_duplicates_after_hours: 4.0,
+            keep_tabs: 6,
+            budget_idle_minutes: 60.0,
+            max_close_per_sweep: 10,
         }
     }
 }
@@ -444,6 +533,77 @@ impl Default for Nvidia {
     }
 }
 
+/// ThreatWarden (`[wardens.threat]`). Its first engine is Wazuh.
+///
+/// Hosted by default: RamWarden runs Wazuh, and this computer authenticates
+/// with its device sign-in, so a user with a Wazuh pass needs no settings at
+/// all. `mode = "self"` points it at a manager the user runs instead; only
+/// then do the manager fields below matter. Passwords come from
+/// `secrets.toml`, `.env` or `$WAZUH_API_PASSWORD` / `$WAZUH_INDEXER_PASSWORD`,
+/// never this file. See `docs/specs/wardens.md` and `docs/threatwarden-self-hosting.md`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Wazuh {
+    /// On unless turned off. It still does nothing until a pass unlocks it.
+    pub enabled: bool,
+    /// `hosted` (RamWarden runs Wazuh) or `self` (your own manager).
+    pub mode: String,
+    /// The hosted API.
+    pub cloud_url: String,
+    /// The manager's server API, e.g. `https://wazuh.example.com:55000`.
+    /// Empty: report only the local agent's health.
+    pub manager_url: String,
+    pub api_user: String,
+    pub api_password: String,
+    /// The indexer, e.g. `https://wazuh.example.com:9200`. Alerts live here.
+    /// Empty: no alerts, agent health only.
+    pub indexer_url: String,
+    pub indexer_user: String,
+    pub indexer_password: String,
+    /// PEM root CA for a self-signed manager (Wazuh's default install). There
+    /// is deliberately no option to skip certificate checks.
+    pub ca_file: Option<PathBuf>,
+    /// This machine's agent name as enrolled. Empty: the hostname.
+    pub agent_name: String,
+    /// Alerts below this Wazuh rule level are ignored.
+    pub min_level: u8,
+    /// Alerts at or above this level are an alert rather than a "worth a look".
+    pub alert_level: u8,
+    pub lookback_hours: u32,
+    pub poll_seconds: u64,
+    pub timeout_seconds: u64,
+}
+
+impl Default for Wazuh {
+    fn default() -> Self {
+        Wazuh {
+            enabled: true,
+            mode: "hosted".to_string(),
+            cloud_url: "https://api.ramwarden.app".to_string(),
+            manager_url: String::new(),
+            api_user: "wazuh-wui".to_string(),
+            api_password: String::new(),
+            indexer_url: String::new(),
+            indexer_user: "admin".to_string(),
+            indexer_password: String::new(),
+            ca_file: None,
+            agent_name: String::new(),
+            min_level: 7,
+            alert_level: 12,
+            lookback_hours: 24,
+            poll_seconds: 120,
+            timeout_seconds: 10,
+        }
+    }
+}
+
+/// `[wardens.*]`: one section per add-on warden, named by its id.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Wardens {
+    pub threat: Wazuh,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct WorkspaceRule {
     #[serde(rename = "match")]
@@ -464,12 +624,16 @@ pub struct Config {
     pub ladder: Ladder,
     pub ollama: Ollama,
     pub nvidia: Nvidia,
+    pub assistant: Assistant,
     pub jev: Jev,
     pub quit: Quit,
     pub logging: Logging,
     pub tidy: Tidy,
+    pub desktop: Desktop,
     pub gpu: Gpu,
     pub updates: Updates,
+    pub wardens: Wardens,
+    pub tabs: Tabs,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -489,12 +653,16 @@ struct Raw {
     ladder: Ladder,
     ollama: Ollama,
     nvidia: Nvidia,
+    assistant: Assistant,
     jev: Jev,
     quit: Quit,
     logging: Logging,
     tidy: Tidy,
+    desktop: Desktop,
     gpu: Gpu,
     updates: Updates,
+    wardens: Wardens,
+    tabs: Tabs,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -539,6 +707,16 @@ pub fn config_dir() -> PathBuf {
         .unwrap_or_else(|| home().join(".config"))
 }
 
+/// The token device sign-in stores, which authenticates this computer to the
+/// hosted API (`<config dir>/ramwarden/device-token`). `None`: signed out.
+/// Never logged; wrap it in a `Secret` before holding it.
+pub fn device_token() -> Option<String> {
+    std::fs::read_to_string(config_dir().join("ramwarden").join("device-token"))
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
 /// Per-user data directory: `%LOCALAPPDATA%` on Windows, `~/.local/share`
 /// elsewhere.
 pub fn data_dir() -> PathBuf {
@@ -555,12 +733,16 @@ impl Default for Config {
             ladder: Ladder::default(),
             ollama: Ollama::default(),
             nvidia: Nvidia::default(),
+            assistant: Assistant::default(),
             jev: Jev::default(),
             quit: Quit::default(),
             logging: Logging::default(),
             tidy: Tidy::default(),
+            desktop: Desktop::default(),
             gpu: Gpu::default(),
             updates: Updates::default(),
+            wardens: Wardens::default(),
+            tabs: Tabs::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -619,6 +801,19 @@ fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// `var` from the environment, else from the first `.env` that sets it. The
+/// environment wins, as it does for every other key.
+fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
+    if let Ok(v) = std::env::var(var)
+        && !v.trim().is_empty()
+    {
+        return Some(v.trim().to_string());
+    }
+    env_files
+        .iter()
+        .find_map(|f| std::fs::read_to_string(f).ok().and_then(|t| dotenv_value(&t, &[var])))
+}
+
 /// Load one specific file, merging any adjacent `secrets.toml`.
 pub fn load_from(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -645,6 +840,8 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if !secrets.nvidia.api_key.is_empty() {
             cfg.nvidia.api_key = secrets.nvidia.api_key;
         }
+        if secrets.assistant.cloud_enabled { cfg.assistant.cloud_enabled = true; }
+        if secrets.assistant.cloud_model.is_some() { cfg.assistant.cloud_model = secrets.assistant.cloud_model; }
         if secrets.nvidia.enabled {
             cfg.nvidia.enabled = true;
         }
@@ -653,6 +850,13 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         }
         if secrets.jev.enabled {
             cfg.jev.enabled = true;
+        }
+        let w = &secrets.wardens.threat;
+        if !w.api_password.is_empty() {
+            cfg.wardens.threat.api_password = w.api_password.clone();
+        }
+        if !w.indexer_password.is_empty() {
+            cfg.wardens.threat.indexer_password = w.indexer_password.clone();
         }
     }
 
@@ -710,6 +914,23 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
             }
         }
     }
+    let env_files: Vec<PathBuf> = [
+        path.parent().map(|d| d.join(".env")),
+        Some(config_dir().join("ramwarden").join(".env")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let wazuh = &mut cfg.wardens.threat;
+    for (field, var) in [
+        (&mut wazuh.api_password, "WAZUH_API_PASSWORD"),
+        (&mut wazuh.indexer_password, "WAZUH_INDEXER_PASSWORD"),
+    ] {
+        if let Some(v) = secret_from_env(var, &env_files) {
+            *field = v;
+        }
+    }
+
     if let Err(e) = cfg.ladder.validate() {
         return Err(format!("{}: {e}", path.display()));
     }
@@ -726,12 +947,16 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         ladder: raw.ladder,
         ollama: raw.ollama,
         nvidia: raw.nvidia,
+        assistant: raw.assistant,
         jev: raw.jev,
         quit: raw.quit,
         logging: raw.logging,
         tidy: raw.tidy,
+        desktop: raw.desktop,
         gpu: raw.gpu,
         updates: raw.updates,
+        wardens: raw.wardens,
+        tabs: raw.tabs,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
@@ -750,6 +975,53 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_wazuh_warden_is_hosted_by_default_and_parses_its_section() {
+        let d = Config::default().wardens.threat;
+        assert!(d.enabled, "a pass is all a user should need");
+        assert_eq!(d.mode, "hosted");
+        assert_eq!(d.cloud_url, "https://api.ramwarden.app");
+        let cfg = parse(
+            r#"
+[wardens.threat]
+mode = "self"
+manager_url = "https://wazuh.lan:55000"
+indexer_url = "https://wazuh.lan:9200"
+ca_file = "/etc/ramwarden/wazuh-root-ca.pem"
+min_level = 5
+"#,
+        )
+        .unwrap();
+        let w = &cfg.wardens.threat;
+        assert!(w.enabled);
+        assert_eq!(w.mode, "self");
+        assert_eq!(w.manager_url, "https://wazuh.lan:55000");
+        assert_eq!(w.min_level, 5);
+        assert_eq!(w.alert_level, 12, "unset keys keep their defaults");
+        assert_eq!(w.api_user, "wazuh-wui");
+        assert_eq!(w.ca_file.as_deref(), Some(Path::new("/etc/ramwarden/wazuh-root-ca.pem")));
+    }
+
+    #[test]
+    fn wazuh_passwords_come_from_secrets_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("ramwarden.toml");
+        std::fs::write(&cfg_path, "[wardens.threat]\nenabled = true\n").unwrap();
+        std::fs::write(
+            dir.path().join("secrets.toml"),
+            "[wardens.threat]\napi_password = \"api-pw\"\nindexer_password = \"idx-pw\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&cfg_path).unwrap();
+        // The environment would override these; only assert when it is not set.
+        if std::env::var("WAZUH_API_PASSWORD").is_err() {
+            assert_eq!(cfg.wardens.threat.api_password, "api-pw");
+        }
+        if std::env::var("WAZUH_INDEXER_PASSWORD").is_err() {
+            assert_eq!(cfg.wardens.threat.indexer_password, "idx-pw");
+        }
+    }
 
     /// The config this machine actually runs, verbatim from `ramwarden.toml`.
     const SHIPPED: &str = r#"
@@ -792,6 +1064,16 @@ key = "sk-ant-should-be-ignored"
 [server]
 port = 7823
 "#;
+
+    #[test]
+    fn the_shipped_configs_keep_tab_closing_in_dry_run() {
+        for text in [include_str!("../../../ramwarden.toml"), include_str!("../../../packaging/macos/config.toml")] {
+            let c = parse(text).unwrap();
+            assert_eq!(c.tabs.close, "dry-run");
+            assert_eq!(c.tabs.sweep_minutes, 5.0);
+        }
+        assert_eq!(parse("").unwrap().tabs.close, "dry-run", "closing is never live by default");
+    }
 
     #[test]
     fn loads_the_config_this_machine_actually_runs() {

@@ -25,11 +25,12 @@ for b in ramwarden-daemon ramwarden-launcher; do
         codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$STAGE/bin/$b"
     fi
 done
-"$ROOT/macos/menubar/build.sh" "$STAGE"
+RAMWARDEN_APP_DEST="$STAGE/RamWarden.app" bash "$ROOT/macos/menubar/build.sh"
 install -m 0755 "$ROOT/packaging/macos/install.sh"                   "$STAGE/install.sh"
 install -m 0644 "$ROOT/packaging/macos/config.toml"                  "$STAGE/config.toml"
 install -m 0644 "$ROOT/packaging/macos/com.ramwarden.daemon.plist"   "$STAGE/"
 install -m 0644 "$ROOT/packaging/macos/com.ramwarden.updater.plist"  "$STAGE/"
+install -m 0644 "$ROOT/packaging/macos/com.ramwarden.menubar.plist"  "$STAGE/"
 
 TGZ="$OUT/ramwarden-macos-$ARCH.tar.gz"
 COPYFILE_DISABLE=1 tar -C "$STAGE" -czf "$TGZ" .

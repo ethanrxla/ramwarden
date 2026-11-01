@@ -13,7 +13,8 @@ BIN="$HOME/.local/bin"
 CONF="$HOME/.config/ramwarden/config.toml"
 AGENTS="$HOME/Library/LaunchAgents"
 DOMAIN="gui/$(id -u)"
-LABELS="com.ramwarden.daemon com.ramwarden.updater"
+# The menu-bar agent keeps RamWarden.app running and restarts it if it crashes.
+LABELS="com.ramwarden.daemon com.ramwarden.updater com.ramwarden.menubar"
 
 stop_agents() {
     for l in $LABELS; do launchctl bootout "$DOMAIN/$l" 2>/dev/null || true; done
@@ -43,9 +44,10 @@ for b in ramwarden-daemon ramwarden-launcher; do
     fi
 done
 if [ -d "$HERE/RamWarden.app" ]; then
-    osascript -e 'tell application id "com.ramwarden.menubar" to quit' >/dev/null 2>&1 || true
+    pkill -x RamWarden 2>/dev/null || true
     rm -rf "$HOME/Applications/RamWarden.app"
-    cp -R "$HERE/RamWarden.app" "$HOME/Applications/RamWarden.app"
+    # ditto keeps the bundle's permissions, metadata and signature intact.
+    ditto "$HERE/RamWarden.app" "$HOME/Applications/RamWarden.app"
 fi
 [ -f "$CONF" ] || install -m 0644 "$HERE/config.toml" "$CONF"
 for l in $LABELS; do
@@ -54,5 +56,7 @@ done
 for l in $LABELS; do
     [ -f "$AGENTS/$l.plist" ] && launchctl bootstrap "$DOMAIN" "$AGENTS/$l.plist"
 done
-[ -d "$HOME/Applications/RamWarden.app" ] && open -g "$HOME/Applications/RamWarden.app" || true
+# A personal install line leaves a link token; claim it now so this Mac is
+# signed in before the user opens anything. Harmless when there is none.
+"$BIN/ramwarden-launcher" link || true
 echo "RamWarden installed. API: http://127.0.0.1:7823   log: ~/Library/Logs/ramwarden.log"

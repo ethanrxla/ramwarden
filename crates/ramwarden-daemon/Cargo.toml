@@ -19,6 +19,9 @@ ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
 ramwarden-ml     = { path = "../ramwarden-ml" }
+# The Wazuh warden: talks to Wazuh over its files and REST APIs only.
+ramwarden-wazuh  = { path = "../ramwarden-wazuh" }
+ramwarden-wm     = { path = "../ramwarden-wm" }
 # CPU only: the daemon never loads CUDA (see src/worker.rs).
 candle-core      = "0.11"
 axum       = { workspace = true }
@@ -43,3 +46,5 @@ ramwarden-kernel = { path = "../ramwarden-kernel" }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 tempfile = { workspace = true }
+ed25519-dalek = "2.1"
+base64 = "0.22"

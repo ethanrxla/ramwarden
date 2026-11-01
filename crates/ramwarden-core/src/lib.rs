@@ -7,6 +7,7 @@
 
 pub mod actuator;
 pub mod apps;
+pub mod arrange;
 pub mod config;
 pub mod describe;
 pub mod detector;
@@ -21,6 +22,7 @@ pub mod roles;
 pub mod signals;
 pub mod structures;
 pub mod tidy;
+pub mod wardens;
 pub mod workspaces;
 
 // These read `/proc` directly: terminal sessions and private-browsing

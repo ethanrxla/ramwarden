@@ -1,0 +1,24 @@
+[package]
+name    = "ramwarden-wazuh"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Mechanism for the Wazuh warden: reads the local Wazuh agent's state and queries a Wazuh manager and indexer. Talks to Wazuh only over its files and REST APIs; links no Wazuh code."
+
+[dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+reqwest    = { workspace = true }
+thiserror  = { workspace = true }
+url        = "2"
+sha2       = "0.10"
+base64     = "0.22"
+tokio      = { workspace = true, features = ["process"] }
+tracing    = { workspace = true }
+tempfile   = { workspace = true }
+
+[dev-dependencies]
+tokio      = { workspace = true, features = ["net"] }
+axum       = { workspace = true }

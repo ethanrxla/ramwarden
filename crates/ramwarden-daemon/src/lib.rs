@@ -6,6 +6,7 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod desktop;
 pub mod embedder;
 pub mod extras;
 pub mod freeze_journal;
@@ -23,7 +24,14 @@ pub mod appquit;
 pub mod tabintel;
 pub mod tabrank;
 pub mod tabs;
+pub mod wardens;
 pub mod worker;
 pub mod ws;
 
 pub mod browser;
+
+pub mod assistant;
+
+pub mod companion;
+
+pub mod assistant_prompt;
