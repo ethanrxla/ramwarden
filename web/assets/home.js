@@ -98,7 +98,7 @@ function setUpExtension() {
 
 function fillPrices() {
   for (const el of document.querySelectorAll("[data-plan]")) {
-    const plan = config.plans.find((p) => p.id === el.dataset.plan);
+    const plan = config.plans.find((p) => String(p.id) === el.dataset.plan);
     if (plan) el.textContent = String(plan.usd);
   }
   for (const el of document.querySelectorAll("[data-limit]")) {

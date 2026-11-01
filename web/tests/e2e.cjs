@@ -87,7 +87,7 @@ async function run() {
     const p = await page();
     await p.goto(`${base}/index.html`);
     await p.waitForSelector("#extension-action >> text=Load unpacked");
-    assert.equal(await p.textContent('[data-plan="ram_60d"]'), "4");
+    assert.equal(await p.textContent('[data-plan="1"]'), "4");
     assert.match(await p.getAttribute('[data-download="releases"]', "href"), /github\.com\/ethanrxla\/ramwarden\/releases/);
     // Exactly one install line is shown: the visitor's OS (Linux in CI).
     assert.deepEqual(await p.$$eval("[data-os-panel]", (ps) => ps.filter((x) => x.offsetParent !== null).map((x) => x.dataset.osPanel)), ["linux"]);

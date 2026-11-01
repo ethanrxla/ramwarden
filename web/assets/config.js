@@ -33,8 +33,10 @@ export const config = {
   // wins on the account page; these fill the landing pages. `soon` plans are
   // shown but not sold until the warden's hosted tier is live.
   plans: [
-    { id: "ram_60d", name: "RamWarden Pro, 2 months", usd: 4, days: 60, wardens: ["ram"] },
-    { id: "threat_60d", name: "ThreatWarden, 2 months", usd: 6, days: 60, wardens: ["threat"], soon: true },
+    // Ids are the checkout contract's on-chain plan ids (contracts/plans.json).
+    { id: 1, name: "RamWarden Pro, 2 months", usd: 4, days: 60, wardens: ["ram"] },
+    { id: 2, name: "ThreatWarden, 2 months", usd: 6, days: 60, wardens: ["threat"], soon: true },
+    { id: 3, name: "RamWarden Pro + ThreatWarden, 2 months", usd: 10, days: 60, wardens: ["ram", "threat"], soon: true },
   ],
   limits: {
     free: { perDay: 5, devices: 1 },

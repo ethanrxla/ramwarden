@@ -98,6 +98,10 @@ class AccountPage {
         pro
           ? h("p", {}, `Your pass runs until ${formatDate(a.entitlement_until)}. Buying another adds to that date.`)
           : h("p", {}, `${limits.perDay} hosted Jev decisions a day on ${limits.devices} device. Local decisions are always unlimited.`),
+        // Each warden's own pass, as the server reports it.
+        Object.entries(a.entitlements || {})
+          .filter(([, until]) => Date.parse(until) > Date.now())
+          .map(([slug, until]) => h("p", {}, `${slug === "threat" ? "ThreatWarden" : slug === "ram" ? "RamWarden Pro" : slug} runs until ${formatDate(until)}.`)),
         typeof a.used_today === "number" ? h("p", { class: "muted" }, `Hosted decisions used today: ${a.used_today} of ${limits.perDay}.`) : null,
         h("p", { class: "muted" }, "Signed in with ", (a.wallets || []).map((w) => shortAddress(w.address)).join(", ") || "a wallet", "."),
         h("button", { class: "button secondary small", type: "button", onclick: () => { api.signOut(); location.reload(); } }, "Sign out"),
