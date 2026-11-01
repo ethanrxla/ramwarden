@@ -318,3 +318,45 @@ fn a_tab_close_under_the_ladder_lock_survives_every_worker_blocking_on_it() {
     drop(held);
     rt.shutdown_timeout(Duration::from_secs(5));
 }
+
+/// The API must answer while the monitor holds the ladder for a long step.
+///
+/// On the Mac (2026-11-01) handlers waited for the ladder on async workers; the
+/// menu bar's polls parked every worker and even `/psi` stopped answering.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_api_answers_while_the_ladder_is_held() {
+    let st = state();
+    let held = st.clone();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let monitor = std::thread::spawn(move || {
+        let _ladder = held.ladder.lock().unwrap();
+        locked_tx.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(6));
+    });
+    locked_rx.recv().unwrap();
+
+    let started = std::time::Instant::now();
+    // More polled requests than workers, as the menu bar and extension make.
+    let mut polls = Vec::new();
+    for path in ["/suspended", "/state", "/tidy", "/ladder/plan", "/suspended", "/state"] {
+        polls.push(tokio::spawn(call(st.clone(), path, "GET", Value::Null)));
+    }
+    let psi = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        call(st.clone(), "/psi", "GET", Value::Null),
+    )
+    .await
+    .expect("/psi must answer while the ladder is held");
+    assert!(psi.get("rung").is_some());
+
+    for p in polls {
+        tokio::time::timeout(std::time::Duration::from_secs(3), p)
+            .await
+            .expect("a polled view must not wait for the step")
+            .unwrap();
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    let busy = call(st.clone(), "/ladder/plan", "GET", Value::Null).await;
+    assert_eq!(busy["busy"], true);
+    monitor.join().unwrap();
+}

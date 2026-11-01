@@ -21,6 +21,7 @@
 //! wakeup: pressure *passing* is not an event anything reports, so the slow tick
 //! is what resumes suspended applications and lifts soft caps.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -121,34 +122,97 @@ impl TabCloser for Tabs {
     }
 }
 
-/// Bridges the ladder's judge to Jev, the same way [`Tabs`] bridges to the
-/// browsers: the ladder is synchronous, so block on the request here.
+/// How long a Jev verdict stands before the app is asked about again.
+///
+/// Before 2026-11-01 every tick asked afresh and waited for the answer inside
+/// the ladder step: on the Mac, "Cursor Helper (Renderer)" was put to Jev every
+/// ~1.5 s and kept every time (46-53%), and the step, holding the ladder lock,
+/// stalled for 204 s until the watchdog restarted the daemon. Twice. An app's
+/// answer barely moves in five minutes; its idle time is what changes, and that
+/// is re-asked when the verdict expires.
+const VERDICT_TTL: Duration = Duration::from_secs(300);
+
+type Verdicts = Result<Vec<Judgement>, String>;
+
+/// Bridges the ladder's judge to Jev without ever waiting on the network.
+///
+/// The ladder is synchronous and holds its lock for the whole step, so the old
+/// bridge's `block_on` held the lock for the length of a Jev round trip, every
+/// tick. Instead: verdicts are cached per app and intent; apps without one are
+/// sent to Jev in the background (one request in flight at a time), and get no
+/// verdict this tick, which the ladder treats as a veto. They are judged on a
+/// later tick, once the answer is in. Nothing is acted on without a verdict.
 struct JevJudge {
     jev: Jev,
     suspend_threshold: f64,
     kill_threshold: f64,
     handle: tokio::runtime::Handle,
+    verdicts: HashMap<(String, &'static str), (Judgement, Instant)>,
+    inflight: Option<(Intent, tokio::task::JoinHandle<Verdicts>)>,
+    /// The last background request failed. Reported once, as an unreachable
+    /// judge, so a suspend can fall back to the gate and a kill is blocked.
+    failed: Option<String>,
+}
+
+impl JevJudge {
+    /// Collect a finished background request into the cache.
+    fn collect(&mut self) {
+        let Some((intent, task)) = self.inflight.take_if(|(_, t)| t.is_finished()) else {
+            return;
+        };
+        // Finished, so this returns at once.
+        match self.handle.block_on(task) {
+            Ok(Ok(out)) => {
+                let now = Instant::now();
+                for j in out {
+                    tracing::info!(
+                        "jev: {} {}: {}",
+                        if j.close { "approve" } else { "keep" },
+                        j.name,
+                        j.reason
+                    );
+                    self.verdicts.insert((j.name.clone(), intent.as_str()), (j, now));
+                }
+            }
+            Ok(Err(e)) => self.failed = Some(e),
+            Err(e) => self.failed = Some(format!("Jev request task failed: {e}")),
+        }
+    }
 }
 
 impl Judge for JevJudge {
     fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String> {
-        let started = Instant::now();
-        let threshold = match intent {
-            Intent::Suspend => self.suspend_threshold,
-            Intent::Kill => self.kill_threshold,
-        };
-        let out = self
-            .handle
-            .block_on(crate::ladderjudge::judge(&self.jev, intent, candidates, threshold))
-            .map_err(|e| e.to_string())?;
-        for j in &out {
-            tracing::info!(
-                "jev: {} {}: {} ({:?})",
-                if j.close { "approve" } else { "keep" },
-                j.name,
-                j.reason,
-                started.elapsed()
-            );
+        self.collect();
+        self.verdicts.retain(|_, (_, at)| at.elapsed() < VERDICT_TTL);
+
+        let mut out = Vec::new();
+        let mut missing = Vec::new();
+        for c in candidates {
+            match self.verdicts.get(&(c.name.clone(), intent.as_str())) {
+                Some((j, _)) => out.push(j.clone()),
+                None => missing.push(c.clone()),
+            }
+        }
+        if missing.is_empty() {
+            return Ok(out);
+        }
+        if let Some(e) = self.failed.take()
+            && out.is_empty()
+        {
+            return Err(e);
+        }
+        if self.inflight.is_none() {
+            let threshold = match intent {
+                Intent::Suspend => self.suspend_threshold,
+                Intent::Kill => self.kill_threshold,
+            };
+            let jev = self.jev.clone();
+            let task = self.handle.spawn(async move {
+                crate::ladderjudge::judge(&jev, intent, &missing, threshold)
+                    .await
+                    .map_err(|e| e.to_string())
+            });
+            self.inflight = Some((intent, task));
         }
         Ok(out)
     }
@@ -185,6 +249,9 @@ fn jev_judge(cfg: &ramwarden_core::config::Config, handle: &tokio::runtime::Hand
         suspend_threshold: j.suspend_threshold,
         kill_threshold: j.kill_threshold,
         handle: handle.clone(),
+        verdicts: HashMap::new(),
+        inflight: None,
+        failed: None,
     })
 }
 
@@ -740,5 +807,79 @@ mod tests {
     fn the_intervals_are_ordered_so_escalation_samples_faster() {
         assert!(BUSY_INTERVAL < WATCHFUL_INTERVAL);
         assert!(WATCHFUL_INTERVAL < IDLE_INTERVAL);
+    }
+
+    fn unreachable_judge(rt: &tokio::runtime::Runtime) -> JevJudge {
+        JevJudge {
+            // Port 1 refuses at once: nothing leaves the machine.
+            jev: Jev::new("http://127.0.0.1:1", Secret::new("test"), "m", Duration::from_millis(500)).unwrap(),
+            suspend_threshold: 0.7,
+            kill_threshold: 0.9,
+            handle: rt.handle().clone(),
+            verdicts: HashMap::new(),
+            inflight: None,
+            failed: None,
+        }
+    }
+
+    fn candidate(name: &str) -> Candidate {
+        Candidate {
+            name: name.into(),
+            cold_rank: 0,
+            idle_minutes: 30.0,
+            pss: 1 << 30,
+            role: "app".into(),
+            has_window: true,
+            established: 0,
+            listening: false,
+            reasons: Vec::new(),
+        }
+    }
+
+    /// The judge must answer the ladder at once, whatever Jev is doing: the step
+    /// holds the ladder lock, and on 2026-11-01 a blocking judge held it 204 s.
+    #[test]
+    fn the_judge_never_waits_on_jev_and_reports_a_failure_once() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let mut j = unreachable_judge(&rt);
+        let c = [candidate("Cursor Helper (Renderer)")];
+
+        let started = Instant::now();
+        assert_eq!(j.judge(Intent::Suspend, &c), Ok(Vec::new()), "no verdict yet: a veto this tick");
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(j.inflight.is_some());
+
+        // A second tick while the request is out does not send another.
+        assert_eq!(j.judge(Intent::Suspend, &c), Ok(Vec::new()));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !j.inflight.as_ref().is_some_and(|(_, t)| t.is_finished()) {
+            assert!(Instant::now() < deadline, "request never finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(j.judge(Intent::Suspend, &c).is_err(), "unreachable is reported, so suspend falls back to the gate");
+        // Reported once; the next tick asks again in the background.
+        assert_eq!(j.judge(Intent::Suspend, &c), Ok(Vec::new()));
+        assert!(j.inflight.is_some());
+    }
+
+    #[test]
+    fn a_cached_verdict_is_reused_per_intent_until_it_expires() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let mut j = unreachable_judge(&rt);
+        let keep = Judgement { name: "Cursor".into(), close: false, confidence: 0.5, reason: "keep".into() };
+        j.verdicts.insert(("Cursor".into(), Intent::Suspend.as_str()), (keep.clone(), Instant::now()));
+
+        assert_eq!(j.judge(Intent::Suspend, &[candidate("Cursor")]), Ok(vec![keep.clone()]));
+        assert!(j.inflight.is_none(), "a cached app is not asked again");
+
+        // A suspend verdict says nothing about a kill.
+        assert_eq!(j.judge(Intent::Kill, &[candidate("Cursor")]), Ok(Vec::new()));
+        assert!(j.inflight.is_some());
+
+        // Expired: asked again.
+        let old = Instant::now().checked_sub(VERDICT_TTL + Duration::from_secs(1)).unwrap();
+        j.verdicts.insert(("Cursor".into(), Intent::Suspend.as_str()), (keep, old));
+        assert_eq!(j.judge(Intent::Suspend, &[candidate("Cursor")]), Ok(Vec::new()));
     }
 }

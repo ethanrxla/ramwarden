@@ -1,7 +1,7 @@
 //! The connected browsers, and the shared state every route reads.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, TryLockError};
 use std::time::{Duration, Instant};
 
 use ramwarden_core::actuator::Outcome;
@@ -24,6 +24,10 @@ use crate::tabs::{Command, Registry, Tab, Transport};
 /// concludes there is nothing to close — which is what v1's startup grace exists
 /// to prevent.
 pub const STARTUP_GRACE: Duration = Duration::from_secs(15);
+
+/// How long a polled view waits for the ladder before answering without it.
+/// Below the menu bar's 2-second request timeout.
+pub const LADDER_WAIT: Duration = Duration::from_millis(750);
 
 /// The shorter wait once the daemon has been up a while.
 pub const CONNECT_GRACE: Duration = Duration::from_millis(3000);
@@ -147,6 +151,50 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Run a handler's body on tokio's blocking pool.
+    ///
+    /// Every lock in [`AppState`] is a `std` lock, and the monitor thread holds
+    /// the ladder for a whole step (tens of seconds when `lsof`, `pmset` or a
+    /// browser round trip times out) and the detector for a whole sample. A
+    /// handler that waits for one of those on an async worker parks that worker.
+    /// The menu bar and the extension poll every few seconds, so on a Mac with
+    /// eight workers the pool was soon all parked: the socket accepted
+    /// connections and nothing answered, not even `/psi`. Worse, a tab close
+    /// inside the step waits on the extension's socket task, which needs a
+    /// free worker, so the step ran to its timeouts every tick.
+    ///
+    /// The blocking pool is sized for exactly this (hundreds of threads), so a
+    /// slow lock costs one request its latency and never the whole API.
+    pub async fn blocking<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&AppState) -> R + Send + 'static,
+    ) -> R {
+        let st = self.clone();
+        match tokio::task::spawn_blocking(move || f(&st)).await {
+            Ok(r) => r,
+            // Keep the handler's old behaviour: its panic, not a new one.
+            Err(e) => std::panic::resume_unwind(e.into_panic()),
+        }
+    }
+
+    /// The ladder, if the monitor lets go of it within [`LADDER_WAIT`].
+    ///
+    /// For read-only views that are polled: a stale or partial answer now beats
+    /// a complete one after the step, which a 2-second client timeout never
+    /// sees. Actions (suspend, resume, cancel-kill) wait for the lock instead,
+    /// on the blocking pool. Call only from [`AppState::blocking`]: it sleeps.
+    pub fn ladder_within(&self, wait: Duration) -> Option<MutexGuard<'_, Ladder>> {
+        let deadline = Instant::now() + wait;
+        loop {
+            match self.ladder.try_lock() {
+                Ok(g) => return Some(g),
+                Err(TryLockError::Poisoned(p)) => return Some(p.into_inner()),
+                Err(TryLockError::WouldBlock) if Instant::now() >= deadline => return None,
+                Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    }
+
     /// Whether freezing is on hold right now.
     pub fn on_hold(&self) -> bool {
         self.hold_until.lock().unwrap().is_some_and(|t| Instant::now() < t)

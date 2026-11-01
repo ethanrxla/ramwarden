@@ -32,13 +32,18 @@ pub fn write(path: &Path, frozen: &[Frozen]) {
     }
 }
 
+/// What the journal lists now. The routes fall back to this when the monitor
+/// is mid-step and holds the ladder: the monitor rewrites it after every change.
+pub fn read(path: &Path) -> Vec<Frozen> {
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
 /// Thaw whatever a previous run left frozen. Returns the names woken.
 ///
 /// A listed pid is woken only if it still has the recorded name and is stopped:
 /// a recycled pid, or a process the user has since continued, is left alone.
 pub fn thaw_leftovers(path: &Path, det: &Detector, control: &dyn ProcessControl) -> Vec<String> {
-    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
-    let listed: Vec<Frozen> = serde_json::from_slice(&bytes).unwrap_or_default();
+    let listed = read(path);
     let mut woke = Vec::new();
     for f in &listed {
         let still_ours = det.get(f.pid).is_some_and(|s| s.name == f.name && s.state == 'T');
