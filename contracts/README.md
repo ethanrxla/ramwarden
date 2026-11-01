@@ -1,16 +1,17 @@
 # RamWarden checkout contract
 
 `RamWardenCheckout` sells **subscriptions** in USDC on Base, per
-`docs/product-spec.md` 1.2 and 3.3: a 14-day free trial, then the plan's price
-every month or year until cancelled. Plans live in [`plans.json`](plans.json),
+`docs/product-spec.md` 1.2 and 3.3: the plan's price every month or year until
+cancelled, with a 14-day free trial first on RamWarden plans (Pro is charged
+at once). Plans live in [`plans.json`](plans.json),
 which the deploy script writes on-chain and the API serves to the website.
 
-| Plan | Tier | Price | Unlocks |
-| --- | --- | --- | --- |
-| 1 | RamWarden | $4 / month | RAM warden (`ram`, warden 0) |
-| 2 | RamWarden Pro | $5 / month | RAM warden and ThreatWarden (`threat`, warden 1) |
-| 3 | RamWarden | $20 / year | RAM warden |
-| 4 | RamWarden Pro | $24 / year | RAM warden and ThreatWarden |
+| Plan | Tier | Price | Trial | Unlocks |
+| --- | --- | --- | --- | --- |
+| 1 | RamWarden | $4 / month | 14 days | RAM warden (`ram`, warden 0) |
+| 2 | RamWarden Pro | $5 / month | none | RAM warden and ThreatWarden (`threat`, warden 1) |
+| 3 | RamWarden | $20 / year | 14 days | RAM warden |
+| 4 | RamWarden Pro | $24 / year | none | RAM warden and ThreatWarden |
 
 Plan ids are fixed: the agent skill uses them.
 
@@ -19,9 +20,10 @@ Plan ids are fixed: the agent skill uses them.
 1. **Start.** The signed-in user picks a plan. `POST /v1/checkout/base` returns
    a USDC `approve` for one year of the plan (12 × the monthly price, or the
    annual price) and `startTrial(account, plan, maxPrice, ref)`. `account` is
-   the keccak-256 of the RamWarden account id. No money moves; every warden in
-   the plan is unlocked for 14 days. An account that already had a trial is
-   charged its first period at once instead.
+   the keccak-256 of the RamWarden account id. On a plan with a trial no money
+   moves, and every warden in the plan is unlocked for 14 days. A plan without
+   one (Pro), or an account that already had its trial, emits `TrialStarted`
+   with `trialEnds = 0` and is charged its first period at once.
 2. **Charge.** When the trial ends, and every period after, anyone may call
    `charge(account)`. `scripts/keeper.cjs` does it. The contract pulls exactly
    the price fixed at start, from the wallet that started the subscription,

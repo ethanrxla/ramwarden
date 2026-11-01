@@ -1,8 +1,9 @@
 //! Checkout and subscription routes (product spec 1.2, 3.3, 3.4).
 //!
-//! Both ways to pay start the same thing: a 14-day trial of the chosen tier
-//! and interval that then renews until cancelled. One trial per account; an
-//! account that had one is charged at once.
+//! Both ways to pay start the same thing: a subscription to the chosen tier
+//! and interval that renews until cancelled. RamWarden plans start with a
+//! 14-day trial, once per account; Pro, and an account that had its trial, is
+//! charged at once.
 //!
 //! - **Base**: the server builds the wallet's transactions
 //!   ([`crate::checkout`]); the chain watcher records what the contract did.
@@ -128,7 +129,7 @@ async fn checkout_base(
     Ok(Json(json!({
         "payment_id": id,
         "chain_id": base.cfg.chain_id,
-        "trial": !a.trial_used,
+        "trial": plan.trial_for(a.trial_used),
         "approval_usd": plan.approval_usd(),
         "transactions": base.cfg.transactions(&a.id, plan, &payment_ref, needs_approve),
     }))
@@ -161,7 +162,7 @@ async fn checkout_stripe(
         payment_id: &id,
         plan,
         email,
-        trial: !a.trial_used,
+        trial: plan.trial_for(a.trial_used),
         success_url: &done,
         cancel_url: &back,
     };
@@ -170,7 +171,7 @@ async fn checkout_stripe(
         error(StatusCode::BAD_GATEWAY, "Card checkout could not start. Try again in a minute.")
     })?;
     c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
-    Ok(Json(json!({"payment_id": id, "url": url, "trial": !a.trial_used})).into_response())
+    Ok(Json(json!({"payment_id": id, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
 }
 
 async fn solana(State(state): State<Arc<AppState>>) -> Reply {

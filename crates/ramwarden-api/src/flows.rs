@@ -368,9 +368,12 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     let rec = a.entitlement(&device_token).await;
     assert_eq!((rec.tier.as_str(), rec.status.as_str(), rec.wardens.len()), ("none", "none", 0));
 
-    let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2, "payer": w.address()}))).await;
+    let trials: Vec<u64> = cfg["plans"].as_array().unwrap().iter().map(|p| p["trial_days"].as_u64().unwrap()).collect();
+    assert_eq!(trials, vec![14, 0, 14, 0], "RamWarden has the trial, Pro doesn't");
+
+    let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(60)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(48)));
     assert_eq!(co["transactions"].as_array().unwrap().len(), 2, "approve one year, then startTrial");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
@@ -379,20 +382,21 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     let mut r = [0u8; 32];
     r.copy_from_slice(&hex::decode(&pid).unwrap());
     let trial_end = NOW + 14 * DAY;
-    a.chain(&[trial_log(&base().checkout, chain_key(&account_id), 2, trial_end, r)]).await;
+    a.chain(&[trial_log(&base().checkout, chain_key(&account_id), 1, trial_end, r)]).await;
 
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
     assert_eq!((p["status"].as_str(), p["account_status"].as_str()), (Some("confirmed"), Some("trial")));
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
-    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("pro"), Some("month"), Some("trial")));
+    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("month"), Some("trial")));
     assert_eq!(acct["trial_ends_at"], iso8601(trial_end));
     assert_eq!(acct["billing"]["method"], "base");
     assert_eq!(acct["trial_available"], false);
 
     let rec = a.entitlement(&device_token).await;
-    assert_eq!((rec.tier.as_str(), rec.status.as_str()), ("pro", "trial"));
+    assert_eq!((rec.tier.as_str(), rec.status.as_str()), ("ram", "trial"));
     let grace_end = trial_end + ramwarden_cloud::model::GRACE_SECONDS;
-    assert_eq!((rec.wardens["ram"], rec.wardens["threat"]), (grace_end, grace_end));
+    assert_eq!(rec.wardens["ram"], grace_end);
+    assert!(!rec.wardens.contains_key("threat"), "ThreatWarden is Pro's");
     assert_eq!(a.call("GET", "/v1/models", Auth::Bearer(&device_token), None).await.0, StatusCode::OK);
 
     // One subscription at a time.
@@ -412,6 +416,30 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     // Another account cannot read the payment.
     let (other, _) = a.web(&EvmWallet::new(8)).await;
     assert_eq!(a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&other), None).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn pro_on_base_is_charged_at_once_and_keeps_the_trial_unused() {
+    let a = app();
+    let w = EvmWallet::new(16);
+    let (device_token, cookie, account_id) = a.sign_in_device(&w).await;
+    let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2, "payer": w.address()}))).await;
+    assert_eq!(s, StatusCode::OK, "{co}");
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(60)));
+    let mut r = [0u8; 32];
+    r.copy_from_slice(&hex::decode(co["payment_id"].as_str().unwrap()).unwrap());
+
+    // The contract's start with no trial, then the first charge.
+    let paid = NOW + 30 * DAY;
+    let key = chain_key(&account_id);
+    a.chain(&[trial_log(&base().checkout, key, 2, 0, r), crate::checkout::tests::charged_log(&base().checkout, key, 2, paid)]).await;
+    let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
+    assert_eq!((acct["tier"].as_str(), acct["status"].as_str()), (Some("pro"), Some("active")));
+    assert_eq!((acct["trial_ends_at"].clone(), acct["paid_until"].clone()), (Value::Null, json!(iso8601(paid))));
+    assert_eq!(acct["trial_available"], true, "the Plus trial is still theirs");
+    let rec = a.entitlement(&device_token).await;
+    assert_eq!((rec.tier.as_str(), rec.status.as_str()), ("pro", "active"));
+    assert!(rec.wardens.contains_key("threat"));
 }
 
 // ------------------------------------------------------------- Stripe

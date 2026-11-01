@@ -29,9 +29,9 @@ async function main() {
 
   for (const p of plans.plans) {
     const mask = p.wardens.reduce((m, w) => m | (1 << w), 0);
-    const tx = await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * 86_400, mask, true);
+    const tx = await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * 86_400, mask, p.trial === true, true);
     await tx.wait();
-    console.log(`  plan ${p.id}: ${p.name}, ${p.usd} USDC, wardens ${p.wardens.join("+")}`);
+    console.log(`  plan ${p.id}: ${p.name}, ${p.usd} USDC, wardens ${p.wardens.join("+")}${p.trial ? ", 14-day trial" : ""}`);
   }
 
   if (owner.toLowerCase() !== deployer.address.toLowerCase()) {

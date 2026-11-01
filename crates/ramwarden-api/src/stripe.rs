@@ -39,7 +39,7 @@ pub struct CheckoutRequest<'a> {
     pub payment_id: &'a str,
     pub plan: &'a PlanDef,
     pub email: Option<&'a str>,
-    /// False when the account already had its trial.
+    /// False for a plan without a trial, or an account that had its trial.
     pub trial: bool,
     pub success_url: &'a str,
     pub cancel_url: &'a str,

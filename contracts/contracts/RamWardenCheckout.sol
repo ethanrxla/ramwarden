@@ -36,6 +36,7 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
         uint128 price; // in the token's smallest unit (USDC: 6 decimals)
         uint32 period; // seconds: 30 days or 365 days
         uint32 wardens; // bit w set = warden w is unlocked
+        bool trial; // whether a first subscription starts with the 14-day trial
         bool active;
     }
 
@@ -66,11 +67,13 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
     mapping(bytes32 account => bool) public trialUsed;
     mapping(bytes32 account => mapping(uint8 warden => uint64 until)) public paidUntil;
 
+    /// `trialEnds` is 0 when the plan has no trial or the account used its
+    /// trial; a `Charged` for the first period follows in the same call.
     event TrialStarted(bytes32 indexed account, uint32 indexed planId, address indexed payer, uint64 trialEnds, bytes32 ref);
     event Charged(bytes32 indexed account, uint32 indexed planId, address indexed payer, uint256 price, uint64 paidUntil);
     event Cancelled(bytes32 indexed account, uint64 serviceUntil);
     event Extended(bytes32 indexed account, uint8 indexed warden, uint64 until);
-    event PlanSet(uint32 indexed planId, uint128 price, uint32 period, uint32 wardens, bool active);
+    event PlanSet(uint32 indexed planId, uint128 price, uint32 period, uint32 wardens, bool trial, bool active);
     event TreasurySet(address treasury);
 
     error ZeroAddress();
@@ -95,8 +98,8 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
     // ---------------------------------------------------------- subscriber
 
     /// Subscribe `account` to `planId`, paid from the caller's wallet. The
-    /// first 14 days are free if this account never had a trial; otherwise the
-    /// first period is charged now. The caller must already have approved at
+    /// first 14 days are free if the plan offers a trial and this account never
+    /// had one; otherwise the first period is charged now. The caller must already have approved at
     /// least one period's price, so the trial can convert without another step.
     function startTrial(bytes32 account, uint32 planId, uint256 maxPrice, bytes32 ref) external whenNotPaused {
         if (account == bytes32(0)) revert ZeroAccount();
@@ -118,14 +121,14 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
             active: true
         });
 
-        if (!trialUsed[account]) {
+        if (p.trial && !trialUsed[account]) {
             trialUsed[account] = true;
             uint64 trialEnds = nowTs + TRIAL;
             subscriptions[account].nextCharge = trialEnds;
             _extend(account, p.wardens, trialEnds);
             emit TrialStarted(account, planId, msg.sender, trialEnds, ref);
         } else {
-            emit TrialStarted(account, planId, msg.sender, nowTs, ref);
+            emit TrialStarted(account, planId, msg.sender, 0, ref);
             _charge(account);
         }
     }
@@ -187,10 +190,13 @@ contract RamWardenCheckout is Ownable2Step, Pausable {
 
     // ---------------------------------------------------------- owner
 
-    function setPlan(uint32 planId, uint128 price, uint32 period, uint32 wardens, bool active) external onlyOwner {
+    function setPlan(uint32 planId, uint128 price, uint32 period, uint32 wardens, bool trial, bool active)
+        external
+        onlyOwner
+    {
         if (active && (price == 0 || period < 1 days || period > MAX_PERIOD || wardens == 0)) revert BadPlan();
-        plans[planId] = Plan(price, period, wardens, active);
-        emit PlanSet(planId, price, period, wardens, active);
+        plans[planId] = Plan(price, period, wardens, trial, active);
+        emit PlanSet(planId, price, period, wardens, trial, active);
     }
 
     function setTreasury(address treasury_) external onlyOwner {

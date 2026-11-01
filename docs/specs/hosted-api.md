@@ -90,9 +90,11 @@ development). The website's side is in `docs/specs/website.md`.
 | 3 | RamWarden | $20 / year | `ram` |
 | 4 | RamWarden Pro | $24 / year | `ram`, `threat` |
 
-Every plan starts with a 14-day trial, then renews every month or year until
-cancelled. One trial per account: an account that had one is charged at
-once. There is no free tier.
+RamWarden plans (1 and 3) start with a 14-day trial; Pro plans (2 and 4) are
+charged at once (user decision, 2026-11-01). Every plan then renews every
+month or year until cancelled. One trial per account: an account that had
+one is charged at once. `trial` in `plans.json` and the contract's `Plan`
+carry this, and `trial_days` in `checkout/config` is 14 or 0.
 
 **Account status**, from `tier`, `paid_until`, `trial_ends_at`, `cancelled`:
 `trial` (inside the trial), `active` (paid period), `grace` (3 days after an
@@ -181,8 +183,9 @@ can't carry the token yet.
 year)` (12 x the monthly price, or the annual price; never unlimited), left
 out when the payer's allowance already covers it, then
 `startTrial(keccak256(account id), plan, price, ref)`, where `ref` is the
-payment id. The contract (`contracts/README.md`) starts the trial, or charges
-at once if the account had one; afterwards anyone may call `charge(account)`
+payment id. The contract (`contracts/README.md`) starts the trial, or, for a
+plan without one or an account that used it, emits `TrialStarted` with
+`trialEnds = 0` and charges the first period at once; afterwards anyone may call `charge(account)`
 when due and the keeper (`contracts/scripts/keeper.cjs`) does. The watcher
 reads `TrialStarted`, `Charged` and `Cancelled`
 `RAMWARDEN_BASE_CONFIRMATIONS` blocks behind the head and copies the

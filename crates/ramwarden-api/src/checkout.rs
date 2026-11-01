@@ -50,6 +50,10 @@ pub struct PlanDef {
     /// `month` or `year`.
     pub interval: String,
     pub days: u64,
+    /// Whether a first subscription starts with the 14-day trial. RamWarden
+    /// only: Pro is charged at once (user decision, 2026-11-01).
+    #[serde(default)]
+    pub trial: bool,
     pub wardens: Vec<u8>,
 }
 
@@ -60,6 +64,11 @@ impl PlanDef {
 
     pub fn interval(&self) -> Interval {
         if self.interval == "year" { Interval::Year } else { Interval::Month }
+    }
+
+    /// Whether this account gets the trial on this plan.
+    pub fn trial_for(&self, trial_used: bool) -> bool {
+        self.trial && !trial_used
     }
 
     /// What the wallet is asked to approve: one year of this plan.
@@ -116,7 +125,7 @@ impl Plans {
             .iter()
             .map(|p| {
                 json!({"id": p.id, "tier": p.tier, "name": p.name, "usd": p.usd, "interval": p.interval,
-                       "days": p.days, "trial_days": 14, "approval_usd": p.approval_usd(), "wardens": self.slugs(p)})
+                       "days": p.days, "trial_days": if p.trial { 14 } else { 0 }, "approval_usd": p.approval_usd(), "wardens": self.slugs(p)})
             })
             .collect();
         let wardens: Vec<Value> = self.wardens.values().map(|w| json!({"slug": w.slug, "name": w.name})).collect();
@@ -290,6 +299,11 @@ impl ChainEvent {
             }
         };
         match self {
+            // No trial (Pro, or the trial was used): the `Charged` in the same
+            // transaction sets the dates.
+            ChainEvent::TrialStarted { plan, payer, trial_ends: 0, .. } => {
+                BillingUpdate { cancelled: Some(false), ..plan_update(*plan, payer) }
+            }
             ChainEvent::TrialStarted { plan, payer, trial_ends, .. } => BillingUpdate {
                 trial_ends_at: Some(*trial_ends),
                 paid_until: Some(*trial_ends),
@@ -473,6 +487,8 @@ pub(crate) mod tests {
         assert_eq!((pro.tier(), pro.interval(), pro.usd, pro.approval_usd()), (Tier::Pro, Interval::Month, 5, 60));
         assert_eq!(p.slugs(pro), vec!["ram", "threat"]);
         assert_eq!(p.plan(3).unwrap().approval_usd(), 20, "annual approves one year, once");
+        assert!(p.plan(1).unwrap().trial_for(false) && !p.plan(1).unwrap().trial_for(true));
+        assert!(!pro.trial_for(false), "Pro has no trial");
         assert!(Plans::from_json(r#"{"wardens":{},"plans":[{"id":1,"tier":"ram","name":"x","usd":1,"interval":"month","days":1,"wardens":[3]}]}"#).is_err());
     }
 
@@ -569,5 +585,10 @@ pub(crate) mod tests {
         assert_eq!((u.tier, u.paid_until, u.trial_ends_at, u.trial_used), (Some(Tier::Pro), Some(500), Some(500), Some(true)));
         assert_eq!(seen[1].0.update(&plans).paid_until, Some(600));
         assert_eq!(seen[2].0.update(&plans).cancelled, Some(true));
+
+        // Pro, or a used trial: no trial dates, and the trial stays available.
+        let paid_now = decode_logs(&[trial_log(&c, chain_key("b"), 2, 0, [8; 32])], &c);
+        let u = paid_now[0].0.update(&plans);
+        assert_eq!((u.tier, u.paid_until, u.trial_ends_at, u.trial_used), (Some(Tier::Pro), None, None, None));
     }
 }

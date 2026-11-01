@@ -1,13 +1,13 @@
 {
-  "_comment": "Wardens and plans sold by RamWardenCheckout, per docs/product-spec.md (approved 2026-11-01). Each plan is a subscription: 14-day trial, then the price every period until cancelled. Plan ids are fixed: the agent skill uses them. The deploy script writes these on-chain; the API serves them from here.",
+  "_comment": "Wardens and plans sold by RamWardenCheckout, per docs/product-spec.md (approved 2026-11-01). Each plan is a subscription: the price every period until cancelled. Plans with \"trial\": true start with a 14-day trial (RamWarden only; Pro is charged at once, user decision 2026-11-01). Plan ids are fixed: the agent skill uses them. The deploy script writes these on-chain; the API serves them from here.",
   "wardens": {
     "0": { "slug": "ram", "name": "RAM warden" },
     "1": { "slug": "threat", "name": "ThreatWarden" }
   },
   "plans": [
-    { "id": 1, "tier": "ram", "name": "RamWarden, monthly",     "usd": 4,  "interval": "month", "days": 30,  "wardens": [0] },
-    { "id": 2, "tier": "pro", "name": "RamWarden Pro, monthly", "usd": 5,  "interval": "month", "days": 30,  "wardens": [0, 1] },
-    { "id": 3, "tier": "ram", "name": "RamWarden, annual",      "usd": 20, "interval": "year",  "days": 365, "wardens": [0] },
-    { "id": 4, "tier": "pro", "name": "RamWarden Pro, annual",  "usd": 24, "interval": "year",  "days": 365, "wardens": [0, 1] }
+    { "id": 1, "tier": "ram", "name": "RamWarden, monthly",     "usd": 4,  "interval": "month", "days": 30,  "trial": true,  "wardens": [0] },
+    { "id": 2, "tier": "pro", "name": "RamWarden Pro, monthly", "usd": 5,  "interval": "month", "days": 30,  "trial": false, "wardens": [0, 1] },
+    { "id": 3, "tier": "ram", "name": "RamWarden, annual",      "usd": 20, "interval": "year",  "days": 365, "trial": true,  "wardens": [0] },
+    { "id": 4, "tier": "pro", "name": "RamWarden Pro, annual",  "usd": 24, "interval": "year",  "days": 365, "trial": false, "wardens": [0, 1] }
   ]
 }

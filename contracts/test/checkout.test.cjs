@@ -29,9 +29,10 @@ async function deploy() {
     treasury.address,
     owner.address,
   );
-  await checkout.setPlan(RAM_MONTH, USDC(4), MONTH, bit(RAM), true);
-  await checkout.setPlan(PRO_MONTH, USDC(5), MONTH, bit(RAM) | bit(THREAT), true);
-  await checkout.setPlan(RAM_YEAR, USDC(20), YEAR, bit(RAM), true);
+  // As plans.json: RamWarden has the 14-day trial, Pro is charged at once.
+  await checkout.setPlan(RAM_MONTH, USDC(4), MONTH, bit(RAM), true, true);
+  await checkout.setPlan(PRO_MONTH, USDC(5), MONTH, bit(RAM) | bit(THREAT), false, true);
+  await checkout.setPlan(RAM_YEAR, USDC(20), YEAR, bit(RAM), true, true);
   await usdc.mint(buyer.address, USDC(1000));
   // What the website asks for: one year of the monthly plan, never unlimited.
   await usdc.connect(buyer).approve(await checkout.getAddress(), USDC(12 * 5));
@@ -41,13 +42,24 @@ async function deploy() {
 describe("RamWardenCheckout", function () {
   it("a trial moves no money and unlocks the plan's wardens for 14 days", async function () {
     const { treasury, buyer, usdc, checkout } = await deploy();
-    const tx = await checkout.connect(buyer).startTrial(ACCOUNT, PRO_MONTH, USDC(5), REF);
+    const tx = await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
     const t = await now();
-    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, PRO_MONTH, buyer.address, t + 14 * DAY, REF);
+    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, RAM_MONTH, buyer.address, t + 14 * DAY, REF);
     expect(await usdc.balanceOf(treasury.address)).to.equal(0n);
     expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(t + 14 * DAY);
-    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(t + 14 * DAY);
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(0n);
     expect(await checkout.isDue(ACCOUNT)).to.equal(false);
+  });
+
+  it("a plan without a trial charges the first period at once and keeps the trial unused", async function () {
+    const { treasury, buyer, usdc, checkout } = await deploy();
+    const tx = await checkout.connect(buyer).startTrial(ACCOUNT, PRO_MONTH, USDC(5), REF);
+    const t = await now();
+    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, PRO_MONTH, buyer.address, 0, REF);
+    await expect(tx).to.emit(checkout, "Charged").withArgs(ACCOUNT, PRO_MONTH, buyer.address, USDC(5), t + MONTH);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(5));
+    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(BigInt(t + MONTH));
+    expect(await checkout.trialUsed(ACCOUNT)).to.equal(false);
   });
 
   it("charges exactly one period when due, never early, never twice", async function () {
@@ -75,7 +87,7 @@ describe("RamWardenCheckout", function () {
   it("a price change never reaches existing subscribers", async function () {
     const { owner, treasury, buyer, usdc, checkout } = await deploy();
     await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
-    await checkout.connect(owner).setPlan(RAM_MONTH, USDC(9), MONTH, bit(RAM) | bit(THREAT), true);
+    await checkout.connect(owner).setPlan(RAM_MONTH, USDC(9), MONTH, bit(RAM) | bit(THREAT), true, true);
     await forward(14 * DAY);
     await checkout.charge(ACCOUNT);
     expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(4));
@@ -117,9 +129,10 @@ describe("RamWardenCheckout", function () {
     const { treasury, buyer, usdc, checkout } = await deploy();
     await checkout.connect(buyer).startTrial(ACCOUNT, RAM_MONTH, USDC(4), REF);
     await checkout.connect(buyer).cancel(ACCOUNT);
-    await checkout.connect(buyer).startTrial(ACCOUNT, PRO_MONTH, USDC(5), REF);
-    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(5));
-    expect(await checkout.paidUntil(ACCOUNT, THREAT)).to.equal(BigInt((await now()) + MONTH));
+    const tx = await checkout.connect(buyer).startTrial(ACCOUNT, RAM_YEAR, USDC(20), REF);
+    await expect(tx).to.emit(checkout, "TrialStarted").withArgs(ACCOUNT, RAM_YEAR, buyer.address, 0, REF);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(USDC(20));
+    expect(await checkout.paidUntil(ACCOUNT, RAM)).to.equal(BigInt((await now()) + YEAR));
   });
 
   it("refuses a second subscription, a missing approval, a higher price and unknown plans", async function () {
@@ -144,7 +157,7 @@ describe("RamWardenCheckout", function () {
       checkout,
       "AlreadySubscribed",
     );
-    await checkout.connect(owner).setPlan(RAM_YEAR, 0, 0, 0, false);
+    await checkout.connect(owner).setPlan(RAM_YEAR, 0, 0, 0, false, false);
     await expect(checkout.connect(other).startTrial(ethers.id("x"), RAM_YEAR, USDC(20), REF)).to.be.revertedWithCustomError(
       checkout,
       "UnknownPlan",
@@ -166,7 +179,7 @@ describe("RamWardenCheckout", function () {
     const token = await checkout.token();
     for (const call of [
       () => checkout.connect(other).unpause(),
-      () => checkout.connect(other).setPlan(7, USDC(1), DAY, 1, true),
+      () => checkout.connect(other).setPlan(7, USDC(1), DAY, 1, false, true),
       () => checkout.connect(other).setTreasury(other.address),
       () => checkout.connect(other).rescue(token, other.address, 1),
     ]) {
@@ -182,7 +195,7 @@ describe("RamWardenCheckout", function () {
       [USDC(1), MONTH, 0],
       [USDC(1), 400 * DAY, 1],
     ]) {
-      await expect(checkout.connect(owner).setPlan(9, price, period, wardens, true)).to.be.revertedWithCustomError(
+      await expect(checkout.connect(owner).setPlan(9, price, period, wardens, false, true)).to.be.revertedWithCustomError(
         checkout,
         "BadPlan",
       );
@@ -243,10 +256,16 @@ describe("plans.json", function () {
       ids.add(p.id);
       for (const w of p.wardens) expect(plans.wardens[String(w)], `plan ${p.id} names warden ${w}`).to.exist;
       const mask = p.wardens.reduce((m, w) => m | (1 << w), 0);
-      await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * DAY, mask, true);
+      await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * DAY, mask, p.trial === true, true);
     }
     // docs/product-spec.md 1.2: ids are fixed because the agent skill uses them.
-    const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.usd]]));
-    expect(by).to.deep.equal({ 1: ["ram", "month", 4], 2: ["pro", "month", 5], 3: ["ram", "year", 20], 4: ["pro", "year", 24] });
+    // The 14-day trial is RamWarden's only (user decision, 2026-11-01).
+    const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.usd, p.trial]]));
+    expect(by).to.deep.equal({
+      1: ["ram", "month", 4, true],
+      2: ["pro", "month", 5, false],
+      3: ["ram", "year", 20, true],
+      4: ["pro", "year", 24, false],
+    });
   });
 });
