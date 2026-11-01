@@ -71,6 +71,10 @@ pub struct Cloud {
     pub downloads_dir: Option<PathBuf>,
     /// The chain id named in SIWE messages.
     pub siwe_chain_id: u64,
+    /// This API's own public base URL, for the install line.
+    pub public_url: String,
+    /// Where release assets are downloaded from.
+    pub releases_url: String,
 }
 
 pub fn routes() -> axum::Router<Arc<AppState>> {
@@ -82,6 +86,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .route("/v1/downloads/{warden}/{file}", get(download))
         .merge(crate::signin::routes())
         .merge(crate::billing::routes())
+        .merge(crate::install::routes())
 }
 
 pub type Reply = Result<Response, Response>;

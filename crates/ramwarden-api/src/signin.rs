@@ -139,6 +139,12 @@ async fn device_start(State(state): State<Arc<AppState>>, Json(b): Json<DeviceSt
 #[derive(Deserialize)]
 struct DeviceToken {
     device_code: String,
+    /// The app names itself when it claims an install link, which was
+    /// issued before anyone knew which machine would run it.
+    #[serde(default)]
+    device_name: Option<String>,
+    #[serde(default)]
+    platform: Option<Platform>,
 }
 
 /// The daemon's poll. Error codes are RFC 8628's (plus `device_limit`),
@@ -150,6 +156,12 @@ async fn device_token(State(state): State<Arc<AppState>>, Json(b): Json<DeviceTo
         Claim::Pending => Err(error(StatusCode::BAD_REQUEST, "authorization_pending")),
         Claim::Gone => Err(error(StatusCode::BAD_REQUEST, "expired_token")),
         Claim::Approved { account_id, device_name, platform } => {
+            let named: Option<String> = b
+                .device_name
+                .map(|n| n.trim().chars().filter(|ch| !ch.is_control()).take(64).collect())
+                .filter(|n: &String| !n.is_empty());
+            let device_name = named.unwrap_or(device_name);
+            let platform = b.platform.unwrap_or(platform);
             let Some((d, token)) =
                 c.store.register_device(&account_id, &device_name, platform, now).await.map_err(storage)?
             else {

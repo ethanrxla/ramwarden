@@ -110,6 +110,8 @@ async fn run() -> Result<(), String> {
                 signer,
                 mailer,
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),
+                public_url: cc.public_url.clone(),
+                releases_url: cc.releases_url.clone(),
             })
         }
     };

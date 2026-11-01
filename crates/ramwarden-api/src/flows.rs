@@ -73,6 +73,8 @@ fn app_with(o: Opts) -> App {
         mailer: Some(mailer.clone()),
         downloads_dir: o.downloads,
         siwe_chain_id: BASE_SEPOLIA,
+        public_url: "https://api.ramwarden.app".into(),
+        releases_url: crate::install::DEFAULT_RELEASES_URL.into(),
     };
     let state = AppState {
         tokens: Default::default(),
@@ -544,6 +546,43 @@ async fn threatwarden_downloads_need_pro_in_good_standing() {
     let dev = acct["devices"][0]["id"].as_str().unwrap();
     assert_eq!(a.call("DELETE", &format!("/v1/account/devices/{dev}"), Auth::Cookie(&cookie), None).await.0, StatusCode::OK);
     assert_eq!(a.call("GET", uri, Auth::Bearer(&tok), None).await.0, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_install_line_links_the_new_device_once() {
+    let a = app();
+    let w = EvmWallet::new(15);
+    let (cookie, id) = a.web(&w).await;
+    let (s, _) = a.call("POST", "/v1/install/link", Auth::Cookie(&cookie), None).await;
+    assert_eq!(s, StatusCode::PAYMENT_REQUIRED, "no line before a trial");
+
+    let trial = BillingUpdate { tier: Some(Tier::Ram), paid_until: Some(NOW + 14 * DAY), trial_ends_at: Some(NOW + 14 * DAY), ..Default::default() };
+    a.store.update_billing(&id, &trial).await.unwrap();
+    let (s, v) = a.call("POST", "/v1/install/link", Auth::Cookie(&cookie), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["expires_at"], iso8601(NOW + 30 * 60));
+    let cmd = v["commands"]["linux"].as_str().unwrap();
+    assert!(cmd.starts_with("curl -fsSL https://api.ramwarden.app/v1/install/rwdc_") && cmd.ends_with("/sh | sh"), "{cmd}");
+    assert!(v["commands"]["windows"].as_str().unwrap().starts_with("irm "));
+    assert!(v["installers"]["macos"].as_str().unwrap().ends_with("/RamWarden.pkg"));
+    let token = cmd.split("/v1/install/").nth(1).unwrap().split('/').next().unwrap().to_string();
+
+    // Fetching the script doesn't use the token up.
+    let req = Request::get(format!("/v1/install/{token}/sh")).body(Body::empty()).unwrap();
+    let resp = a.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let script = String::from_utf8(to_bytes(resp.into_body(), 1 << 16).await.unwrap().to_vec()).unwrap();
+    assert!(script.contains(&token) && script.contains("SHA256SUMS"));
+    assert_eq!(a.call("GET", "/v1/install/rwdc_nope/sh", Auth::None, None).await.0, StatusCode::NOT_FOUND);
+
+    // The app's first run claims it and names itself.
+    let body = json!({"device_code": token, "device_name": "ethan-macbook", "platform": "macos"});
+    let (s, tok) = a.call("POST", "/v1/device/token", Auth::None, Some(body.clone())).await;
+    assert_eq!(s, StatusCode::OK, "{tok}");
+    let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
+    assert_eq!((acct["devices"][0]["name"].as_str(), acct["devices"][0]["platform"].as_str()), (Some("ethan-macbook"), Some("macos")));
+    let (s, again) = a.call("POST", "/v1/device/token", Auth::None, Some(body)).await;
+    assert_eq!((s, again["error"].as_str()), (StatusCode::BAD_REQUEST, Some("expired_token")), "single use");
 }
 
 #[tokio::test]

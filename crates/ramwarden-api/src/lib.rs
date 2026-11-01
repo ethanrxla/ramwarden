@@ -31,6 +31,7 @@ pub mod catalog;
 pub mod checkout;
 pub mod config;
 pub mod entitlement;
+pub mod install;
 pub mod limits;
 pub mod mail;
 pub mod routes;

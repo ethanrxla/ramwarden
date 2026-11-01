@@ -104,7 +104,7 @@ unless cancelled.
 | Route | Auth | Answer |
 | --- | --- | --- |
 | `POST /v1/device/start` `{device_name, platform}` | none | `{device_code, user_code, verification_uri, verification_uri_complete, expires_in: 600, interval: 5}` |
-| `POST /v1/device/token` `{device_code}` | none | `{device_token, account_id, device_id}` once approved; 400 `authorization_pending` while waiting; 400 `expired_token` when unknown, expired or claimed; 403 `device_limit` if the account filled up meanwhile |
+| `POST /v1/device/token` `{device_code, device_name?, platform?}` | none | `{device_token, account_id, device_id}` once approved; 400 `authorization_pending` while waiting; 400 `expired_token` when unknown, expired or claimed; 403 `device_limit` if the account filled up meanwhile |
 | `GET /v1/device/lookup?user_code=` | none | `{status, device_name, platform, expires_at}` for a pending code, else 404 |
 | `POST /v1/auth/challenge` `{chain, address, user_code?}` | none | `{message, expires_at}`: the SIWE/SIWS text to sign |
 | `POST /v1/auth/verify` `{chain, address, message, signature, session?}` | none | sign-in reply (below) |
@@ -121,6 +121,8 @@ unless cancelled.
 | `GET /v1/checkout/payments/{id}` | session | `{id, plan, method, status: pending \| confirmed \| failed, reason, account_status, tier, trial_ends_at, entitlement_until}` |
 | `POST /v1/checkout/cancel` | session | Base: `{chain_id, payer, transactions: [cancel(account)]}` for the paying wallet to send. Card: cancels at Stripe, `{cancelled, service_until}`. 409 with nothing to cancel |
 | `POST /v1/stripe/webhook` | Stripe signature | 200 when recorded or ignored; 400 for a bad or stale signature |
+| `POST /v1/install/link` | session | `{expires_at, commands: {macos, linux, windows}, installers: {macos, windows, linux}}`: the personal install line (product spec 2.4). 402 without an active subscription, 409 at the device limit |
+| `GET /v1/install/{token}/sh`, `/ps1` | the token | the install script, `text/plain`. Doesn't use up the token |
 | `GET /v1/entitlement` | device | signed record (below) |
 | `GET /v1/downloads/{warden}/{file}` | device | `RAMWARDEN_DOWNLOADS_DIR/<warden>/<file>`; 401 no or revoked device, 403 tier lacks that warden or lapsed, 404 otherwise |
 | `GET /v1/models`, `POST /v1/systemone` | device or phase 1 token | as phase 1; 402 `subscription_inactive` for a device whose account is lapsed or never subscribed |
@@ -162,6 +164,18 @@ in the future. `tier` and `status` are for display ("trial ends in 3 days",
 "lapsed: local mode") and never widen access. ThreatWarden needs `tier=pro`
 and a `warden:threat` line in the future. A record that fails to verify
 unlocks nothing; v1 never shipped and is refused.
+
+**Install line.** The token is a device code approved for the account when
+it is issued, valid 30 minutes. `commands` are `curl -fsSL
+<RAMWARDEN_PUBLIC_URL>/v1/install/<token>/sh | sh` (macOS, Linux) and `irm
+.../ps1 | iex` (Windows). The script downloads the release asset, checks it
+against the release's `SHA256SUMS`, writes the token to `<config
+dir>/ramwarden/link-token` (owner-only) and runs the platform installer. On
+first run the app claims it with `POST /v1/device/token`, sending its own
+`device_name` and `platform`, saves the device token and deletes the link
+token. Claimed once, like any device code. `installers` are plain release
+downloads that sign in through the device page, because a downloaded file
+can't carry the token yet.
 
 **Base.** `POST /v1/checkout/base` returns USDC `approve(checkout, one
 year)` (12 x the monthly price, or the annual price; never unlimited), left
@@ -225,6 +239,8 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
 | `RESEND_API_KEY` + `RAMWARDEN_MAIL_FROM` | unset: email sign-in off |
 | `RAMWARDEN_DEV_MAIL_LOG` | `1` writes sign-in codes to the log instead of mailing them. Development only |
 | `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |
+| `RAMWARDEN_PUBLIC_URL` | `https://api.<site domain>`: this API's URL as install lines name it |
+| `RAMWARDEN_RELEASES_URL` | `https://github.com/ethanrxla/ramwarden/releases/latest/download` |
 
 With phase 2 on, `RAMWARDEN_API_TOKENS` becomes optional.
 `RAMWARDEN_FREE_PER_DAY` is gone with the free tier.
@@ -242,7 +258,9 @@ the account to `pro`/`trial`, confirms the payment, signs a v2 entitlement
 with both wardens and opens Jev, which answered 402 before; one subscription
 at a time; cancel returns the wallet's transaction and the `Cancelled` log
 ends grace; a card trial starts only from a correctly signed, fresh webhook
-and cancels at Stripe; ThreatWarden downloads need Pro; CORS with
+and cancels at Stripe; the install line needs a live subscription, its script doesn't use up the
+token, and the app's claim names the device and works once; ThreatWarden
+downloads need Pro; CORS with
 credentials for the site only. Unit tests cover SIWE, EIP-55, Base calldata
 (one-year approval, `startTrial` arguments), log decoding, Stripe signatures
 and event mapping, the entitlement text and config validation.
@@ -263,6 +281,9 @@ on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
 - After a year of monthly charges the approval runs out and the wallet must
   approve again (spec 3.3 step 5). The account page offers it when
   `isDue` and the charge fails; the notice email is not built yet.
+- The app side of the install line (reading `link-token` on first run) is
+  not built yet. Until it is, the app signs in through the device page as
+  before, and the link expires unused.
 - Native Solana answers 503; Phantom pays on Base through its EVM account.
 - The contract is not deployed. Base checkout has run against Hardhat and the
   test logs only; Stripe against a fake. Going live needs a deployed contract

@@ -62,6 +62,10 @@ pub struct CloudConfig {
     pub base: Option<BaseConfig>,
     pub stripe: Option<StripeKeys>,
     pub mail: MailConfig,
+    /// This API's public URL (`RAMWARDEN_PUBLIC_URL`), named in install lines.
+    pub public_url: String,
+    /// `RAMWARDEN_RELEASES_URL`: where install scripts fetch release assets.
+    pub releases_url: String,
 }
 
 /// Stripe's two secrets. Both or neither.
@@ -216,7 +220,21 @@ impl Config {
             _ if var("RAMWARDEN_DEV_MAIL_LOG").as_deref() == Some("1") => MailConfig::Log,
             _ => MailConfig::Off,
         };
+        let public_url = var("RAMWARDEN_PUBLIC_URL")
+            .map(|u| u.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| if origin.starts_with("http://") { "http://localhost:8080".into() } else { format!("https://api.{domain}") });
+        if !(public_url.starts_with("https://") || public_url.starts_with("http://localhost")) || public_url.contains('\'') {
+            return Err("RAMWARDEN_PUBLIC_URL must be an https:// URL".into());
+        }
+        let releases_url = var("RAMWARDEN_RELEASES_URL")
+            .map(|u| u.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| crate::install::DEFAULT_RELEASES_URL.into());
+        if !releases_url.starts_with("https://") || releases_url.contains('\'') {
+            return Err("RAMWARDEN_RELEASES_URL must be an https:// URL".into());
+        }
         Ok(Some(CloudConfig {
+            public_url,
+            releases_url,
             site_origin: origin,
             site_domain: domain,
             entitlement_key: var("RAMWARDEN_ENTITLEMENT_KEY").map(Secret::new),
@@ -272,6 +290,7 @@ mod tests {
         assert!(c.tokens.is_empty(), "devices sign in; phase 1 tokens are optional");
         assert_eq!((cloud.site_origin.as_str(), cloud.site_domain.as_str()), ("https://ramwarden.app", "ramwarden.app"));
         assert!(cloud.base.is_none(), "no contract address, no Base checkout");
+        assert_eq!(cloud.public_url, "https://api.ramwarden.app");
 
         let c = cfg(&[
             ("JEV_API_KEY", "k"),
