@@ -9,6 +9,6 @@ mod tests {
     fn brand_icon_has_complete_rgba_pixels() {
         let image=super::gauge(0.5);
         assert_eq!(image.len(),(super::SIZE*super::SIZE*4) as usize);
-        assert!(image.chunks_exact(4).any(|pixel|pixel[3]>0));
+        assert!(image.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0));
     }
 }

@@ -787,28 +787,19 @@ fn repopulate(ui: &Rc<Ui>) {
     let rows = ui.rows.borrow().clone();
     let filtered = model::filter(&rows, &ui.filter.text());
 
-    let vertical = ui.process_scroll.vadjustment();
-    let horizontal = ui.process_scroll.hadjustment();
-    let (y, x) = (vertical.value(), horizontal.value());
     let objects: Vec<_> = filtered.into_iter().map(RowObject::new).collect();
     // Replacing the entire model briefly removes every visible row, so GTK
     // loses its scroll anchor even when the replacement has the same size.
     // Keep the model populated while replacing rows, then adjust its tail.
+    // GTK then keeps the user's position by itself. Do not also put back a
+    // position saved before the splice: a restore that runs a frame or two
+    // later puts back a stale value over a scroll the user made in between.
+    // That was the CI failure on a single-CPU runner.
     let shared = ui.store.n_items().min(objects.len() as u32);
     for i in 0..shared {
         ui.store.splice(i, 1, &objects[i as usize..i as usize + 1]);
     }
     ui.store.splice(shared, ui.store.n_items() - shared, &objects[shared as usize..]);
-    // ColumnView recomputes adjustments during layout, after idle callbacks.
-    // Restore on the next completed layout rather than before it resets them.
-    let frames=std::cell::Cell::new(0);
-    ui.process_scroll.add_tick_callback(move |_, _| {
-        frames.set(frames.get() + 1);
-        if frames.get() < 2 { return glib::ControlFlow::Continue; }
-        vertical.set_value(y.min((vertical.upper() - vertical.page_size()).max(0.0)));
-        horizontal.set_value(x.min((horizontal.upper() - horizontal.page_size()).max(0.0)));
-        glib::ControlFlow::Break
-    });
 }
 
 async fn refresh(client: &Rc<Client>, ui: &Rc<Ui>) {
