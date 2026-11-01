@@ -61,6 +61,8 @@ Checkout:
   if allowance suffices) then `RamWardenCheckout.purchase(account, plan)`.
   Solana: a USDC transfer with a Solana Pay reference key. The page only asks
   the wallet to send what it was given.
+- `account.html?plan=<id>` preselects that plan when `checkout/config` sells
+  it (agents link people here to buy a pass); any other value is ignored.
 - The payer wallet need not be a wallet on the account.
 - The page polls the payment every 3 s for up to 3 minutes, then tells the
   user it is safe to close: the server credits the pass on confirmation

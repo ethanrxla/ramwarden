@@ -160,7 +160,10 @@ class AccountPage {
     // A warden whose hosted tier is not live yet is shown on the landing page
     // but never sold here.
     const plans = this.plans.filter((p) => !p.soon);
-    let plan = plans[0]?.id;
+    // `?plan=<id>` (sent by agents and the landing page) preselects a plan the
+    // server sells; any other value is ignored.
+    const wanted = new URLSearchParams(location.search).get("plan");
+    let plan = (plans.find((p) => String(p.id) === wanted) ?? plans[0])?.id;
     const planButtons = plans.map((p) =>
       h(
         "label",

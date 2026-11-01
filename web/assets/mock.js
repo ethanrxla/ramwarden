@@ -71,8 +71,10 @@ export class MockApi {
   async checkoutConfig() {
     return {
       plans: [
-        { id: "pro_30d", name: "Pro, 30 days", usd: 4, days: 30 },
-        { id: "pro_365d", name: "Pro, 1 year", usd: 36, days: 365 },
+        // contracts/plans.json; the test network sells every plan.
+        { id: 1, name: "RamWarden Pro, 2 months", usd: 4, days: 60, wardens: ["ram"] },
+        { id: 2, name: "ThreatWarden, 2 months", usd: 6, days: 60, wardens: ["threat"] },
+        { id: 3, name: "RamWarden Pro + ThreatWarden, 2 months", usd: 10, days: 60, wardens: ["ram", "threat"] },
       ],
       base: { chain_id: 84532, network: "Base Sepolia (test)" },
       solana: { network: "Solana devnet (test)" },

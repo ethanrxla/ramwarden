@@ -166,6 +166,16 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
+  t("account page: ?plan= preselects a plan the server sells, ignores others", async () => {
+    for (const [q, want] of [["2", "2"], ["99", "1"], ["", "1"]]) {
+      const p = await page(fakeMetaMask);
+      await p.goto(`${base}/account.html?mock=1&plan=${q}`);
+      await p.getByRole("button", { name: /MetaMask/ }).click();
+      await p.waitForSelector("input[name=plan]");
+      assert.equal(await p.$eval("input[name=plan]:checked", (i) => i.value), want, `plan=${q}`);
+    }
+  });
+
   t("account page: revoking a device removes it", async () => {
     const p = await page(fakeMetaMask);
     p.on("dialog", (d) => d.accept());
