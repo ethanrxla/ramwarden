@@ -9,7 +9,7 @@ import { ApiError, normaliseUserCode } from "./api.js";
 
 const DAY = 86_400_000;
 
-// `?mock=1&as=trial|active|lapsed` starts already signed in, in that state,
+// `?mock=1&as=lite|trial|active|lapsed` starts already signed in, in that state,
 // so the landing page's install box can be previewed signed in. `signedIn`
 // stands for the server's HttpOnly cookie, which a real page never sees.
 const AS = typeof location === "undefined" ? null : new URLSearchParams(location.search).get("as");
@@ -21,12 +21,17 @@ export class MockApi {
     this.pendingCodes = new Map([["BCDF-GHJK", { device_name: "ethan-desktop", platform: "linux" }]]);
     this.account_ = null;
     this.payments = new Map();
+    if (AS === "lite") {
+      this.account_ = this.#newAccount("email", "you@example.com");
+      this.signedIn = true;
+    }
     if (["trial", "active", "lapsed"].includes(AS)) {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {
-        tier: "pro",
+        tier: AS === "trial" ? "ram" : "pro", // only Plus has a trial
         interval: "month",
         status: AS,
+        device_limit: 5,
         trial_ends_at: AS === "trial" ? new Date(Date.now() + 14 * DAY).toISOString() : null,
         paid_until: AS === "active" ? new Date(Date.now() + 30 * DAY).toISOString() : AS === "lapsed" ? new Date(Date.now() - 3 * DAY).toISOString() : null,
       });
@@ -45,7 +50,7 @@ export class MockApi {
       status: null,
       trial_ends_at: null,
       paid_until: null,
-      device_limit: 5,
+      device_limit: 1, // Lite until a plan is bought
       prefs: {},
       devices: [{ id: "dev_1", name: "ethan-desktop", platform: "linux", last_seen_at: new Date().toISOString() }],
     };
@@ -113,7 +118,9 @@ export class MockApi {
   }
   async installLink() {
     if (!this.signedIn) throw new ApiError(401, "Sign in first.");
-    if (!["trial", "active", "grace"].includes(this.account_.status)) throw new ApiError(402, "Start a trial or renew to get the installer.");
+    // Lite (signed in, nothing bought) gets a line too; the device limit of 1
+    // is the server's to enforce.
+    if (this.account_.status && !["trial", "active", "grace"].includes(this.account_.status)) throw new ApiError(402, "Renew to get the installer.");
     const token = "K7Q2-9MXA";
     return {
       expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
@@ -148,10 +155,10 @@ export class MockApi {
     return {
       // docs/product-spec.md 1.2; the test network sells every plan.
       plans: [
-        { id: 1, tier: "ram", name: "RamWarden", usd: 4, interval: "month", days: 30, trial_days: 14, approval_usd: 48, wardens: ["ram"] },
-        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 30, trial_days: 14, approval_usd: 60, wardens: ["ram", "threat"] },
-        { id: 3, tier: "ram", name: "RamWarden", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
-        { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 14, approval_usd: 24, wardens: ["ram", "threat"] },
+        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "month", days: 30, trial_days: 14, approval_usd: 48, wardens: ["ram"] },
+        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 30, trial_days: 0, approval_usd: 60, wardens: ["ram", "threat"] },
+        { id: 3, tier: "ram", name: "RamWarden Plus", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
+        { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 0, approval_usd: 24, wardens: ["ram", "threat"] },
       ],
       base: { chain_id: 84532, network: "Base Sepolia (test)" },
       solana: { network: "Solana devnet (test)" },
@@ -163,7 +170,7 @@ export class MockApi {
     this.payer = payer;
     return this.#payment(plan, "base", {
       chain_id: 84532,
-      trial: this.account_.trial_available,
+      trial: this.account_.trial_available && p.trial_days > 0,
       approval_usd: p.approval_usd,
       transactions: [
         { to: "0x0000000000000000000000000000000000000001", data: "0x095ea7b3" },
@@ -175,7 +182,8 @@ export class MockApi {
     return this.#payment(plan, "solana_pay", { message: "3Bxs4Bc3VYuGVB19" });
   }
   async checkoutStripe(plan) {
-    return this.#payment(plan, "card", { url: "#stripe-mock", trial: this.account_.trial_available });
+    const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
+    return this.#payment(plan, "card", { url: "#stripe-mock", trial: this.account_.trial_available && p.trial_days > 0 });
   }
   async payment(id) {
     const p = this.payments.get(id);
@@ -185,14 +193,16 @@ export class MockApi {
       p.status = "confirmed";
       // Confirming the approval starts the trial; nothing is charged yet.
       const plan = (await this.checkoutConfig()).plans.find((x) => x.id === p.plan);
-      const trial = this.account_.trial_available;
+      // Only Plus has a trial; Pro is charged straight away.
+      const trial = this.account_.trial_available && plan.trial_days > 0;
       Object.assign(this.account_, {
         tier: plan.tier,
         interval: plan.interval,
         status: trial ? "trial" : "active",
         trial_ends_at: trial ? new Date(Date.now() + 14 * DAY).toISOString() : null,
         paid_until: trial ? null : new Date(Date.now() + plan.days * DAY).toISOString(),
-        trial_available: false,
+        trial_available: trial ? false : this.account_.trial_available,
+        device_limit: 5,
         billing: { method: p.method, payer: this.payer },
       });
       Object.assign(p, { account_status: this.account_.status, tier: plan.tier, trial_ends_at: this.account_.trial_ends_at });

@@ -3,7 +3,7 @@
 
 import { makeApi, mockBanner } from "./common.js";
 import { InstallBox, detectOs } from "./install.js";
-import { PetColor, PetStage, WardenPet, loadLines } from "./pets.js";
+import { PetLook, PetStage, WardenPet, loadLines } from "./pets.js";
 import { Pricing } from "./pricing.js";
 
 export { detectOs };
@@ -60,20 +60,20 @@ async function main() {
 
   const warden = document.body.dataset.warden || "ram";
   const lines = await loadLines(warden);
-  const color = new PetColor(warden, `assets/pets/${warden}.svg`);
-  if (account && account.prefs?.wardens?.[warden]?.color != null && color.hue == null) color.hue = account.prefs.wardens[warden].color;
-  await color.load();
-  color.addEventListener("change", (e) => {
-    // Signed in, the color follows the account to the apps.
+  const look = new PetLook(warden);
+  look.adopt(account?.prefs?.wardens?.[warden]?.look);
+  look.paint();
+  look.addEventListener("change", (e) => {
+    // Signed in, the look follows the account to the apps.
     // Prefs are replaced whole, so the rest of them go back unchanged.
     if (!account) return;
     const prefs = { ...(account.prefs || {}) };
-    prefs.wardens = { ...(prefs.wardens || {}), [warden]: { ...(prefs.wardens?.[warden] || {}), color: e.detail.hue } };
+    prefs.wardens = { ...(prefs.wardens || {}), [warden]: { ...(prefs.wardens?.[warden] || {}), look: e.detail.look } };
     account.prefs = prefs;
     api.savePrefs(prefs).catch(() => {});
   });
   const stage = document.querySelector("[data-stage]");
-  if (stage) new PetStage(stage, lines, color).start();
+  if (stage) new PetStage(stage, lines, look).start();
   const pet = document.querySelector("[data-pet]");
   if (pet) new WardenPet(pet, lines).start();
 }

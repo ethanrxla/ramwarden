@@ -47,18 +47,9 @@
             <a class="button secondary" href="#how">How it works</a>
           </div>
         </div>
-        <div class="memory-lab" data-memory-lab data-optimized="false">
-          <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
-          <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
-          <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
-          <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
-          <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
-            <svg viewBox="0 0 348 164" role="img" aria-labelledby="pressure-title pressure-desc"><title id="pressure-title">Memory pressure over time</title><desc id="pressure-desc" data-chart-summary></desc><defs><linearGradient id="pressure-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff697c" stop-opacity=".35"/><stop offset="100%" stop-color="#ff697c" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M20 24H328 M20 82H328 M20 140H328"/><path data-chart-area fill="url(#pressure-fill)"/><path data-chart-line fill="none" stroke="#ff697c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="160">Earlier</text><text x="300" y="160">Now</text></svg>
-          </div>
-          <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
-          <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
-          <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
-          <p class="lab-footnote">This demo uses no live device data.</p>
+        <div class="hero-media radar" aria-hidden="true">
+          <img data-sprite="ram" src="assets/pets/ram.svg" alt="">
+          <i class="blip b1"></i><i class="blip b2"></i><i class="blip b3"></i>
         </div>
       </div>
     </section>
@@ -106,12 +97,8 @@
         </div>
         <div>
           <h2>Meet your warden.</h2>
-          <p class="sub">It explains every call, cracks the odd joke, and wears any color you like.</p>
-          <div class="colors" data-colors>
-            <div class="swatches" data-swatches></div>
-            <label class="hue">Any color <input type="range" min="0" max="359" value="354" aria-label="Warden hue"></label>
-            <button type="button" class="button secondary small" data-reset>Original</button>
-          </div>
+          <p class="sub">It explains every call, cracks the odd joke, and dresses the way you like: wool, horns, hooves, eyes and pupils.</p>
+          <div class="colors" data-colors></div>
         </div>
       </div>
     </section>
@@ -127,6 +114,25 @@
           <div class="card"><span class="num">PROTECTS</span><h3>Hands off what matters</h3><p>Games, terminals, VMs and security tools are never touched.</p></div>
           <div class="card"><span class="num">DECIDES</span><h3>Cheapest fix first</h3><p>Closing an app is the last resort, and only for apps you list.</p></div>
         </div>
+        <div class="demo-layout">
+          <div>
+            <h3 class="subhead">Watch it think.</h3>
+            <p class="sub">Drag the pressure up and see which step your warden picks, cheapest first.</p>
+          </div>
+          <div class="memory-lab" data-memory-lab data-optimized="false">
+            <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
+            <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
+            <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
+            <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
+            <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
+              <svg viewBox="0 0 348 164" role="img" aria-labelledby="pressure-title pressure-desc"><title id="pressure-title">Memory pressure over time</title><desc id="pressure-desc" data-chart-summary></desc><defs><linearGradient id="pressure-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff697c" stop-opacity=".35"/><stop offset="100%" stop-color="#ff697c" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M20 24H328 M20 82H328 M20 140H328"/><path data-chart-area fill="url(#pressure-fill)"/><path data-chart-line fill="none" stroke="#ff697c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="160">Earlier</text><text x="300" y="160">Now</text></svg>
+            </div>
+            <label class="pressure-control">Explore simulated pressure <input data-pressure type="range" min="0" max="20" value="3" step="1" aria-label="Simulated memory stall percentage"></label>
+            <div class="lab-verdict" aria-live="polite"><span class="verdict-icon">↳</span><div><strong data-rung>Reclaim</strong><p data-explanation></p></div></div>
+            <button class="button secondary lab-run" data-simulate>Simulate an intervention</button>
+            <p class="lab-footnote">This demo uses no live device data.</p>
+          </div>
+        </div>
         <h3 class="subhead">Your warden asks three quick questions about everything it might close.</h3>
         <div class="grid three">
           <div class="card"><span class="num">ASKS</span><h3>Will you be back within a day?</h3><p>Last week's recipe goes. The docs you keep reopening stay.</p></div>
@@ -140,7 +146,7 @@
     <section class="block" id="pricing" data-section="pricing">
       <div class="wrap">
         <h2>Two intelligent desktop companions.</h2>
-        <p class="sub">Performance and security, starting at $24 a year.</p>
+        <p class="sub">Start free. Plus and Pro from $20 a year.</p>
         <div class="pricing" data-pricing></div>
       </div>
     </section>
@@ -150,9 +156,9 @@
       <div class="wrap narrow">
         <h2>Questions</h2>
         <details><summary>Is there a free version?</summary>
-          <p>RamWarden is open source: build it from GitHub and set it up yourself. The app here is the ready-to-go version, free for 14 days.</p></details>
+          <p>Yes. RamWarden Lite is free. It frees memory on simple built-in rules, on one computer, with a free account and no card. Plus adds the AI warden. You can also build RamWarden yourself from GitHub.</p></details>
         <details><summary>What happens after the trial?</summary>
-          <p>Your plan starts and renews monthly or yearly until you cancel. Cancel any time from your account or your wallet.</p></details>
+          <p>Plus starts and renews monthly or yearly until you cancel. Cancel any time from your account or your wallet, and your warden goes back to Lite.</p></details>
         <details><summary>Will it close something I'm using?</summary>
           <p>No. Active, pinned and playing tabs are protected, and apps only close if you put them on your list.</p></details>
         <details><summary>Is it safe for games and anti-cheat?</summary>

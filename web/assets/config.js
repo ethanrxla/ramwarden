@@ -19,12 +19,60 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
-  // Two tiers, each monthly or yearly, both with a 14-day trial
-  // (docs/product-spec.md 1.2). Ids are the checkout contract's plan ids.
+  // Three cards (docs/product-spec.md 1.2, as changed 2026-11-01):
+  // - Lite (free): the fixed-rules engine with no AI, on one computer. A free
+  //   account (email or wallet, no card) is what makes "1 computer" true:
+  //   devices are counted per account.
+  // - Plus (tier id "ram"): adds the AI warden. Upgrades are enforced by
+  //   the signed entitlement, not by the page. The only plan with a trial.
+  // - Pro: adds ThreatWarden. Paid from day one.
+  // Plan ids are the checkout contract's. Bullets promise only what ships.
   trialDays: 14,
+  lite: {
+    name: "RamWarden Lite",
+    tagline: "Keep it tidy.",
+    cta: "Get it free",
+    features: [
+      "See what's really eating your memory, live",
+      "Frees memory on simple, built-in rules",
+      "Tab budget: old tabs close on their own",
+      "Games, calls, terminals and VMs are never touched",
+      "Your warden in its original colors",
+      "1 computer, free account, no card",
+    ],
+  },
   tiers: {
-    ram: { name: "RamWarden", blurb: "AI-powered memory management and system resource optimization.", devices: 5 },
-    pro: { name: "RamWarden Pro", blurb: "Everything in RamWarden, plus the ThreatWarden security companion.", devices: 5 },
+    ram: {
+      name: "RamWarden Plus",
+      tagline: "Let it decide.",
+      badge: "Most popular",
+      trialDays: 14,
+      devices: 5,
+      features: [
+        "Everything in Lite, plus:",
+        "An AI warden that picks what you won't miss",
+        "Learns your habits and keeps what you'll reopen",
+        "Never closes a tab with unsaved work",
+        "Pauses idle apps when memory gets tight, resumed the moment you return",
+        "Explains every call in plain words",
+        "Dress up your warden: wool, horns, hooves, eyes",
+        "5 computers: Windows, macOS and Linux",
+      ],
+    },
+    pro: {
+      name: "RamWarden Pro",
+      tagline: "Fast and safe.",
+      trialDays: 0,
+      devices: 5,
+      features: [
+        "Everything in Plus, plus:",
+        "ThreatWarden watches this computer for threats",
+        "One plain status: Clear, Watch or Alert",
+        "Every alert explained in plain words",
+        "Its own pane in your menu bar or tray",
+        "The cyborg warden",
+      ],
+    },
   },
   plans: [
     { id: 1, tier: "ram", interval: "month", usd: 4 },

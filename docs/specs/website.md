@@ -26,10 +26,10 @@ Both warden tabs share one skeleton, in this order, with the same components:
 
 | # | Section | RamWarden | ThreatWarden |
 | --- | --- | --- | --- |
-| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Graphic: the simulated memory demo | Same, "Catch threats. Keep your peace.". Graphic: the radar with the cyborg ram |
+| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Graphic: the radar with RamWarden's own pixel ram (crimson sweep) | Same, "Catch threats. Keep your peace.". Graphic: the radar with the cyborg ram |
 | 2 | Install (`#get`) | `assets/install.js`, the same on both | same |
 | 3 | Scroll world | The promo film scrubbed by scroll | The green clip (`assets/world/threat-scrub.mp4`) scrubbed by scroll |
-| 4 | Pet | The ram, talking, with the color picker | The cyborg ram |
+| 4 | Pet | The ram, talking, with the app's look controls | The cyborg ram, plus a visor color |
 | 5 | How it works (`#how`) | Measures, Triggers, Protects, Decides; then three questions | Host, Files, Network, Traffic; then Acts, Protected, Plain words |
 | 6 | Pricing (`#pricing`) | `assets/pricing.js`, the same on both | same |
 | 7 | FAQ (`#faq`) | Short | Short |
@@ -68,9 +68,11 @@ trial_available, billing: {method}|null, entitlement_until, entitlements,
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`.
 
-Plans are the contract's ids: 1 RamWarden monthly ($4), 2 Pro monthly ($5),
-3 RamWarden annual ($20), 4 Pro annual ($24). Both tiers start with a 14-day
-trial and renew until cancelled.
+Plans are the contract's ids: 1 Plus monthly ($4), 2 Pro monthly ($5),
+3 Plus annual ($20), 4 Pro annual ($24). Plus (tier id `ram`) starts with a
+14-day trial; Pro is charged from day one (`trial_days: 0`). Both renew until
+cancelled. RamWarden Lite has no plan: a signed-in account with nothing
+bought, on 1 device, with no AI.
 
 Sign-in:
 
@@ -107,11 +109,15 @@ Checkout:
   and cards. Pages never name the engines or providers behind a warden and
   never say "our server"; attributions live on `notices.html`. No em dashes
   anywhere under `web/`. A unit test enforces both.
-- **No free tier on the site.** The product is paid with a 14-day trial.
-  The open-source repo is the free option and appears as one line under the
-  pricing cards and a small card beside the install box, never as a tier.
-- **The install box knows who you are.** Signed out: OS tabs and Start free
-  trial, no command. Trial or active: a personal one-liner and installer
+- **Three cards: Lite, Plus, Pro** (changed 2026-11-01; was "no free tier").
+  Lite (free) is the fixed-rules engine with no AI, on 1 device, with a free account
+  (email or wallet, no card), because device limits are counted per account.
+  Plus adds the AI warden and is the only plan with a trial. Pro adds
+  ThreatWarden and has no trial. Bullets say what the visitor gets and promise
+  only what ships; engines are still never named. The open-source repo stays
+  as one line under the cards and a small card beside the install box.
+- **The install box knows who you are.** Signed out: OS tabs and Choose a
+  plan, no command. Trial or active: a personal one-liner and installer
   download from `POST /v1/install/link`. Lapsed or cancelled: Renew. No
   command from `raw.githubusercontent.com` appears on the site.
 - **Scroll drives the world.** `assets/world.js` scrubs each tab's clip by
@@ -123,9 +129,14 @@ Checkout:
   typing, and one click mutes it (remembered). Lines live in
   `assets/pets/<warden>-lines.json`. Comments may react to the page (the
   demo slider), never to the visitor's machine, which the site cannot see.
-- **Warden color.** Six presets and a hue slider recolor the sprite by
-  palette swap, keeping outline and eyes. Kept in `localStorage`; signed in,
-  also saved to the account's `prefs`.
+- **Warden look.** The Mac app's Colors pane on the page: wool, horns,
+  hooves and eyes color wells, the pupil style (slits, round, none), Reset
+  eyes and Original, plus six wool presets (ThreatWarden adds a visor
+  color). `assets/sprite.js` redraws the sprite from the app's pixel grid with
+  the app's tint factors, so each warden keeps its own shape (RamWarden never
+  gets the cyborg's antenna or plates). The original look draws exactly the
+  shipped SVG. Kept in `localStorage` (`rw.pet.look.<warden>`); signed in,
+  also saved to `prefs.wardens.<warden>.look`.
 
 - **No third-party code on pages that sign.** No wallet SDK, analytics or
   CDN. Each page carries a CSP of `script-src 'self'`; its `connect-src`
@@ -145,12 +156,12 @@ Checkout:
 
 - `node --test web/tests/*.test.mjs`: user-code normalisation against the
   server's alphabet, base58, hex encoding, wallet error wording, OS detection,
-  the API client's session handling, pet recoloring, pricing math, and the
+  the API client's session handling, the pet's look, pricing math, and the
   copy rules (no em dashes, no engine or provider names, no "our server").
 - `node web/tests/e2e.cjs`: Chromium against the mock with injected fake
   MetaMask (EIP-6963) and Phantom. Both tabs have the same section order;
   the install box in signed-out, trial and lapsed states; the pricing toggle;
-  pet jokes, mute and color. Device link signs a message bound to the
+  pet jokes, mute and look controls. Device link signs a message bound to the
   code; bad and expired codes re-prompt; a rejected signature offers a retry;
   sign in with Phantom and start a trial on Base with MetaMask (chain switch,
   capped approve then startTrial, install line appears); revoke; unreachable server.

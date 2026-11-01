@@ -1,9 +1,10 @@
 // /account: sign in, start a trial, see the plan, get the personal install
 // line and the browser helper, and manage devices (docs/product-spec.md 3).
 //
-// Signing in with a new wallet goes straight to choosing a plan: there is no
-// "account with nothing bought" state worth showing. Starting a trial
-// charges nothing; the server reports the plan and its status.
+// A signed-in account with nothing bought is RamWarden Lite: free, rules
+// only, 1 device, with its install line and an Upgrade to Plus. Plus shows
+// Upgrade to Pro. The server enforces every limit; this page only offers the
+// step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
 import { config, planFor } from "./config.js";
 import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
@@ -82,7 +83,10 @@ class AccountPage {
 
   render() {
     const a = this.account;
-    const live = installState(a) === "ready";
+    const state = installState(a);
+    const live = state === "ready" || state === "lite";
+    // What the Upgrade button offers: Lite and lapsed go to Plus, Plus to Pro.
+    const next = state === "lite" ? "ram" : state === "ready" && a.tier === "ram" ? "pro" : null;
     this.flashArea = h("div");
     const install = live ? h("div", { class: "install" }) : null;
 
@@ -90,17 +94,18 @@ class AccountPage {
       root,
       h("h1", {}, "Your account"),
       this.flashArea,
-      a.tier
+      a.identity || a.tier
         ? h(
             "section",
             { class: "panel" },
-            h("h2", {}, config.tiers[a.tier]?.name || "Your plan"),
-            h("p", {}, (STATUS[a.status] || (() => ""))(a)),
+            h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
+            h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
             h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
               ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
           )
@@ -108,7 +113,7 @@ class AccountPage {
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
       live ? this.extensionPanel() : null,
       live ? this.devicesPanel() : null,
-      live ? null : this.buyPanel(),
+      state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
     if (install) new InstallBox(install, { api, account: a }).render();
   }
@@ -172,13 +177,21 @@ class AccountPage {
     );
   }
 
+  // Upgrade opens the plan picker on the next tier. Plus to Pro is an
+  // upgrade of the running plan, which the server prices.
+  upgradeTo(tier) {
+    this.upgrading = tier;
+    this.render();
+    document.getElementById("buy")?.scrollIntoView();
+  }
+
   buyPanel() {
     const any = this.methods.base || this.methods.solana || this.methods.stripe;
     const area = h("div");
     // `?plan=<id>` (sent by agents and the pricing cards) preselects a plan
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
-    let tier = wanted?.tier || "ram";
+    let tier = this.upgrading || wanted?.tier || "ram";
     let interval = wanted?.interval || "month";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
@@ -186,10 +199,11 @@ class AccountPage {
       const p = plan();
       for (const i of picker.querySelectorAll("input")) i.checked = i.value === (i.name === "tier" ? tier : interval);
       const approve = p?.approval_usd ?? (p && (p.interval === "month" ? p.usd * 12 : p.usd));
-      const trialDays = p?.trial_days ?? config.trialDays;
+      // Only Plus has a trial; Pro is paid from day one.
+      const trialDays = p ? (p.trial_days ?? config.tiers[p.tier]?.trialDays ?? 0) : 0;
       terms.textContent = !p
         ? ""
-        : this.account.trial_available === false
+        : this.account.trial_available === false || !trialDays
           ? `$${p.usd} a ${interval}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
           : `Nothing is charged today. After ${trialDays} days, $${p.usd} a ${interval} until you cancel. A wallet approves $${approve} at most (one year).`;
     };
@@ -216,7 +230,17 @@ class AccountPage {
     return h(
       "section",
       { class: "panel", id: "buy" },
-      h("h2", {}, this.account.trial_available === false ? (this.account.status ? "Renew" : "Choose a plan") : `Start your ${config.trialDays}-day free trial`),
+      h(
+        "h2",
+        {},
+        this.upgrading === "pro"
+          ? "Upgrade to Pro"
+          : this.account.status
+            ? "Renew"
+            : this.account.trial_available === false
+              ? "Upgrade from Lite"
+              : "Upgrade from Lite. Plus is free for 14 days.",
+      ),
       any
         ? [
             picker,
