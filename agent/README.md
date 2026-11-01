@@ -32,8 +32,8 @@ checksum), and how to talk to it on `127.0.0.1:7823`.
 ## Paying
 
 RamWarden is $4/month or $20/year and RamWarden Pro (adds ThreatWarden)
-$5/month or $24/year, each with a 14-day free trial and renewing until
-cancelled. Payment is USDC on Base (MetaMask, or Phantom's EVM account), or a
+$5/month or $24/year, renewing until cancelled. RamWarden plans start with a
+14-day free trial; Pro is charged when it starts. Payment is USDC on Base (MetaMask, or Phantom's EVM account), or a
 card when offered. The agent never spends on its own: the user asks, the agent
 says exactly what they are agreeing to (price, renewal, the one-year USDC
 approval), and the user approves every signature and payment in their own

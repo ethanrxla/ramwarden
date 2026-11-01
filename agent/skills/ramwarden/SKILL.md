@@ -17,7 +17,8 @@ browser tabs next, freezing or closing apps last. Its agents are called
 
 Current prices (the server's `/v1/checkout/config` is the authority, always
 quote from it): **RamWarden $4/month or $20/year, RamWarden Pro $5/month or
-$24/year**, each with a 14-day free trial, renewing until cancelled, paid in
+$24/year**, renewing until cancelled. RamWarden plans start with a 14-day
+free trial; Pro is charged when it starts. Paid in
 USDC on Base with MetaMask or Phantom, or by card when offered.
 
 The daemon listens on `http://127.0.0.1:7823`. Every call below is plain HTTP

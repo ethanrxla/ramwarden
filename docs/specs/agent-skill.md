@@ -48,7 +48,9 @@ Warden ids are `ram` (hosted Jev) and `threat` (ThreatWarden). Plan ids are
 the contract's numbers. Prices are whatever `checkout/config` says; at the
 time of writing plan 1 is RamWarden $4/month, plan 2 RamWarden Pro (adds
 ThreatWarden) $5/month, plan 3 RamWarden $20/year and plan 4 Pro $24/year,
-each with a 14-day trial and renewing until cancelled. Native Solana answers
+renewing until cancelled. Plans 1 and 3 have a 14-day trial (`trial_days:
+14`); Pro (2 and 4) is charged when it starts (`trial_days: 0`), and the
+agent says "charged now", never "free trial", for it. Native Solana answers
 503 until it opens, so agents pay on Base.
 
 ## Policy
