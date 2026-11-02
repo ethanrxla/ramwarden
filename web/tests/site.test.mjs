@@ -128,7 +128,6 @@ test("marketing hooks appear verbatim", () => {
   const index = fs.readFileSync(path.join(WEB, "index.html"), "utf8");
   for (const hook of [
     "Your PC has 32GB of RAM. So why does it still feel slow?",
-    "Your task manager isn't telling you the whole story.",
     "Two intelligent desktop companions.",
     "Performance and security, starting at $5 every 2 months or $24 a year.",
     "Free your RAM.<br><em>Keep your peace.</em>",

@@ -11,7 +11,7 @@
 // Everything from the server goes in through textContent (common.js `h`).
 
 import { ApiError } from "./api.js";
-import { h } from "./common.js";
+import { h, pageHref } from "./common.js";
 
 const store = {
   get(k) {
@@ -84,6 +84,7 @@ export class SupportChat {
   build() {
     this.log = h("ol", { class: "chat-log", "aria-live": "polite" });
     this.chips = h("div", { class: "chat-chips" });
+    this.offers = h("div", { class: "chat-chips chat-offers" });
     this.email = h("input", { type: "email", name: "email", placeholder: "Email for the reply (optional)", autocomplete: "email", "aria-label": "Email for the reply" });
     this.ticketBox = h(
       "form",
@@ -110,6 +111,7 @@ export class SupportChat {
       ),
       this.log,
       this.chips,
+      this.offers,
       this.ticketBox,
       form,
       h("p", { class: "chat-note" }, "Chats are kept for 30 days so the team can help. ", h("a", { href: "privacy.html" }, "Privacy")),
@@ -166,6 +168,13 @@ export class SupportChat {
     );
   }
 
+  setOffer(topic) {
+    const offer = topic === "trial" ? ["Start the Plus trial", "account.html?plan=1"]
+      : topic === "threatwarden" ? ["See Pro", "account.html?plan=2"]
+      : ["plans", "pricing", "lite"].includes(topic) ? ["Compare plans", "#pricing"] : null;
+    this.offers.replaceChildren(...(offer ? [h("a", { class: "button secondary", href: pageHref(offer[1]) }, offer[0])] : []));
+  }
+
   async send({ message, topic, label }) {
     const text = (message ?? "").trim();
     if (this.busy || (!text && !topic)) return;
@@ -181,6 +190,7 @@ export class SupportChat {
       typing.remove();
       this.say("warden", r.reply.text);
       this.setChips(r.reply.chips);
+      this.setOffer(r.reply.topic);
       this.ticket = r.ticket || this.ticket;
       this.ticketBox.hidden = !r.reply.offer_ticket;
       // The ticket box takes room from the log; keep the answer in view.

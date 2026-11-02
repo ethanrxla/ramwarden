@@ -112,8 +112,8 @@ pub const TOPICS: &[Topic] = &[
         id: "lite",
         meaning: "the free plan, RamWarden Lite, what you get without paying",
         keywords: &["free", "free plan", "lite", "without paying", "no card", "free version", "free tier"],
-        answer: "RamWarden Lite is free with an account (email or wallet, no card). It measures memory the way your OS charges it, acts on memory stalls rather than a full meter, \
-                 runs a 4-step reclaim algorithm, keeps a tab budget with a reopen list, and never touches games, anti-cheat, calls, terminals or VMs. \
+        answer: "RamWarden Lite is free with an account (email or wallet, no card). It monitors memory and activity, applies fixed cleanup rules, and keeps a reopen list for closed tabs. \
+                 Safety checks protect games, calls and system processes. Available actions depend on your platform and settings. \
                  It covers 1 computer. It has no AI and no warden pet; those come with Plus.",
         next: &["plans", "trial", "install"],
         ticket: false,
@@ -211,9 +211,9 @@ pub const TOPICS: &[Topic] = &[
         id: "how_it_works",
         meaning: "how it frees memory, how it works, RAM, performance, speed",
         keywords: &["how does", "how it works", "ram", "memory", "slow", "speed", "faster", "performance", "free up", "reclaim", "task manager", "32gb", "16gb"],
-        answer: "RamWarden measures memory the way your OS charges it, so shared browser memory is counted once, and it acts on memory stalls (time lost waiting on RAM) rather than a full meter. \
-                 Then it works up a ladder in order of how little each step costs you: compress cold memory, page it out, unload idle tabs, and only then pause idle apps you've listed. \
-                 Plus adds an AI that predicts what you'll come back to.",
+        answer: "RamWarden monitors memory pressure and computer activity. On Linux it apportions shared memory instead of counting it in full for each process. \
+                 It tries lower-impact memory reclamation first, then other actions allowed by your settings and platform. Scheduled tab cleanup can also run before memory fills up. \
+                 Plus adds AI estimates about whether you will return to an app or tab; those estimates can be wrong.",
         next: &["safety", "plans"],
         ticket: false,
     },

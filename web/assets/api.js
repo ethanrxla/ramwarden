@@ -30,9 +30,10 @@ export class ApiError extends Error {
 // injected into it could not steal one; every call just sends the cookie.
 
 export class Api {
-  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
+  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis), timeoutMs = 8000 } = {}) {
     this.base = base.replace(/\/+$/, "");
     this.fetch = fetchImpl;
+    this.timeoutMs = timeoutMs;
   }
 
   async request(method, path, body) {
@@ -45,6 +46,7 @@ export class Api {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: "include",
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new ApiError(0, "The RamWarden server could not be reached.");

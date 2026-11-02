@@ -75,6 +75,8 @@ async function run() {
 
   async function page(init, arg) {
     const ctx = await browser.newContext();
+    // Fixture tests never depend on a public API being reachable.
+    await ctx.route("https://api.ramwarden.com/**", (route) => route.abort());
     // These installer assertions deliberately exercise Linux, on every test host.
     await ctx.addInitScript(() => {
       Object.defineProperty(navigator, "platform", {get: () => "Linux x86_64"});
@@ -122,6 +124,7 @@ async function run() {
     await p.waitForFunction(() => /Free to start/.test(document.querySelector("[data-say]").textContent));
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), true);
     await p.click("[data-mute]");
+    assert.ok((await p.getAttribute(".chat-offers a", "href")).endswith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), false);
     // Look: the app's controls are all there; a swatch and the pupil picker
@@ -298,6 +301,7 @@ async function run() {
     await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
     await p.press('#warden-chat input[name="message"]', "Enter");
     await p.waitForSelector("#warden-chat >> text=Pro is $5 every 2 months");
+    assert.ok((await p.getAttribute(".chat-offers a", "href")).endswith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");
     // A problem offers a ticket.
@@ -313,7 +317,7 @@ async function run() {
     assert.equal(await p.isVisible("#warden-chat"), false);
     // Offline, the chat says so instead of failing silently.
     const q = await page();
-    await q.route("https://api.ramwarden.app/**", (r) => r.abort());
+    await q.route("https://api.ramwarden.com/**", (r) => r.abort());
     await q.goto(`${base}/threat.html`);
     await q.click("[data-pet] img");
     await q.waitForSelector("#warden-chat >> text=can't reach the RamWarden server");
@@ -322,7 +326,7 @@ async function run() {
 
   t("without the server, sign-in explains that it could not be reached", async () => {
     const p = await page(fakeMetaMask);
-    await p.route("https://api.ramwarden.app/**", (r) => r.abort());
+    await p.route("https://api.ramwarden.com/**", (r) => r.abort());
     await p.goto(`${base}/link.html?code=BCDF-GHJK`);
     await p.waitForSelector("text=could not be reached");
   });
