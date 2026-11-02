@@ -40,5 +40,7 @@ scanned a benign file successfully as SYSTEM. Both synthetic feed fixtures decod
 with the correct engine groups. Live ClamAV scan events and Suricata alerts reach
 the manager. Windows Suricata captures the default Wi-Fi interface in passive mode.
 Scheduled antivirus scans defer when the RAM daemon's `/psi` endpoint is unavailable;
-the installed Windows service currently does not expose that endpoint. This is a
-remaining product integration dependency, not a successful scheduled sweep.
+the Windows memory daemon was restarted through its existing login task and the
+endpoint now responds. A reclaim-pressure response correctly defers scans. The
+daemon task has no runtime cutoff and retries after failures. Deferral is not a
+successful scheduled sweep.
