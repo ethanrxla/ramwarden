@@ -80,6 +80,11 @@ pub struct MessageParts<'a> {
 
 const STATEMENT: &str = "Sign in to RamWarden. This does not move funds or approve any transaction.";
 
+pub fn link_message(text: &str, account: &str) -> String {
+    text.replacen(STATEMENT,
+        &format!("Link this wallet as a sign-in method for RamWarden account {account}. This does not move funds or approve any transaction."), 1)
+}
+
 pub fn device_resource(user_code: &str) -> String {
     format!("urn:ramwarden:device:{user_code}")
 }

@@ -102,6 +102,20 @@ impl MongoStore {
         }
     }
 
+    async fn claim_login_identity(&self, identity: &Identity, owner: &str) -> Result<Document> {
+        let key = hash(&serde_json::to_string(identity).expect("identity serializes"));
+        let collection = self.raw("login_identities");
+        match collection.find_one_and_update(doc! {"_id": &key},
+            doc! {"$setOnInsert":{"account_id":owner,"identity":to_bson(identity)}})
+            .upsert(true).return_document(ReturnDocument::After).await {
+            Ok(Some(value)) => Ok(value),
+            Err(error) if is_duplicate_key(&error) => collection.find_one(doc! {"_id":key}).await?
+                .ok_or_else(|| StoreError::Unavailable("identity claim disappeared".into())),
+            Err(error) => Err(error.into()),
+            Ok(None) => Err(StoreError::Unavailable("identity claim returned nothing".into())),
+        }
+    }
+
     /// Every index the rules rely on. Idempotent: run at start, or with
     /// `ramwarden-cloud-db init`.
     pub async fn ensure_indexes(&self) -> Result<()> {
@@ -126,6 +140,7 @@ impl MongoStore {
         for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY] {
             self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
         }
+        self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
         self.ensure_support_indexes().await?;
         Ok(())
     }
@@ -210,8 +225,9 @@ impl Store for MongoStore {
         Ok(d.and_then(|d| bson::from_document::<Challenge>(d).ok()).filter(|c| c.expires_at > now))
     }
 
-    async fn start_email_code(&self, email: &str, code: &str, user_code: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
+    async fn start_email_code_for(&self, email: &str, code: &str, user_code: Option<&str>, link_account: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
         let c = EmailCode {
+            link_account: link_account.map(str::to_string),
             code_hash: hash(code),
             user_code: user_code.map(str::to_string),
             created_at: now,
@@ -248,7 +264,7 @@ impl Store for MongoStore {
         right.insert("code_hash", hash(code));
         if let Some(d) = self.raw(EMAIL_CODES).find_one_and_delete(right).await? {
             let c: EmailCode = bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))?;
-            return Ok(EmailCheck::Ok { user_code: c.user_code });
+            return Ok(EmailCheck::Ok { user_code: c.user_code, link_account: c.link_account });
         }
         let r = self.raw(EMAIL_CODES).update_one(live, doc! { "$inc": { "attempts": 1 } }).await?;
         if r.matched_count == 1 {
@@ -260,31 +276,48 @@ impl Store for MongoStore {
     }
 
     async fn account_for_identity(&self, identity: &Identity, now: u64) -> Result<(Account, bool)> {
+        let legacy = self.accounts().find_one(doc! { "identity": to_bson(identity) }).await?;
         let fresh = Account::new(new_id(), identity.clone(), now);
-        let mut insert = bson::to_document(&fresh).expect("serializes");
-        insert.remove("identity"); // comes from the upsert's filter
-        insert.insert("chain_key", hex(&fresh.chain_key()));
-        let filter = doc! { "identity": to_bson(identity) };
-        for _ in 0..2 {
-            match self
-                .accounts()
-                .find_one_and_update(filter.clone(), doc! { "$setOnInsert": insert.clone() })
-                .upsert(true)
-                .return_document(ReturnDocument::After)
-                .await
-            {
-                Ok(Some(a)) => {
-                    let created = a.id == fresh.id;
-                    return Ok((a, created));
-                }
-                Ok(None) => return Err(StoreError::Unavailable("upsert returned nothing".into())),
-                // Two first sign-ins racing: the loser's retry finds the winner's.
-                Err(e) if is_duplicate_key(&e) => continue,
-                Err(e) => return Err(e.into()),
+        let proposed = legacy.as_ref().map_or(fresh.id.as_str(), |a| a.id.as_str());
+        let alias = self.claim_login_identity(identity, proposed).await?;
+        let owner = alias.get_str("account_id").map_err(|e| StoreError::Unavailable(e.to_string()))?;
+        if let Some(account) = self.accounts().find_one(doc! {"_id":owner}).await? { return Ok((account,owner == fresh.id)); }
+        // All simultaneous first sign-ins use the id of the single identity
+        // claim, so neither an account nor its linked methods can split.
+        let account = Account::new(owner.to_string(), identity.clone(), now);
+        let mut insert = bson::to_document(&account).expect("account serializes");
+        insert.insert("chain_key", hex(&account.chain_key()));
+        let saved = self.accounts().find_one_and_update(doc! {"_id":owner},doc! {"$setOnInsert":insert})
+            .upsert(true).return_document(ReturnDocument::After).await?
+            .ok_or_else(|| StoreError::Unavailable("account creation returned nothing".into()))?;
+        Ok((saved, owner == fresh.id))
+    }
+
+    async fn link_identity(&self, account_id: &str, identity: &Identity) -> Result<bool> {
+        if self.accounts().find_one(doc! {"_id":account_id}).await?.is_none() { return Ok(false); }
+        let key = hash(&serde_json::to_string(identity).expect("identity serializes"));
+        if let Some(alias) = self.raw("login_identities").find_one(doc! {"_id":key}).await? {
+            return Ok(alias.get_str("account_id").ok() == Some(account_id));
+        }
+        if self.accounts().find_one(doc! {"identity":to_bson(identity),"_id":{"$ne":account_id}}).await?.is_some() {
+            return Ok(false);
+        }
+        let alias = self.claim_login_identity(identity, account_id).await?;
+        Ok(alias.get_str("account_id").ok() == Some(account_id))
+    }
+
+    async fn identities(&self, account_id: &str) -> Result<Vec<Identity>> {
+        use futures::TryStreamExt;
+        let rows: Vec<Document> = self.raw("login_identities").find(doc! {"account_id":account_id}).await?.try_collect().await?;
+        let mut identities = Vec::new();
+        if let Some(account) = self.accounts().find_one(doc! {"_id":account_id}).await? { identities.push(account.identity); }
+        for row in rows {
+            if let Ok(value) = row.get_document("identity") {
+                let identity: Identity = bson::from_document(value.clone()).map_err(|e| StoreError::Unavailable(e.to_string()))?;
+                if !identities.contains(&identity) { identities.push(identity); }
             }
         }
-        let a = self.accounts().find_one(filter).await?;
-        a.map(|a| (a, false)).ok_or_else(|| StoreError::Unavailable("account vanished".into()))
+        Ok(identities)
     }
 
     async fn account(&self, id: &str) -> Result<Option<Account>> {

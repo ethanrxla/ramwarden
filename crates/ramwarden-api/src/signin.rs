@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use ramwarden_cloud::model::{Account, Challenge, Claim, EmailCheck, Identity, Platform};
@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 
 use crate::accounts::{
     Cloud, Reply, SESSION_COOKIE, account_json, at_device_limit, cloud, device_limit, device_limit_reached, session_token,
-    storage,
+    storage, session,
 };
 use crate::routes::{AppState, error};
 use crate::wallet::{self, Chain, MessageParts, iso8601};
@@ -200,20 +200,26 @@ async fn device_lookup(State(state): State<Arc<AppState>>, Query(q): Query<Looku
 
 #[derive(Deserialize)]
 struct ChallengeReq {
+    #[serde(default)]
+    link: bool,
     chain: Chain,
     address: String,
     #[serde(default)]
     user_code: Option<String>,
 }
 
-async fn challenge(State(state): State<Arc<AppState>>, Json(b): Json<ChallengeReq>) -> Reply {
+async fn challenge(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json<ChallengeReq>) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
     let address = wallet::normalise(b.chain, &b.address).map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, &e))?;
+    let link_account = if b.link {
+        if b.user_code.is_some() { return Err(error(StatusCode::BAD_REQUEST,"Link a sign-in method separately from a device.")); }
+        Some(session(c, &Method::POST, &headers, now).await?.id)
+    } else { None };
     let user_code = pending_code(c, b.user_code.as_deref(), now).await?;
     let nonce = hex::encode(random_bytes::<16>());
     let expires_at = now + CHALLENGE_TTL;
-    let message = wallet::message(
+    let mut message = wallet::message(
         b.chain,
         &address,
         &MessageParts {
@@ -226,7 +232,10 @@ async fn challenge(State(state): State<Arc<AppState>>, Json(b): Json<ChallengeRe
             user_code: user_code.as_deref(),
         },
     );
-    let stored = Challenge { chain: b.chain, address, message: message.clone(), user_code, expires_at };
+    if let Some(account) = &link_account {
+        message = wallet::link_message(&message, account);
+    }
+    let stored = Challenge { link_account, chain: b.chain, address, message: message.clone(), user_code, expires_at };
     c.store.put_challenge(&nonce, stored, now).await.map_err(storage)?;
     Ok(Json(json!({"message": message, "expires_at": iso8601(expires_at)})).into_response())
 }
@@ -239,6 +248,8 @@ fn wants_bearer(s: &Option<String>) -> bool {
 
 #[derive(Deserialize)]
 struct VerifyReq {
+    #[serde(default)]
+    link: bool,
     chain: Chain,
     address: String,
     message: String,
@@ -247,7 +258,7 @@ struct VerifyReq {
     session: Option<String>,
 }
 
-async fn verify(State(state): State<Arc<AppState>>, Json(b): Json<VerifyReq>) -> Reply {
+async fn verify(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json<VerifyReq>) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
     let stale = || error(StatusCode::UNAUTHORIZED, "That sign-in request expired or was already used. Try again.");
@@ -262,6 +273,10 @@ async fn verify(State(state): State<Arc<AppState>>, Json(b): Json<VerifyReq>) ->
         .map_err(|_| error(StatusCode::UNAUTHORIZED, "The signature did not match the wallet. Try again."))?;
 
     let identity = Identity::Wallet { chain: b.chain, address };
+    if b.link != ch.link_account.is_some() { return Err(error(StatusCode::UNAUTHORIZED,"That proof was issued for a different sign-in action.")); }
+    if let Some(target) = ch.link_account {
+        return finish_link(c, &headers, &target, &identity, now).await;
+    }
     let (account, created) = c.store.account_for_identity(&identity, now).await.map_err(storage)?;
     if created {
         tracing::info!(account = %account.id, "account created (wallet)");
@@ -285,12 +300,14 @@ pub fn plausible_email(e: &str) -> bool {
 
 #[derive(Deserialize)]
 struct EmailStart {
+    #[serde(default)]
+    link: bool,
     email: String,
     #[serde(default)]
     user_code: Option<String>,
 }
 
-async fn email_start(State(state): State<Arc<AppState>>, Json(b): Json<EmailStart>) -> Reply {
+async fn email_start(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json<EmailStart>) -> Reply {
     let c = cloud(&state)?;
     let mailer = c
         .mailer
@@ -301,9 +318,13 @@ async fn email_start(State(state): State<Arc<AppState>>, Json(b): Json<EmailStar
     if !plausible_email(&email) {
         return Err(error(StatusCode::UNPROCESSABLE_ENTITY, "That doesn't look like an email address."));
     }
+    let link_account = if b.link {
+        if b.user_code.is_some() { return Err(error(StatusCode::BAD_REQUEST,"Link a sign-in method separately from a device.")); }
+        Some(session(c, &Method::POST, &headers, now).await?.id)
+    } else { None };
     let user_code = pending_code(c, b.user_code.as_deref(), now).await?;
     let code = email_code();
-    if !c.store.start_email_code(&email, &code, user_code.as_deref(), now, EMAIL_CODE_TTL).await.map_err(storage)? {
+    if !c.store.start_email_code_for(&email, &code, user_code.as_deref(), link_account.as_deref(), now, EMAIL_CODE_TTL).await.map_err(storage)? {
         return Err(error(StatusCode::TOO_MANY_REQUESTS, "A code was sent less than a minute ago. Check your inbox, or wait a minute."));
     }
     mailer.send_code(&email, &code).await.map_err(|e| {
@@ -315,13 +336,15 @@ async fn email_start(State(state): State<Arc<AppState>>, Json(b): Json<EmailStar
 
 #[derive(Deserialize)]
 struct EmailVerify {
+    #[serde(default)]
+    link: bool,
     email: String,
     code: String,
     #[serde(default)]
     session: Option<String>,
 }
 
-async fn email_verify(State(state): State<Arc<AppState>>, Json(b): Json<EmailVerify>) -> Reply {
+async fn email_verify(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json<EmailVerify>) -> Reply {
     let c = cloud(&state)?;
     if c.mailer.is_none() {
         return Err(error(StatusCode::SERVICE_UNAVAILABLE, "Email sign-in opens soon. Sign in with a wallet for now."));
@@ -330,18 +353,33 @@ async fn email_verify(State(state): State<Arc<AppState>>, Json(b): Json<EmailVer
     let identity = Identity::email(&b.email);
     let Identity::Email { email } = &identity else { unreachable!() };
     let code: String = b.code.chars().filter(char::is_ascii_digit).collect();
-    let user_code = match c.store.check_email_code(email, &code, now).await.map_err(storage)? {
-        EmailCheck::Ok { user_code } => user_code,
+    let (user_code, link_account) = match c.store.check_email_code(email, &code, now).await.map_err(storage)? {
+        EmailCheck::Ok { user_code, link_account } => (user_code, link_account),
         EmailCheck::Wrong => return Err(error(StatusCode::UNAUTHORIZED, "That code is not right. Check the latest email.")),
         EmailCheck::Gone => {
             return Err(error(StatusCode::UNAUTHORIZED, "That code expired or was used too many times. Send a new one."));
         }
     };
+    if b.link != link_account.is_some() { return Err(error(StatusCode::UNAUTHORIZED,"That code was issued for a different sign-in action. Request a fresh code.")); }
+    if let Some(target) = link_account {
+        return finish_link(c, &headers, &target, &identity, now).await;
+    }
     let (account, created) = c.store.account_for_identity(&identity, now).await.map_err(storage)?;
     if created {
         tracing::info!(account = %account.id, "account created (email)");
     }
     signed_in(c, account, user_code.as_deref(), wants_bearer(&b.session), now).await
+}
+
+/// A proof can only add a credential to the authenticated account it was
+/// issued for; it cannot switch an account or approve a payment/device.
+async fn finish_link(c: &Cloud, headers: &HeaderMap, target: &str, identity: &Identity, now: u64) -> Reply {
+    let account = session(c, &Method::POST, headers, now).await?;
+    if account.id != target { return Err(error(StatusCode::UNAUTHORIZED,"Sign in to the account that requested this link.")); }
+    if !c.store.link_identity(target, identity).await.map_err(storage)? {
+        return Err(error(StatusCode::CONFLICT,"That sign-in method belongs to another account. No accounts or subscriptions were merged."));
+    }
+    Ok(Json(json!({"account":account_json(c,&account,now).await?,"linked_identity":true})).into_response())
 }
 
 // ------------------------------------------------------------- sign out

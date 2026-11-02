@@ -280,6 +280,22 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
+  t("an additional email stays on the wallet account", async () => {
+    const p = await page(fakeMetaMask);
+    await p.goto(`${base}/account.html?mock=1`);
+    await p.getByRole("button", {name:/MetaMask/}).click();
+    const original = await p.textContent(".panel >> text=Account:");
+    await p.getByRole("button", {name:"Add an email"}).click();
+    await p.fill('input[name="email"]', "linked@example.com");
+    await p.getByRole("button", {name:"Email me a code"}).click();
+    await p.fill('input[name="code"]', "123456");
+    await p.getByRole("button", {name:"Sign in",exact:true}).click();
+    await p.waitForSelector("#sign-in-methods >> text=linked@example.com");
+    assert.equal(await p.textContent(".panel >> text=Account:"), original);
+    assert.equal(await p.locator("#sign-in-methods li").count(),2);
+    assert.deepEqual(p.errors, []);
+  });
+
   t("existing email codes have a visible entry path without sending again", async () => {
     const p = await page();
     await p.goto(`${base}/account.html?mock=1&as=active&signin=email`);

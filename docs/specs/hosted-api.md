@@ -329,3 +329,19 @@ explicit escape hatch for disposable local testing only: account IDs, device
 sessions, and payment mappings disappear on restart, and blockchain replay cannot
 reconstruct the lost wallet-to-account mapping. Never accept real payments in
 this mode.
+
+
+### Linking verified sign-in methods
+
+`link: true` on the existing wallet challenge / verify or email start / verify
+routes adds a sign-in method to the authenticated account. A challenge or email
+code stores the requesting account id; verify requires the same live session
+account and the same action mode. Wallet messages explicitly describe linking.
+A consumed, expired, normal sign-in, or another account's proof cannot link a
+credential. The response includes the unchanged account and `linked_identity`.
+No new session cookie is set.
+
+`account.identities` lists verified methods. Mongo `login_identities` claims a
+normalized identity by a deterministic primary key before account creation;
+unique claims serialize simultaneous linking and sign-in. Legacy primary
+identities are respected. Existing accounts are not automatically merged.
