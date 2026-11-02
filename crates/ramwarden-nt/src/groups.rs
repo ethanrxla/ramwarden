@@ -27,10 +27,14 @@ use crate::workingset::{self, Limits};
 /// A process joins its parent's group when the parent runs the same executable
 /// *and is older than it*. The age check matters: Windows reuses PIDs, so a
 /// stale parent PID can point at an unrelated process started later.
-pub fn roots(procs: &[NtProcess]) -> HashMap<u32, u32> {
-    let by_pid: HashMap<u32, &NtProcess> = procs.iter().map(|p| (p.pid, p)).collect();
+///
+/// Takes owned processes or references, so the sampler can pass the user's
+/// processes without cloning each one every tick.
+pub fn roots<P: std::borrow::Borrow<NtProcess>>(procs: &[P]) -> HashMap<u32, u32> {
+    let by_pid: HashMap<u32, &NtProcess> = procs.iter().map(|p| (p.borrow().pid, p.borrow())).collect();
     let mut out = HashMap::with_capacity(procs.len());
     for p in procs {
+        let p: &NtProcess = p.borrow();
         let mut cur = p;
         let mut seen = HashSet::from([p.pid]);
         while let Some(parent) = by_pid.get(&cur.ppid) {

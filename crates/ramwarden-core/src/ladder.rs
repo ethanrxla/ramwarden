@@ -36,6 +36,7 @@
 //! undoes. Without that band a machine hovering at the threshold would suspend
 //! and resume the same application every tick.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use ramwarden_platform::{AppGroup, GroupSource, MemorySource, Pressure};
@@ -417,42 +418,115 @@ impl Ladder {
 
     /// Distinct process names that are both idle and on the watchlist, least
     /// recently used first.
+    fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
+        self.eligible(w, usize::MAX).into_iter().map(|(name, _)| name).collect()
+    }
+
+    /// At most `limit` eligible names, least recently used first, each with its
+    /// reclaimable processes (largest first).
     ///
     /// `reclaimable` has already applied the gate and the watchlist ceiling, so
-    /// this only deduplicates and orders. The order comes from the detector's
-    /// LRU: walking it from the tail means the app the user has gone longest
+    /// this only groups and orders. The order comes from the detector's LRU:
+    /// walking it from the tail means the app the user has gone longest
     /// without touching is the first considered, rather than simply the largest.
-    fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
-        let mut candidates = w.det.reclaimable(w.watchlist);
-        // With a ranker, suspend what the user is least likely to want back
-        // first; without one, the detector's largest-first order stands.
+    ///
+    /// # Bounded
+    ///
+    /// The walk stops as soon as `limit` names are found, so asking for the
+    /// judge's eight coldest costs O(8) LRU steps when few names are filtered
+    /// out, not a sort of every process. Grouping is one hash pass. Only names
+    /// the LRU has not seen yet (normally none) are ranked, after the walk:
+    /// with a ranker, what the user is least likely to want back first;
+    /// without one, the detector's largest-first order. That leftover group is
+    /// the only thing ever sorted here.
+    fn eligible<'d>(&self, w: &World<'d>, limit: usize) -> Vec<(String, Vec<&'d Signals>)> {
+        let det: &'d Detector = w.det;
+        let reclaimable = det.reclaimable(w.watchlist);
+        if reclaimable.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut by_name: HashMap<&str, Vec<&'d Signals>> = HashMap::new();
+        for s in &reclaimable {
+            by_name.entry(s.name.as_str()).or_default().push(s);
+        }
+
+        let mut out = Vec::with_capacity(by_name.len().min(limit));
+        for (name, _) in det.coldest() {
+            if out.len() >= limit || by_name.is_empty() {
+                break;
+            }
+            if let Some(procs) = by_name.remove(name) {
+                out.push((name.to_string(), procs));
+            }
+        }
+        if out.len() >= limit || by_name.is_empty() {
+            return out;
+        }
+
+        // Names the LRU has not seen yet keep their ranked (or largest-first) place.
+        let mut rest: Vec<&'d Signals> = reclaimable.into_iter().filter(|s| by_name.contains_key(s.name.as_str())).collect();
         if let Some(r) = &self.ranker {
             let back = |pid: i32| r.reuse(pid).unwrap_or(0.5);
-            candidates.sort_by(|a, b| {
+            rest.sort_by(|a, b| {
                 let ka = a.pss as f64 * (1.0 - back(a.pid));
                 let kb = b.pss as f64 * (1.0 - back(b.pid));
                 kb.total_cmp(&ka)
             });
         }
-        let mut seen: Vec<String> = Vec::new();
-        for s in candidates {
-            if !seen.contains(&s.name) {
-                seen.push(s.name.clone());
+        for s in rest {
+            if out.len() >= limit {
+                break;
+            }
+            if let Some(procs) = by_name.remove(s.name.as_str()) {
+                out.push((s.name.clone(), procs));
             }
         }
-        let mut ordered: Vec<String> = w
-            .det
-            .coldest()
-            .filter(|(name, _)| seen.iter().any(|s| s == name))
-            .map(|(name, _)| name.to_string())
-            .collect();
-        // Anything the LRU has not seen yet keeps its largest-first place.
-        for name in seen {
-            if !ordered.contains(&name) {
-                ordered.push(name);
-            }
+        out
+    }
+
+    /// The candidates a judge is shown for one decision: the [`JUDGE_LIMIT`]
+    /// coldest eligible names, with what is known about each.
+    fn judge_candidates(&self, w: &World<'_>) -> Vec<Candidate> {
+        self.eligible(w, JUDGE_LIMIT)
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (name, procs))| {
+                let idle = w.det.recency(&name).map(|r| r.idle().as_secs_f64() / 60.0).unwrap_or(0.0);
+                Candidate::from_signals(&name, rank, idle, &procs)
+            })
+            .collect()
+    }
+
+    /// What [`Ladder::step`] would ask a judge this tick, given the same world.
+    ///
+    /// Lets the caller ask *before* the step, with no lock held: judging is a
+    /// network round trip (Jev, up to `ladder_timeout_ms`), and asking from
+    /// inside the step meant holding the ladder mutex and the detector read
+    /// lock for all of it, so every HTTP handler that wanted either waited
+    /// too. The caller hands the answers back through a
+    /// [`Prejudged`](crate::judge::Prejudged) judge, and the step re-derives
+    /// its candidates under the lock: a name that is no longer eligible is
+    /// not acted on whatever the answer was, and a newly eligible name that
+    /// was not judged gets no verdict, so is spared until the next tick.
+    pub fn judge_requests(&self, w: &World<'_>) -> Vec<(Intent, Vec<Candidate>)> {
+        if !w.det.is_warm() {
+            return Vec::new();
         }
-        ordered
+        let rung = rung_for(&self.cfg, &w.psi, w.available_bytes);
+        let mut out = Vec::new();
+        if rung < Rung::Suspend {
+            return out;
+        }
+        let candidates = self.judge_candidates(w);
+        if candidates.is_empty() {
+            return out;
+        }
+        out.push((Intent::Suspend, candidates.clone()));
+        // `do_kill` asks only when nothing is queued or armed.
+        if rung >= Rung::Kill && self.kill_queue.is_empty() && self.pending_kill.is_none() {
+            out.push((Intent::Kill, candidates));
+        }
+        out
     }
 
     /// The eligible names a judge agrees to act on, in LRU order, plus the
@@ -464,51 +538,33 @@ impl Ladder {
         w: &mut World<'_>,
         intent: Intent,
     ) -> (Vec<String>, Vec<(String, Outcome)>, Option<String>) {
-        let names = self.eligible_names(w);
-        let Some(judge) = w.judge.as_mut() else {
-            return (names, Vec::new(), None);
-        };
-        if names.is_empty() {
-            return (names, Vec::new(), None);
+        if w.judge.is_none() {
+            return (self.eligible_names(w), Vec::new(), None);
         }
-
-        let candidates: Vec<Candidate> = names
-            .iter()
-            .take(JUDGE_LIMIT)
-            .enumerate()
-            .map(|(rank, name)| {
-                let procs: Vec<&Signals> = w
-                    .det
-                    .reclaimable(w.watchlist)
-                    .into_iter()
-                    .filter(|s| &s.name == name)
-                    .collect();
-                let idle = w
-                    .det
-                    .recency(name)
-                    .map(|r| r.idle().as_secs_f64() / 60.0)
-                    .unwrap_or(0.0);
-                Candidate::from_signals(name, rank, idle, &procs)
-            })
-            .collect();
+        let candidates = self.judge_candidates(w);
+        if candidates.is_empty() {
+            return (Vec::new(), Vec::new(), None);
+        }
+        let Some(judge) = w.judge.as_mut() else {
+            return (Vec::new(), Vec::new(), None);
+        };
 
         match judge.judge(intent, &candidates) {
             Ok(verdicts) => {
                 let mut keep = Vec::new();
                 let mut vetoed = Vec::new();
-                for c in &candidates {
+                for c in candidates {
                     match verdicts.iter().find(|j| j.name == c.name) {
-                        Some(j) if j.close => keep.push(c.name.clone()),
-                        Some(j) => vetoed.push((c.name.clone(), Outcome::refused(j.reason.clone()))),
-                        None => vetoed.push((
-                            c.name.clone(),
-                            Outcome::refused("the judge gave no verdict"),
-                        )),
+                        Some(j) if j.close => keep.push(c.name),
+                        Some(j) => vetoed.push((c.name, Outcome::refused(j.reason.clone()))),
+                        None => vetoed.push((c.name, Outcome::refused("the judge gave no verdict"))),
                     }
                 }
                 (keep, vetoed, None)
             }
-            Err(e) => (names, Vec::new(), Some(e)),
+            // Unreachable: the caller decides; suspend falls back to the gate
+            // alone over every eligible name, as before judges existed.
+            Err(e) => (self.eligible_names(w), Vec::new(), Some(e)),
         }
     }
 
@@ -1958,6 +2014,49 @@ mod tests {
         assert_eq!(suspends, 2, "suspend falls back to the gate: {:?}", report.steps);
         let (_, _, kill) = report.steps.iter().find(|(a, _, _)| *a == "kill").unwrap();
         assert!(kill.notes[0].contains("not killing without it"), "{kill:?}");
+        assert!(l.pending_kill().is_none());
+    }
+
+    /// Asking the judge before the step, with no lock held, must decide
+    /// exactly what asking from inside the step decides.
+    #[test]
+    fn judging_ahead_of_the_step_decides_what_judging_inside_it_would() {
+        for (allow, fail) in [(vec![], false), (vec!["Slack"], false), (vec!["Slack", "Discord"], false), (vec![], true)] {
+            let f = Fixture::new();
+            let h = f.hierarchy();
+            let det = lru_detector(&f, "none");
+            let wl = vec!["Discord".to_string(), "Slack".to_string()];
+
+            let mut inside = ladder(cfg(), &f.root);
+            let mut j = FakeJudge { calls: vec![], allow: allow.clone(), fail };
+            let a = inside.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+
+            let f2 = Fixture::new();
+            let h2 = f2.hierarchy();
+            let mut ahead = ladder(cfg(), &f2.root);
+            let requests = ahead.judge_requests(&world(&f2, &h2, &det, 1.0, 30.0, &wl));
+            let mut j2 = FakeJudge { calls: vec![], allow, fail };
+            let mut pre = crate::judge::Prejudged::ask(&mut j2, &requests);
+            let b = ahead.step(&mut World { judge: Some(&mut pre), ..world(&f2, &h2, &det, 1.0, 30.0, &wl) });
+
+            assert_eq!(j.calls, j2.calls, "the same questions were asked");
+            let show = |r: &Report| r.steps.iter().map(|(a, t, o)| format!("{a} {t} {:?}", o.notes)).collect::<Vec<_>>();
+            assert_eq!(show(&a), show(&b));
+            assert_eq!(inside.pending_kill().map(|p| p.targets.clone()), ahead.pending_kill().map(|p| p.targets.clone()));
+        }
+    }
+
+    /// Nothing a judge was not asked about is acted on.
+    #[test]
+    fn a_step_with_no_recorded_answers_spares_everything() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = lru_detector(&f, "none");
+        let wl = vec!["Discord".to_string(), "Slack".to_string()];
+        let mut l = ladder(cfg(), &f.root);
+        let mut pre = crate::judge::Prejudged::new();
+        let report = l.step(&mut World { judge: Some(&mut pre), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        assert!(report.steps.iter().all(|(a, _, o)| !matches!(*a, "suspend" | "kill") || o.did_nothing()), "{:?}", report.steps);
         assert!(l.pending_kill().is_none());
     }
 
