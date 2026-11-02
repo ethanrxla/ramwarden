@@ -53,6 +53,7 @@ chrome = {
     "description": base["description"],
     "minimum_chrome_version": "116",   # WebSockets in service workers
     "icons": icons,
+    "content_scripts": base["content_scripts"],
     "permissions": ["tabs", "storage"],
     "host_permissions": [
         "http://localhost:7823/*",
@@ -72,6 +73,7 @@ firefox = {
     "version": base["version"],
     "description": base["description"],
     "icons": icons,
+    "content_scripts": base["content_scripts"],
     "permissions": ["tabs", "storage", "alarms"],
     "host_permissions": [
         "http://localhost:7823/*",

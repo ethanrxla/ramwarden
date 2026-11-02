@@ -8,7 +8,57 @@ func boundedChatText(_ text: String, bytes: Int = 4000) -> String {
     return value
 }
 
+struct ReviewTarget: Codable { let browser: String; let id: Int64; let url: String }
+struct ReviewTab: Decodable, Identifiable {
+    let browser: String; let id: Int64; let url: String; let title: String; let reason: String
+    var key: String { "\(browser):\(id):\(url)" }
+    var target: ReviewTarget { ReviewTarget(browser:browser,id:id,url:url) }
+}
+struct TabReview: Decodable { let token: String; let expires_at: Double; let tabs: [ReviewTab] }
+struct TabReviewEnvelope: Decodable { let proposal: TabReview? }
+
 final class CompanionModel: ObservableObject {
+    @Published var tabReview: TabReview?
+    @Published var selectedReviewTabs: Set<String> = []
+    @Published var reviewBusy = false
+    private var reviewPolling = false
+    @MainActor func pollReview() async {
+        guard companionVisible, !reviewPolling, !reviewBusy else { return }
+        reviewPolling = true; defer { reviewPolling = false }
+        do {
+            var req = URLRequest(url:base.appendingPathComponent("browser/review")); req.timeoutInterval=8
+            let (data,response)=try await URLSession.shared.data(for:req)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+            let next=try JSONDecoder().decode(TabReviewEnvelope.self,from:data).proposal
+            if next?.token != tabReview?.token { selectedReviewTabs=[] }
+            tabReview=next
+        } catch { /* Leave uncertain tabs open when the daemon is unreachable. */ }
+    }
+    func answerReview(_ action: String) {
+        guard let proposal=tabReview, !reviewBusy else { return }
+        guard Date().timeIntervalSince1970 < proposal.expires_at else { tabReview=nil; return }
+        let targets=proposal.tabs.filter { selectedReviewTabs.contains($0.key) }.map { $0.target }
+        reviewBusy=true
+        Task { @MainActor in
+            defer { reviewBusy=false }
+            do {
+                struct Reply: Encodable { let token:String; let action:String; let tabs:[ReviewTarget] }
+                var req=URLRequest(url:base.appendingPathComponent("browser/review/respond"))
+                req.httpMethod="POST"; req.timeoutInterval=100
+                req.setValue("application/json",forHTTPHeaderField:"Content-Type")
+                req.httpBody=try JSONEncoder().encode(Reply(token:proposal.token,action:action,tabs:targets))
+                let (data,response)=try await URLSession.shared.data(for:req)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    tabReview=nil; error="This review expired or changed. Tabs were kept unless a close was already confirmed."; return
+                }
+                if let result=try? JSONSerialization.jsonObject(with:data) as? [String:Any],
+                   let refused=result["refused"] as? [Any], !refused.isEmpty {
+                    error="Some tabs changed or became active and were kept."
+                }
+                tabReview=nil; selectedReviewTabs=[]
+            } catch { self.error="Could not confirm the result. Check your tabs before trying again."; tabReview=nil }
+        }
+    }
     @Published var companionVisible = UserDefaults.standard.bool(forKey:"ram.visible")
     @Published var connected = false
     @Published var thinking = false
@@ -193,6 +243,13 @@ struct PixelRam: View {
                 let label = !model.connected ? "Reconnecting…" : model.thinking ? "Thinking…" : "Warden"
                 context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
             }
+        }.overlay(alignment:.top) {
+            if model.tabReview != nil {
+                Text("Keep these tabs or close some? Click to review.")
+                    .font(.system(size:11)).multilineTextAlignment(.center).padding(6)
+                    .background(.regularMaterial,in:RoundedRectangle(cornerRadius:10))
+                    .offset(y:-12).allowsHitTesting(false)
+            }
         }.accessibilityLabel(model.connected ? "RamWarden ram companion. Click to open assistant." : "RamWarden companion. Reconnecting to daemon.")
     }
 }
@@ -237,6 +294,29 @@ struct AssistantView: View {
                     }.padding(8)
                 }.onChange(of:model.turns.count) { _ in if let last = model.turns.last { proxy.scrollTo(last.id,anchor:.bottom) } }
             }
+            }
+            if let review=model.tabReview {
+                Text("These tabs may still matter. Choose what to keep or close.").font(.caption)
+                ScrollView {
+                    VStack(alignment:.leading) {
+                        ForEach(review.tabs, id: \.key) { tab in
+                            Toggle(isOn:Binding(get:{ model.selectedReviewTabs.contains(tab.key) },set:{ on in
+                                if on { model.selectedReviewTabs.insert(tab.key) } else { model.selectedReviewTabs.remove(tab.key) }
+                            })) {
+                                VStack(alignment:.leading) {
+                                    Text(tab.title).lineLimit(2)
+                                    Text(URL(string:tab.url)?.host ?? "Web page").foregroundStyle(.secondary)
+                                    Text(tab.reason).font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.toggleStyle(.checkbox)
+                        }
+                    }
+                }.frame(maxHeight:220)
+                HStack {
+                    Button("Close selected") { model.answerReview("close") }.disabled(model.selectedReviewTabs.isEmpty)
+                    Button("Keep selected") { model.answerReview("keep") }.disabled(model.selectedReviewTabs.isEmpty)
+                    Button("Later") { model.answerReview("later") }
+                }.font(.caption).disabled(model.reviewBusy)
             }
             if model.thinking { ProgressView("Thinking…").controlSize(.small) }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
@@ -324,10 +404,17 @@ final class Companion: NSObject, NSWindowDelegate {
     let model = CompanionModel()
     var pet: PetPanel?
     var chat: ChatPanel?
+    var reviewTimer: Timer?
     var positioning = false
     var subscriptions = Set<AnyCancellable>()
     override init() {
         super.init()
+        reviewTimer=Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
+            Task { @MainActor in await self?.model.pollReview() }
+        }
+        model.$tabReview.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+        }.store(in:&subscriptions)
         model.$turns.sink { [weak self] turns in
             DispatchQueue.main.async { self?.resizeChat(hasTurns:!turns.isEmpty) }
         }.store(in:&subscriptions)
@@ -375,6 +462,7 @@ final class Companion: NSObject, NSWindowDelegate {
             w.contentView = NSHostingView(rootView:AssistantView(model:model,dismiss:{ [weak self] in self?.closeChat() },settings:{ [weak self] in self?.openColors() }))
             chat = w
         }
+        resizeChat(hasTurns:!model.turns.isEmpty)
         positionChat(movePet:true)
         chat?.makeKeyAndOrderFront(nil)
     }
@@ -397,7 +485,7 @@ final class Companion: NSObject, NSWindowDelegate {
     }
     func resizeChat(hasTurns: Bool) {
         guard let chat = chat else { return }
-        var frame = chat.frame; frame.size.height = hasTurns ? 240 : 80
+        var frame = chat.frame; frame.size.height = model.tabReview != nil ? 440 : hasTurns ? 240 : 80
         chat.setFrame(frame,display:true)
         positionChat(movePet:true)
     }

@@ -116,29 +116,40 @@ impl TabCloser for Tabs {
 /// user is unlikely to come back to (when `[tabs] close` allows it).
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
-    let threshold = state.cfg.thresholds.inactivity_minutes as i64;
-    let (to_unload, to_close, titles) = {
-        let hub = state.hub.lock().unwrap();
-        let rows = crate::browser::snapshot(&hub.reg, threshold);
+    let (to_unload, to_close, decided) = {
+        let rows = crate::tabreview::snapshot(state);
         let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
-        let titles: std::collections::HashMap<_, _> = rows.iter()
-            .filter(|r| close.contains(&r.target))
-            .map(|r| (r.target.clone(), r.title.clone())).collect();
-        let unload: Vec<_> = rows.into_iter()
+        let unload: Vec<_> = rows.iter()
             .filter(|r| r.eligible && !close.contains(&r.target))
-            .take(crate::browser::BATCH_LIMIT).map(|r| r.target).collect();
-        (unload, close, titles)
+            .take(crate::browser::BATCH_LIMIT).map(|r| r.target.clone()).collect();
+        // The rows behind both lists, for the decision log.
+        let decided: std::collections::HashMap<_, _> = rows.into_iter()
+            .filter(|r| close.contains(&r.target) || unload.contains(&r.target))
+            .map(|r| (r.target.clone(), r)).collect();
+        (unload, close, decided)
     };
+    let (to_close, recalled) = crate::recall::Recall::load(&state.cfg.db_path).hold_back(to_close);
 
     let unloaded = state.discard_tabs(&to_unload).await;
     let mut closed = crate::hub::DiscardResult::default();
     match state.cfg.tabs.close.as_str() {
-        "live" if !to_close.is_empty() => closed = state.close_selected_tabs(&to_close).await,
+        "live" if !to_close.is_empty() => closed = state.close_safe(&to_close, false).await,
         "dry-run" => for t in &to_close {
             tracing::info!("tabs: would close {} (dry-run)", t.url);
         },
         _ => {}
     }
+    if let Ok(h) = state.history.lock() {
+        let cfg = &state.cfg.tabs;
+        crate::decisionlog::record_batch(&h, &decided, &unloaded, "unload", trigger, |r| r.unload_reason());
+        crate::decisionlog::record_batch(&h, &decided, &closed, "close", trigger, |r| r.close_reason(cfg));
+        if cfg.close == "dry-run" {
+            crate::decisionlog::record_dry_run(&h, &decided, &to_close, trigger, cfg);
+        }
+        crate::recall::record_kept(&h, &decided, &recalled, trigger);
+    }
+    let titles: std::collections::HashMap<_, _> =
+        decided.iter().map(|(t, r)| (t.clone(), r.title.clone())).collect();
 
     let notes = format!("{} unloaded, {} closed, {} queued, {} refused",
         unloaded.confirmed.len(), closed.confirmed.len(),
@@ -146,10 +157,10 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     tracing::info!("tabs ({trigger}): {notes}");
     // Closed tabs also go in the daemon's own closed_tabs table, so the popup
     // can list them for reopening even before the extension is reloaded.
-    let closed_rows: Vec<(String, String)> = closed.confirmed.iter().chain(&closed.queued)
+    let closed_rows: Vec<(String, String)> = closed.confirmed.iter()
         .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
     for (url, _) in &closed_rows {
-        tracing::info!("tabs: closed {url}");
+        tracing::info!("tabs: confirmed closed {url}");
     }
     if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
         let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
@@ -755,6 +766,12 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 && n > 0
             {
                 tracing::info!("pruned {n} behaviour sample(s) older than {} days", cfg.logging.keep_days);
+            }
+            if let Ok(h) = state.history.lock()
+                && let Ok(n) = h.prune_decisions(crate::decisionlog::KEEP_DAYS, ramwarden_core::history::unix_now() as i64)
+                && n > 0
+            {
+                tracing::info!("pruned {n} decision(s) older than {} days", crate::decisionlog::KEEP_DAYS);
             }
         }
 
