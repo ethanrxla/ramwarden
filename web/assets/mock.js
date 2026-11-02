@@ -29,7 +29,7 @@ export class MockApi {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {
         tier: AS === "trial" ? "ram" : "pro", // only Plus has a trial
-        interval: "2mo",
+        interval: "month",
         status: AS,
         device_limit: AS === "trial" ? 3 : 5,
         trial_ends_at: AS === "trial" ? new Date(Date.now() + 14 * DAY).toISOString() : null,
@@ -155,8 +155,8 @@ export class MockApi {
     return {
       // docs/product-spec.md 1.2; the test network sells every plan.
       plans: [
-        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "2mo", days: 60, trial_days: 14, approval_usd: 24, wardens: ["ram"] },
-        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "2mo", days: 60, trial_days: 0, approval_usd: 30, wardens: ["ram", "threat"] },
+        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "month", days: 60, trial_days: 14, approval_usd: 24, wardens: ["ram"] },
+        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 60, trial_days: 0, approval_usd: 30, wardens: ["ram", "threat"] },
         { id: 3, tier: "ram", name: "RamWarden Plus", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
         { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 0, approval_usd: 24, wardens: ["ram", "threat"] },
       ],
@@ -251,9 +251,9 @@ export class MockApi {
     const q = text.toLowerCase();
     const pick = topic || (/price|cost|how much/.test(q) ? "pricing" : /trial/.test(q) ? "trial" : /plan|tier/.test(q) ? "plans" : /human|person|broken|not working|refund/.test(q) ? "human" : "unknown");
     const answers = {
-      plans: "There are three plans. Lite is free on 1 computer, Plus adds the AI warden pet on 3 computers ($4 every 2 months or $20 a year, 14-day trial), and Pro adds ThreatWarden on 5 ($5 every 2 months or $24 a year).",
-      pricing: "Lite is free. Plus is $4 every 2 months or $20 a year. Pro is $5 every 2 months or $24 a year.",
-      trial: "RamWarden Plus has a 14-day free trial. Nothing is charged during it.",
+      plans: "There are three plans. Lite is free on 1 computer, Plus adds the AI warden pet on 3 computers ($4 per month or $20 a year, 14-day trial), and Pro adds ThreatWarden on 5 ($5 per month or $24 a year).",
+      pricing: "Lite is free. Plus is $4 per month or $20 a year. Pro is $5 per month or $24 a year.",
+      trial: "RamWarden Plus is free for 14 days. After that, your selected payment method is charged $4 per month or $20 per year, depending on your plan, until you cancel. Pro is $5 per month or $24 per year, paid from day one.",
       human: "I'll get a person on it. Open a ticket below, with an email if you'd like a reply there.",
       unknown: "I don't know that one for sure, and I'd rather not guess. I can open a ticket so a person on the team answers you.",
     };

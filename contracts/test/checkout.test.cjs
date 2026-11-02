@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers, network } = require("hardhat");
 
 const DAY = 24 * 60 * 60;
-const PERIOD = 60 * DAY; // plans 1 and 2 bill every 60 days
+const PERIOD = 30 * DAY; // new monthly crypto subscriptions
 const YEAR = 365 * DAY;
 const USDC = (n) => BigInt(Math.round(n * 1e6));
 const RAM = 0; // the RAM warden
@@ -287,11 +287,11 @@ describe("plans.json", function () {
     }
     // docs/product-spec.md 1.2: ids are fixed because the agent skill uses them.
     // The 14-day trial is RamWarden's only (user decision, 2026-11-01).
-    // Plans 1 and 2 bill every 60 days (user decision, 2026-11-02).
+    // Plans 1 and 2 use monthly pricing (owner clarification, 2026-11-02).
     const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.days, p.usd, p.trial]]));
     expect(by).to.deep.equal({
-      1: ["ram", "2mo", 60, 4, true],
-      2: ["pro", "2mo", 60, 5, false],
+      1: ["ram", "month", 30, 4, true],
+      2: ["pro", "month", 30, 5, false],
       3: ["ram", "year", 365, 20, true],
       4: ["pro", "year", 365, 24, false],
     });

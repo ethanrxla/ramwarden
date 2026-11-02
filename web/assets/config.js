@@ -10,7 +10,8 @@
 export const config = {
   // The hosted API (`ramwarden-api`). Changing it also means changing the
   // `connect-src` in each page's Content-Security-Policy.
-  apiBase: "https://api.ramwarden.com",
+  apiBase: typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)
+    ? location.origin : "https://api.ramwarden.com",
 
   repo: "https://github.com/ethanrxla/ramwarden",
   releases: "https://github.com/ethanrxla/ramwarden/releases/latest",
@@ -79,8 +80,8 @@ export const config = {
     },
   },
   plans: [
-    { id: 1, tier: "ram", interval: "2mo", usd: 4 },
-    { id: 2, tier: "pro", interval: "2mo", usd: 5 },
+    { id: 1, tier: "ram", interval: "month", usd: 4 },
+    { id: 2, tier: "pro", interval: "month", usd: 5 },
     { id: 3, tier: "ram", interval: "year", usd: 20 },
     { id: 4, tier: "pro", interval: "year", usd: 24 },
   ],
@@ -91,15 +92,14 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against six 2-month payments, in whole percent.
+// What a year of the annual plan saves against twelve monthly payments, in whole percent.
 export function annualSaving(plans, tier) {
-  const m = planFor(plans, tier, "2mo");
+  const m = planFor(plans, tier, "month");
   const y = planFor(plans, tier, "year");
   if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * PER_YEAR["2mo"])) * 100);
+  return Math.round((1 - y.usd / (m.usd * PER_YEAR["month"])) * 100);
 }
 
-// Billing periods (owner's decision, 2026-11-02): every 2 months, or yearly.
-// The contract and the card subscription charge on the same 60-day cycle.
-export const PERIOD = { "2mo": "2 months", year: "year" };
-export const PER_YEAR = { "2mo": 6, year: 1 };
+// Monthly and annual pricing (owner decision, 2026-11-02).
+export const PERIOD = { "month": "month", year: "year" };
+export const PER_YEAR = { "month": 12, year: 1 };

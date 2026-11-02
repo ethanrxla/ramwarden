@@ -76,7 +76,7 @@ async function run() {
   async function page(init, arg) {
     const ctx = await browser.newContext();
     // Fixture tests never depend on a public API being reachable.
-    await ctx.route("https://api.ramwarden.com/**", (route) => route.abort());
+    await ctx.route("**/v1/**", (route) => route.abort());
     // These installer assertions deliberately exercise Linux, on every test host.
     await ctx.addInitScript(() => {
       Object.defineProperty(navigator, "platform", {get: () => "Linux x86_64"});
@@ -99,8 +99,8 @@ async function run() {
     assert.equal(await p.$$eval("[data-install] .cmd", (c) => c.length), 0);
     assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Choose a plan'));
     // Pricing: monthly by default, the toggle switches prices and plan links.
-    assert.equal(await p.textContent('.tier-ram [data-price="2mo"]'), "$4 / 2 months");
-    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
+    assert.equal(await p.textContent('.tier-ram [data-price="month"]'), "$4 / month");
+    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
     assert.match(await p.getAttribute('[data-buy="pro"]', "href"), /plan=2$/);
     // Three cards: Free signs up, Plus has the trial, Pro has none.
     assert.equal(await p.$$eval(".price-cards .price", (c) => c.map((x) => x.dataset.tier).join()), "lite,ram,pro");
@@ -150,7 +150,7 @@ async function run() {
     assert.match(await p.textContent(".catchline em"), /click every link/);
     assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     await p.waitForSelector('[data-install][data-state="signed-out"]');
-    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
+    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
     assert.ok(await p.isVisible('#top .radar img[data-sprite="threat"]'), "the radar stays in the hero");
     assert.ok(await p.isVisible('#meet [data-part="visor"]'));
     assert.ok(await p.isVisible('.tier-pro >> text=Paid from day one'));
@@ -251,7 +251,7 @@ async function run() {
   });
 
   t("account page: ?plan= preselects a plan the server sells, ignores others", async () => {
-    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "2mo"], ["99", "ram", "2mo"], ["", "ram", "2mo"]]) {
+    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "month"], ["99", "ram", "month"], ["", "ram", "month"]]) {
       const p = await page(fakeMetaMask);
       await p.goto(`${base}/account.html?mock=1&plan=${q}`);
       await p.getByRole("button", { name: /MetaMask/ }).click();
@@ -299,7 +299,7 @@ async function run() {
     // A typed question gets the price; the pet's jokes stay out of the way.
     await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
     await p.press('#warden-chat input[name="message"]', "Enter");
-    await p.waitForSelector("#warden-chat >> text=Pro is $5 every 2 months");
+    await p.waitForSelector("#warden-chat >> text=Pro is $5 per month");
     assert.ok((await p.getAttribute(".chat-offers a", "href")).endsWith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");
@@ -316,7 +316,7 @@ async function run() {
     assert.equal(await p.isVisible("#warden-chat"), false);
     // Offline, the chat says so instead of failing silently.
     const q = await page();
-    await q.route("https://api.ramwarden.com/**", (r) => r.abort());
+    await q.route("**/v1/**", (r) => r.abort());
     await q.goto(`${base}/threat.html`);
     await q.click("[data-pet] img");
     await q.waitForSelector("#warden-chat >> text=can't reach the RamWarden server");
@@ -325,7 +325,7 @@ async function run() {
 
   t("without the server, sign-in explains that it could not be reached", async () => {
     const p = await page(fakeMetaMask);
-    await p.route("https://api.ramwarden.com/**", (r) => r.abort());
+    await p.route("**/v1/**", (r) => r.abort());
     await p.goto(`${base}/link.html?code=BCDF-GHJK`);
     await p.waitForSelector("text=could not be reached");
   });

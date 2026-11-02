@@ -77,40 +77,55 @@ impl MongoStore {
         self.db.collection(name)
     }
 
+    /// Reuse an equivalent index with an older name. Never drop an index or
+    /// silently accept weaker uniqueness/expiry semantics during startup.
+    async fn ensure_named_index(&self, name: &str, model: IndexModel) -> Result<()> {
+        use futures::TryStreamExt;
+        let collection = self.raw(name);
+        match collection.create_index(model.clone()).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let indexes: Vec<IndexModel> = collection.list_indexes().await?.try_collect().await?;
+                let expected = model.options.as_ref().expect("index options");
+                let equivalent = indexes.iter().any(|existing| {
+                    let Some(options) = existing.options.as_ref() else { return false };
+                    existing.keys == model.keys
+                        && options.unique.unwrap_or(false) == expected.unique.unwrap_or(false)
+                        && options.sparse.unwrap_or(false) == expected.sparse.unwrap_or(false)
+                        && options.expire_after == expected.expire_after
+                        && options.partial_filter_expression == expected.partial_filter_expression
+                        && options.collation.is_none() && expected.collation.is_none()
+                        && !options.hidden.unwrap_or(false)
+                });
+                if equivalent { Ok(()) } else { Err(error.into()) }
+            }
+        }
+    }
+
     /// Every index the rules rely on. Idempotent: run at start, or with
     /// `ramwarden-cloud-db init`.
     pub async fn ensure_indexes(&self) -> Result<()> {
         let named = |name: &str| IndexOptions::builder().name(name.to_string()).build();
         let unique = |name: &str| IndexOptions::builder().unique(true).name(name.to_string()).build();
-        let ttl = || IndexOptions::builder().expire_after(Duration::ZERO).name("expire".to_string()).build();
+        let ttl = || IndexOptions::builder().expire_after(Duration::ZERO).name("expire_at_ttl".to_string()).build();
         let index = |keys: Document, opts: IndexOptions| IndexModel::builder().keys(keys).options(opts).build();
 
-        self.raw(ACCOUNTS)
-            .create_indexes([
-                index(doc! { "identity": 1 }, unique("identity_unique")),
+        for (collection, indexes) in [
+            (ACCOUNTS, vec![index(doc! { "identity": 1 }, unique("identity_unique")),
                 index(doc! { "chain_key": 1 }, unique("chain_key_unique")),
-                index(doc! { "tier": 1 }, named("by_tier")),
-            ])
-            .await?;
-        self.raw(DEVICES)
-            .create_indexes([
-                index(doc! { "token_hash": 1 }, unique("token_unique")),
-                index(doc! { "account_id": 1, "created_at": 1 }, named("by_account")),
-            ])
-            .await?;
-        self.raw(DEVICE_CODES)
-            .create_indexes([
-                index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
-                index(doc! { "expire_at": 1 }, ttl()),
-            ])
-            .await?;
-        for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY] {
-            self.raw(name).create_index(index(doc! { "expire_at": 1 }, ttl())).await?;
+                index(doc! { "tier": 1 }, named("by_tier"))]),
+            (DEVICES, vec![index(doc! { "token_hash": 1 }, unique("token_unique")),
+                index(doc! { "account_id": 1, "created_at": 1 }, named("account_created"))]),
+            (DEVICE_CODES, vec![index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
+                index(doc! { "expire_at": 1 }, ttl())]),
+            (SESSIONS, vec![index(doc! { "account_id": 1 }, named("by_account"))]),
+            (PAYMENTS, vec![index(doc! { "account_id": 1, "created_at": -1 }, named("by_account"))]),
+        ] {
+            for model in indexes { self.ensure_named_index(collection, model).await?; }
         }
-        self.raw(SESSIONS).create_index(index(doc! { "account_id": 1 }, named("by_account"))).await?;
-        self.raw(PAYMENTS)
-            .create_index(index(doc! { "account_id": 1, "created_at": -1 }, named("by_account")))
-            .await?;
+        for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY] {
+            self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
+        }
         self.ensure_support_indexes().await?;
         Ok(())
     }
