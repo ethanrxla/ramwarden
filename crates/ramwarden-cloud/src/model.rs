@@ -1,9 +1,10 @@
 //! The accounts, devices, sign-ins and payments RamWarden's hosted service
 //! keeps, per `docs/product-spec.md` 4.1.
 //!
-//! # An account is one identity and one subscription
+//! # An account has verified sign-in methods and one subscription
 //!
-//! The identity is a wallet or a verified email and never changes. The
+//! The primary identity stays fixed; verified linked identities can access the
+//! same account. Ownership is claimed atomically in login_identities. The
 //! subscription is a tier (`ram` or `pro`), an interval, and the dates billing
 //! last reported: when the trial ends, and how far service is paid. Billing
 //! (the Base contract's logs, or Stripe's webhooks) only ever moves those
@@ -92,10 +93,10 @@ impl Tier {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Interval {
-    /// Every 60 days (user decision, 2026-11-02). Records written before
-    /// then say `month`, which reads as this.
-    #[serde(rename = "2mo", alias = "month")]
+    /// Legacy sixty-day subscriptions retain their original meaning.
+    #[serde(rename = "2mo")]
     TwoMonths,
+    Month,
     Year,
 }
 
@@ -337,6 +338,8 @@ pub enum Claim {
 /// A sign-in message the server wrote and is waiting to see signed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Challenge {
+    #[serde(default)]
+    pub link_account: Option<Id>,
     pub chain: Chain,
     pub address: String,
     pub message: String,
@@ -347,6 +350,8 @@ pub struct Challenge {
 /// A one-time code mailed to an address.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmailCode {
+    #[serde(default)]
+    pub link_account: Option<Id>,
     pub code_hash: String,
     pub user_code: Option<String>,
     pub created_at: u64,
@@ -356,7 +361,7 @@ pub struct EmailCode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EmailCheck {
-    Ok { user_code: Option<String> },
+    Ok { user_code: Option<String>, link_account: Option<Id> },
     Wrong,
     /// Expired, used, or too many wrong tries: send a new one.
     Gone,

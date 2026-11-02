@@ -45,11 +45,9 @@ pub struct CheckoutRequest<'a> {
     pub cancel_url: &'a str,
 }
 
-/// Stripe's recurrence for a plan: `2mo` plans bill every second month,
-/// which is how Stripe says "every 60 days" closest (user decision,
-/// 2026-11-02); annual plans bill yearly.
+/// Card subscriptions renew monthly or yearly.
 fn stripe_interval(plan: &PlanDef) -> (&'static str, &'static str) {
-    if plan.interval == "year" { ("year", "1") } else { ("month", "2") }
+    if plan.interval == "year" { ("year", "1") } else { ("month", "1") }
 }
 
 impl Stripe {
@@ -256,7 +254,7 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     if matches!(status, "trialing" | "active") {
         // A failed upgrade must preserve the previously paid tier.
         u.tier = Some(if plan.tier == "pro" { Tier::Pro } else { Tier::Ram });
-        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::TwoMonths });
+        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::Month });
         u.paid_until = period_end.max(trial_end);
     }
     if status == "trialing" {
@@ -272,6 +270,14 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn card_recurrence_matches_monthly_and_annual_prices() {
+        let plans = crate::checkout::Plans::built_in();
+        assert_eq!(stripe_interval(plans.plan(1).unwrap()), ("month", "1"));
+        assert_eq!(stripe_interval(plans.plan(2).unwrap()), ("month", "1"));
+        assert_eq!(stripe_interval(plans.plan(3).unwrap()), ("year", "1"));
+    }
 
     pub fn sign(secret: &str, body: &[u8], t: u64) -> String {
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
@@ -306,7 +312,7 @@ pub(crate) mod tests {
         let e = subscription_event("customer.subscription.created", "a1", 2, "trialing", 2000, Some(2000));
         let (id, u) = update_from_event(&e, &plans).unwrap();
         assert_eq!(id, "a1");
-        assert_eq!((u.tier, u.interval), (Some(Tier::Pro), Some(Interval::TwoMonths)));
+        assert_eq!((u.tier, u.interval), (Some(Tier::Pro), Some(Interval::Month)));
         assert_eq!((u.paid_until, u.trial_ends_at, u.cancelled), (Some(2000), Some(2000), Some(false)));
 
         assert_eq!(confirmed_payment(&e), Some(("pay1", "sub_123")));

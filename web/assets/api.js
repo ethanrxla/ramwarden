@@ -69,20 +69,20 @@ export class Api {
 
   // `userCode` is set when signing in to link a device, and omitted for a
   // plain website sign-in (account page, checkout).
-  challenge({ chain, address, userCode }) {
-    return this.request("POST", "/v1/auth/challenge", { chain, address, user_code: userCode ?? null });
+  challenge({ chain, address, userCode, link = false }) {
+    return this.request("POST", "/v1/auth/challenge", { chain, address, user_code: userCode ?? null, link });
   }
 
   // Both sign-ins answer `{account, linked_device}` and set the cookie.
   // 409 means the account is at its device limit (Lite 1, Plus 3, Pro 5).
-  verify({ chain, address, message, signature }) {
-    return this.request("POST", "/v1/auth/verify", { chain, address, message, signature });
+  verify({ chain, address, message, signature, link = false }) {
+    return this.request("POST", "/v1/auth/verify", { chain, address, message, signature, link });
   }
-  emailStart({ email, userCode }) {
-    return this.request("POST", "/v1/auth/email/start", { email, user_code: userCode ?? null });
+  emailStart({ email, userCode, link = false }) {
+    return this.request("POST", "/v1/auth/email/start", { email, user_code: userCode ?? null, link });
   }
-  emailVerify({ email, code }) {
-    return this.request("POST", "/v1/auth/email/verify", { email, code });
+  emailVerify({ email, code, link = false }) {
+    return this.request("POST", "/v1/auth/email/verify", { email, code, link });
   }
   logout() {
     return this.request("POST", "/v1/auth/logout");

@@ -47,7 +47,12 @@ class AccountPage {
         return;
       }
     }
-    if (!this.account) await this.signIn();
+    const emailOnly = new URLSearchParams(location.search).get("signin") === "email";
+    if (!this.account || emailOnly) await this.signIn(emailOnly);
+    if (emailOnly) {
+      const url = new URL(location.href); url.searchParams.delete("signin");
+      history.replaceState(null, "", url);
+    }
     await this.loadCheckout();
     this.render();
     // Back from card checkout: follow the payment until it confirms.
@@ -59,10 +64,11 @@ class AccountPage {
     }
   }
 
-  async signIn() {
+  async signIn(emailOnly = false) {
     const area = h("div");
-    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
-    this.account = (await chooseSignIn(area, api)).account;
+    show(root, h("h1", {}, emailOnly ? "Email sign-in" : "Your account"),
+      h("p", {}, emailOnly ? "Enter your email, then request a code or use one you already received. Signing in switches this browser to the account for that email." : "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api, { emailOnly })).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -100,11 +106,12 @@ class AccountPage {
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
             h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
-            h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
               next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
               ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
@@ -112,6 +119,7 @@ class AccountPage {
         : null,
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
       live ? this.extensionPanel() : null,
+      this.signInMethods(),
       live ? this.devicesPanel() : null,
       state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
@@ -131,6 +139,26 @@ class AccountPage {
       h("p", {}, "Lets your warden unload tabs you aren't using. It pairs with RamWarden on this computer by itself."),
       action,
     );
+  }
+
+  signInMethods() {
+    const identities = this.account.identities || [this.account.identity].filter(Boolean);
+    return h("section", {class:"panel",id:"sign-in-methods"},
+      h("h2", {}, "Sign-in methods"),
+      h("p", {}, "Use a wallet, email, or both for this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("div", {class:"row-actions"},
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email")));
+  }
+
+  async linkMethod(kind) {
+    const area = h("div");
+    show(root, h("h1", {}, kind === "email" ? "Add an email" : "Add a wallet"),
+      h("p", {}, "Verify the new sign-in method to add it to this account. Your plan and devices stay here; this does not start a payment."),
+      area, h("button", {class:"linkish",onclick:() => this.render()}, "Back to account"));
+    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",purpose:"Verify this wallet to add it to your account. No payment."})).account;
+    this.render();
   }
 
   devicesPanel() {
@@ -192,7 +220,7 @@ class AccountPage {
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
     let tier = this.upgrading || wanted?.tier || "ram";
-    let interval = wanted?.interval || "2mo";
+    let interval = wanted?.interval || "month";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
     const refresh = () => {
@@ -216,13 +244,13 @@ class AccountPage {
         h("strong", {}, label),
         sub ? h("span", {}, sub) : null,
       );
-    const m = (t) => planFor(this.plans, t, "2mo");
+    const m = (t) => planFor(this.plans, t, "month");
     const y = (t) => planFor(this.plans, t, "year");
     const picker = h(
       "div",
       {},
-      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / 2 months`))),
-      h("div", { class: "plans" }, choice("interval", "2mo", "Every 2 months"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
+      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / month`))),
+      h("div", { class: "plans" }, choice("interval", "month", "Monthly"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
     );
     const method = (key, label, sub, run) =>
       this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan().id, area) }, h("strong", {}, label), h("span", {}, sub)) : null;
