@@ -82,6 +82,16 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
         std::env::set_var("APPDATA", dir.path());
     }
     let st = state(dir.path());
+    assert_eq!(json(&st, "/account").await["status"], "signed_out");
+    let blocked = ramwarden_daemon::routes::router(st.clone()).oneshot(
+        Request::builder().method("POST").uri("/account/start")
+            .header("origin", "https://untrusted.example").body(Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(blocked.status().as_u16(), 403, "a web page cannot initiate local account changes");
+    let mut remote = st.clone();
+    let mut remote_cfg = (*st.cfg).clone(); remote_cfg.server.host = "0.0.0.0".into();
+    remote.cfg = Arc::new(remote_cfg);
+    assert_eq!(get(&remote, "/account").await.0, 404, "account routes must not appear on network listeners");
     let key = SigningKey::from_bytes(&[1; 32]);
     let w = ramwarden_daemon::wardens::Wardens::install(ramwarden_daemon::wardens::Wardens::with_public_key(
         &st.cfg,
