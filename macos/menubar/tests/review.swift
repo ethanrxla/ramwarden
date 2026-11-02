@@ -1,4 +1,4 @@
-// Compile with Companion.swift only. All HTTP is intercepted; no daemon is used.
+// Compile with Companion.swift, Voice.swift and Speech.swift. All HTTP is intercepted; no daemon is used.
 import AppKit
 import SwiftUI
 import Foundation
@@ -54,6 +54,9 @@ final class ReviewProtocol: URLProtocol {
             preconditionFailure("review response timed out")
         }
         precondition(model.chatHeight == 80)
+        model.focusProposal = FocusProposal(token: "focus", tabs: [], expires_at: Date().timeIntervalSince1970 + 600)
+        precondition(model.chatHeight == 360)
+        model.focusProposal = nil
         offer()
         precondition(model.selectedReviewTabs.isEmpty)
         precondition(model.chatHeight == 440)

@@ -1,0 +1,68 @@
+{
+  "warden": "ram",
+  "check_in": [
+    "Coming back to \"{title}\"? It has been idle for {idle}.",
+    "Still need \"{title}\"? It has been sitting there for {idle}.",
+    "Quick one: are you going back to \"{title}\"? Untouched for {idle}.",
+    "\"{title}\" has been napping for {idle}. Keep it, or let it go?"
+  ],
+  "quips": {
+    "any": [
+      "I've seen your tab count. We need to talk.",
+      "Fun fact: rams can't read tabs. I learned anyway.",
+      "Just doing my rounds. Everything looks tidy.",
+      "If you need me, I'll be guarding the RAM. Mostly napping near it.",
+      "Bytes counted. Horns polished. All quiet.",
+      "No pressure. Literally. I'm watching it."
+    ],
+    "many_tabs": [
+      "{tabs} tabs open. I'm not judging. I'm counting.",
+      "{tabs} tabs. Bold. Brave, even.",
+      "You have {tabs} tabs. Some of them miss you. Some of them don't.",
+      "{tabs} tabs open. Cut that in half and I'll do a little hop."
+    ],
+    "high_memory": [
+      "{percent}% of your RAM is in use. It's getting cosy in here.",
+      "Memory is at {percent}%. I'm eyeing a few idle tabs.",
+      "{percent}% used. Deep breaths. I've got this."
+    ],
+    "calm": [
+      "Only {percent}% of your RAM in use. Look at all this room.",
+      "Plenty of space today. I'll just be over here, chewing on cache.",
+      "{percent}% in use. A very relaxed day for a ram."
+    ]
+  },
+  "activity": {
+    "unloaded": [
+      "Put {count} idle tabs to sleep. That is roughly {mb} back.",
+      "{count} tabs are napping now, roughly {mb} freed. They wake up when you click them."
+    ],
+    "closed": [
+      "Closed {count} tabs you hadn't touched in a while. They're in the reopen list.",
+      "Tidied up {count} old tabs. Find them in the reopen list if you miss one."
+    ]
+  },
+  "replies": {
+    "keep": [
+      "Got it. I'll leave it alone for a day.",
+      "Noted. That one stays."
+    ],
+    "close": [
+      "Closed. It's in the reopen list if you change your mind.",
+      "Done. One less tab to worry about."
+    ],
+    "close_queued": [
+      "Asked the browser to close it. It goes on its next check-in."
+    ],
+    "close_failed": [
+      "I couldn't close it. The browser didn't confirm, so it's still open."
+    ],
+    "later": [
+      "Fair enough. I'll ask again another time.",
+      "No rush. I'll check back later."
+    ],
+    "muted": [
+      "Okay, I'll keep quiet."
+    ]
+  }
+}

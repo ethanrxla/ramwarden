@@ -38,6 +38,7 @@ fn state() -> AppState {
         started: std::time::Instant::now(),
         hold_until: Default::default(),
         desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
+        voice: Default::default(),
     }
 }
 fn tab(id: i64) -> Tab {
