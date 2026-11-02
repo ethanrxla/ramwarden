@@ -8,7 +8,11 @@ GET /browser/review offers at most ten uncertain tabs, at most once per 30 minut
 
 The Mac pet shows a review bubble; checkboxes start unchecked. Dismissal never authorizes closure. Other clients keep uncertain tabs open.
 
-Validation pending: live disposable-tab browser smoke test, full cross-platform CI, production deployment. Do not replace the installed daemon or extension until those checks pass.
+Validation (2026-11-02): workspace tests and clippy passed in Linux, macOS and Windows CI for merged revision 7172de7. The Swift app compiled and signed into a temporary destination. All 15 extension unit tests passed. Live Chrome tests passed on Windows and macOS, and bundled Chromium passed on macOS, using disposable profiles disconnected from the installed daemon. These test real input, active/work/cart guards, expired commands, URL identity, selected-only closing, reopening, persisted Keep, and manual closure. The test advances only the extension worker clock to exercise inactivity without waiting 24 hours.
+
+Run `node extension/tests/live.cjs` with Playwright and its Chromium installed, or set `CHROME_PATH` to a Chrome executable. The bundled run uses the full Chromium channel because the headless shell does not support extensions. On a remote Mac, `caffeinate -i node extension/tests/live.cjs` keeps the machine awake for the test. `RW_DEBUG=1` logs the current test operation. Earlier Mac worker timeouts did not reproduce with either browser during the awake runs; their cause remains unconfirmed.
+
+Native checklist interaction and installed-version rollout still need validation. No installed daemon or extension was replaced during these tests.
 
 ## Work pages and browser pages (2026-11-02)
 

@@ -80,3 +80,7 @@ jobs:
           npm install --no-save --no-package-lock playwright@1
           npx playwright install --with-deps chromium
           node web/tests/e2e.cjs
+      - name: Extension activity and closure guards
+        run: |
+          node --test extension/tests/discard.cjs
+          node extension/tests/live.cjs
