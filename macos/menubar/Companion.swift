@@ -24,6 +24,7 @@ struct FocusChoice: Decodable, Identifiable {
 }
 struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
 final class CompanionModel: ObservableObject {
+    var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
     @Published var selectedReviewTabs: Set<String> = []
     @Published var reviewBusy = false
@@ -376,7 +377,7 @@ struct AssistantView: View {
                     Button("Close selected") { model.answerReview("close") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Keep selected") { model.answerReview("keep") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Later") { model.answerReview("later") }
-                }.font(.caption).disabled(model.reviewBusy)
+                }.font(.caption).controlSize(.small).disabled(model.reviewBusy)
             }
             if let proposal = model.focusProposal {
                 Text("Relevant to this task").font(.caption.weight(.semibold))
@@ -413,7 +414,7 @@ struct AssistantView: View {
                 TextField(model.focusMode ? "What are you working on?" : "Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
                 Button(action:send) { Image(systemName:"arrow.up.circle.fill").font(.system(size:19)) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(model.thinking || message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             }
-        }.padding(12).frame(width:288,height:model.tabReview != nil ? 424 : model.focusProposal != nil ? 344 : model.turns.isEmpty ? 64 : 224)
+        }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
             .onAppear { inputFocused = true }
@@ -509,13 +510,13 @@ final class Companion: NSObject, NSWindowDelegate {
             Task { @MainActor in await self?.model.pollReview() }
         }
         model.$tabReview.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
         model.$focusProposal.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
-        model.$turns.sink { [weak self] turns in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:!turns.isEmpty) }
+        model.$turns.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
         voice.onChange = { [weak self] in self?.updateBubble() }
         voice.allowSpeech = { [weak self] in self?.chat?.isVisible != true }
@@ -595,7 +596,7 @@ final class Companion: NSObject, NSWindowDelegate {
         hideBubble()
         if pet == nil { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet(); model.companionVisible = true }
         if chat == nil {
-            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless],backing:.buffered,defer:false)
+            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.chatHeight),styleMask:[.borderless],backing:.buffered,defer:false)
             w.title = "Ram chat"; w.isReleasedWhenClosed = false
             w.isFloatingPanel = true; w.becomesKeyOnlyIfNeeded = false
             w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
@@ -604,7 +605,7 @@ final class Companion: NSObject, NSWindowDelegate {
             w.contentView = NSHostingView(rootView:AssistantView(model:model,dismiss:{ [weak self] in self?.closeChat() },settings:{ [weak self] in self?.openColors() }))
             chat = w
         }
-        resizeChat(hasTurns:!model.turns.isEmpty)
+        resizeChat()
         positionChat(movePet:true)
         NSApp.activate(ignoringOtherApps:true)
         chat?.makeKeyAndOrderFront(nil)
@@ -628,9 +629,9 @@ final class Companion: NSObject, NSWindowDelegate {
         let y = max(bounds.minY,pet.frame.minY-chat.frame.height-4)
         chat.setFrameOrigin(NSPoint(x:x,y:y))
     }
-    func resizeChat(hasTurns: Bool) {
+    func resizeChat() {
         guard let chat = chat else { return }
-        var frame = chat.frame; frame.size.height = model.tabReview != nil ? 440 : model.focusProposal != nil ? 360 : hasTurns ? 240 : 80
+        var frame = chat.frame; frame.size.height = model.chatHeight
         chat.setFrame(frame,display:true)
         positionChat(movePet:true)
     }
