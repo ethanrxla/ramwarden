@@ -9,14 +9,26 @@ const assert = require('node:assert/strict');
 
 (async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-live-'));
+  // Copy only this test extension and disable its real-daemon connection before startup.
+  const extension = path.join(profile, 'extension');
+  fs.cpSync(path.resolve(__dirname, '..'), extension, {recursive:true});
+  const background = path.join(extension, 'background.js');
+  fs.writeFileSync(background, fs.readFileSync(background, 'utf8').replace('const DEFAULT_HOST = "localhost:7823";', 'const DEFAULT_HOST = "127.0.0.1:1";'));
   const context = await chromium.launchPersistentContext(profile, {
     executablePath: process.env.CHROME_PATH || undefined,
     headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging'],
   });
   try {
     const cdp = await context.browser().newBrowserCDPSession();
-    await cdp.send('Extensions.loadUnpacked', { path: path.resolve(__dirname, '..') });
+    await cdp.send('Extensions.loadUnpacked', { path: extension });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const evaluate = worker.evaluate.bind(worker);
+    worker.evaluate = async (...args) => {
+      let timer;
+      try { return await Promise.race([evaluate(...args), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Extension worker did not respond within 15 seconds')), 15000);
+      })]); } finally { clearTimeout(timer); }
+    };
     await worker.evaluate(async () => { await safetyReady; _httpUrl = 'http://127.0.0.1:1'; if (typeof ws !== 'undefined' && ws) ws.close(); });
     await context.route('https://fixture.example.org/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Disposable fixture</title><input aria-label="Work"><p>Test only</p>' }));
     const make = async (suffix) => { const p = await context.newPage(); await p.goto('https://fixture.example.org/' + suffix); return p; };
