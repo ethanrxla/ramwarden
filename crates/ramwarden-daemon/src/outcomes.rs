@@ -59,6 +59,7 @@ pub fn reconcile(h: &History, browser: &str, tabs: &[Tab], now: i64) -> usize {
         let same_site = tabrank::site_key(&t.url).as_deref() == Some(host);
         if loaded_again && used_since && same_site && now - unloaded_at >= SETTLE_SECONDS {
             returned += h.mark_returned(browser, t.id, now).unwrap_or(0);
+            let _ = h.mark_unload_returned(browser, t.id, now);
         }
     }
     returned
@@ -76,6 +77,8 @@ mod tests {
             inactive_minutes: 300,
             eligible: true,
             closeable: true,
+            auto_closeable: true,
+            work: false,
             status: "candidate",
             reason: String::new(),
             priority: 1,

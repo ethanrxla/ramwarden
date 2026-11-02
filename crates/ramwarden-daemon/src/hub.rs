@@ -40,6 +40,7 @@ pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(8);
 /// Browsers, their sockets, and the replies the daemon is waiting on.
 #[derive(Default)]
 pub struct Hub {
+    pub tab_review: crate::tabreview::ReviewState,
     pub reg: Registry,
     senders: HashMap<String, mpsc::UnboundedSender<String>>,
     tab_waiters: HashMap<String, Vec<oneshot::Sender<Vec<Tab>>>>,
@@ -288,6 +289,49 @@ impl AppState {
             crate::outcomes::record(&h, &refs, ramwarden_core::history::unix_now() as i64);
         }
         result
+    }
+
+    /// Safe, identity-scoped close protocol. Older extensions cannot execute it.
+    pub async fn close_safe(&self, requested: &[crate::browser::Target], approved: bool) -> DiscardResult {
+        self.request_all_tabs().await;
+        let rows = crate::tabreview::snapshot(self);
+        let auto = crate::browser::close_candidates(&rows, &self.cfg.tabs);
+        let mut result = DiscardResult::default();
+        for target in requested {
+            // Approved closes (the review checklist) need only what a manual close
+            // needs; unattended ones must pass every automatic guard.
+            let valid = rows.iter().any(|r| &r.target==target
+                && if approved { r.closeable } else { r.auto_closeable }
+                && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
+                && (approved || auto.contains(target)));
+            if !valid { result.refused.push(target.clone()); continue; }
+            let request=uuid::Uuid::new_v4().to_string();
+            let rx = {
+                let mut hub=self.hub.lock().unwrap();
+                // Polling delivery is deferred until it supports correlated close acknowledgements.
+                if !hub.reg.is_socket(&target.browser) { result.refused.push(target.clone()); continue; }
+                let (tx,rx)=oneshot::channel();
+                hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
+                let message=serde_json::json!({"action":"close_safe","requestId":request,
+                    "tabs":[target],"minInactiveMinutes":if approved {60} else {1440},
+                    "expiresAt":ramwarden_core::history::unix_now()*1000+10000});
+                hub.send(&target.browser,&message);
+                rx
+            };
+            self.note_tab(&target.url,"requested");
+            let confirmed=matches!(tokio::time::timeout(CLOSE_TIMEOUT,rx).await,Ok(Ok(ids)) if ids.contains(&target.id));
+            self.hub.lock().unwrap().discard_waiters.remove(&request);
+            self.note_tab(&target.url,if confirmed {"confirmed"} else {"refused"});
+            if confirmed { result.confirmed.push(target.clone()); } else { result.refused.push(target.clone()); }
+        }
+        result
+    }
+    pub fn note_tab(&self,url:&str,kind:&str) {
+        if let Ok(h)=self.history.lock()
+            && let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64)
+        {
+            tracing::warn!("could not save tab feedback: {e}");
+        }
     }
 
     /// Explicit close, validated against a freshly requested report. Legacy

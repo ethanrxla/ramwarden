@@ -192,6 +192,11 @@ impl History {
         &self.path
     }
 
+    /// For sibling modules that keep their own tables here (`decisions`).
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Create what is missing, touch what exists.
     ///
     /// `goal_context` is added separately because v1 shipped without it and
@@ -275,6 +280,7 @@ impl History {
             "ALTER TABLE closed_tabs ADD COLUMN goal_context TEXT NOT NULL DEFAULT ''",
             [],
         );
+        crate::decisions::migrate(&self.conn)?;
         Ok(())
     }
 
@@ -454,12 +460,29 @@ impl History {
     }
 
     pub fn recent_actions(&self, limit: u32) -> Result<Vec<Action>> {
-        let mut stmt = self.conn.prepare(
+        self.query_actions(
             "SELECT id, at, rung, trigger, psi_some, psi_full, action, target,
                     bytes_freed, succeeded, notes
-               FROM actions ORDER BY id DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([limit], |r| {
+               FROM actions WHERE id > ?1 ORDER BY id DESC LIMIT ?2",
+            0,
+            limit,
+        )
+    }
+
+    /// Actions with an id past `after`, oldest first: what a sync has not sent.
+    pub fn actions_after(&self, after: i64, limit: u32) -> Result<Vec<Action>> {
+        self.query_actions(
+            "SELECT id, at, rung, trigger, psi_some, psi_full, action, target,
+                    bytes_freed, succeeded, notes
+               FROM actions WHERE id > ?1 ORDER BY id LIMIT ?2",
+            after,
+            limit,
+        )
+    }
+
+    fn query_actions(&self, sql: &str, after: i64, limit: u32) -> Result<Vec<Action>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params![after, limit], |r| {
             Ok(Action {
                 id: r.get(0)?,
                 at: r.get(1)?,
@@ -1191,5 +1214,54 @@ mod tests {
         h.mark_returned("b", 7, 300).unwrap();
         let pending = h.pending_unloads("b").unwrap();
         assert_eq!(pending, vec![(7, "x.com".to_string(), 100)]);
+    }
+}
+
+/// Local tab feedback is never sent to the hosted support database.
+impl History {
+    fn tab_safety_schema(&self) -> Result<()> {
+        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS tab_feedback (
+            url TEXT PRIMARY KEY, protected_until INTEGER NOT NULL, negative INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS tab_close_events (
+            id INTEGER PRIMARY KEY, url TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL);")
+    }
+    pub fn tab_feedback(&self, url: &str, kind: &str, now: i64) -> Result<()> {
+        self.tab_safety_schema()?;
+        self.conn.execute("DELETE FROM tab_feedback WHERE updated_at < ?1", [now-30*86400])?;
+        self.conn.execute("DELETE FROM tab_close_events WHERE at < ?1", [now-30*86400])?;
+        self.conn.execute("INSERT INTO tab_close_events(url,at,outcome) VALUES (?1,?2,?3)", params![url,now,kind])?;
+        if kind == "keep" || kind == "reopened" {
+            self.conn.execute("INSERT INTO tab_feedback VALUES (?1,?2,1,?3)
+                ON CONFLICT(url) DO UPDATE SET protected_until=excluded.protected_until,
+                negative=MIN(4,tab_feedback.negative+1),updated_at=excluded.updated_at",
+                params![url,now+86400,now])?;
+        } else if kind == "manual_close" {
+            self.conn.execute("DELETE FROM tab_feedback WHERE url=?1", [url])?;
+        }
+        Ok(())
+    }
+    pub fn tab_protection(&self, url: &str, now: i64) -> Result<(i64,u32)> {
+        self.tab_safety_schema()?;
+        use rusqlite::OptionalExtension;
+        Ok(self.conn.query_row("SELECT protected_until,negative FROM tab_feedback WHERE url=?1 AND updated_at>=?2",
+            params![url,now-30*86400], |r| Ok((r.get(0)?,r.get(1)?))).optional()?.unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tab_feedback_tests {
+    use super::*;
+    #[test]
+    fn feedback_survives_restart_expires_and_manual_close_resets() {
+        let dir=tempfile::tempdir().unwrap(); let path=dir.path().join("history.db");
+        { let h=History::open(&path).unwrap(); h.tab_feedback("https://namecheap.com/", "reopened", 100).unwrap(); }
+        let h=History::open(&path).unwrap();
+        assert_eq!(h.tab_protection("https://namecheap.com/",101).unwrap(), (86500,1));
+        assert!(h.tab_protection("https://namecheap.com/",86501).unwrap().0 < 86501);
+        h.tab_feedback("https://namecheap.com/","manual_close",200).unwrap();
+        assert_eq!(h.tab_protection("https://namecheap.com/",201).unwrap(), (0,0));
+        h.tab_feedback("x","keep",300).unwrap();
+        assert_eq!(h.tab_protection("x",300+31*86400).unwrap(),(0,0));
     }
 }

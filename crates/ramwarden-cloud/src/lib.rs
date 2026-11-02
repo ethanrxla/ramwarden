@@ -9,6 +9,8 @@
 
 pub mod config;
 pub mod db;
+pub mod decision_sync;
+pub mod decisions;
 pub mod model;
 pub mod secret;
 

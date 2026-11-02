@@ -96,6 +96,40 @@ function isHardProtected(url) {
   return HARD_PATTERNS.some(r => r.test(url));
 }
 
+// Mirrors tabpolicy::is_work_page: signed-in consoles, registrars, and pages in
+// the middle of a form, order or setting. Never closed unattended. (2026-11-02:
+// an Oracle Cloud DB console, an Agensi submit form and Namecheap were closed.)
+const WORK_HOSTS = ["cloud.oracle.com","oraclecloud.com","portal.azure.com","cloud.mongodb.com",
+  "cloud.digitalocean.com","app.netlify.com","vercel.com","supabase.com","railway.app","fly.io",
+  "namecheap.com","godaddy.com","porkbun.com","name.com","dynadot.com","domains.squarespace.com",
+  "domains.google.com","dash.cloudflare.com"];
+const WORK_SEGMENTS = ["submit","new","create","edit","compose","upload","publish","apply","checkout",
+  "cart","shoppingcart","basket","signup","register","onboarding","settings","account","billing",
+  "admin","dashboard","console"];
+const WORK_PREFIXES = ["submit","create","checkout","upload","publish","apply"];
+function isWorkPage(url) {
+  let u; try { u = new URL(url); } catch { return false; }
+  if (!/^https?:$/.test(u.protocol)) return false;
+  const host = u.hostname.toLowerCase();
+  if (WORK_HOSTS.some(h => host === h || host.endsWith("." + h))) return true;
+  return u.pathname.split("/").some(raw => {
+    const seg = raw.toLowerCase();
+    return WORK_SEGMENTS.includes(seg) || WORK_PREFIXES.some(p => seg.startsWith(p + "-") || seg.startsWith(p + "_"));
+  });
+}
+// Mirrors tabpolicy::is_disposable_browser_page: settings pages hold no work.
+const DISPOSABLE_PAGES = ["extensions","settings","history","downloads","newtab","new-tab-page","bookmarks","version","help","flags"];
+function isDisposableBrowserPage(url) {
+  const m = /^(chrome|edge|brave|vivaldi|opera):\/\/([^/?#]+)/i.exec(url || "");
+  return !!m && DISPOSABLE_PAGES.includes(m[2].toLowerCase());
+}
+// The site a tab is on, for reopen matching: reopening Namecheap from the
+// address bar lands on a different URL than the page that was closed.
+function siteOf(url) {
+  try { const h = new URL(url).hostname.toLowerCase(); return h ? h.split(".").slice(-2).join(".") : ""; }
+  catch { return ""; }
+}
+
 function isProtectedFor(url, idleMinutes) {
   if (isHardProtected(url)) return true;
   return isProtected(url) && idleMinutes < RELEASE_MINUTES;
@@ -114,7 +148,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
     _leaveIdleGroup(tab);
-    if (isProtected(tab.url)) return;
+
     // Keep the last 24 activations: the daemon turns them into a frecency score
     // (how often, and how recently, this tab is actually visited).
     const prior = tabActivity[tabId]?.activations ?? [];
@@ -130,11 +164,15 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete") return;
-  if (isProtected(tab.url)) {
-    if (tabActivity[tabId]) { delete tabActivity[tabId]; persistActivity(); }
-    return;
+  if (changeInfo.url) {
+    // Navigating within a site (Namecheap's control panel, a console) is the same
+    // piece of work: keep its visit history. A new site starts fresh.
+    const prior = tabActivity[tabId];
+    const keep = prior && siteOf(prior.url) && siteOf(prior.url) === siteOf(changeInfo.url);
+    tabActivity[tabId] = {url:changeInfo.url,lastActiveMs:Date.now(),activations:keep ? (prior.activations || []) : []};
+    delete safety.work[tabId]; persistSafety(); persistActivity();
   }
+  if (changeInfo.status !== "complete") return;
   tabActivity[tabId] = {
     url: tab.url || "",
     title: tab.title || tab.url || "",
@@ -146,6 +184,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const url = tabActivity[tabId]?.url;
+  if (url && !safetyClosing.has(tabId)) {
+    delete safety.pages[url]; delete safety.closed[url]; delete safety.sites[siteOf(url)];
+    postFeedback(url, "manual_close");
+  }
+  safetyClosing.delete(tabId); delete safety.work[tabId]; persistSafety();
   delete tabActivity[tabId];
   persistActivity();
 });
@@ -165,7 +209,7 @@ chrome.tabs.query({}, (allTabs) => {
   const FALLBACK_INACTIVE_MS = 30 * 60 * 1000;
   let seeded = 0;
   for (const tab of allTabs) {
-    if (isProtected(tab.url)) continue;
+
     if (!tabActivity[tab.id]) {
       tabActivity[tab.id] = {
         url: tab.url || "",
@@ -191,7 +235,8 @@ chrome.tabs.query({}, (allTabs) => {
 // from previous browser sessions survive forever — onRemoved never fired for them,
 // so the daemon kept being handed IDs of tabs that no longer existed, and every
 // close aimed at ghosts.
-function buildTabReport(activity) {
+async function buildTabReport(activity) {
+  await safetyReady;
   return new Promise((resolve) => {
     chrome.tabs.query({}, (liveTabs) => {
       if (chrome.runtime.lastError) {
@@ -220,6 +265,9 @@ function buildTabReport(activity) {
       for (const tab of liveTabs) {
         const known = activity[tab.id];
         const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
+        observeReopen(tab);
+        const page = safety.pages[tab.url] || {}, site = safety.sites[siteOf(tab.url)] || {};
+        const feedback = {until: Math.max(page.until || 0, site.until || 0), negative: Math.max(page.negative || 0, site.negative || 0)};
         report.push({
           id: tab.id,
           url: tab.url || "",
@@ -237,6 +285,10 @@ function buildTabReport(activity) {
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
           activations: known?.activations ?? [],
+          activityVersion: 1,
+          workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,
+          protectedUntilMs: feedback.until || 0,
+          negativeFeedback: feedback.negative || 0,
         });
       }
       _unloaded = report.filter(t => t.discarded).length;
@@ -407,6 +459,7 @@ async function _poll() {
     for (const cmd of (data.commands || [])) {
       if (cmd.action === "close") await closeTabs(cmd.tabIds);
       if (cmd.action === "discard") await discardTabs(cmd);
+      if (cmd.action === "keep_tabs") await keepTabs(cmd.tabs);
     }
   } catch (e) {
     console.warn("[RamWarden] poll fetch error:", e);
@@ -447,6 +500,8 @@ function _connect() {
     switch (msg.action) {
       case "get_tabs": _sendTabReport(); break;
       case "close":    closeTabs(msg.tabIds); break;
+      case "close_safe": closeSafe(msg); break;
+      case "keep_tabs": keepTabs(msg.tabs); break;
       case "discard":  discardTabs(msg); break;
       case "ping":     _send({ action: "pong" }); break;
     }
@@ -477,6 +532,7 @@ if (!IS_FIREFOX) {
 
 // Policy/ranking lives in Rust. This is the final race guard at the browser API.
 async function discardTabs(command) {
+  await safetyReady;
   const confirmed = [];
   const minimum = Math.max(5, Number(command.minInactiveMinutes) || 5);
   for (const target of (command.tabs || []).slice(0, 5)) {
@@ -484,7 +540,7 @@ async function discardTabs(command) {
     const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
       resolve(chrome.runtime.lastError ? null : tab);
     }));
-    if (!tab || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
+    if (!tab || safety.work[tab.id]?.dirty || (safety.pages[tab.url]?.until||0)>Date.now() || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
         || tab.incognito || tab.discarded || tab.autoDiscardable === false || tab.status !== "complete") continue;
     const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
     if (!last || (Date.now() - last) / 60000 < minimum) continue;
@@ -505,4 +561,81 @@ async function discardTabs(command) {
   }
   // Poll transport reports the resulting discarded flags in its next report.
   return confirmed;
+}
+
+// Local feedback survives service-worker and browser restarts. No page text is collected.
+let safety = {pages:{},closed:{},work:{},sites:{},closedSites:{}};
+const safetyClosing = new Set();
+const safetyReady = new Promise(resolve => chrome.storage.local.get("tabSafety", r => {
+  safety = {pages:{},closed:{},work:{},sites:{},closedSites:{},...(r?.tabSafety || {})};
+  const cutoff=Date.now()-30*86400000;
+  for (const [url,p] of Object.entries(safety.pages)) if (p.updated<cutoff) delete safety.pages[url];
+  for (const [url,p] of Object.entries(safety.closed)) if (p.at<cutoff) delete safety.closed[url];
+  for (const [k,p] of Object.entries(safety.sites)) if (p.updated<cutoff) delete safety.sites[k];
+  for (const [k,p] of Object.entries(safety.closedSites)) if (p.at<cutoff) delete safety.closedSites[k];
+  resolve();
+}));
+function persistSafety() { chrome.storage.local.set({tabSafety:safety}); }
+function postFeedback(url,kind) {
+  if (typeof fetch === "function") fetch(_httpUrl+"/browser/feedback",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({url,kind})}).catch(()=>{});
+}
+function protectPage(url,kind) {
+  const old=safety.pages[url] || {};
+  safety.pages[url]={until:Date.now()+86400000,negative:Math.min(4,(old.negative||0)+1),updated:Date.now()};
+  delete safety.closed[url];
+  // A reopen protects the whole site, and each reopen counts: reopening a site
+  // twice is the strongest "I am coming back to this" there is.
+  const site=siteOf(url);
+  if (kind==="reopened" && site) {
+    const s=safety.sites[site] || {};
+    safety.sites[site]={until:Date.now()+86400000,negative:Math.min(4,(s.negative||0)+1),updated:Date.now()};
+    delete safety.closedSites[site];
+  }
+  persistSafety();
+  if (kind==="reopened") postFeedback(url,kind);
+}
+function observeReopen(tab) {
+  const url = tab.url || tab.pendingUrl || "";
+  if (!url || safetyClosing.has(tab.id)) return;
+  if (safety.closed[url] || safety.closedSites[siteOf(url)]) protectPage(url,"reopened");
+}
+async function keepTabs(targets) {
+  await safetyReady;
+  for (const t of targets || []) protectPage(t.url,"keep");
+}
+chrome.tabs.onCreated?.addListener(async tab => { await safetyReady; observeReopen(tab); });
+chrome.runtime.onMessage?.addListener((message,sender) => {
+  if (message?.type!=="rw_activity" || !sender.tab || sender.frameId!==0) return;
+  const tab=sender.tab, now=Date.now();
+  const old=tabActivity[tab.id] || {};
+  tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[]};
+  if (message.dirty===true) safety.work[tab.id]={url:tab.url,dirty:true};
+  persistActivity(); persistSafety();
+});
+async function closeSafe(command) {
+  await safetyReady;
+  const closed=[];
+  for (const target of command.tabs || []) {
+    if (Date.now()>=command.expiresAt || !Number.isFinite(command.expiresAt)) break;
+    const tab=await new Promise(r=>chrome.tabs.get(target.id,t=>r(chrome.runtime.lastError?null:t)));
+    const disposable=isDisposableBrowserPage(tab?.url);
+    if (!tab || tab.url!==target.url || isWorkPage(tab.url)
+      || (!disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
+      || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
+      || tab.status!=="complete" || tab.autoDiscardable===false
+      || safety.work[tab.id]?.dirty || (safety.pages[tab.url]?.until||0)>Date.now()
+      || _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440)) continue;
+    safetyClosing.add(tab.id);
+    const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
+    if (ok) {
+      safety.closed[tab.url]={at:Date.now()}; closed.push(tab);
+      if (siteOf(tab.url)) safety.closedSites[siteOf(tab.url)]={at:Date.now()};
+      postFeedback(tab.url,"confirmed");
+    } else safetyClosing.delete(tab.id);
+  }
+  persistSafety();
+  if (closed.length) await _rememberReleased(closed);
+  _send({action:"tabs_closed_safe",requestId:command.requestId,tabIds:closed.map(t=>t.id)});
+  return closed.map(t=>t.id);
 }

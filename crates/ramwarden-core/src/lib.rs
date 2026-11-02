@@ -9,6 +9,7 @@ pub mod actuator;
 pub mod apps;
 pub mod arrange;
 pub mod config;
+pub mod decisions;
 pub mod describe;
 pub mod detector;
 pub mod exec;

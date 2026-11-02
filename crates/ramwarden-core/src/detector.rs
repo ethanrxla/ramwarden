@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use ramwarden_platform::{Owner, ProcessSample, ProcessSource};
+use ramwarden_platform::{Instances, Owner, ProcessSample, ProcessSource};
 
 use crate::pattern;
 use crate::roles::classify;
@@ -57,10 +57,15 @@ pub struct Detector {
     /// Where process facts come from: `/proc` on Linux, the NT process table on
     /// Windows. The detector itself only interprets them.
     source: Box<dyn ProcessSource>,
+    /// The source's last [`ProcessSource::accounting_degraded`].
+    degraded: bool,
     signals: HashMap<i32, Signals>,
-    /// pid -> cumulative CPU seconds at the previous sample. The CPU signal is
-    /// a difference, which is the whole reason [`Detector::is_warm`] exists.
-    cpu_prev: HashMap<i32, f64>,
+    /// Last tick's map, emptied, kept for its capacity.
+    spare: HashMap<i32, Signals>,
+    /// Per process instance: cumulative CPU at the previous sample (the CPU
+    /// signal is a difference, which is the whole reason
+    /// [`Detector::is_warm`] exists), and what it was classified from.
+    instances: Instances<Instance>,
     ticks: u32,
     our_pid: i32,
     /// pid -> parent pid and the focused pid at the last sample, so "is this
@@ -101,6 +106,22 @@ impl Recency {
     }
 }
 
+/// What the detector remembers about one process instance between ticks.
+struct Instance {
+    cpu_total: f64,
+    /// What its role, app and part were classified from. A change to either
+    /// means classifying again.
+    owner: Owner,
+    cmdline: std::sync::Arc<str>,
+}
+
+/// One application's activity in one tick.
+#[derive(Default)]
+struct AppTick {
+    used: bool,
+    cpu: bool,
+}
+
 /// A source with nothing in it, for detectors that are only ever preloaded.
 struct NoProcesses;
 
@@ -114,8 +135,10 @@ impl Detector {
     pub fn new(source: Box<dyn ProcessSource>) -> Self {
         Detector {
             source,
+            degraded: false,
             signals: HashMap::new(),
-            cpu_prev: HashMap::new(),
+            spare: HashMap::new(),
+            instances: Instances::new(),
             ticks: 0,
             our_pid: std::process::id() as i32,
             parents: HashMap::new(),
@@ -137,7 +160,18 @@ impl Detector {
     /// False means accounting has degraded to summed resident size and
     /// over-reports any process that shares pages — which is every browser.
     pub fn pss_available(&self) -> bool {
-        !self.source.accounting_degraded()
+        !self.degraded
+    }
+
+    /// Hand the process source to the caller, leaving an empty one behind.
+    ///
+    /// For a caller that samples on its own thread and must not hold the
+    /// detector's lock while it does: walking the process table is the slow
+    /// part of a tick, and every reader of the detector (the HTTP API, the
+    /// ladder) used to wait for it. Sample the returned source, then pass the
+    /// table to [`Detector::ingest`] under the lock.
+    pub fn take_source(&mut self) -> Box<dyn ProcessSource> {
+        std::mem::replace(&mut self.source, Box::new(NoProcesses))
     }
 
     /// A detector holding hand-built signals, for tests and for replaying a
@@ -166,32 +200,72 @@ impl Detector {
     ///
     /// `desktop` carries the signals that require subprocesses or window-system
     /// calls; the caller refreshes it on its own slower cadence.
+    ///
+    /// # What is reused between ticks
+    ///
+    /// A process seen last tick keeps its [`Signals`] entry: its name, app and
+    /// part strings, its reasons buffer, and its role are carried over, and
+    /// only the per-tick facts are overwritten. The role, app and part are what
+    /// classification produces from the command line, which lower-cases and
+    /// scans kilobytes of Chromium flags; they are recomputed only for a new
+    /// process instance (PID *and* start time, so a recycled PID is never
+    /// mistaken for the process it replaced), or when its name, owner or
+    /// command line changed. The maps themselves are cleared rather than
+    /// reallocated, so their capacity survives.
     pub fn sample(&mut self, desktop: &Desktop) -> ramwarden_platform::Result<()> {
         let table = self.source.sample()?;
-        let mut fresh: HashMap<i32, Signals> = HashMap::with_capacity(table.len());
-        let mut parents: HashMap<i32, i32> = HashMap::with_capacity(table.len());
-        let mut cpu_now: HashMap<i32, f64> = HashMap::with_capacity(table.len());
+        let degraded = self.source.accounting_degraded();
+        self.ingest(table, desktop, degraded);
+        Ok(())
+    }
+
+    /// Score a process table sampled elsewhere (see [`Detector::take_source`]).
+    /// `degraded` is the source's [`ProcessSource::accounting_degraded`].
+    pub fn ingest(&mut self, table: Vec<ProcessSample>, desktop: &Desktop, degraded: bool) {
+        self.degraded = degraded;
+        let mut fresh = std::mem::take(&mut self.spare);
+        fresh.clear();
+        fresh.reserve(table.len());
+        let mut old = std::mem::take(&mut self.signals);
+        self.parents.clear();
+        self.instances.begin();
 
         for p in table {
             if p.pid == self.our_pid {
                 continue;
             }
-            parents.insert(p.pid, p.ppid);
-            cpu_now.insert(p.pid, p.cpu_seconds);
+            self.parents.insert(p.pid, p.ppid);
 
-            let cpu_delta = match self.cpu_prev.get(&p.pid) {
-                Some(&prev) => (p.cpu_seconds - prev).max(0.0),
-                None => 0.0,
+            let (inst, new) = self.instances.entry(p.pid, p.started, || Instance {
+                cpu_total: p.cpu_seconds,
+                owner: p.owner,
+                cmdline: std::sync::Arc::clone(&p.cmdline),
+            });
+            let cpu_delta = if new { 0.0 } else { (p.cpu_seconds - inst.cpu_total).max(0.0) };
+            inst.cpu_total = p.cpu_seconds;
+            let same_image = !new
+                && inst.owner == p.owner
+                && (std::sync::Arc::ptr_eq(&inst.cmdline, &p.cmdline) || *inst.cmdline == *p.cmdline);
+            if !same_image {
+                inst.owner = p.owner;
+                inst.cmdline = std::sync::Arc::clone(&p.cmdline);
+            }
+
+            let mut s = match old.remove(&p.pid) {
+                Some(s) if same_image && s.name == p.name => s,
+                _ => {
+                    let role = classify(&p.name, &p.cmdline, uid_hint(p.owner));
+                    let mut s = Signals::new(p.pid, p.name, role);
+                    s.app = crate::describe::app_of(&s.name, &p.cmdline);
+                    s.part = crate::describe::part_of(&s.name, &p.cmdline);
+                    s
+                }
             };
-
-            let mut s = Signals::new(p.pid, &p.name, classify(&p.name, &p.cmdline, uid_hint(p.owner)));
             s.pss = p.proportional;
             s.rss = p.resident;
             s.state = p.state;
             s.scope = p.group;
             s.ppid = p.ppid;
-            s.app = crate::describe::app_of(&p.name, &p.cmdline);
-            s.part = crate::describe::part_of(&p.name, &p.cmdline);
             s.listening_ports = p.listening_ports;
             s.established = p.established;
             s.is_focused = desktop.focused_pid == Some(p.pid);
@@ -200,11 +274,15 @@ impl Detector {
             s.has_tty = p.has_tty;
             s.cpu_seconds_recent = cpu_delta;
             s.age_minutes = p.age_seconds / 60.0;
+            s.active_descendant = None;
 
             fresh.insert(p.pid, s);
         }
+        self.instances.sweep();
+        old.clear();
+        self.spare = old;
 
-        propagate(&mut fresh, &parents);
+        propagate(&mut fresh, &self.parents);
 
         self.ticks += 1;
         let warm = self.is_warm();
@@ -212,49 +290,42 @@ impl Detector {
             s.score(warm);
         }
 
+        // Per application: is any process of it in use (focus, audio, a busy
+        // child), and is any using CPU? One pass over the processes; the old
+        // code rescanned every process once per application to prune.
         let now = Instant::now();
+        let mut apps: HashMap<&str, AppTick> = HashMap::with_capacity(self.app_active.len() + 8);
         for s in fresh.values() {
-            let busy = s.is_focused
-                || s.playing_audio
-                || s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS
-                || s.active_descendant.is_some();
-            if busy || !self.app_active.contains_key(&s.app) {
-                self.app_active.insert(s.app.clone(), now);
-            }
-        }
-        self.app_active.retain(|app, _| fresh.values().any(|s| &s.app == app));
-
-        let mut cpu_only: HashMap<&str, bool> = HashMap::new();
-        for s in fresh.values() {
-            let cpu = s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS;
             let used = s.is_focused || s.playing_audio || s.active_descendant.is_some();
-            let e = cpu_only.entry(s.app.as_str()).or_insert(false);
-            *e |= cpu && !used;
-            if used {
-                // Anything in the app being used clears the whole app.
-                *e = false;
-            }
+            let cpu = s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS;
+            let a = apps.entry(s.app.as_str()).or_default();
+            a.used |= used;
+            a.cpu |= cpu;
         }
-        let used_apps: HashSet<&str> = fresh
-            .values()
-            .filter(|s| s.is_focused || s.playing_audio || s.active_descendant.is_some())
-            .map(|s| s.app.as_str())
-            .collect();
-        for (app, cpu) in &cpu_only {
-            if *cpu && !used_apps.contains(app) {
-                self.app_busy_since.entry(app.to_string()).or_insert(now);
+        for (app, a) in &apps {
+            let busy = a.used || a.cpu;
+            match self.app_active.get_mut(*app) {
+                Some(t) if busy => *t = now,
+                Some(_) => {}
+                None => {
+                    self.app_active.insert(app.to_string(), now);
+                }
+            }
+            if a.cpu && !a.used {
+                if !self.app_busy_since.contains_key(*app) {
+                    self.app_busy_since.insert(app.to_string(), now);
+                }
             } else {
                 self.app_busy_since.remove(*app);
             }
         }
-        self.app_busy_since.retain(|app, _| fresh.values().any(|s| &s.app == app));
+        self.app_active.retain(|app, _| apps.contains_key(app.as_str()));
+        self.app_busy_since.retain(|app, _| apps.contains_key(app.as_str()));
+        drop(apps);
 
-        self.cpu_prev = cpu_now;
         self.signals = fresh;
-        self.parents = parents;
         self.focused = desktop.focused_pid;
         self.update_recency();
-        Ok(())
     }
 
     /// Fold this sample into the LRU.
@@ -265,14 +336,19 @@ impl Detector {
     /// than brand new. Names with no process left are dropped.
     fn update_recency(&mut self) {
         let now = Instant::now();
-        let mut used: HashMap<&str, bool> = HashMap::new();
+        let mut used: HashMap<&str, bool> = HashMap::with_capacity(self.recency.len() + 8);
         for s in self.signals.values() {
             *used.entry(s.name.as_str()).or_default() |= s.recently_used();
         }
         self.recency.retain(|name, _| used.contains_key(name.as_str()));
         for (name, was_used) in used {
+            let fresh = Recency { since: now, touched: true };
             if was_used {
-                self.recency.put_hot(name.to_string(), Recency { since: now, touched: true });
+                // Move an existing entry without allocating its key again.
+                match self.recency.touch(name) {
+                    Some(r) => *r = fresh,
+                    None => self.recency.put_hot(name.to_string(), fresh),
+                }
             } else if !self.recency.contains(name) {
                 self.recency.put_cold(name.to_string(), Recency { since: now, touched: false });
             }
@@ -369,6 +445,12 @@ impl Detector {
     /// The single gate every suspend, page-out, and kill passes through.
     pub fn may_suspend(&self, name_pattern: &str, watchlist: &[String]) -> Decision {
         let matched = self.matching(name_pattern);
+        Self::gate(name_pattern, &matched, watchlist)
+    }
+
+    /// [`Detector::may_suspend`] over processes already matched to the pattern,
+    /// so a caller that needs both the decision and the processes scans once.
+    fn gate(name_pattern: &str, matched: &[&Signals], watchlist: &[String]) -> Decision {
         if matched.is_empty() {
             return Decision::Refuse(format!("no running process matches {name_pattern:?}"));
         }
@@ -418,19 +500,30 @@ impl Detector {
     /// Processes the user opted into reclaiming that are genuinely idle.
     ///
     /// Nothing outside the watchlist is ever returned.
+    ///
+    /// One scan of the process table per watchlist entry, which serves both the
+    /// gate and the result. Largest first; equal sizes by pid, so the order is
+    /// stable from tick to tick.
     pub fn reclaimable(&self, watchlist: &[String]) -> Vec<&Signals> {
         let mut out: Vec<&Signals> = Vec::new();
+        let mut taken: HashSet<i32> = HashSet::new();
+        let mut matched: Vec<&Signals> = Vec::new();
         for pat in watchlist {
-            if !self.may_suspend(pat, watchlist).is_allowed() {
+            matched.clear();
+            matched.extend(self.signals.values().filter(|s| pattern::matches_ci(pat, &s.name)));
+            // The gate reports the first offending process; pid order keeps
+            // that the same one every time.
+            matched.sort_unstable_by_key(|s| s.pid);
+            if !Self::gate(pat, &matched, watchlist).is_allowed() {
                 continue;
             }
-            for s in self.matching(pat) {
-                if s.worth_reclaiming() && !out.iter().any(|e| e.pid == s.pid) {
+            for s in &matched {
+                if s.worth_reclaiming() && taken.insert(s.pid) {
                     out.push(s);
                 }
             }
         }
-        out.sort_by_key(|s| std::cmp::Reverse(s.pss));
+        out.sort_unstable_by_key(|s| (std::cmp::Reverse(s.pss), s.pid));
         out
     }
 
@@ -512,6 +605,64 @@ mod tests {
     }
 
     // ── Structural protection ───────────────────────────────────────────────
+
+    // ── Reuse between ticks ─────────────────────────────────────────────────
+
+    fn fake_detector(procs: Vec<ProcessSample>) -> (Detector, ramwarden_platform::fake::Shared) {
+        let world = std::sync::Arc::new(std::sync::Mutex::new(ramwarden_platform::fake::World::default()));
+        world.lock().unwrap().processes = procs;
+        let platform = ramwarden_platform::fake::platform(world.clone());
+        (Detector::new(platform.processes()), world)
+    }
+
+    /// A recycled pid is a new process: it is classified afresh and its CPU
+    /// is not differenced against the dead process's.
+    #[test]
+    fn a_recycled_pid_is_classified_afresh() {
+        let mut vm = ramwarden_platform::fake::process(50, "qemu-system-x86", 4 << 30);
+        vm.started = 100;
+        vm.cpu_seconds = 10.0;
+        let (mut d, world) = fake_detector(vec![vm]);
+        d.sample(&Desktop::default()).unwrap();
+        d.sample(&Desktop::default()).unwrap();
+        assert_eq!(d.get(50).unwrap().protection, Protection::Structural);
+
+        let mut other = ramwarden_platform::fake::process(50, "Discord", 500 << 20);
+        other.started = 900;
+        other.cpu_seconds = 50.0;
+        world.lock().unwrap().processes = vec![other];
+        d.sample(&Desktop::default()).unwrap();
+        let s = d.get(50).unwrap();
+        assert_eq!(s.name, "Discord");
+        assert_eq!(s.protection, Protection::None);
+        assert_eq!(s.cpu_seconds_recent, 0.0, "no delta across two different processes");
+    }
+
+    /// The same process keeps its entry, and per-tick facts are overwritten,
+    /// never carried over: a child that stopped working no longer marks its
+    /// parent, and a lost focus is lost.
+    #[test]
+    fn a_reused_entry_carries_nothing_per_tick_over() {
+        let mut shell = ramwarden_platform::fake::process(60, "bash", 10 << 20);
+        shell.started = 1;
+        let mut child = ramwarden_platform::fake::process(61, "worker", 10 << 20);
+        child.started = 2;
+        child.ppid = 60;
+        child.cpu_seconds = 0.0;
+        let (mut d, world) = fake_detector(vec![shell, child]);
+        d.sample(&Desktop::default()).unwrap();
+        world.lock().unwrap().processes[1].cpu_seconds = 5.0;
+        let focused = Desktop { focused_pid: Some(60), ..Default::default() };
+        d.sample(&focused).unwrap();
+        assert!(d.get(60).unwrap().active_descendant.is_some());
+        assert!(d.get(60).unwrap().is_focused);
+
+        d.sample(&Desktop::default()).unwrap();
+        let s = d.get(60).unwrap();
+        assert!(s.active_descendant.is_none(), "{s:?}");
+        assert!(!s.is_focused);
+        assert_eq!(d.get(61).unwrap().cpu_seconds_recent, 0.0);
+    }
 
     /// v1's `test_virtual_machine_is_never_suspendable_even_if_watchlisted`.
     /// A detector that cannot read PSS has degraded to v1's accounting, and that

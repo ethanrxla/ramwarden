@@ -73,6 +73,58 @@ const LOCAL_STATE_EDITORS: &[&str] = &[
     "jupyter",
 ];
 
+/// Hosts where the user is signed into something that holds state: cloud and
+/// database consoles, hosting dashboards, registrars and DNS.
+///
+/// Added 2026-11-02 after the tab budget closed an Oracle Cloud console signed
+/// into a database and a Namecheap tab the user had reopened twice, while it left
+/// `chrome://extensions` alone. Neither host matched a `console.` or `dashboard.`
+/// prefix (`cloud.oracle.com`, `ap.www.namecheap.com`), so both were classed as
+/// "an ordinary web page" and Jev was told nothing that set them apart.
+const ACCOUNT_HOSTS: &[&str] = &[
+    "cloud.oracle.com",
+    "oraclecloud.com",
+    "portal.azure.com",
+    "cloud.mongodb.com",
+    "cloud.digitalocean.com",
+    "app.netlify.com",
+    "vercel.com",
+    "supabase.com",
+    "railway.app",
+    "fly.io",
+    "namecheap.com",
+    "godaddy.com",
+    "porkbun.com",
+    "name.com",
+    "dynadot.com",
+    "domains.squarespace.com",
+    "domains.google.com",
+    "dash.cloudflare.com",
+];
+
+/// Path segments that mean "in the middle of something" on any site: a form
+/// being filled, an order being placed, a setting being changed. Matched as a
+/// whole segment (or a `submit-...` style prefix), so `/newsletter` and
+/// `/accounting-tips` do not count. The Agensi tab closed on 2026-11-02 was a
+/// "submit a skill" form.
+const WORK_SEGMENTS: &[&str] = &[
+    "submit", "new", "create", "edit", "compose", "upload", "publish", "apply",
+    "checkout", "cart", "shoppingcart", "basket", "signup", "register", "onboarding",
+    "settings", "account", "billing", "admin", "dashboard", "console",
+];
+/// Segments that also count as a prefix (`submit-a-skill`, `create_project`).
+const WORK_PREFIXES: &[&str] = &["submit", "create", "checkout", "upload", "publish", "apply"];
+
+/// Browser pages that hold no work and reopen in one click. Automatic closing
+/// may take these (after the same 24 h floor as any tab) instead of keeping them
+/// forever while it closes pages the user is working in. Extension pages
+/// (`chrome-extension://`) are not on this list: a password manager or wallet
+/// popup can hold state.
+const DISPOSABLE_BROWSER_PAGES: &[&str] = &[
+    "extensions", "settings", "history", "downloads", "newtab", "new-tab-page",
+    "bookmarks", "version", "help", "flags",
+];
+
 /// How long every other protection lasts once a tab is left alone (4 h).
 ///
 /// A console, a dashboard, a school page or a login page protects what the user
@@ -109,10 +161,35 @@ pub fn is_protected(url: &str) -> bool {
         if private { return true; }
     }
     if NEVER_CLOSE.iter().any(|p| host.contains(p)) || EDITOR_HOSTS.iter().any(|h| domain_matches(&host,h)) { return true; }
+    if is_work_page(url) { return true; }
     let path = parsed.path().to_lowercase();
     if ["/login", "/signin", "/auth", "/oauth", "/callback", "/session"].iter().any(|p|path.starts_with(p)) { return true; }
     (domain_matches(&host,"github.com") || domain_matches(&host,"gitlab.com"))
         && NEVER_CLOSE_PATHS.iter().any(|p|path.contains(p))
+}
+
+/// A signed-in console, account or registrar page, or a page in the middle of a
+/// form, order or setting (see [`ACCOUNT_HOSTS`], [`WORK_SEGMENTS`]). These are
+/// protected like any soft protection, are never closed automatically, and are
+/// described to Jev as work so its "unsaved work" answer can see them.
+pub fn is_work_page(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else { return false; };
+    if !matches!(parsed.scheme(), "http" | "https") { return false; }
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    if ACCOUNT_HOSTS.iter().any(|h| domain_matches(&host, h)) { return true; }
+    parsed.path_segments().into_iter().flatten().any(|seg| {
+        let seg = seg.to_ascii_lowercase();
+        WORK_SEGMENTS.contains(&seg.as_str())
+            || WORK_PREFIXES.iter().any(|p| seg.strip_prefix(p).is_some_and(|rest| rest.starts_with(['-', '_'])))
+    })
+}
+
+/// A browser settings page (`chrome://extensions`, `edge://settings`, ...): no
+/// work lives there, so it should leave before any page the user is using.
+pub fn is_disposable_browser_page(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else { return false; };
+    matches!(parsed.scheme(), "chrome" | "edge" | "brave" | "vivaldi" | "opera")
+        && parsed.host_str().is_some_and(|h| DISPOSABLE_BROWSER_PAGES.contains(&h.to_ascii_lowercase().as_str()))
 }
 
 /// Protections that hold however long the tab sits: non-web pages, private
@@ -422,5 +499,45 @@ mod tests {
         ] {
             assert!(is_protected_for(url, 100_000), "{url}");
         }
+    }
+    #[test]
+    fn the_tabs_closed_on_2026_11_02_are_work_pages() {
+        for url in [
+            "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase.oc1?region=us-ashburn-1",
+            "https://ap.www.namecheap.com/domains/domaincontrolpanel/example.com/domain",
+            "https://www.namecheap.com/shoppingcart/",
+            "https://www.agensi.io/submit",
+            "https://agensi.io/creators/submit-a-skill",
+        ] {
+            assert!(is_work_page(url), "{url}");
+            assert!(is_protected(url), "{url}");
+            assert!(is_protected_for(url, 60), "{url}");
+        }
+    }
+
+    #[test]
+    fn work_segments_match_whole_segments_only() {
+        for url in [
+            "https://example.com/newsletter/2026",
+            "https://blog.example.com/accounting-tips",
+            "https://example.com/articles/how-to-create",
+            "https://example.com/new-york",
+        ] {
+            assert!(!is_work_page(url), "{url}");
+        }
+        assert!(is_work_page("https://example.com/projects/new"));
+        assert!(is_work_page("https://example.com/Checkout"));
+    }
+
+    #[test]
+    fn browser_settings_pages_are_disposable_but_extension_pages_are_not() {
+        assert!(is_disposable_browser_page("chrome://extensions/"));
+        assert!(is_disposable_browser_page("edge://settings/privacy"));
+        assert!(is_disposable_browser_page("chrome://newtab/"));
+        assert!(!is_disposable_browser_page("chrome-extension://abcdef/popup.html"));
+        assert!(!is_disposable_browser_page("chrome://inspect/"));
+        assert!(!is_disposable_browser_page("https://example.com/settings"));
+        // Still protected from unloading: discarding a browser page saves nothing.
+        assert!(is_protected("chrome://extensions/"));
     }
 }
