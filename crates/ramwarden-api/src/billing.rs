@@ -187,6 +187,8 @@ async fn checkout_stripe(
         .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Card payments open soon. Pay with USDC on Base."))?;
     let (a, plan, kind) = start(c, &method, &headers, b.plan, BillingMethod::Card, now).await?;
     let id = new_id();
+    // Persist before Stripe can charge or deliver a webhook.
+    c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
     if kind == Start::Upgrade {
         // The card on file pays the difference now; the webhook moves the tier.
         let sub = a.billing.as_ref().map(|b| b.reference.clone()).unwrap_or_default();
@@ -194,7 +196,6 @@ async fn checkout_stripe(
             tracing::error!("{e}");
             error(StatusCode::BAD_GATEWAY, "The upgrade did not go through. Try again in a minute.")
         })?;
-        c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
         return Ok(Json(json!({"payment_id": id, "upgrade": true, "url": null, "trial": false})).into_response());
     }
     let email = match &a.identity {
@@ -216,7 +217,6 @@ async fn checkout_stripe(
         tracing::error!("{e}");
         error(StatusCode::BAD_GATEWAY, "Card checkout could not start. Try again in a minute.")
     })?;
-    c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
     Ok(Json(json!({"payment_id": id, "upgrade": false, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
 }
 

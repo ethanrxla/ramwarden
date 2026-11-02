@@ -172,13 +172,12 @@ impl Config {
 
     fn cloud_from(var: &dyn Fn(&str) -> Option<String>) -> Result<Option<CloudConfig>, String> {
         let Some(origin) = var("RAMWARDEN_SITE_ORIGIN") else { return Ok(None) };
-        let origin = origin.trim_end_matches('/').to_string();
-        let domain = origin
-            .strip_prefix("https://")
-            .or_else(|| origin.strip_prefix("http://localhost").map(|_| origin.trim_start_matches("http://")))
-            .filter(|d| !d.is_empty() && !d.contains('/'))
-            .ok_or("RAMWARDEN_SITE_ORIGIN must be an https:// origin, like https://ramwarden.app")?
-            .to_string();
+        let parsed = reqwest::Url::parse(&origin).map_err(|_| "Invalid RAMWARDEN_SITE_ORIGIN")?;
+        if !safe_service_url(&parsed) || parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+            return Err("RAMWARDEN_SITE_ORIGIN must be an HTTPS origin or an HTTP loopback origin".into());
+        }
+        let origin = parsed.origin().ascii_serialization();
+        let domain = origin.split_once("://").expect("validated scheme").1.to_string();
         let num = |k: &str, default: u64| -> Result<u64, String> {
             var(k).map_or(Ok(default), |v| v.parse().map_err(|_| format!("{k} must be a number, got `{v}`")))
         };
@@ -227,7 +226,7 @@ impl Config {
         let public_url = var("RAMWARDEN_PUBLIC_URL")
             .map(|u| u.trim_end_matches('/').to_string())
             .unwrap_or_else(|| if origin.starts_with("http://") { "http://localhost:8080".into() } else { format!("https://api.{domain}") });
-        if !(public_url.starts_with("https://") || public_url.starts_with("http://localhost")) || public_url.contains('\'') {
+        if !reqwest::Url::parse(&public_url).is_ok_and(|url| safe_service_url(&url) && url.query().is_none() && url.fragment().is_none()) || public_url.contains('\'') {
             return Err("RAMWARDEN_PUBLIC_URL must be an https:// URL".into());
         }
         let support_token = match var("RAMWARDEN_SUPPORT_TOKEN") {
@@ -361,5 +360,25 @@ mod tests {
         let printed = format!("{c:?}");
         assert!(!printed.contains("jev-secret-value"), "{printed}");
         assert!(!printed.contains(TOKEN), "{printed}");
+    }
+}
+
+fn safe_service_url(url: &reqwest::Url) -> bool {
+    url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && (url.scheme() == "https" || (url.scheme() == "http" && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"))))
+}
+
+#[cfg(test)]
+mod local_origin_tests {
+    #[test]
+    fn only_real_loopback_hosts_may_use_http() {
+        for host in ["localhost:8000", "127.0.0.1:8080", "[::1]:8000"] {
+            assert!(super::safe_service_url(&reqwest::Url::parse(&format!("http://{host}")).unwrap()));
+        }
+        for url in ["http://localhost.evil.example", "http://localhost@evil.example", "https://user:pass@example.com", "http://example.com"] {
+            assert!(!super::safe_service_url(&reqwest::Url::parse(url).unwrap()), "{url}");
+        }
     }
 }

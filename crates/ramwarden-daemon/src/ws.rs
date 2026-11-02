@@ -44,6 +44,8 @@ enum ClientMessage {
         #[serde(default, rename = "tabIds")]
         tab_ids: Vec<i64>,
     },
+    #[serde(rename = "tabs_closed_safe")]
+    TabsClosedSafe { #[serde(rename = "requestId")] request_id:String, #[serde(default,rename = "tabIds")] tab_ids:Vec<i64> },
     #[serde(rename = "tabs_discarded")]
     TabsDiscarded {
         #[serde(rename = "requestId")]
@@ -116,6 +118,9 @@ async fn connection(socket: WebSocket, st: AppState) {
             Ok(ClientMessage::TabsClosed { tab_ids }) => {
                 tracing::info!("[{conn_id}] confirmed {} tab(s) closed", tab_ids.len());
                 st.hub.lock().unwrap().deliver_close(&conn_id, tab_ids);
+            }
+            Ok(ClientMessage::TabsClosedSafe { request_id, tab_ids }) => {
+                st.hub.lock().unwrap().deliver_discard(&conn_id, &request_id, tab_ids);
             }
             Ok(ClientMessage::TabsDiscarded { request_id, tab_ids }) => {
                 st.hub.lock().unwrap().deliver_discard(&conn_id, &request_id, tab_ids);

@@ -9,6 +9,8 @@
 //! `docs/product-spec.md` 4.
 
 pub mod config;
+pub mod decision_sync;
+pub mod decisions;
 pub mod model;
 pub mod mongo;
 pub mod secret;
@@ -18,3 +20,6 @@ pub mod support;
 pub use config::CloudConfig;
 pub use mongo::MongoStore;
 pub use store::{MemoryStore, Store, StoreError};
+
+/// Compatibility name for the shared MongoDB connection used by decision sync.
+pub use mongo::MongoStore as Db;

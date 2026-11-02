@@ -14,9 +14,49 @@ pub fn matches(pattern: &str, text: &str) -> bool {
     is_match(&p, &t)
 }
 
+/// Names and patterns up to this long are matched without touching the heap.
+const STACK: usize = 128;
+
 /// Case-insensitive match, the form every caller in RamWarden actually wants.
+///
+/// The ladder asks this for every process against every watchlist entry, many
+/// times a tick. Lower-casing both sides into new strings and then into `Vec`s
+/// of chars made that four allocations per comparison — most of the 880,000
+/// allocations one judged ladder step used to make. Process names and
+/// watchlist entries are ASCII in practice, so they are lower-cased into stack
+/// buffers and matched as bytes; anything else takes the general path.
 pub fn matches_ci(pattern: &str, text: &str) -> bool {
+    if pattern.is_ascii() && text.is_ascii() && pattern.len() <= STACK && text.len() <= STACK {
+        let (mut pb, mut tb) = ([0u8; STACK], [0u8; STACK]);
+        let p = lower_ascii(pattern, &mut pb);
+        let t = lower_ascii(text, &mut tb);
+        return is_match(p, t);
+    }
     matches(&pattern.to_lowercase(), &text.to_lowercase())
+}
+
+fn lower_ascii<'a>(s: &str, buf: &'a mut [u8; STACK]) -> &'a [u8] {
+    let out = &mut buf[..s.len()];
+    out.copy_from_slice(s.as_bytes());
+    out.make_ascii_lowercase();
+    out
+}
+
+/// A pattern or text unit: a `char`, or a byte of ASCII text.
+trait Unit: Copy + PartialEq + PartialOrd {
+    fn is(self, c: char) -> bool;
+}
+
+impl Unit for char {
+    fn is(self, c: char) -> bool {
+        self == c
+    }
+}
+
+impl Unit for u8 {
+    fn is(self, c: char) -> bool {
+        c.is_ascii() && self == c as u8
+    }
 }
 
 /// Whether `text` matches any pattern in `patterns`, case-insensitively.
@@ -24,7 +64,7 @@ pub fn any_ci(patterns: &[String], text: &str) -> bool {
     patterns.iter().any(|p| matches_ci(p, text))
 }
 
-fn is_match(p: &[char], t: &[char]) -> bool {
+fn is_match<U: Unit>(p: &[U], t: &[U]) -> bool {
     // Iterative with one backtrack point, so a pathological pattern like
     // `*a*a*a*` cannot blow the stack or the clock.
     let (mut pi, mut ti) = (0usize, 0usize);
@@ -33,17 +73,17 @@ fn is_match(p: &[char], t: &[char]) -> bool {
     while ti < t.len() {
         if pi < p.len() {
             match p[pi] {
-                '*' => {
+                c if c.is('*') => {
                     star = Some((pi, ti));
                     pi += 1;
                     continue;
                 }
-                '?' => {
+                c if c.is('?') => {
                     pi += 1;
                     ti += 1;
                     continue;
                 }
-                '[' => {
+                c if c.is('[') => {
                     if let Some((end, ok)) = class_match(p, pi, t[ti]) {
                         if ok {
                             pi = end + 1;
@@ -78,13 +118,13 @@ fn is_match(p: &[char], t: &[char]) -> bool {
     }
 
     // Trailing '*'s may match the empty remainder.
-    p[pi..].iter().all(|&c| c == '*')
+    p[pi..].iter().all(|&c| c.is('*'))
 }
 
 /// Match one `[...]` class against `c`, returning the closing index and result.
-fn class_match(p: &[char], open: usize, c: char) -> Option<(usize, bool)> {
+fn class_match<U: Unit>(p: &[U], open: usize, c: U) -> Option<(usize, bool)> {
     let mut i = open + 1;
-    let negated = matches!(p.get(i), Some('!') | Some('^'));
+    let negated = p.get(i).is_some_and(|u| u.is('!') || u.is('^'));
     if negated {
         i += 1;
     }
@@ -93,11 +133,11 @@ fn class_match(p: &[char], open: usize, c: char) -> Option<(usize, bool)> {
 
     while i < p.len() {
         // A ']' in the first position is a literal, per POSIX.
-        if p[i] == ']' && i > first {
+        if p[i].is(']') && i > first {
             return Some((i, hit != negated));
         }
         // A range, unless the '-' is first or last in the class.
-        if i + 2 < p.len() && p[i + 1] == '-' && p[i + 2] != ']' {
+        if i + 2 < p.len() && p[i + 1].is('-') && !p[i + 2].is(']') {
             if p[i] <= c && c <= p[i + 2] {
                 hit = true;
             }
@@ -115,6 +155,21 @@ fn class_match(p: &[char], open: usize, c: char) -> Option<(usize, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The allocation-free ASCII path must answer exactly as the general one.
+    #[test]
+    fn the_ascii_fast_path_agrees_with_the_general_matcher() {
+        let pats = ["Discord", "burp*", "*Suite*", "b?rp", "[bc]urp*", "[!a]*", "[a-c]*", "*a*a*a*", "[", "", "*"];
+        let texts = ["discord", "BurpSuiteCommunity", "burp", "curpx", "aaa", "", "Zoom", "[", "Ünïcode"];
+        for p in pats {
+            for t in texts {
+                let general = matches(&p.to_lowercase(), &t.to_lowercase());
+                assert_eq!(matches_ci(p, t), general, "{p:?} vs {t:?}");
+            }
+        }
+        let long = "x".repeat(STACK + 1);
+        assert!(matches_ci("X*", &long), "longer than the stack buffer takes the general path");
+    }
 
     #[test]
     fn exact_names_match() {

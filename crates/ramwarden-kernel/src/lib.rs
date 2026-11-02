@@ -36,6 +36,7 @@ pub mod platform;
 pub mod process;
 pub mod procfd;
 pub mod psi;
+pub mod sampler;
 pub mod smaps;
 pub mod zram;
 

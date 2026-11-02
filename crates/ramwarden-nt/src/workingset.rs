@@ -114,17 +114,36 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    /// A child that dirties ~200 MB of private memory, then idles.
-    fn hog() -> std::process::Child {
-        Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "$b = New-Object byte[] (200MB); for ($i=0; $i -lt $b.Length; $i+=4096) { $b[$i]=1 }; Start-Sleep 60",
-            ])
+    /// Native child fixture: avoids PowerShell startup and allocation delays on CI.
+    #[test]
+    #[ignore = "spawned by the working-set integration test"]
+    fn memory_hog_fixture() {
+        if std::env::var("RAMWARDEN_TEST_MEMORY_HOG").as_deref() != Ok("1") {
+            return;
+        }
+        let mut pages = vec![0u8; 200 * 1024 * 1024];
+        for offset in (0..pages.len()).step_by(4096) {
+            // SAFETY: each offset is within the allocated vector. Force page commitment.
+            unsafe { std::ptr::write_volatile(pages.as_mut_ptr().add(offset), 1) };
+        }
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        std::hint::black_box(pages);
+    }
+
+    struct Hog(std::process::Child);
+    impl Drop for Hog {
+        fn drop(&mut self) {
+            self.0.kill().ok();
+            self.0.wait().ok();
+        }
+    }
+    fn hog() -> Hog {
+        Hog(Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", "workingset::tests::memory_hog_fixture", "--ignored"])
+            .env("RAMWARDEN_TEST_MEMORY_HOG", "1")
             .stdout(std::process::Stdio::null())
             .spawn()
-            .expect("spawn powershell")
+            .expect("spawn native memory fixture"))
     }
 
     fn wait_for_ws(pid: u32, at_least: u64) -> u64 {
@@ -141,8 +160,8 @@ mod tests {
 
     #[test]
     fn trimming_an_idle_process_measurably_moves_its_private_pages() {
-        let mut child = hog();
-        let pid = child.id();
+        let child = hog();
+        let pid = child.0.id();
         let before = wait_for_ws(pid, 150 * 1024 * 1024);
         assert!(before >= 150 * 1024 * 1024, "hog only reached {before}");
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -151,8 +170,6 @@ mod tests {
         assert!(moved > 100 * 1024 * 1024, "only {moved} bytes moved");
         assert!(private_working_set_of(pid).unwrap() < before);
 
-        child.kill().ok();
-        child.wait().ok();
     }
 
     #[test]
