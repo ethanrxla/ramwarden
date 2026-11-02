@@ -68,13 +68,18 @@ function fakePhantom({ reject = false } = {}) {
 async function run() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined });
   const failures = [];
   const tests = [];
   const t = (name, fn) => tests.push({ name, fn });
 
   async function page(init, arg) {
     const ctx = await browser.newContext();
+    // These installer assertions deliberately exercise Linux, on every test host.
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", {get: () => "Linux x86_64"});
+      Object.defineProperty(navigator, "userAgentData", {get: () => ({platform: "Linux"})});
+    });
     if (init) await ctx.addInitScript(init, arg);
     const p = await ctx.newPage();
     p.errors = [];
@@ -300,3 +305,4 @@ async function run() {
 }
 
 run();
+
