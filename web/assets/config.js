@@ -56,7 +56,7 @@ export const config = {
       features: [
         "Everything in Lite, plus:",
         "A customizable AI warden pet that picks what you won't miss",
-        "AI scores each idle app: your chance of coming back within the hour",
+        "Scores each idle app: your chance of coming back within the hour",
         "Pauses an app only when 70% sure you won't return, closes one only at 85%",
         "Closes tabs you won't return to, each saved to a reopen list",
         "3 computers: Windows, macOS and Linux",

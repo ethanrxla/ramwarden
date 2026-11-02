@@ -436,3 +436,4 @@ footer a { color: var(--muted); }
 .linkish { background:none; border:0; padding:0; color:var(--accent-2); font:inherit; font-size:14px; text-decoration:underline; cursor:pointer; }
 .row-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
+.how-note { color:var(--muted); font-size:14px; margin:18px 0 0; }
