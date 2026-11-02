@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-private struct ThreatPixel { let x: Double; let y: Double; let color: Color }
+private struct ThreatPixel { let x: Double; let y: Double; let width: Double; let height: Double; let color: Color }
 private final class ThreatPixels: NSObject, XMLParserDelegate {
     var pixels: [ThreatPixel] = []
     func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes a: [String:String]) {
         guard name == "rect", let x = Double(a["x"] ?? ""), let y = Double(a["y"] ?? ""), let hex = a["fill"], let rgb = UInt32(hex.dropFirst(),radix:16) else { return }
-        pixels.append(ThreatPixel(x:x,y:y,color:Color(red:Double((rgb>>16)&255)/255,green:Double((rgb>>8)&255)/255,blue:Double(rgb&255)/255)))
+        pixels.append(ThreatPixel(x:x,y:y,width:Double(a["width"] ?? "1") ?? 1,height:Double(a["height"] ?? "1") ?? 1,color:Color(red:Double((rgb>>16)&255)/255,green:Double((rgb>>8)&255)/255,blue:Double(rgb&255)/255)))
     }
     static let sprite: [ThreatPixel] = {
         guard let url = Bundle.main.url(forResource:"ThreatWarden",withExtension:"svg"), let parser = XMLParser(contentsOf:url) else { return [] }
@@ -22,6 +22,7 @@ final class ThreatState: ObservableObject {
     @Published var engines: [String] = []
     var lastPoll = Date.distantPast
     var busy = false
+    var isVisible: (() -> Bool)?
     @MainActor func poll() async {
         guard !busy, Date().timeIntervalSince(lastPoll) >= 15 else { return }
         busy = true; lastPoll = Date(); defer { busy = false }
@@ -34,7 +35,7 @@ final class ThreatState: ObservableObject {
         level = status["level"] as? String ?? "off"
         headline = status["headline"] as? String ?? "Setup needed"
         detail = status["detail"] as? String ?? "Check the security agent and connection."
-        if headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat") }
+        if isVisible?() == true && !headline.localizedCaseInsensitiveContains("Pro warden") && headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat") }
         let engineRows = (report["report"] as? [String:Any])?["engines"] as? [[String:Any]] ?? []
         engines = engineRows.map { "\($0["name"] as? String ?? "Engine"): \($0["state"] as? String ?? "unknown")" }
     }
@@ -47,7 +48,7 @@ private struct ThreatSprite: View {
             Canvas { context,size in
                 let scale = floor(min(size.width,size.height)/48)
                 for pixel in ThreatPixels.sprite {
-                    context.fill(Path(CGRect(x:pixel.x*scale,y:pixel.y*scale,width:scale,height:scale)),with:.color(pixel.color))
+                    context.fill(Path(CGRect(x:pixel.x*scale,y:pixel.y*scale,width:pixel.width*scale,height:pixel.height*scale)),with:.color(pixel.color))
                 }
             }.frame(width:144,height:144).accessibilityLabel("ThreatWarden companion. Click for protection status.")
             Text(state.headline).font(.system(size:10,weight:.semibold)).lineLimit(2)
@@ -59,6 +60,7 @@ private struct ThreatSprite: View {
 private struct ThreatReport: View {
     @AppStorage("threat.speech") private var spoken = false
     @ObservedObject var state: ThreatState
+    var hide: () -> Void
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
             Text("ThreatWarden").font(.headline)
@@ -66,6 +68,15 @@ private struct ThreatReport: View {
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled)
             ForEach(state.engines,id:\.self) { Text($0).font(.caption) }
+            HStack {
+                Button("Hide companion", action:hide)
+                Spacer()
+                Button("Get Pro…") {
+                    let site = UserDefaults.standard.string(forKey:"website.url") ?? "https://ramwarden.com"
+                    if let url = URL(string:site + "/account.html?plan=2") { NSWorkspace.shared.open(url) }
+                }
+            }
+            Text("Upgrade opens checkout. Your card or wallet approval happens there.").font(.caption).foregroundStyle(.secondary)
             Text("Status comes from this Mac's daemon. Detection is read-only.").font(.caption).foregroundStyle(.secondary)
         }.padding(20).frame(width:320).modifier(ChatGlass())
     }
@@ -95,9 +106,14 @@ final class ThreatCompanion {
     var panel: NSPanel?
     var report: NSWindow?
     var visible: Bool { UserDefaults.standard.bool(forKey:"threat.visible") }
-    func restore() { if visible { show() } }
+    func restore() { state.isVisible = { [weak self] in self?.visible == true }; if visible { show() } }
+    func hide() {
+        UserDefaults.standard.set(false,forKey:"threat.visible")
+        CompanionSpeech.shared.stop("threat")
+        panel?.orderOut(nil); panel = nil; report?.orderOut(nil)
+    }
     func toggle() {
-        if visible { CompanionSpeech.shared.stop("threat"); UserDefaults.standard.set(false,forKey:"threat.visible"); panel?.orderOut(nil); panel = nil; report?.orderOut(nil) }
+        if visible { hide() }
         else { UserDefaults.standard.set(true,forKey:"threat.visible"); show() }
     }
     @MainActor func poll() async { if visible { await state.poll() } }
@@ -106,7 +122,7 @@ final class ThreatCompanion {
         let p = PetPanel(contentRect:NSRect(x:300,y:100,width:160,height:180),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.level = .floating; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
-        let host = ThreatHost(rootView:ThreatSprite(state:state)); host.report = { [weak self] in self?.showReport() }; host.hide = { [weak self] in self?.toggle() }
+        let host = ThreatHost(rootView:ThreatSprite(state:state)); host.report = { [weak self] in self?.showReport() }; host.hide = { [weak self] in self?.hide() }
         p.contentView = host
         let d = UserDefaults.standard
         let bounds = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1000,height:800)
@@ -119,7 +135,7 @@ final class ThreatCompanion {
         if report == nil {
             let window = NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:260),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             window.title = "ThreatWarden status"; window.isReleasedWhenClosed = false; window.level = .floating
-            window.contentView = NSHostingView(rootView:ThreatReport(state:state)); window.center(); report = window
+            window.contentView = NSHostingView(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide() })); window.center(); report = window
         }
         NSApp.activate(ignoringOtherApps:true); report?.makeKeyAndOrderFront(nil)
     }
