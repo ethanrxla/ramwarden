@@ -720,3 +720,70 @@ async fn only_the_site_origin_gets_cors_with_credentials() {
     let bad = a.router.clone().oneshot(pre("https://evil.example")).await.unwrap();
     assert_ne!(bad.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).map(|v| v.as_bytes()), Some(&b"https://evil.example"[..]));
 }
+
+#[tokio::test]
+async fn verified_email_and_wallet_share_one_account_and_subscription() {
+    let a = app();
+    let (cookie, id) = a.web(&EvmWallet::new(41)).await;
+    a.store.update_billing(&id, &BillingUpdate { tier:Some(Tier::Pro), paid_until:Some(NOW+DAY), ..Default::default() }).await.unwrap();
+    let email="linked-owner@example.com";
+    let (s, _) = a.call("POST","/v1/auth/email/start",Auth::Cookie(&cookie),Some(json!({"email":email,"link":true}))).await;
+    assert_eq!(s,StatusCode::OK);
+    let code=a.mailer.last_code(email).unwrap();
+    let (s, linked, headers)=a.raw("POST","/v1/auth/email/verify",Auth::Cookie(&cookie),ORIGIN,
+        Some(json!({"email":email,"code":code,"link":true}))).await;
+    assert_eq!(s,StatusCode::OK,"{linked}");
+    assert!(headers.get(header::SET_COOKIE).is_none(),"linking keeps the original session");
+    assert_eq!(linked["account"]["id"],id);
+    assert_eq!(linked["account"]["tier"],"pro");
+    assert_eq!(linked["account"]["identities"].as_array().unwrap().len(),2);
+    let (s, signed)=a.call("POST","/v1/auth/email/start",Auth::None,Some(json!({"email":email}))).await;
+    // A consumed code permits a new, independent normal sign-in.
+    assert_eq!(s,StatusCode::OK,"{signed}");
+    let code=a.mailer.last_code(email).unwrap();
+    let (s, signed)=a.call("POST","/v1/auth/email/verify",Auth::None,Some(json!({"email":email,"code":code}))).await;
+    assert_eq!(s,StatusCode::OK,"{signed}");
+    assert_eq!(signed["account"]["id"],id);
+    assert_eq!(signed["account"]["tier"],"pro");
+}
+
+#[tokio::test]
+async fn wallet_link_proofs_are_bound_to_the_requesting_account() {
+    let a=app();
+    let (cookie,id)=a.web(&EvmWallet::new(42)).await;
+    let (other_cookie,_)=a.web(&EvmWallet::new(43)).await;
+    let wallet=EvmWallet::new(44);
+    let body=json!({"chain":"evm","address":wallet.address(),"link":true});
+    let (s,_)=a.call("POST","/v1/auth/challenge",Auth::None,Some(body.clone())).await;
+    assert_eq!(s,StatusCode::UNAUTHORIZED);
+    for (auth,expected) in [(Auth::Cookie(&other_cookie),StatusCode::UNAUTHORIZED),(Auth::Cookie(&cookie),StatusCode::OK)] {
+        let (s,ch)=a.call("POST","/v1/auth/challenge",Auth::Cookie(&cookie),Some(body.clone())).await;
+        assert_eq!(s,StatusCode::OK,"{ch}");
+        let message=ch["message"].as_str().unwrap();
+        assert!(message.contains("Link this wallet"));
+        let (s,result)=a.call("POST","/v1/auth/verify",auth,
+            Some(json!({"chain":"evm","address":wallet.address(),"message":message,"signature":wallet.personal_sign(message),"link":true}))).await;
+        assert_eq!(s,expected,"{result}");
+    }
+    let (_,signed,_)=a.sign_in_evm(&wallet,None).await;
+    assert_eq!(signed["account"]["id"],id);
+}
+
+#[tokio::test]
+async fn linking_refuses_existing_accounts_and_normal_signin_proofs() {
+    let a=app();
+    let (cookie,id)=a.web(&EvmWallet::new(45)).await;
+    let wallet=EvmWallet::new(46);
+    let (_,other)=a.web(&wallet).await;
+    for link in [false,true] {
+        let (_,ch)=a.call("POST","/v1/auth/challenge",Auth::Cookie(&cookie),
+            Some(json!({"chain":"evm","address":wallet.address(),"link":link}))).await;
+        let message=ch["message"].as_str().unwrap();
+        let (s,result)=a.call("POST","/v1/auth/verify",Auth::Cookie(&cookie),
+            Some(json!({"chain":"evm","address":wallet.address(),"message":message,"signature":wallet.personal_sign(message),"link":true}))).await;
+        assert_eq!(s,if link {StatusCode::CONFLICT} else {StatusCode::UNAUTHORIZED},"{result}");
+    }
+    assert_ne!(id,other);
+    let (_,signed,_)=a.sign_in_evm(&wallet,None).await;
+    assert_eq!(signed["account"]["id"],other);
+}

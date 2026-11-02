@@ -114,7 +114,10 @@ pub trait Store: crate::support::SupportStore + Send + Sync {
     // --- email sign-in
     /// Stores a code for `email`. False when one was sent less than
     /// [`EMAIL_RESEND_SECONDS`] ago.
-    async fn start_email_code(&self, email: &str, code: &str, user_code: Option<&str>, now: u64, ttl: u64) -> Result<bool>;
+    async fn start_email_code(&self, email: &str, code: &str, user_code: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
+        self.start_email_code_for(email, code, user_code, None, now, ttl).await
+    }
+    async fn start_email_code_for(&self, email: &str, code: &str, user_code: Option<&str>, link_account: Option<&str>, now: u64, ttl: u64) -> Result<bool>;
     /// A right code is used up; [`EMAIL_CODE_ATTEMPTS`] wrong ones burn it.
     async fn check_email_code(&self, email: &str, code: &str, now: u64) -> Result<EmailCheck>;
 
@@ -122,6 +125,9 @@ pub trait Store: crate::support::SupportStore + Send + Sync {
     /// The account for this identity, created on first sign-in. The flag is
     /// true when it was just created.
     async fn account_for_identity(&self, identity: &Identity, now: u64) -> Result<(Account, bool)>;
+    /// Add a verified identity, refusing ownership by another account.
+    async fn link_identity(&self, account_id: &str, identity: &Identity) -> Result<bool>;
+    async fn identities(&self, account_id: &str) -> Result<Vec<Identity>>;
     async fn account(&self, id: &str) -> Result<Option<Account>>;
     async fn account_by_chain_key(&self, key: &[u8; 32]) -> Result<Option<Account>>;
     async fn update_billing(&self, account_id: &str, u: &BillingUpdate) -> Result<Option<Account>>;
@@ -261,7 +267,7 @@ impl Store for MemoryStore {
         Ok(self.lock().challenges.remove(nonce).filter(|c| c.expires_at > now))
     }
 
-    async fn start_email_code(&self, email: &str, code: &str, user_code: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
+    async fn start_email_code_for(&self, email: &str, code: &str, user_code: Option<&str>, link_account: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
         let mut g = self.lock();
         g.email_codes.retain(|_, c| c.expires_at > now);
         if g.email_codes.get(email).is_some_and(|c| c.created_at + EMAIL_RESEND_SECONDS > now) {
@@ -270,6 +276,7 @@ impl Store for MemoryStore {
         g.email_codes.insert(
             email.to_string(),
             EmailCode {
+                link_account: link_account.map(str::to_string),
                 code_hash: hash(code),
                 user_code: user_code.map(str::to_string),
                 created_at: now,
@@ -289,7 +296,7 @@ impl Store for MemoryStore {
         }
         if c.code_hash == hash(code) {
             let c = g.email_codes.remove(email).expect("present");
-            return Ok(EmailCheck::Ok { user_code: c.user_code });
+            return Ok(EmailCheck::Ok { user_code: c.user_code, link_account: c.link_account });
         }
         c.attempts += 1;
         Ok(EmailCheck::Wrong)
@@ -304,6 +311,18 @@ impl Store for MemoryStore {
         g.identities.insert(identity.clone(), a.id.clone());
         g.accounts.insert(a.id.clone(), a.clone());
         Ok((a, true))
+    }
+
+    async fn link_identity(&self, account_id: &str, identity: &Identity) -> Result<bool> {
+        let mut g = self.lock();
+        if !g.accounts.contains_key(account_id) { return Ok(false); }
+        if let Some(owner) = g.identities.get(identity) { return Ok(owner == account_id); }
+        g.identities.insert(identity.clone(), account_id.to_string());
+        Ok(true)
+    }
+    async fn identities(&self, account_id: &str) -> Result<Vec<Identity>> {
+        Ok(self.lock().identities.iter().filter(|(_, owner)| owner.as_str() == account_id)
+            .map(|(identity, _)| identity.clone()).collect())
     }
 
     async fn account(&self, id: &str) -> Result<Option<Account>> {
@@ -441,9 +460,24 @@ pub mod contract {
         device_codes(s).await;
         email_codes(s).await;
         accounts_and_billing(s).await;
+        identity_claims_are_atomic(s).await;
         devices_and_sessions(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
+    }
+
+    async fn identity_claims_are_atomic(s: &dyn Store) {
+        let identity = Identity::email("parallel-signin@example.com");
+        let (first, second) = tokio::join!(s.account_for_identity(&identity,NOW),s.account_for_identity(&identity,NOW));
+        let (first, second) = (first.unwrap(),second.unwrap());
+        assert_eq!(first.0.id,second.0.id);
+        assert_ne!(first.1,second.1,"only one creator");
+        let target=s.account_for_identity(&wallet(77),NOW).await.unwrap().0;
+        let identity=Identity::email("parallel-link@example.com");
+        let (linked,signed)=tokio::join!(s.link_identity(&target.id,&identity),s.account_for_identity(&identity,NOW));
+        let linked=linked.unwrap();let signed=signed.unwrap().0;
+        assert_eq!(signed.id == target.id,linked,"a racing link cannot split ownership");
+        assert_eq!(s.account_for_identity(&identity,NOW).await.unwrap().0.id,signed.id);
     }
 
     async fn device_codes(s: &dyn Store) {
@@ -471,7 +505,7 @@ pub mod contract {
         assert_eq!(s.check_email_code(e, "000000", NOW + 20).await.unwrap(), EmailCheck::Wrong);
         assert_eq!(
             s.check_email_code(e, "123456", NOW + 21).await.unwrap(),
-            EmailCheck::Ok { user_code: Some("BCDF-GHJK".into()) }
+            EmailCheck::Ok { user_code: Some("BCDF-GHJK".into()), link_account: None }
         );
         assert_eq!(s.check_email_code(e, "123456", NOW + 22).await.unwrap(), EmailCheck::Gone, "used once");
 
@@ -491,6 +525,14 @@ pub mod contract {
         let (c, _) = s.account_for_identity(&Identity::email("x@example.com"), NOW).await.unwrap();
         assert_ne!(a.id, c.id);
         assert_eq!(s.account_by_chain_key(&a.chain_key()).await.unwrap().unwrap().id, a.id);
+
+        let second = Identity::email("linked@example.com");
+        assert!(s.link_identity(&a.id, &second).await.unwrap());
+        assert!(s.link_identity(&a.id, &second).await.unwrap(), "idempotent");
+        assert!(!s.link_identity(&c.id, &second).await.unwrap(), "cannot take an identity");
+        assert!(!s.link_identity(&a.id, &c.identity).await.unwrap(), "cannot merge another account");
+        assert_eq!(s.account_for_identity(&second, NOW).await.unwrap().0.id, a.id);
+        assert_eq!(s.identities(&a.id).await.unwrap().len(), 2);
 
         let start = BillingUpdate {
             tier: Some(Tier::Pro),
@@ -544,7 +586,7 @@ pub mod contract {
     }
 
     async fn challenges_and_payments(s: &dyn Store) {
-        let c = Challenge { chain: Chain::Evm, address: "0xabc".into(), message: "m".into(), user_code: None, expires_at: NOW + 10 };
+        let c = Challenge { link_account: None, chain: Chain::Evm, address: "0xabc".into(), message: "m".into(), user_code: None, expires_at: NOW + 10 };
         s.put_challenge("n1", c.clone(), NOW).await.unwrap();
         assert!(s.take_challenge("n1", NOW).await.unwrap().is_some());
         assert!(s.take_challenge("n1", NOW).await.unwrap().is_none(), "single use");

@@ -63,12 +63,12 @@ export class MockApi {
     return { status: "pending", ...d, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() };
   }
 
-  async challenge({ chain, address, userCode }) {
+  async challenge({ chain, address, userCode, link = false }) {
     const lines = [
       "ramwarden.app wants you to sign in with your " + (chain === "evm" ? "Ethereum" : "Solana") + " account:",
       address,
       "",
-      userCode ? `Link the device with code ${userCode} to your RamWarden account.` : "Sign in to your RamWarden account.",
+      link ? "Link this wallet as a sign-in method. No payment." : userCode ? `Link the device with code ${userCode} to your RamWarden account.` : "Sign in to your RamWarden account.",
       "",
       "URI: https://ramwarden.app",
       "Version: 1",
@@ -79,26 +79,34 @@ export class MockApi {
     return { message: lines.join("\n"), expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
   }
 
-  async verify({ chain, address, message }) {
+  async verify({ chain, address, message, link = false }) {
     const linked = message.match(/urn:ramwarden:device:([A-Z]{4}-[A-Z]{4})/)?.[1] || null;
     if (linked) this.pendingCodes.delete(linked);
     this.account_ ??= this.#newAccount(chain, address);
+    if (link) {
+      this.account_.identities ||= [this.account_.identity];
+      this.account_.identities.push({kind:"wallet",chain,address});
+    }
     this.signedIn = true;
-    return { account: this.account_, linked_device: linked ? this.account_.devices[0] : null };
+    return { account: this.account_, linked_identity:link, linked_device: linked ? this.account_.devices[0] : null };
   }
 
   // Email sign-in: the code is always 123456 in preview.
-  async emailStart({ email, userCode }) {
+  async emailStart({ email, userCode, link = false }) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || "")) throw new ApiError(400, "That doesn't look like an email address.");
-    this.emailCodes.set(email.toLowerCase(), { code: "123456", userCode: userCode ?? null });
+    this.emailCodes.set(email.toLowerCase(), { code: "123456", userCode: userCode ?? null, link });
     return { sent: true, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() };
   }
-  async emailVerify({ email, code }) {
+  async emailVerify({ email, code, link = false }) {
     const e = this.emailCodes.get((email || "").toLowerCase());
-    if (!e || e.code !== String(code).trim()) throw new ApiError(400, "That code is wrong or has expired. Check the email, or send a new one.");
+    if (!e || e.link !== link || e.code !== String(code).trim()) throw new ApiError(400, "That code is wrong or has expired. Check the email, or send a new one.");
     this.emailCodes.delete(email.toLowerCase());
     if (e.userCode) this.pendingCodes.delete(e.userCode);
     this.account_ ??= this.#newAccount("email", email);
+    if (link) {
+      this.account_.identities ||= [this.account_.identity];
+      this.account_.identities.push({kind:"email",email});
+    }
     this.signedIn = true;
     return { account: this.account_, linked_device: e.userCode ? this.account_.devices[0] : null };
   }

@@ -226,6 +226,7 @@ pub async fn account_json(c: &Cloud, a: &Account, now: u64) -> Result<Value, Res
     Ok(json!({
         "id": a.id,
         "identity": identity_json(&a.identity),
+        "identities": c.store.identities(&a.id).await.map_err(storage)?.iter().map(identity_json).collect::<Vec<_>>(),
         "tier": a.tier.map(|t| t.as_str()),
         "interval": a.interval,
         "status": a.status(now).map(|s| s.as_str()),

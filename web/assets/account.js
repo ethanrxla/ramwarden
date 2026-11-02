@@ -106,7 +106,7 @@ class AccountPage {
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
             h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
-            h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
@@ -119,6 +119,7 @@ class AccountPage {
         : null,
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
       live ? this.extensionPanel() : null,
+      this.signInMethods(),
       live ? this.devicesPanel() : null,
       state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
@@ -138,6 +139,26 @@ class AccountPage {
       h("p", {}, "Lets your warden unload tabs you aren't using. It pairs with RamWarden on this computer by itself."),
       action,
     );
+  }
+
+  signInMethods() {
+    const identities = this.account.identities || [this.account.identity].filter(Boolean);
+    return h("section", {class:"panel",id:"sign-in-methods"},
+      h("h2", {}, "Sign-in methods"),
+      h("p", {}, "Use a wallet, email, or both for this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("div", {class:"row-actions"},
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email")));
+  }
+
+  async linkMethod(kind) {
+    const area = h("div");
+    show(root, h("h1", {}, kind === "email" ? "Add an email" : "Add a wallet"),
+      h("p", {}, "Verify the new sign-in method to add it to this account. Your plan and devices stay here; this does not start a payment."),
+      area, h("button", {class:"linkish",onclick:() => this.render()}, "Back to account"));
+    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",purpose:"Verify this wallet to add it to your account. No payment."})).account;
+    this.render();
   }
 
   devicesPanel() {

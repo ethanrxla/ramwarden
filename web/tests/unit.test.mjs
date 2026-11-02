@@ -84,14 +84,14 @@ test("prefs are replaced with PUT and email sign-in carries the device code", as
   await api.savePrefs({ wardens: { ram: { color: 200 } } });
   await api.emailStart({ email: "a@b.c", userCode: "BCDF-GHJK" });
   assert.equal(fetchImpl.calls[0].init.method, "PUT");
-  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { email: "a@b.c", user_code: "BCDF-GHJK" });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { email: "a@b.c", user_code: "BCDF-GHJK", link: false });
 });
 
 test("challenge sends a null user code for a plain web sign-in", async () => {
   const fetchImpl = fakeFetch({ "POST /v1/auth/challenge": { body: { message: "m" } } });
   const api = new Api("https://api.example", { fetchImpl });
   await api.challenge({ chain: "solana", address: "So1" });
-  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { chain: "solana", address: "So1", user_code: null });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { chain: "solana", address: "So1", user_code: null, link: false });
 });
 
 

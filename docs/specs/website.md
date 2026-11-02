@@ -230,3 +230,14 @@ host-only settings. Production credentials never belong in website assets.
 - The checkout contract is not deployed, so the Base flow is tested only
   against the mock.
 - The domain `ramwarden.app` is a placeholder until one is registered.
+
+
+### Additional sign-in methods
+
+The account page lists verified sign-in methods and offers Add a wallet / Add an
+email. Adding one requires a fresh proof bound to the current authenticated
+account; it does not create a checkout, change the session, or link a device.
+Existing identities owned by another account return a conflict rather than
+merging subscriptions. Both linked methods subsequently resolve to the same
+account id, plan and devices. Email sign-in also offers an existing-code entry
+path, including when switching from a wallet session.
