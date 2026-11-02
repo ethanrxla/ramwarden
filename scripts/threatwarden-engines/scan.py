@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Scan-only ClamAV bridge. Scheduled runs fail closed without a clear RAM rung."""
-import argparse, fcntl, json, pathlib, subprocess, urllib.request
+import argparse, fcntl, json, os, subprocess, urllib.request
 p = argparse.ArgumentParser()
 p.add_argument('--scheduled', action='store_true')
 p.add_argument('paths', nargs='+')
 a = p.parse_args()
-lock = open('/run/lock/threatwarden-clamav.lock', 'w')
+if os.geteuid() != 0:
+    raise SystemExit('Run the scan as root')
+os.makedirs('/run/threatwarden', mode=0o700, exist_ok=True)
+lock = open('/run/threatwarden/clamav.lock', 'w')
 try:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:

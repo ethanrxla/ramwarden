@@ -11,7 +11,7 @@ class ScanPolicy(unittest.TestCase):
                 opened.append(f)
                 return f
             response = io.BytesIO(json.dumps(pressure).encode())
-            with patch('sys.argv', [str(SCRIPT), '--scheduled', '/tmp/example']), patch('builtins.open', mapped), patch('urllib.request.urlopen', return_value=response), patch('subprocess.run', return_value=subprocess.CompletedProcess([], code, output)) as run, contextlib.redirect_stdout(io.StringIO()):
+            with patch('os.geteuid', return_value=0), patch('os.makedirs'), patch('sys.argv', [str(SCRIPT), '--scheduled', '/tmp/example']), patch('builtins.open', mapped), patch('urllib.request.urlopen', return_value=response), patch('subprocess.run', return_value=subprocess.CompletedProcess([], code, output)) as run, contextlib.redirect_stdout(io.StringIO()):
                 try:
                     runpy.run_path(str(SCRIPT), run_name='__main__')
                 except SystemExit as e:

@@ -13,6 +13,16 @@ install -m 755 "$(dirname "$0")/scan.py" /usr/local/sbin/threatwarden-scan
 install -d -m 750 /var/log/clamav
  touch /var/log/clamav/threatwarden.json
 chmod 640 /var/log/clamav/threatwarden.json
+cat > /etc/logrotate.d/threatwarden-clamav <<'ROTATE'
+/var/log/clamav/threatwarden.json {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+ROTATE
 suricata-update
 python3 - <<'CONFIG'
 import subprocess, yaml
