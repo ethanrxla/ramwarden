@@ -300,7 +300,7 @@ async function run() {
     await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
     await p.press('#warden-chat input[name="message"]', "Enter");
     await p.waitForSelector("#warden-chat >> text=Pro is $5 every 2 months");
-    assert.ok((await p.getAttribute(".chat-offers a", "href")).endswith("mock=1#pricing"));
+    assert.ok((await p.getAttribute(".chat-offers a", "href")).endsWith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");
     // A problem offers a ticket.

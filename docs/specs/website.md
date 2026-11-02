@@ -129,6 +129,21 @@ hidden while it is open. Code: `web/assets/support.js` and
   (TTL index), tickets a year after their last message, 60 messages each.
 - The site never names the model, provider or engines (test in `kb.rs`).
 
+### Production and personal testing models
+
+`RAMWARDEN_API_PROFILE=production` requires the host's `OPENAI_API_KEY` and
+uses `OPENAI_MODEL_ID=gpt-6-luna`. Sales topic routing goes directly to this
+model; the curated answer bank remains the source of product claims.
+Hosted decision analysis keeps its primary typed decision service and uses
+Luna if that service fails. Model outputs must match every requested question,
+valid choice labels and probabilities before the API accepts them.
+
+The default `development` profile does not enable OpenAI just because a key
+exists. Personal desktop chat and analysis retain the existing Nemotron
+configuration. This production setting does not alter local model settings
+or cloud consent. See `packaging/ramwarden-api.production.env.example` for
+host-only settings. Production credentials never belong in website assets.
+
 ## Policy
 
 - **Two tabs, one skeleton.** The table above is the order on both pages;

@@ -44,7 +44,10 @@ async fn run() -> Result<(), String> {
         tracing::info!("loaded {n} extra question definitions from {path}");
     }
 
-    let upstream = Upstream::new(&cfg.jev_base_url, &cfg.jev_model, cfg.jev_key.clone(), cfg.jev_timeout)?;
+    let mut upstream = Upstream::new(&cfg.jev_base_url, &cfg.jev_model, cfg.jev_key.clone(), cfg.jev_timeout)?;
+    if let Some((key, model)) = &cfg.production_model {
+        upstream = upstream.with_openai(key.clone(), model.clone());
+    }
     tracing::info!(
         "jev {} model {} key {}; {} tokens; {} questions; {}/min {}/day per token; {} input tokens/day",
         cfg.jev_base_url,

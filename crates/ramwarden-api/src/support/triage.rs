@@ -108,7 +108,7 @@ pub async fn triage(upstream: Option<&Upstream>, warden: &str, message: &str) ->
     let Some(up) = upstream else { return words };
     let req = build_request(up.model(), &state(message), &questions(warden));
     let qs: Map<String, Value> = req["questions"].as_object().cloned().unwrap_or_default();
-    match up.ask(&state(message), &qs).await {
+    match up.ask_sales(&state(message), &qs).await {
         Ok((reply, tokens)) => match from_jev(&reply) {
             Some(t) if t.topic == UNKNOWN && words.topic != UNKNOWN => {
                 Triage { wants_person: t.wants_person || words.wants_person, input_tokens: tokens, ..words }

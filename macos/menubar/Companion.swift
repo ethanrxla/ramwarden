@@ -320,7 +320,6 @@ struct AssistantView: View {
             }
             if model.thinking { ProgressView("Thinking…").controlSize(.small) }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
-            if !model.tier.isEmpty { Text(model.tier == "facts" ? "Observed facts · local checks" : "AI interpretation · \(model.tier) provider").font(.caption).foregroundStyle(.secondary) }
             if model.proposedToken != nil {
                 Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
                     .help(model.proposedLabel)
