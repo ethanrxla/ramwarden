@@ -41,7 +41,7 @@ export const config = {
       "Acts on memory stalls (time lost waiting on RAM), not on a full meter",
       "A 4-step reclaim algorithm: compress cold memory, page it out, unload idle tabs, pause idle apps you list",
       "Every app ranked least recently used first",
-      "Tab budget: your 6 most recent tabs stay, others close after 60 idle minutes, with a reopen list",
+      "Automatic tab closing requires 24 hours without activity and a return score below 0.3; active work and reopened tabs stay protected",
       "Every pause undone the moment memory recovers",
       "Games, anti-cheat, calls, terminals and VMs are never touched",
       "1 computer, free account, no card",
