@@ -76,6 +76,19 @@
       padding: 3px 8px; background: #1e293b; border: 1px solid #334155;
       border-radius: 4px; color: #e2e8f0; font-size: 11px; cursor: pointer;
     }
+    .warden { display: flex; gap: 6px; align-items: flex-start; padding: 10px 12px 4px; }
+    .warden[hidden] { display: none; }
+    .warden-ram { font-size: 22px; line-height: 1; padding-top: 4px; }
+    .warden-bubble { flex: 1; background: #1e293b; border: 1.5px solid #c0392b; border-radius: 12px; padding: 7px 9px; }
+    .warden-text { font-size: 12px; line-height: 1.4; }
+    .warden-choices { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .warden-choices:empty { display: none; }
+    .warden-choice { padding: 3px 8px; background: #334155; border: none; border-radius: 5px; color: #e2e8f0; font-size: 11px; cursor: pointer; }
+    .warden-choice:hover { background: #475569; }
+    .warden-choice.danger { background: #7f1d1d; }
+    .warden-x, .warden-mute { background: none; border: none; color: #64748b; font-size: 11px; cursor: pointer; }
+    .warden-mute { width: 26px; appearance: none; }
+    .warden-note { color: #64748b; font-size: 10px; margin-top: 4px; }
     footer {
       padding: 7px 16px; color: #475569; font-size: 11px;
       border-top: 1px solid #1e293b; text-align: center;
@@ -89,6 +102,8 @@
     <h1>RamWarden</h1>
     <span id="ram-pct" style="font-size:12px;color:#94a3b8">—</span>
   </header>
+
+  <div id="warden" class="warden" hidden aria-live="polite"></div>
 
   <div class="ram-bar-wrap">
     <div class="ram-label">
@@ -109,7 +124,7 @@
   </div>
 
   <button class="action" id="analyze-btn">Analyze Now</button>
-  <div id="analysis-result" style="padding:0 10px 10px;color:#94a3b8;font-size:12px" aria-live="polite"></div>
+  <div id="analysis-result" class="warden" hidden aria-live="polite"></div>
 
   <div class="section">
     <div class="section-title">Closed by RamWarden (click to reopen)</div>
@@ -125,6 +140,7 @@
 
   <footer>RamWarden · <span id="browsers-connected">—</span> browser(s) connected</footer>
 
+  <script src="warden.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

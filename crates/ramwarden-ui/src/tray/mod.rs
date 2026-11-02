@@ -25,7 +25,7 @@ use std::process::Child;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::client::Client;
@@ -75,6 +75,11 @@ impl eframe::App for WindowApp {
         });
 
         let mut command: Option<Command> = None;
+        egui::Panel::top("warden").show(ui, |ui| {
+            if let Some(c) = views::bubble(ui, &snap) {
+                command = Some(c);
+            }
+        });
         egui::CentralPanel::default().show(ui, |ui| match self.tab {
             Tab::Overview => views::overview(ui, &snap),
             Tab::Processes => command = views::processes(ui, &snap, &mut self.view),
@@ -145,9 +150,20 @@ fn gauge_icon(fraction: f32) -> Option<Icon> {
 /// The tray icon and its menu.
 struct Tray {
     icon: TrayIcon,
+    menu: Menu,
     open: MenuId,
     quit: MenuId,
     shown_fraction: f32,
+    /// The warden's question at the top of the menu, so it can be answered
+    /// with the window closed: the line, its choices, and a separator.
+    voice: Option<VoiceItems>,
+}
+
+struct VoiceItems {
+    bubble: String,
+    line: MenuItem,
+    choices: Vec<(MenuItem, Command)>,
+    gap: PredefinedMenuItem,
 }
 
 impl Tray {
@@ -158,17 +174,61 @@ impl Tray {
         menu.append(&open).map_err(|e| e.to_string())?;
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(menu.clone()))
             .with_tooltip("RamWarden")
             .with_icon(gauge_icon(0.0).ok_or("icon")?)
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Tray {
             icon,
+            menu,
             open: open.id().clone(),
             quit: quit.id().clone(),
             shown_fraction: -1.0,
+            voice: None,
         })
+    }
+
+    /// The command behind a clicked menu item, if it is one of the warden's.
+    fn voice_command(&self, id: &MenuId) -> Option<Command> {
+        let v = self.voice.as_ref()?;
+        v.choices.iter().find(|(item, _)| item.id() == id).map(|(_, c)| c.clone())
+    }
+
+    /// Show the warden's current question in the menu and the tooltip, or
+    /// take the last one away. Remarks stay in the window: the tray is for
+    /// what needs an answer.
+    fn show_question(&mut self, poller: &Poller) {
+        let snap = poller.snapshot();
+        let question = snap.speech.as_ref()
+            .filter(|s| s.pet)
+            .and_then(|s| s.bubble.as_ref())
+            .filter(|b| b.is_question());
+        if self.voice.as_ref().map(|v| v.bubble.as_str()) == question.map(|b| b.id.as_str()) {
+            return;
+        }
+        if let Some(old) = self.voice.take() {
+            let _ = self.menu.remove(&old.line);
+            for (item, _) in &old.choices {
+                let _ = self.menu.remove(item);
+            }
+            let _ = self.menu.remove(&old.gap);
+            self.shown_fraction = -1.0; // restore the gauge tooltip
+        }
+        let Some(b) = question else { return };
+        let line = MenuItem::new(format!("🐏 {}", b.text), false, None);
+        let choices: Vec<(MenuItem, Command)> = b.choices.iter()
+            .map(|c| (MenuItem::new(format!("    {}", c.label), true, None),
+                Command::Answer { id: b.id.clone(), choice: c.id.clone() }))
+            .collect();
+        let gap = PredefinedMenuItem::separator();
+        let _ = self.menu.insert(&line, 0);
+        for (i, (item, _)) in choices.iter().enumerate() {
+            let _ = self.menu.insert(item, i + 1);
+        }
+        let _ = self.menu.insert(&gap, choices.len() + 1);
+        let _ = self.icon.set_tooltip(Some(format!("RamWarden: {}", b.text)));
+        self.voice = Some(VoiceItems { bubble: b.id.clone(), line, choices, gap });
     }
 
     /// Redraw the gauge when the figure visibly changes.
@@ -181,7 +241,7 @@ impl Tray {
             return;
         };
         let f = (st.percent / 100.0) as f32;
-        if (f - self.shown_fraction).abs() >= 0.01 {
+        if (f - self.shown_fraction).abs() >= 0.01 && self.voice.is_none() {
             let _ = self.icon.set_icon(gauge_icon(f));
             let _ = self.icon.set_tooltip(Some(format!(
                 "RamWarden — {:.0}% in use, {:.1}% pressure",
@@ -252,6 +312,9 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             if e.id == tray.open {
                 open_window(&mut window);
             }
+            if let Some(c) = tray.voice_command(&e.id) {
+                poller.send(c);
+            }
         }
         while let Ok(e) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = e {
@@ -260,6 +323,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         }
         if last.elapsed() >= Duration::from_secs(2) {
             tray.update(&poller);
+            tray.show_question(&poller);
             last = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(50));

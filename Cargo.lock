@@ -5152,6 +5152,7 @@ dependencies = [
  "ramwarden-platform",
  "ramwarden-wazuh",
  "ramwarden-wm",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",

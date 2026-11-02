@@ -135,6 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ai: Arc::new(provider),
         started: Instant::now(),
         hold_until: Arc::new(Mutex::new(None)),
+        voice: Arc::new(ramwarden_daemon::voice::Voice::new(Some(ramwarden_daemon::voice::default_store()))),
     };
 
     // Bind before the monitor starts, so a daemon that cannot have the port
