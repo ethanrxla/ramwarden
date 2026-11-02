@@ -122,4 +122,3 @@ ramwarden-cloud-db decisions similar <device>:<id>
 | `decisions` | decision on one device | `_id` `<device>:<id>`, `kind` (tab, app, ladder), `action`, `result`, `subject` (host or app), `title?`, `reason`, `inputs`, `jev?`, `vector` (16), `text_vector?` (1024), `outcome?` | `(device, at)`, `(kind, action, at)`, `(subject, at)`; vector search `decision_features`, `decision_text` |
 
 Full URLs never leave the machine; `--no-titles` keeps titles local too.
-
