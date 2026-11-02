@@ -35,3 +35,5 @@ pub mod assistant;
 pub mod companion;
 
 pub mod assistant_prompt;
+
+pub mod tabreview;

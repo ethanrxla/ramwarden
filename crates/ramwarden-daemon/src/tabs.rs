@@ -72,6 +72,14 @@ pub struct Tab {
     /// oldest first. Absent from older extensions.
     #[serde(default, deserialize_with = "lenient_f64_list")]
     pub activations: Vec<f64>,
+    #[serde(default, rename = "activityVersion")]
+    pub activity_version: u32,
+    #[serde(default, rename = "workInProgress")]
+    pub work_in_progress: bool,
+    #[serde(default, rename = "protectedUntilMs")]
+    pub protected_until_ms: f64,
+    #[serde(default, rename = "negativeFeedback")]
+    pub negative_feedback: u32,
 }
 
 /// Accept an integer or a float where an integer is wanted, rounding.

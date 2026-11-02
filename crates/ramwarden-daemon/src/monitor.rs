@@ -116,10 +116,8 @@ impl TabCloser for Tabs {
 /// user is unlikely to come back to (when `[tabs] close` allows it).
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
-    let threshold = state.cfg.thresholds.inactivity_minutes as i64;
     let (to_unload, to_close, titles) = {
-        let hub = state.hub.lock().unwrap();
-        let rows = crate::browser::snapshot(&hub.reg, threshold);
+        let rows = crate::tabreview::snapshot(state);
         let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
         let titles: std::collections::HashMap<_, _> = rows.iter()
             .filter(|r| close.contains(&r.target))
@@ -133,7 +131,7 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     let unloaded = state.discard_tabs(&to_unload).await;
     let mut closed = crate::hub::DiscardResult::default();
     match state.cfg.tabs.close.as_str() {
-        "live" if !to_close.is_empty() => closed = state.close_selected_tabs(&to_close).await,
+        "live" if !to_close.is_empty() => closed = state.close_safe(&to_close, false).await,
         "dry-run" => for t in &to_close {
             tracing::info!("tabs: would close {} (dry-run)", t.url);
         },
@@ -146,10 +144,10 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     tracing::info!("tabs ({trigger}): {notes}");
     // Closed tabs also go in the daemon's own closed_tabs table, so the popup
     // can list them for reopening even before the extension is reloaded.
-    let closed_rows: Vec<(String, String)> = closed.confirmed.iter().chain(&closed.queued)
+    let closed_rows: Vec<(String, String)> = closed.confirmed.iter()
         .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
     for (url, _) in &closed_rows {
-        tracing::info!("tabs: closed {url}");
+        tracing::info!("tabs: confirmed closed {url}");
     }
     if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
         let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);

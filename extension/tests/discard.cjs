@@ -11,12 +11,12 @@ function fixture(overrides = {}, fail = false) {
   const tab = {id: 7, url:'https://example.org/article', active:false, pinned:false, audible:false,
     discarded:false, incognito:false, autoDiscardable:true, status:'complete', lastAccessed:now - 120*60000, ...overrides};
   const chrome = {
-    runtime:{}, storage:{local:{get:noop,set:noop},sync:{get:noop}},
+    runtime:{}, storage:{local:{get:(k,cb)=>cb({}),set:(v,cb)=>cb?.()},sync:{get:noop}},
     action:{setBadgeText:noop,setBadgeBackgroundColor:noop},
     tabs:{onActivated:event,onUpdated:event,onRemoved:event,query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
-  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,URL,setInterval:noop,setTimeout:noop});
+  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
   return {context,chrome,tab,discards};
 }
@@ -115,4 +115,26 @@ test('a protected page left alone 4h can close; private hosts and in-tab editors
     f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
     assert.deepEqual(Array.from(await f.context.closeTabs([7])), expected, url);
   }
+});
+
+test('safe closing refuses navigation, recent activity, dirty work, protection and expired proposals',async()=>{
+  for (const override of [{url:'https://example.org/new'},{lastAccessed:Date.now()},{active:true},{status:'loading'},{pinned:true}]) {
+    const f=fixture(override);let removed=0;f.chrome.tabs.remove=(id,cb)=>{removed++;cb();};
+    assert.equal((await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})).length,0);
+    assert.equal(removed,0);
+  }
+  const f=fixture();f.chrome.tabs.remove=(id,cb)=>cb();
+  vm.runInContext('safety.work[7]={url:"https://example.org/article",dirty:true}',f.context);
+  assert.equal((await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})).length,0);
+  vm.runInContext('safety.work={}',f.context);
+  assert.equal((await f.context.closeSafe({...command,expiresAt:Date.now()-1})).length,0);
+  await f.context.keepTabs(command.tabs);
+  assert.equal((await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})).length,0);
+});
+test('safe closing confirms selected identity only and reopening protects a new tab ID',async()=>{
+  const f=fixture();const removed=[];f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+  assert.deepEqual(Array.from(await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})),[7]);
+  assert.deepEqual(removed,[7]);
+  f.context.observeReopen({...f.tab,id:9});
+  assert.ok(vm.runInContext('safety.pages["https://example.org/article"].until>Date.now()',f.context));
 });

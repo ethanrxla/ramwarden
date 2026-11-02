@@ -30,6 +30,7 @@ use crate::tabs::{Tab, Transport};
 pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     let router = Router::new()
+        .merge(crate::tabreview::routes())
         // â”€â”€ Contracts the shipped extensions depend on â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))

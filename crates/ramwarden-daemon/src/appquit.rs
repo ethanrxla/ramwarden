@@ -90,6 +90,11 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
         for (app, procs) in by_app {
             let quiet = det.quiet_minutes(app, now).unwrap_or(0.0);
             let runaway = det.runaway_minutes(app, now);
+            // CPU background work is not evidence that the user abandoned an app.
+            if quiet < cfg.min_quiet_minutes.max(60.0) {
+                note_kept(&mut q.kept, app, "recently active; retain for reuse");
+                continue;
+            }
             if let Some(why) = appintel::floor(app, &procs, quiet, runaway, cfg) {
                 // Only apps the user listed are worth a line; the rest are not candidates.
                 if cfg.allow.iter().any(|a| a.eq_ignore_ascii_case(app)) {
