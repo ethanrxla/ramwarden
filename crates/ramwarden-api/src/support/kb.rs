@@ -149,7 +149,7 @@ pub const TOPICS: &[Topic] = &[
         id: "extension",
         meaning: "the browser extension, Chrome, tabs, how tabs are handled",
         keywords: &["extension", "chrome", "browser", "edge", "brave", "firefox", "tab", "tabs", "add-on", "plugin"],
-        answer: "The browser extension works with the app on your computer: it finds it by itself, with no code to type, and lets your warden unload or close tabs you won't come back to. \
+        answer: "The browser extension works with the app on your computer: it finds it by itself, with no code to type, and lets your warden identify idle tabs that may be unloaded or closed. \
                  Closed tabs go to a reopen list. Until the store listing is live, the install page shows how to add it to Chrome.",
         next: &["safety", "privacy", "install"],
         ticket: false,
@@ -203,8 +203,7 @@ pub const TOPICS: &[Topic] = &[
         id: "safety",
         meaning: "whether it might close or kill something important, games, unsaved work, protected apps",
         keywords: &["safe", "safety", "lose", "unsaved", "close my", "kill", "game", "games", "anti-cheat", "important", "protected", "undo", "work"],
-        answer: "Games, anti-cheat, calls, terminals and VMs are never touched. Reversible steps come first (compressing and paging out cold memory, unloading idle tabs), and every pause is undone the moment memory recovers. \
-                 On Plus, the AI pauses an app only when it's 70% sure you won't come back, closes one only at 85%, and keeps anything that may hold unsaved work.",
+        answer: "RamWarden uses activity signals and safety checks before reclaiming memory. Unloading a tab leaves it in the tab strip so it can reload; closing removes it and records it in the reopen list. Automatic housekeeping can run even when memory is not full. App actions depend on your settings and platform. Predictions can be wrong: if a tab closes unexpectedly, reopen it and report it here. Recent-work protection and a Mac review checklist are being improved; they are not yet available in every installed version.",
         next: &["how_it_works", "extension"],
         ticket: false,
     },

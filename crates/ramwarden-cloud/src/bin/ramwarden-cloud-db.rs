@@ -42,6 +42,14 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
             db.ensure_indexes().await?;
             println!("ok: indexes ready in {:?}", cfg.database);
         }
+        "support-indexes" => {
+            db.ensure_support_indexes().await?;
+            use futures::TryStreamExt;
+            let indexes: Vec<_> = db.database().collection::<mongodb::bson::Document>(
+                ramwarden_cloud::support::SUPPORT_CONVERSATIONS).list_indexes().await?.try_collect().await?;
+            for index in indexes { println!("{:?}: {:?}",index.options,index.keys); }
+            println!("ok: support indexes verified in {:?}",cfg.database);
+        }
         "stats" => {
             for name in [
                 model::ACCOUNTS,

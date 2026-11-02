@@ -111,13 +111,13 @@
     <!-- 5. How it works -->
     <section class="block" id="how" data-section="how">
       <div class="wrap">
-        <h2>Your task manager isn't telling you the whole story.</h2>
-        <p class="sub">RamWarden counts memory the way your computer actually pays for it.</p>
+        <h2>What RamWarden does with your memory.</h2>
+        <p class="sub">It measures memory, checks what you are using, and chooses an action allowed by your settings.</p>
         <div class="grid four">
-          <div class="card"><span class="num">MEASURES</span><h3>The real number</h3><p>Shared browser memory is counted once, not five times.</p></div>
-          <div class="card"><span class="num">TRIGGERS</span><h3>Acts on slowdowns</h3><p>Steps in when your computer waits on memory, not when a meter looks full.</p></div>
-          <div class="card"><span class="num">PROTECTS</span><h3>Hands off what matters</h3><p>Games, terminals, VMs and security tools are never touched.</p></div>
-          <div class="card"><span class="num">DECIDES</span><h3>Cheapest fix first</h3><p>Closing an app is the last resort, and only for apps you list.</p></div>
+          <div class="card"><span class="num">MEASURES</span><h3>Memory by app and process</h3><p>Uses the memory measurements available on your operating system. On Linux, shared pages are apportioned instead of counted in full for every process.</p></div>
+          <div class="card"><span class="num">TRIGGERS</span><h3>Pressure checks and scheduled cleanup</h3><p>Responds to memory pressure and can also check idle browser tabs on a schedule. Scheduled cleanup can run before memory fills up.</p></div>
+          <div class="card"><span class="num">PROTECTS</span><h3>Activity before prediction</h3><p>Checks foreground use, browser activity, audio and protected processes. A background tab can still be part of your work; idle time alone is not proof you are finished.</p></div>
+          <div class="card"><span class="num">DECIDES</span><h3>Unload, pause or close</h3><p>Unloading leaves a tab in the strip to reload later. Closing removes it and saves a reopen entry. App reclamation, pause and quit controls depend on your platform and settings.</p></div>
         </div>
         <h3 class="subhead">Your warden asks three quick questions about everything it might close.</h3>
         <div class="grid three">
@@ -146,7 +146,7 @@
         <details><summary>What happens after the trial?</summary>
           <p>Your plan starts and renews monthly or yearly until you cancel. Cancel any time from your account or your wallet.</p></details>
         <details><summary>Will it close something I'm using?</summary>
-          <p>No. Active, pinned and playing tabs are protected, and apps only close if you put them on your list.</p></details>
+          <p>Active, pinned and audible tabs have protection checks, but predictions can be wrong. Closing and unloading are different actions. Review your cleanup settings, and reopen or report anything closed unexpectedly.</p></details>
         <details><summary>Is it safe for games and anti-cheat?</summary>
           <p>Yes. Games, anti-cheat, security tools and system processes are never touched.</p></details>
         <details><summary>How do I sign in?</summary>

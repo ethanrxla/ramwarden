@@ -329,7 +329,7 @@ async fn my_tickets(State(state): State<Arc<AppState>>, method: Method, headers:
     let c = accounts::cloud(&state)?;
     let a = accounts::session(c, &method, &headers, (state.now)()).await?;
     let list = c.store.account_tickets(&a.id).await.map_err(storage)?;
-    Ok(Json(json!({"tickets": list.iter().filter_map(|c| c.ticket.as_ref()).map(ticket_json).collect::<Vec<_>>()})).into_response())
+    Ok(Json(json!({"tickets": list.iter().filter(|c| c.expires_at > (state.now)()).filter_map(|c| c.ticket.as_ref()).map(ticket_json).collect::<Vec<_>>()})).into_response())
 }
 
 // ------------------------------------------------------------------ staff
@@ -367,14 +367,14 @@ async fn staff_list(State(state): State<Arc<AppState>>, headers: HeaderMap, Quer
         Some(s) => Some(TicketStatus::parse(s).ok_or_else(|| error(StatusCode::UNPROCESSABLE_ENTITY, "status is open, answered, closed or all"))?),
     };
     let list = c.store.tickets(TicketQuery { status, limit: q.limit.unwrap_or(50).min(200) }).await.map_err(storage)?;
-    Ok(Json(json!({"tickets": list.iter().map(staff_json).collect::<Vec<_>>()})).into_response())
+    Ok(Json(json!({"tickets": list.iter().filter(|c| c.expires_at > (state.now)()).map(staff_json).collect::<Vec<_>>()})).into_response())
 }
 
 async fn staff_get(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(r): Path<String>) -> Reply {
     let c = accounts::cloud(&state)?;
     c.support.staff(&headers)?;
     let conv = c.store.ticket(&reference(&r)?).await.map_err(storage)?;
-    let conv = conv.ok_or_else(|| error(StatusCode::NOT_FOUND, "No ticket has that reference."))?;
+    let conv = conv.filter(|c| c.expires_at > (state.now)()).ok_or_else(|| error(StatusCode::NOT_FOUND, "No ticket has that reference."))?;
     Ok(Json(staff_json(&conv)).into_response())
 }
 
@@ -390,7 +390,7 @@ async fn staff_reply(State(state): State<Arc<AppState>>, headers: HeaderMap, Pat
         return Err(error(StatusCode::UNPROCESSABLE_ENTITY, "The reply is empty."));
     }
     let conv = c.store.staff_reply(&reference(&r)?, &b.text, (state.now)()).await.map_err(storage)?;
-    let conv = conv.ok_or_else(|| error(StatusCode::NOT_FOUND, "No ticket has that reference."))?;
+    let conv = conv.filter(|c| c.expires_at > (state.now)()).ok_or_else(|| error(StatusCode::NOT_FOUND, "No ticket has that reference."))?;
     Ok(Json(staff_json(&conv)).into_response())
 }
 

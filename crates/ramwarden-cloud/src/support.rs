@@ -291,7 +291,7 @@ impl SupportStore for MemoryStore {
 
     async fn staff_reply(&self, reference: &str, text: &str, now: u64) -> Result<Option<Conversation>> {
         let mut g = self.support();
-        let Some(c) = g.values_mut().find(|c| c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
+        let Some(c) = g.values_mut().find(|c| live(c,now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
             return Ok(None);
         };
         push(c, &[SupportMessage::new(Speaker::Staff, text, now)], now);
@@ -303,7 +303,7 @@ impl SupportStore for MemoryStore {
 
     async fn set_ticket_status(&self, reference: &str, status: TicketStatus, now: u64) -> Result<bool> {
         let mut g = self.support();
-        let Some(c) = g.values_mut().find(|c| c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
+        let Some(c) = g.values_mut().find(|c| live(c,now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
             return Ok(false);
         };
         if let Some(t) = &mut c.ticket {
@@ -339,7 +339,7 @@ impl MongoStore {
         self.database().collection(SUPPORT_CONVERSATIONS)
     }
 
-    pub(crate) async fn ensure_support_indexes(&self) -> Result<()> {
+    pub async fn ensure_support_indexes(&self) -> Result<()> {
         let opts = |name: &str| IndexOptions::builder().name(name.to_string());
         let models = [
             IndexModel::builder()
@@ -401,7 +401,7 @@ impl MongoStore {
         };
         let expires = now + c.retention();
         self.conversations()
-            .update_one(doc! { "_id": &c.id }, doc! { "$set": { "expires_at": expires as i64, "expire_at": date(expires) } })
+            .update_one(doc! { "_id": &c.id }, doc! { "$max": { "expires_at": expires as i64, "expire_at": date(expires) } })
             .await?;
         Ok(Some(Conversation { expires_at: expires, ..c }))
     }
@@ -504,7 +504,7 @@ impl SupportStore for MongoStore {
     async fn staff_reply(&self, reference: &str, text: &str, now: u64) -> Result<Option<Conversation>> {
         let msg = SupportMessage::new(Speaker::Staff, text, now);
         let mut c = self
-            .push_messages(doc! { "ticket.reference": reference }, &[msg], doc! { "ticket.status": "answered" }, now)
+            .push_messages(doc! { "ticket.reference": reference, "expires_at": { "$gt": now as i64 } }, &[msg], doc! { "ticket.status": "answered" }, now)
             .await?;
         if let Some(t) = c.as_mut().and_then(|c| c.ticket.as_mut()) {
             t.status = TicketStatus::Answered;
@@ -516,7 +516,7 @@ impl SupportStore for MongoStore {
         let r = self
             .conversations()
             .update_one(
-                doc! { "ticket.reference": reference },
+                doc! { "ticket.reference": reference, "expires_at": { "$gt": now as i64 } },
                 doc! { "$set": { "ticket.status": status.as_str(), "updated_at": now as i64 } },
             )
             .await?;
@@ -601,6 +601,11 @@ pub mod contract {
         let mine = s.account_tickets("acct1").await.unwrap();
         assert_eq!(mine.len(), 1);
         assert!(s.account_tickets("acct2").await.unwrap().is_empty());
+
+        // Staff cannot resurrect a ticket awaiting asynchronous TTL deletion.
+        let expired=NOW+TICKET_RETENTION_SECONDS+100;
+        assert!(s.staff_reply(&t.reference,"late reply",expired).await.unwrap().is_none());
+        assert!(!s.set_ticket_status(&t.reference,TicketStatus::Open,expired).await.unwrap());
 
         // Expired chats are gone even before the TTL monitor runs.
         let (raw3, _) = s.start_conversation("ram", None, NOW).await.unwrap();
