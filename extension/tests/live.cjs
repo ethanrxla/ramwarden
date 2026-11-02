@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
     worker.evaluate = async (...args) => {
       let timer;
       try { return await Promise.race([evaluate(...args), new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Extension worker did not respond within 15 seconds')), 15000);
+        timer = setTimeout(() => reject(new Error('Extension worker timed out: ' + String(args[0]).slice(0,160))), 15000);
       })]); } finally { clearTimeout(timer); }
     };
     await worker.evaluate(async () => { await safetyReady; _httpUrl = 'http://127.0.0.1:1'; if (typeof ws !== 'undefined' && ws) ws.close(); });
