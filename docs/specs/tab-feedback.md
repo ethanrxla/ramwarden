@@ -12,7 +12,7 @@ Validation (2026-11-02): workspace tests and clippy passed in Linux, macOS and W
 
 Run `node extension/tests/live.cjs` with Playwright and its Chromium installed, or set `CHROME_PATH` to a Chrome executable. The bundled run uses the full Chromium channel because the headless shell does not support extensions. On a remote Mac, `caffeinate -i node extension/tests/live.cjs` keeps the machine awake for the test. `RW_DEBUG=1` logs the current test operation. Earlier Mac worker timeouts did not reproduce with either browser during the awake runs; their cause remains unconfirmed.
 
-Native checklist interaction and installed-version rollout still need validation. No installed daemon or extension was replaced during these tests.
+The native Swift harness renders the checklist off-screen and verifies its content height, unchecked defaults, selected-only request, Keep, Later and expiry against mocked HTTP responses. Its image was visually inspected. An installed-version rollout and end-to-end interaction with the installed pet still need validation. No installed daemon or extension was replaced during these tests.
 
 ## Work pages and browser pages (2026-11-02)
 

@@ -61,6 +61,12 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Mac checklist and app build
+        if: runner.os == 'macOS'
+        run: |
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
+          "$RUNNER_TEMP/review-test"
+          RAMWARDEN_APP_DEST="$RUNNER_TEMP/RamWarden.app" bash macos/menubar/build.sh
 
   # The website in web/: plain HTML, CSS and ES modules with no build step.
   # Unit tests need only Node; the browser tests drive Chromium against the
