@@ -44,10 +44,12 @@ final class VoiceModel: ObservableObject {
     var onChange: (() -> Void)?
     var onFocusRequested: (() -> Void)?
     var allowSpeech: (() -> Bool)?
+    private var answerVisibleUntil = Date.distantPast
 
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
         await MainActor.run {
+            guard Date() >= answerVisibleUntil else { return }
             let next = WardenBubble(obj["bubble"])
             let changed = next != bubble || (obj["pet"] as? Bool ?? true) != pet
             bubble = next
@@ -74,9 +76,19 @@ final class VoiceModel: ObservableObject {
         guard let b = bubble, !busy else { return }
         busy = true
         Task {
-            _ = await post("warden/answer", ["id": b.id, "choice": choice])
-            await MainActor.run { self.busy = false }
-            await poll()
+            let response = await post("warden/answer", ["id": b.id, "choice": choice])
+            await MainActor.run {
+                self.busy = false
+                // Keep the result visible even if the question expired or the
+                // browser refused the close. Polling alone loses HTTP errors.
+                let reply = response?["reply"] as? String
+                    ?? "I couldn't confirm that choice reached the browser. The tab may still be open."
+                if !reply.isEmpty {
+                    self.answerVisibleUntil = Date().addingTimeInterval(15)
+                    self.bubble = WardenBubble(["id": "answer-" + b.id, "kind": "reply", "text": reply, "choices": []] as [String: Any])
+                    self.onChange?()
+                }
+            }
         }
     }
 
