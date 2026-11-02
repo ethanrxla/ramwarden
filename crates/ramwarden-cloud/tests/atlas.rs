@@ -31,6 +31,10 @@ async fn atlas_keeps_the_store_contract() {
         store.database().collection::<Document>(collection)
             .create_index(IndexModel::builder().keys(keys).options(options).build()).await.expect("legacy index");
     }
+    store.database().collection::<Document>("device_codes")
+        .create_index(IndexModel::builder().keys(doc! {"user_code":1})
+            .options(IndexOptions::builder().name("user_code_unique".to_string()).unique(true).build()).build())
+        .await.expect("legacy user-code uniqueness");
     store.ensure_indexes().await.expect("indexes");
     store.ensure_indexes().await.expect("idempotent indexes");
 

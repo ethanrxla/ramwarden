@@ -145,6 +145,9 @@ impl Store for MongoStore {
                 expires_at: now + ttl,
             };
             let mut d = bson::to_document(&dc).expect("serializes");
+            // Earlier deployments indexed user_code separately from _id.
+            // Mirror it so that retained unique index never sees repeated nulls.
+            d.insert("user_code", dc.user_code.clone());
             d.insert("expire_at", date(dc.expires_at));
             match self.raw(DEVICE_CODES).insert_one(d).await {
                 Ok(_) => return Ok((raw, dc)),

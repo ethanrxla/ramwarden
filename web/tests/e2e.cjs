@@ -280,6 +280,22 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
+  t("existing email codes have a visible entry path without sending again", async () => {
+    const p = await page();
+    await p.goto(`${base}/account.html?mock=1&as=active&signin=email`);
+    await p.fill("input[name=email]", "visitor@example.com");
+    await p.getByRole("button", {name:"I already have a code"}).click();
+    await p.waitForSelector('input[name="code"]');
+    assert.equal(await p.getAttribute('input[name="code"]', "inputmode"), "numeric");
+    assert.equal(await p.getByRole("button", {name:"Email me a code"}).count(), 0);
+    // No request was made: the demo has no prior code. An invalid code is
+    // handled in place; the earlier email test covers successful verification.
+    await p.fill('input[name="code"]', "123456");
+    await p.getByRole("button", {name:"Sign in",exact:true}).click();
+    await p.waitForSelector("text=That code is wrong or has expired");
+    assert.deepEqual(p.errors, []);
+  });
+
   t("account page: removing a device frees its slot", async () => {
     const p = await page();
     p.on("dialog", (d) => d.accept());

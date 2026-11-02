@@ -47,7 +47,12 @@ class AccountPage {
         return;
       }
     }
-    if (!this.account) await this.signIn();
+    const emailOnly = new URLSearchParams(location.search).get("signin") === "email";
+    if (!this.account || emailOnly) await this.signIn(emailOnly);
+    if (emailOnly) {
+      const url = new URL(location.href); url.searchParams.delete("signin");
+      history.replaceState(null, "", url);
+    }
     await this.loadCheckout();
     this.render();
     // Back from card checkout: follow the payment until it confirms.
@@ -59,10 +64,11 @@ class AccountPage {
     }
   }
 
-  async signIn() {
+  async signIn(emailOnly = false) {
     const area = h("div");
-    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
-    this.account = (await chooseSignIn(area, api)).account;
+    show(root, h("h1", {}, emailOnly ? "Email sign-in" : "Your account"),
+      h("p", {}, emailOnly ? "Enter your email, then request a code or use one you already received. Signing in switches this browser to the account for that email." : "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api, { emailOnly })).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -105,6 +111,7 @@ class AccountPage {
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
               next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
               ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
