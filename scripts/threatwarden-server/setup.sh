@@ -5,7 +5,7 @@
 #
 # What it does, and why (see docs/threatwarden-hosting.md):
 #   1. 4 GB of swap, so a burst of indexing can't OOM a 12 GB box.
-#   2. Wazuh all-in-one (manager + indexer + dashboard), official installer.
+#   2. Wazuh manager and indexer, official component installers.
 #   3. Turns off password enrolment: ramwarden-api registers each agent itself
 #      and hands out per-agent keys, so port 1515 is never needed.
 #   4. Opens only 1514/tcp (agents) in the host firewall. The manager API
@@ -54,15 +54,27 @@ for firewall in iptables ip6tables; do
 done
 netfilter-persistent save >/dev/null
 
-echo "==> Wazuh ${WAZUH_SERIES} all-in-one (takes 10-20 minutes)"
+echo "==> Wazuh ${WAZUH_SERIES} manager and indexer"
 cd /root
-if [[ -f wazuh-install-files.tar ]] && ! systemctl is-active --quiet wazuh-manager wazuh-indexer wazuh-dashboard; then
+if [[ -f wazuh-install-files.tar ]] && ! systemctl is-active --quiet wazuh-manager wazuh-indexer; then
   echo "An earlier Wazuh installation is incomplete or stopped. Diagnose it before rerunning; refusing to overwrite keys." >&2
   exit 1
 fi
 if [[ ! -f wazuh-install-files.tar ]]; then
   curl -sSfO "https://packages.wazuh.com/${WAZUH_SERIES}/wazuh-install.sh"
-  bash ./wazuh-install.sh -a
+  cat > config.yml <<'CONFIG'
+nodes:
+  indexer:
+    - name: wazuh-indexer
+      ip: 127.0.0.1
+  server:
+    - name: wazuh-server
+      ip: 127.0.0.1
+CONFIG
+  bash ./wazuh-install.sh -g
+  bash ./wazuh-install.sh -wi wazuh-indexer
+  bash ./wazuh-install.sh -s
+  bash ./wazuh-install.sh -ws wazuh-server
 fi
 
 echo "==> Per-agent keys only: disable password enrolment"
@@ -70,7 +82,7 @@ CONF=/var/ossec/etc/ossec.conf
 perl -0pi -e 's|(<auth>\s*<disabled>)no(</disabled>)|${1}yes${2}|' "$CONF"
 systemctl restart wazuh-manager
 
-systemctl is-active --quiet wazuh-manager wazuh-indexer wazuh-dashboard
+systemctl is-active --quiet wazuh-manager wazuh-indexer
 
 echo
 echo "Done."
@@ -83,5 +95,5 @@ echo "  WAZUH_MANAGER_URL=https://127.0.0.1:55000   WAZUH_API_USER=wazuh-wui   W
 echo "  WAZUH_INDEXER_URL=https://127.0.0.1:9200    WAZUH_INDEXER_USER=admin   WAZUH_INDEXER_PASSWORD=<admin password>"
 echo "  WAZUH_AGENT_HOST=<the DNS name agents connect to, e.g. agents.ramwarden.app>"
 echo
-echo "Dashboard (for you only), from your own computer:"
+echo "Optional dashboard, if installed separately, is private and requires an SSH tunnel:"
 echo "  ssh -L 8443:127.0.0.1:443 ubuntu@<server>   then open https://localhost:8443"

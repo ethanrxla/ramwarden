@@ -1,0 +1,9 @@
+[Unit]
+Description=Update and validate ThreatWarden network signatures
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/suricata-update
+ExecStartPost=/usr/bin/systemctl try-restart suricata.service
+Nice=10

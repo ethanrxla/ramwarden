@@ -17,6 +17,14 @@ if (-not ($root.localfile | Where-Object {$_.location -eq $location})) {
 }
 New-Item -ItemType Directory -Force C:/ProgramData/ThreatWarden/logs | Out-Null
 if (-not (Test-Path $location)) { New-Item -ItemType File $location | Out-Null }
+$location='D:\ThreatWarden\Suricata\log\eve*.json'
+if (-not ($root.localfile | Where-Object {$_.location -eq $location})) {
+ $lf=$xml.CreateElement('localfile')
+ foreach ($entry in @(@('log_format','json'),@('location',$location))) {
+  $node=$xml.CreateElement($entry[0]); $node.InnerText=$entry[1]; $lf.AppendChild($node) | Out-Null
+ }
+ $root.AppendChild($lf) | Out-Null
+}
 $xml.Save($f)
 Restart-Service WazuhSvc
 Get-Service WazuhSvc

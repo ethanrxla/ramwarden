@@ -25,7 +25,7 @@ if a.scheduled:
 # No shell, deletion, quarantine, or automatic remediation.
 result = subprocess.run(['clamscan', '--recursive', '--infected', '--', *a.paths],
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-with open('/var/log/clamav/threatwarden.json', 'a') as log:
+with open('/var/log/threatwarden/clamav.json', 'a') as log:
     for line in result.stdout.splitlines():
         if line.endswith(' FOUND'):
             log.write(json.dumps({'engine': 'threatwarden_clamav', 'event': 'malware_found',

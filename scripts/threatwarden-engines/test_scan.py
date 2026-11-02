@@ -18,7 +18,7 @@ class ScanPolicy(unittest.TestCase):
                     status = e.code
             for f in opened:
                 f.close()
-            log = pathlib.Path(d) / 'threatwarden.json'
+            log = pathlib.Path(d) / 'clamav.json'
             return status, run.call_args, log.read_text() if log.exists() else ''
     def test_pressure_or_unknown_defers_without_loading_antivirus(self):
         for pressure in [{'rung':'suspend'}, {}, {'rung':'kill'}]:
