@@ -45,6 +45,13 @@ pub struct CheckoutRequest<'a> {
     pub cancel_url: &'a str,
 }
 
+/// Stripe's recurrence for a plan: `2mo` plans bill every second month,
+/// which is how Stripe says "every 60 days" closest (user decision,
+/// 2026-11-02); annual plans bill yearly.
+fn stripe_interval(plan: &PlanDef) -> (&'static str, &'static str) {
+    if plan.interval == "year" { ("year", "1") } else { ("month", "2") }
+}
+
 impl Stripe {
     pub fn new(key: Secret, webhook_secret: Secret) -> Self {
         Self::with_base(key, webhook_secret, "https://api.stripe.com")
@@ -64,7 +71,7 @@ impl Stripe {
 
     /// Creates a Checkout Session and returns its URL.
     pub async fn checkout(&self, r: &CheckoutRequest<'_>) -> Result<String, String> {
-        let interval = if r.plan.interval == "year" { "year" } else { "month" };
+        let (interval, count) = stripe_interval(r.plan);
         let cents = (r.plan.usd * 100).to_string();
         let plan_id = r.plan.id.to_string();
         let trial_days = TRIAL_DAYS.to_string();
@@ -77,6 +84,7 @@ impl Stripe {
             ("line_items[0][price_data][currency]", "usd"),
             ("line_items[0][price_data][unit_amount]", &cents),
             ("line_items[0][price_data][recurring][interval]", interval),
+            ("line_items[0][price_data][recurring][interval_count]", count),
             ("line_items[0][price_data][product_data][name]", &r.plan.name),
             ("subscription_data[metadata][account_id]", r.account_id),
             ("subscription_data[metadata][plan]", &plan_id),
@@ -121,13 +129,14 @@ impl Stripe {
             .await
             .map_err(|e| format!("stripe: {e}"))?;
         let item = sub["items"]["data"][0]["id"].as_str().ok_or("stripe: subscription has no item")?.to_string();
-        let interval = if plan.interval == "year" { "year" } else { "month" };
+        let (interval, count) = stripe_interval(plan);
         let cents = (plan.usd * 100).to_string();
         let price: Value = post("/v1/prices".into())
             .form(&[
                 ("currency", "usd"),
                 ("unit_amount", cents.as_str()),
                 ("recurring[interval]", interval),
+                ("recurring[interval_count]", count),
                 ("product_data[name]", plan.name.as_str()),
             ])
             .send()
@@ -247,7 +256,7 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     if matches!(status, "trialing" | "active") {
         // A failed upgrade must preserve the previously paid tier.
         u.tier = Some(if plan.tier == "pro" { Tier::Pro } else { Tier::Ram });
-        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::Month });
+        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::TwoMonths });
         u.paid_until = period_end.max(trial_end);
     }
     if status == "trialing" {
@@ -297,7 +306,7 @@ pub(crate) mod tests {
         let e = subscription_event("customer.subscription.created", "a1", 2, "trialing", 2000, Some(2000));
         let (id, u) = update_from_event(&e, &plans).unwrap();
         assert_eq!(id, "a1");
-        assert_eq!((u.tier, u.interval), (Some(Tier::Pro), Some(Interval::Month)));
+        assert_eq!((u.tier, u.interval), (Some(Tier::Pro), Some(Interval::TwoMonths)));
         assert_eq!((u.paid_until, u.trial_ends_at, u.cancelled), (Some(2000), Some(2000), Some(false)));
 
         assert_eq!(confirmed_payment(&e), Some(("pay1", "sub_123")));

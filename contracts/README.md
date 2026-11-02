@@ -1,16 +1,16 @@
 # RamWarden checkout contract
 
 `RamWardenCheckout` sells **subscriptions** in USDC on Base, per
-`docs/product-spec.md` 1.2 and 3.3: the plan's price every month or year until
+`docs/product-spec.md` 1.2 and 3.3: the plan's price every 60 days or every year until
 cancelled, with a 14-day free trial first on RamWarden plans (Pro is charged
 at once). Plans live in [`plans.json`](plans.json),
 which the deploy script writes on-chain and the API serves to the website.
 
 | Plan | Tier | Price | Trial | Unlocks |
 | --- | --- | --- | --- | --- |
-| 1 | RamWarden | $4 / month | 14 days | RAM warden (`ram`, warden 0) |
-| 2 | RamWarden Pro | $5 / month | none | RAM warden and ThreatWarden (`threat`, warden 1) |
-| 3 | RamWarden | $20 / year | 14 days | RAM warden |
+| 1 | RamWarden Plus | $4 / 2 months | 14 days | RAM warden (`ram`, warden 0) |
+| 2 | RamWarden Pro | $5 / 2 months | none | RAM warden and ThreatWarden (`threat`, warden 1) |
+| 3 | RamWarden Plus | $20 / year | 14 days | RAM warden |
 | 4 | RamWarden Pro | $24 / year | none | RAM warden and ThreatWarden |
 
 Plan ids are fixed: the agent skill uses them.
@@ -18,7 +18,7 @@ Plan ids are fixed: the agent skill uses them.
 ## How a subscription flows
 
 1. **Start.** The signed-in user picks a plan. `POST /v1/checkout/base` returns
-   a USDC `approve` for one year of the plan (12 × the monthly price, or the
+   a USDC `approve` for one year of the plan (6 × the 2-month price, or the
    annual price) and `startTrial(account, plan, maxPrice, ref)`. `account` is
    the keccak-256 of the RamWarden account id. On a plan with a trial no money
    moves, and every warden in the plan is unlocked for 14 days. A plan without
@@ -37,7 +37,7 @@ Plan ids are fixed: the agent skill uses them.
    account in grace for 3 days after `paidUntil`, then local mode.
 4. **Cancel.** `cancel(account)` from the paying wallet, or revoking the
    approval, stops future charges. Service runs to `paidUntil`.
-5. After a year of monthly charges the approval is spent and the user is
+5. After a year of 2-monthly charges the approval is spent and the user is
    asked to approve another year. Nobody is ever asked for an unlimited
    approval.
 

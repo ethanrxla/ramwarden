@@ -88,7 +88,8 @@ single atomic update rather than a read followed by a write.
   taken with `find_one_and_delete` (or a guarded update), so two racing claims
   can't both win. Device codes, device tokens, sessions and email codes are
   stored as SHA-256; the raw value is returned once, to its owner.
-- **5 devices per account.** `register_device` refuses past `device_limit`.
+- **At most 5 devices per account.** `register_device` refuses past `device_limit`
+  (the hard cap); the API applies the plan's limit first (Lite 1, Plus 3, Pro 5).
   Revoking a device deletes it and so its token.
 - **Expired sign-in material disappears on its own** through TTL indexes on
   `expire_at`.

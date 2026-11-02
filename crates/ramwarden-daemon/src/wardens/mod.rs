@@ -138,6 +138,7 @@ pub async fn list(State(st): State<AppState>) -> Json<Value> {
         "paid": ent.paid_at(wardens::now()),
         "tier": ent.tier,
         "plan_status": ent.status,
+        "pet": ent.shows_pet(wardens::now()),
         "wardens": wardens::CATALOGUE.iter().map(|x| w.entry(&st, x)).collect::<Vec<_>>(),
     }))
 }

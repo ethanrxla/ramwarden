@@ -176,6 +176,15 @@ impl Entitlement {
         }
     }
 
+    /// Whether the apps show the warden pet. The pet comes with a paid plan
+    /// (Plus or Pro): RamWarden Lite, a lapsed plan, and a device with no
+    /// signed record show none (user decision, 2026-11-02). Both paid plans
+    /// carry the `ram` warden, so its signed expiry is the test, and no new
+    /// field is needed in the signed text.
+    pub fn shows_pet(&self, now: u64) -> bool {
+        self.wardens.get("ram").is_some_and(|&until| until > now)
+    }
+
     /// The ids of every paid warden unlocked at `now`.
     pub fn paid_at(&self, now: u64) -> Vec<&str> {
         self.wardens
@@ -401,6 +410,15 @@ mod tests {
             wardens: paid.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_pet_comes_with_a_paid_plan_only() {
+        let mut e = Entitlement::default();
+        assert!(!e.shows_pet(NOW), "Lite, or no account");
+        e.wardens.insert("ram".into(), NOW + 1);
+        assert!(e.shows_pet(NOW));
+        assert!(!e.shows_pet(NOW + 1), "lapsed");
     }
 
     #[test]

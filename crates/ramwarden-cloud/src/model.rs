@@ -92,7 +92,10 @@ impl Tier {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Interval {
-    Month,
+    /// Every 60 days (user decision, 2026-11-02). Records written before
+    /// then say `month`, which reads as this.
+    #[serde(rename = "2mo", alias = "month")]
+    TwoMonths,
     Year,
 }
 
@@ -418,7 +421,7 @@ mod tests {
 
         BillingUpdate {
             tier: Some(Tier::Pro),
-            interval: Some(Interval::Month),
+            interval: Some(Interval::TwoMonths),
             trial_ends_at: Some(NOW + 14 * DAY),
             paid_until: Some(NOW + 14 * DAY),
             ..Default::default()

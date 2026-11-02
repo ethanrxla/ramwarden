@@ -83,7 +83,7 @@ pub enum Start {
 pub fn is_upgrade(a: &Account, plan: &PlanDef) -> bool {
     let (Some(tier), Some(interval)) = (a.tier, a.interval) else { return false };
     let rank = |t: Tier| if t == Tier::Pro { 1 } else { 0 };
-    let longer = interval == Interval::Month && plan.interval() == Interval::Year;
+    let longer = interval == Interval::TwoMonths && plan.interval() == Interval::Year;
     rank(plan.tier()) > rank(tier) || (plan.tier() == tier && longer)
 }
 

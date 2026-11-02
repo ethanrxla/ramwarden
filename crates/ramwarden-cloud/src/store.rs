@@ -485,7 +485,7 @@ pub mod contract {
 
         let start = BillingUpdate {
             tier: Some(Tier::Pro),
-            interval: Some(Interval::Month),
+            interval: Some(Interval::TwoMonths),
             trial_ends_at: Some(NOW + 100),
             paid_until: Some(NOW + 100),
             trial_used: Some(true),

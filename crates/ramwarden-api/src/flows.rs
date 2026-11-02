@@ -307,9 +307,22 @@ async fn the_sixth_device_is_refused_on_the_link_page() {
     let a = app();
     let w = EvmWallet::new(12);
     let (cookie, id) = a.web(&w).await;
-    let plus = BillingUpdate { tier: Some(Tier::Ram), interval: Some(Interval::Month), paid_until: Some(NOW + 30 * DAY), ..Default::default() };
+    // Plus covers 3 devices and Pro 5 (user decision, 2026-11-02).
+    let plus = BillingUpdate { tier: Some(Tier::Ram), interval: Some(Interval::TwoMonths), paid_until: Some(NOW + 60 * DAY), ..Default::default() };
     a.store.update_billing(&id, &plus).await.unwrap();
-    for i in 0..5 {
+    for i in 0..3 {
+        a.store.register_device(&id, &format!("pc{i}"), Platform::Linux, NOW).await.unwrap().unwrap();
+    }
+    let (_, code) = a.start_device().await;
+    let (s, v, _) = a.sign_in_evm(&w, Some(&code)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("Plus covers 3 devices"), "{v}");
+    let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
+    assert_eq!((acct["plan"].as_str(), acct["device_limit"].as_u64(), acct["pet"].as_bool()), (Some("plus"), Some(3), Some(true)));
+
+    let pro = BillingUpdate { tier: Some(Tier::Pro), ..Default::default() };
+    a.store.update_billing(&id, &pro).await.unwrap();
+    for i in 3..5 {
         a.store.register_device(&id, &format!("pc{i}"), Platform::Linux, NOW).await.unwrap().unwrap();
     }
     let (dc, code) = a.start_device().await;
@@ -375,7 +388,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
 
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(48)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(24)));
     assert_eq!(co["transactions"].as_array().unwrap().len(), 2, "approve one year, then startTrial");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
@@ -389,7 +402,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
     assert_eq!((p["status"].as_str(), p["account_status"].as_str()), (Some("confirmed"), Some("trial")));
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
-    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("month"), Some("trial")));
+    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("2mo"), Some("trial")));
     assert_eq!(acct["trial_ends_at"], iso8601(trial_end));
     assert_eq!(acct["billing"]["method"], "base");
     assert_eq!(acct["trial_available"], false);
@@ -427,12 +440,12 @@ async fn pro_on_base_is_charged_at_once_and_keeps_the_trial_unused() {
     let (device_token, cookie, account_id) = a.sign_in_device(&w).await;
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(60)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(30)));
     let mut r = [0u8; 32];
     r.copy_from_slice(&hex::decode(co["payment_id"].as_str().unwrap()).unwrap());
 
     // The contract's start with no trial, then the first charge.
-    let paid = NOW + 30 * DAY;
+    let paid = NOW + 60 * DAY;
     let key = chain_key(&account_id);
     a.chain(&[trial_log(&base().checkout, key, 2, 0, r), crate::checkout::tests::charged_log(&base().checkout, key, 2, paid)]).await;
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
@@ -450,7 +463,7 @@ async fn lite_is_a_free_account_on_one_device_with_no_hosted_ai() {
     let w = EvmWallet::new(17);
     let (tok, cookie, _) = a.sign_in_device(&w).await;
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
-    assert_eq!((acct["plan"].as_str(), acct["device_limit"].as_u64()), (Some("lite"), Some(1)));
+    assert_eq!((acct["plan"].as_str(), acct["device_limit"].as_u64(), acct["pet"].as_bool()), (Some("lite"), Some(1), Some(false)));
     assert_eq!(a.call("GET", "/v1/models", Auth::Bearer(&tok), None).await.0, StatusCode::PAYMENT_REQUIRED, "no Jev on Lite");
 
     // A second device is refused on the link page and for the install line.
@@ -489,7 +502,7 @@ async fn plus_upgrades_to_pro_on_base_in_one_wallet_call() {
 
     let mut r = [0u8; 32];
     r.copy_from_slice(&hex::decode(up["payment_id"].as_str().unwrap()).unwrap());
-    a.chain(&[trial_log(&base().checkout, key, 2, 0, r), crate::checkout::tests::charged_log(&base().checkout, key, 2, NOW + 30 * DAY)]).await;
+    a.chain(&[trial_log(&base().checkout, key, 2, 0, r), crate::checkout::tests::charged_log(&base().checkout, key, 2, NOW + 60 * DAY)]).await;
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
     assert_eq!((acct["plan"].as_str(), acct["status"].as_str()), (Some("pro"), Some("active")), "the trial ended with the upgrade");
     assert_eq!(acct["trial_ends_at"], Value::Null);
@@ -550,7 +563,7 @@ async fn a_card_trial_starts_from_a_signed_webhook() {
     assert_eq!(co["url"], "https://checkout.stripe.com/c/pay/cs_test_1");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let form = seen.lock().unwrap()[0].1.clone();
-    for part in ["mode=subscription", "unit_amount%5D=2000", "interval%5D=year", "trial_period_days%5D=14", "customer_email=card%40example.com"] {
+    for part in ["mode=subscription", "unit_amount%5D=2000", "interval%5D=year", "interval_count%5D=1", "trial_period_days%5D=14", "customer_email=card%40example.com"] {
         assert!(form.contains(part), "{part} in {form}");
     }
     assert!(form.contains(&format!("payment_id%5D={pid}")));

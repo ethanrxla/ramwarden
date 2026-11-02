@@ -86,16 +86,27 @@ confirmed by the user 2026-11-01):
 
 | Card | Plan | Tier id | Price | Trial | Wardens | Devices |
 | --- | --- | --- | --- | --- | --- | --- |
-| RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI | 1 |
-| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 5 |
-| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
+| RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI, no warden pet | 1 |
+| RamWarden Plus | 1, 3 | `ram` | $4 / 2 months, $20 / year | 14 days | `ram` | 3 |
+| RamWarden Pro | 2, 4 | `pro` | $5 / 2 months, $24 / year | none | `ram`, `threat` | 5 |
+
+Plans 1 and 2 bill every 60 days (`interval: "2mo"`, `days: 60`; by card,
+Stripe's every-2-months recurrence), and the device limits are Lite 1, Plus
+3, Pro 5 (user decision, 2026-11-02). Account records written before then
+say `interval: "month"`, which reads as `2mo`.
+
+**The warden pet** comes with a paid plan. `pet` in the account says whether
+to show it; on a device, the daemon's `GET /wardens` has `pet`, true while
+the signed entitlement's `ram` warden is in date
+(`Entitlement::shows_pet`). Lite, a lapsed plan and a device with no signed
+record show no pet. This needs no new field in the signed text.
 
 Lite is a signed-in account (wallet or email, no card) with no plan, or one
 whose plan lapsed. It gets the install line and the entitlement (tier
 `none`) for one device; the Jev routes answer 402. Devices linked while on a
 plan stay linked if it lapses; adding one is refused past the Lite limit.
 
-**Upgrades** (Lite to Plus, Plus to Pro, monthly to annual) are the same
+**Upgrades** (Lite to Plus, Plus to Pro, 2-monthly to annual) are the same
 checkout routes. Lite starts a new subscription. A live one moves up in
 place: on Base, `changePlan(account, plan, maxPrice, ref)` from the paying
 wallet (any trial ends, the new plan's first period is charged and starts
@@ -107,7 +118,7 @@ subscription upgrades with the method that pays for it.
 
 RamWarden plans (1 and 3) start with a 14-day trial; Pro plans (2 and 4) are
 charged at once (user decision, 2026-11-01). Every plan then renews every
-month or year until cancelled. One trial per account: an account that had
+60 days or every year until cancelled. One trial per account: an account that had
 one is charged at once. `trial` in `plans.json` and the contract's `Plan`
 carry this, and `trial_days` in `checkout/config` is 14 or 0.
 
@@ -153,9 +164,9 @@ approved, unless the account already has `device_limit` devices (409, shown
 on the link page).
 
 **Account.** `{id, identity: {kind: "wallet", chain, address} | {kind:
-"email", email}, tier: "ram" | "pro" | null, interval: "month" | "year" |
+"email", email}, tier: "ram" | "pro" | null, interval: "2mo" | "year" |
 null, status, trial_ends_at, paid_until, trial_available, billing: {method:
-"base" | "card"} | null, plan: "lite" | "plus" | "pro", entitlement_until, entitlements: {slug: iso time},
+"base" | "card"} | null, plan: "lite" | "plus" | "pro", pet, entitlement_until, entitlements: {slug: iso time},
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`. Times are ISO 8601 UTC.
 
@@ -195,7 +206,7 @@ downloads that sign in through the device page, because a downloaded file
 can't carry the token yet.
 
 **Base.** `POST /v1/checkout/base` returns USDC `approve(checkout, one
-year)` (12 x the monthly price, or the annual price; never unlimited), left
+year)` (6 x the 2-month price, so $24 or $30, or the annual price; never unlimited), left
 out when the payer's allowance already covers it, then
 `startTrial(keccak256(account id), plan, price, ref)`, where `ref` is the
 payment id. The contract (`contracts/README.md`) starts the trial, or, for a
@@ -232,7 +243,7 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
   shorten or double anything.
 - **Lite has no hosted AI.** A device whose account has no `ram` warden in
   date gets 402 from the Jev routes and the daemon uses its fixed rules.
-- **Devices: 1 on Lite, 5 on Plus and Pro**, checked when the link page
+- **Devices: 1 on Lite, 3 on Plus, 5 on Pro**, checked when the link page
   approves, when an install line is issued and when the daemon claims.
 - **Real money waits for the audit.** Base mainnet and live Stripe keys are
   refused at start unless `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1`.
@@ -289,13 +300,13 @@ on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
 ### Basis and limitations
 
 - On Base an upgrade doesn't credit unused time on the old plan (at most one
-  Plus month, $4). Card upgrades are prorated by Stripe.
+  Plus period, $4). Card upgrades are prorated by Stripe.
 - One trial per account only. Per-device-fingerprint trials (spec 4.2) need
   the `trials` collection and a device key, which come with device key pairs.
 - Stripe events are applied in arrival order. Stripe can deliver out of
   order, so a late `updated` could clear a cancellation; the next event
   corrects it. Ordering by event time is a follow-up.
-- After a year of monthly charges the approval runs out and the wallet must
+- After a year of 2-monthly charges the approval runs out and the wallet must
   approve again (spec 3.3 step 5). The account page offers it when
   `isDue` and the charge fails; the notice email is not built yet.
 - The app side of the install line (reading `link-token` on first run) is
