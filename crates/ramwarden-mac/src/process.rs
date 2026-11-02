@@ -1,6 +1,9 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ramwarden_platform::{Error, Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource, Result};
+use ramwarden_platform::{
+    Cadence, Error, Instances, Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource, Result,
+};
 
 use crate::sys;
 
@@ -12,21 +15,37 @@ fn owner_of(uid: u32, me: u32) -> Owner {
     }
 }
 
+/// The socket table is re-read at least this often, and no sooner than
+/// [`SOCKETS_SOONEST`] after a new process appears. `lsof` is slow (tens of
+/// ms, two runs), which is why this platform cached it first; Linux and
+/// Windows now use the same [`Cadence`].
+pub const SOCKETS_EVERY: Duration = Duration::from_secs(20);
+pub const SOCKETS_SOONEST: Duration = Duration::from_secs(5);
+
 /// Listening ports and established-connection counts per pid, from `lsof`.
-/// Slow (tens of ms), so it is cached and refreshed every 20 s.
-#[derive(Default)]
 struct Sockets {
-    at: Option<Instant>,
+    cadence: Cadence,
     listening: std::collections::HashMap<i32, Vec<u16>>,
     established: std::collections::HashMap<i32, u32>,
 }
 
+impl Default for Sockets {
+    fn default() -> Self {
+        Sockets {
+            cadence: Cadence::new(SOCKETS_EVERY, SOCKETS_SOONEST),
+            listening: Default::default(),
+            established: Default::default(),
+        }
+    }
+}
+
 impl Sockets {
-    fn refresh(&mut self) {
-        if self.at.is_some_and(|t| t.elapsed() < Duration::from_secs(20)) {
+    fn refresh(&mut self, appeared: bool) {
+        let now = Instant::now();
+        if !self.cadence.due(now, appeared) {
             return;
         }
-        self.at = Some(Instant::now());
+        self.cadence.mark(now);
         self.listening.clear();
         self.established.clear();
         for (state, listen) in [("LISTEN", true), ("ESTABLISHED", false)] {
@@ -58,17 +77,31 @@ impl Sockets {
     }
 }
 
+/// Samples every process through libproc.
+///
+/// Command lines come from `sysctl(KERN_PROCARGS2)`, a copy of the process's
+/// argument area, so they are cached per process instance (PID plus start
+/// time, see `ramwarden_platform::cache`) and read on the first two sightings
+/// only: the second catches a process that rewrote its `argv` just after it
+/// started, as Chromium helpers do.
 pub struct MacProcesses {
     me: u32,
     sockets: Sockets,
     argbuf: Vec<u8>,
+    cmdlines: Instances<(Arc<str>, u8)>,
     degraded: bool,
 }
 
 impl MacProcesses {
     pub fn new() -> Self {
-        // SAFETY: getuid has no preconditions.
-        MacProcesses { me: unsafe { libc::getuid() }, sockets: Sockets::default(), argbuf: Vec::new(), degraded: false }
+        MacProcesses {
+            // SAFETY: getuid has no preconditions.
+            me: unsafe { libc::getuid() },
+            sockets: Sockets::default(),
+            argbuf: Vec::new(),
+            cmdlines: Instances::new(),
+            degraded: false,
+        }
     }
 }
 
@@ -84,13 +117,32 @@ impl ProcessSource for MacProcesses {
         if pids.is_empty() {
             return Err(Error::Unsupported("proc_listallpids"));
         }
-        self.sockets.refresh();
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let mut degraded = false;
-        let mut out = Vec::with_capacity(pids.len());
-
+        let mut appeared = false;
+        let mut infos = Vec::with_capacity(pids.len());
+        self.cmdlines.begin();
         for pid in pids {
             let Some(b) = sys::bsd_info(pid) else { continue };
+            let started = b.pbi_start_tvsec * 1_000_000 + b.pbi_start_tvusec;
+            let mine = owner_of(b.pbi_ruid, self.me) == Owner::CurrentUser;
+            let (argbuf, cmdlines) = (&mut self.argbuf, &mut self.cmdlines);
+            let (entry, new) = cmdlines.entry(pid, started, || (Arc::from(""), 0));
+            appeared |= new;
+            if mine && entry.1 < 2 {
+                let cmd = sys::cmdline(pid, argbuf);
+                if *entry.0 != *cmd {
+                    entry.0 = Arc::from(cmd);
+                }
+                entry.1 += 1;
+            }
+            infos.push((pid, b, started, Arc::clone(&entry.0)));
+        }
+        self.cmdlines.sweep();
+        self.sockets.refresh(appeared);
+        let mut out = Vec::with_capacity(infos.len());
+
+        for (pid, b, started, cmdline) in infos {
             let name = {
                 let n = sys::cstr(&b.pbi_name);
                 if n.is_empty() { sys::cstr(&b.pbi_comm) } else { n }
@@ -117,10 +169,10 @@ impl ProcessSource for MacProcesses {
                     resident
                 }
             };
-            let cmdline = if owner == Owner::CurrentUser { sys::cmdline(pid, &mut self.argbuf) } else { String::new() };
             out.push(ProcessSample {
                 pid,
                 ppid: b.pbi_ppid as i32,
+                started,
                 name,
                 cmdline,
                 owner,

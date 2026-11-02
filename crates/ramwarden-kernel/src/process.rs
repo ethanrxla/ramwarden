@@ -97,7 +97,15 @@ impl ProcEntry {
             .map_err(|_| Error::parse(path, "pid is not an integer"))?;
         let comm = text[open + 1..close].to_string();
 
-        let f: Vec<&str> = text[close + 1..].split_whitespace().collect();
+        // Fields 3..=24 are all that is read; a fixed array keeps this off the
+        // heap, since it runs for every process on every tick.
+        let mut f: [&str; 22] = [""; 22];
+        let mut n = 0;
+        for (slot, word) in f.iter_mut().zip(text[close + 1..].split_whitespace()) {
+            *slot = word;
+            n += 1;
+        }
+        let f = &f[..n];
         // Indices are offset by 3: f[0] is `state`, field 3 of the file.
         let need = |i: usize, what: &str| -> Result<&str> {
             f.get(i)
@@ -148,13 +156,27 @@ pub fn table(root: &Root) -> Result<Vec<ProcEntry>> {
     let entries = fs::read_dir(&proc_dir).map_err(|e| Error::io(&proc_dir, e))?;
 
     let mut out = Vec::with_capacity(512);
+    // One path and one text buffer for the whole walk: this runs every tick,
+    // and building a fresh path and string per process was three allocations
+    // each before any parsing happened.
+    let mut path = proc_dir;
+    let mut text = String::with_capacity(512);
     for e in entries.flatten() {
         let name = e.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(pid) = name.parse::<i32>() else {
+        if name.parse::<i32>().is_err() {
             continue; // /proc/net, /proc/sys, ...
-        };
-        match entry(root, pid) {
+        }
+        path.push(name);
+        path.push("stat");
+        text.clear();
+        let read = fs::File::open(&path)
+            .and_then(|mut f| std::io::Read::read_to_string(&mut f, &mut text))
+            .map_err(|e| Error::io(&path, e))
+            .and_then(|_| ProcEntry::parse(&text, &path));
+        path.pop();
+        path.pop();
+        match read {
             Ok(p) => out.push(p),
             Err(e) if e.is_missing() => continue,
             Err(Error::Denied { .. }) => continue,

@@ -24,6 +24,7 @@
 //! in a unit test on either platform.
 
 mod background;
+pub mod cache;
 mod desktop;
 mod error;
 pub mod fake;
@@ -38,6 +39,7 @@ pub mod secret;
 mod wm;
 
 pub use background::{Background, NoBackground};
+pub use cache::{Cadence, Instances};
 pub use desktop::{Desktop, DesktopSource};
 pub use error::{Error, Result};
 pub use group::{AppGroup, GroupSource};

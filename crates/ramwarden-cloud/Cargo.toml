@@ -4,9 +4,12 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
-description = "RamWarden's hosted service storage: accounts, sign-ins, devices, subscriptions and payments, on MongoDB Atlas or in memory."
+description = "Hosted accounts, subscriptions, and opt-in decision-log storage on MongoDB Atlas."
 
 [dependencies]
+# The local decision log (decisions.rs, History) that `decisions sync` reads.
+ramwarden-core = { path = "../ramwarden-core" }
+reqwest    = { workspace = true }
 mongodb    = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
