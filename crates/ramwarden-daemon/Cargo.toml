@@ -35,6 +35,8 @@ tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid       = { workspace = true }
 url = "2"
+reqwest = { workspace = true }
+tempfile = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 ramwarden-debloat = { path = "../ramwarden-debloat" }

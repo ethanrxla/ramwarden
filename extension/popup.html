@@ -105,6 +105,16 @@
 
   <div id="warden" class="warden" hidden aria-live="polite"></div>
 
+  <div class="section" id="account-section">
+    <div class="section-title">Account</div>
+    <div id="account-status" aria-live="polite">Checking this app’s sign-in…</div>
+    <button id="account-signin" hidden>Sign in with email or wallet</button>
+    <button id="account-continue" hidden>Continue sign-in</button>
+    <button id="account-refresh" hidden>Refresh plan</button>
+    <button id="account-disconnect" hidden>Disconnect this app</button>
+    <div id="account-detail" style="font-size:11px;color:#94a3b8"></div>
+  </div>
+
   <div class="ram-bar-wrap">
     <div class="ram-label">
       <span>RAM Usage</span>
@@ -134,13 +144,14 @@
   <div class="daemon-row">
     <span>Daemon</span>
     <input type="text" id="daemon-host-input" placeholder="localhost:7823" />
-    <button onclick="saveDaemonHost()">Save</button>
+    <button id="daemon-host-save">Save</button>
   </div>
   <div id="daemon-host-status" style="color:#f59e0b;font-size:11px;padding:0 10px 6px"></div>
 
   <footer>RamWarden · <span id="browsers-connected">—</span> browser(s) connected</footer>
 
   <script src="warden.js"></script>
+  <script src="account.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
