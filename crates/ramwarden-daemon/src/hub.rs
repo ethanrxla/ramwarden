@@ -322,10 +322,9 @@ impl AppState {
         result
     }
     pub fn note_tab(&self,url:&str,kind:&str) {
-        if let Ok(h)=self.history.lock() {
-            if let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64) {
-                tracing::warn!("could not save tab feedback: {e}");
-            }
+        if let Ok(h)=self.history.lock()
+            && let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64) {
+            tracing::warn!("could not save tab feedback: {e}");
         }
     }
 
