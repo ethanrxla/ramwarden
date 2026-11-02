@@ -200,6 +200,61 @@ export class MockApi {
     return p;
   }
 
+  // The support desk, cut down: a few of the server's answers, keyword
+  // routed the way its fallback is, so the chat can be clicked through.
+  supportHistory({ conversation, warden }) {
+    const c = this.#support?.get(conversation);
+    return Promise.resolve({
+      greeting: warden === "threat" ? "I'm ThreatWarden's warden. Ask me about security, plans or setup." : "I'm your warden. Ask me about plans, the free trial, installing, or how I free memory.",
+      chips: [
+        { topic: "plans", label: "Which plan is right for me?" },
+        { topic: "trial", label: "How does the free trial work?" },
+        { topic: "human", label: "Talk to a person" },
+      ],
+      live: Boolean(c),
+      thread: c ? { warden, messages: c.messages, ticket: c.ticket } : null,
+    });
+  }
+
+  supportChat({ conversation, warden, message, topic }) {
+    this.#support ??= new Map();
+    const text = message || { plans: "Which plan is right for me?", trial: "How does the free trial work?", human: "Talk to a person" }[topic] || "";
+    if (!text.trim()) return Promise.reject(new ApiError(422, "Ask me something first."));
+    let fresh = null;
+    if (!this.#support.has(conversation)) {
+      fresh = conversation = "rwsc_mock" + (this.#support.size + 1);
+      this.#support.set(conversation, { messages: [], ticket: null });
+    }
+    const c = this.#support.get(conversation);
+    const q = text.toLowerCase();
+    const pick = topic || (/price|cost|how much/.test(q) ? "pricing" : /trial/.test(q) ? "trial" : /plan|tier/.test(q) ? "plans" : /human|person|broken|not working|refund/.test(q) ? "human" : "unknown");
+    const answers = {
+      plans: "There are three plans. Lite is free on 1 computer, Plus adds the AI warden pet on 3 computers ($4 every 2 months or $20 a year, 14-day trial), and Pro adds ThreatWarden on 5 ($5 every 2 months or $24 a year).",
+      pricing: "Lite is free. Plus is $4 every 2 months or $20 a year. Pro is $5 every 2 months or $24 a year.",
+      trial: "RamWarden Plus has a 14-day free trial. Nothing is charged during it.",
+      human: "I'll get a person on it. Open a ticket below, with an email if you'd like a reply there.",
+      unknown: "I don't know that one for sure, and I'd rather not guess. I can open a ticket so a person on the team answers you.",
+    };
+    const at = Math.floor(Date.now() / 1000);
+    c.messages.push({ from: "visitor", text, at }, { from: "warden", text: answers[pick], at });
+    return Promise.resolve({
+      conversation: fresh,
+      reply: { text: answers[pick], topic: pick, chips: pick === "plans" ? [{ topic: "trial", label: "How does the free trial work?" }] : [], offer_ticket: ["human", "unknown"].includes(pick) && !c.ticket },
+      ticket: c.ticket,
+    });
+  }
+
+  supportTicket({ conversation, email }) {
+    const c = this.#support?.get(conversation);
+    if (!c) return Promise.reject(new ApiError(404, "That chat has expired."));
+    c.ticket ??= { reference: "RW-BCD234", status: "open", subject: c.messages.at(-2)?.text || "Question", opened_at: Math.floor(Date.now() / 1000) };
+    const text = email ? `Ticket ${c.ticket.reference} is open. The team will write back to ${email}, and the reply shows here too.` : `Ticket ${c.ticket.reference} is open. Come back to this chat for the team's reply.`;
+    c.messages.push({ from: "warden", text, at: c.ticket.opened_at });
+    return Promise.resolve({ ticket: c.ticket, reply: { text } });
+  }
+
+  #support = null;
+
   #payment(plan, method, extra) {
     const id = "pay_" + (this.payments.size + 1);
     this.payments.set(id, { id, plan, method, status: "pending", polls: 0 });

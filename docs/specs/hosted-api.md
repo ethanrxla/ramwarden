@@ -270,6 +270,7 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
 | `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |
 | `RAMWARDEN_PUBLIC_URL` | `https://api.<site domain>`: this API's URL as install lines name it |
 | `RAMWARDEN_RELEASES_URL` | `https://github.com/ethanrxla/ramwarden/releases/latest/download` |
+| `RAMWARDEN_SUPPORT_TOKEN` | unset: the site chat answers and opens tickets, but the staff ticket routes answer 503. At least 24 characters |
 
 With phase 2 on, `RAMWARDEN_API_TOKENS` becomes optional.
 `RAMWARDEN_FREE_PER_DAY` is gone with the free tier.

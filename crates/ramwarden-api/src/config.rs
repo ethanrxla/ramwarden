@@ -62,6 +62,10 @@ pub struct CloudConfig {
     pub base: Option<BaseConfig>,
     pub stripe: Option<StripeKeys>,
     pub mail: MailConfig,
+    /// SHA-256 of `RAMWARDEN_SUPPORT_TOKEN`: the team's key to the ticket
+    /// queue. Unset, the site chat still answers and opens tickets; nobody
+    /// can read them through the API until it is set.
+    pub support_token: Option<TokenHash>,
     /// This API's public URL (`RAMWARDEN_PUBLIC_URL`), named in install lines.
     pub public_url: String,
     /// `RAMWARDEN_RELEASES_URL`: where install scripts fetch release assets.
@@ -226,6 +230,13 @@ impl Config {
         if !(public_url.starts_with("https://") || public_url.starts_with("http://localhost")) || public_url.contains('\'') {
             return Err("RAMWARDEN_PUBLIC_URL must be an https:// URL".into());
         }
+        let support_token = match var("RAMWARDEN_SUPPORT_TOKEN") {
+            Some(t) if t.trim().len() < MIN_TOKEN_LEN => {
+                return Err(format!("RAMWARDEN_SUPPORT_TOKEN must be at least {MIN_TOKEN_LEN} characters"));
+            }
+            Some(t) => Some(hash_token(t.trim())),
+            None => None,
+        };
         let releases_url = var("RAMWARDEN_RELEASES_URL")
             .map(|u| u.trim_end_matches('/').to_string())
             .unwrap_or_else(|| crate::install::DEFAULT_RELEASES_URL.into());
@@ -242,6 +253,7 @@ impl Config {
             base,
             stripe,
             mail,
+            support_token,
         }))
     }
 }

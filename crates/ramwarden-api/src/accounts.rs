@@ -124,6 +124,8 @@ pub struct Cloud {
     pub public_url: String,
     /// Where release assets are downloaded from.
     pub releases_url: String,
+    /// The site wardens' chat and tickets: limits and the staff token.
+    pub support: crate::support::SupportDesk,
 }
 
 pub fn routes() -> axum::Router<Arc<AppState>> {
@@ -136,6 +138,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .merge(crate::signin::routes())
         .merge(crate::billing::routes())
         .merge(crate::install::routes())
+        .merge(crate::support::routes())
 }
 
 pub type Reply = Result<Response, Response>;

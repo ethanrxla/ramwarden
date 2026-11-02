@@ -97,6 +97,34 @@ Checkout:
 - When `checkout/config` fails or lists no method, the page says checkout
   opens soon and sells nothing.
 
+### Support chat (the corner pet)
+
+Product spec 2.6. The pet at the bottom right of each page opens a chat when
+clicked (or its "Ask me" button). It never opens itself, and its jokes are
+hidden while it is open. Code: `web/assets/support.js` and
+`crates/ramwarden-api/src/support/`.
+
+| Route | Body / auth | Answer |
+|---|---|---|
+| `POST /v1/support/history` | `{conversation?, warden}` | `{greeting, chips:[{topic,label}], live, thread?:{messages:[{from,text,at}], ticket?}}` |
+| `POST /v1/support/chat` | `{conversation?, warden, message? \| topic?}`; session cookie optional | `{conversation?` (only when a new one starts), `reply:{text, topic, chips, offer_ticket}, ticket?}`. 422 empty or over 2000 characters, 429 over 8 a minute or 80 a day per conversation |
+| `POST /v1/support/ticket` | `{conversation, email?}` | `{ticket:{reference, status, subject, opened_at}, reply:{text}}`. Once per conversation; 404 expired, 422 bad email |
+| `GET /v1/support/tickets` | session | the account's tickets |
+| `GET /v1/support/staff/tickets?status=` | `Bearer RAMWARDEN_SUPPORT_TOKEN` | the queue, newest first, with each thread, email and the topics answered |
+| `POST /v1/support/staff/tickets/{ref}/reply` | staff, `{text}` | the thread; the ticket becomes `answered` |
+| `POST /v1/support/staff/tickets/{ref}/status` | staff, `{status}` | `open`, `answered` or `closed` |
+
+- **Answers are curated, not generated.** Jev routes a message to a topic in
+  `support/kb.rs` (and says whether it needs a person); the visitor only ever
+  reads text from that file. Jev unreachable, unsure or over the daily budget:
+  a keyword router. Nothing matched: "I don't know" and a ticket offer.
+- **Signed in**, "what plan am I on" reads the account's own plan, trial or
+  renewal date and device count. Nothing else, and nothing changes.
+- **Storage**: MongoDB `support_conversations`, keyed by the SHA-256 of a
+  `rwsc_` secret the page keeps in `localStorage`. Chats expire after 30 days
+  (TTL index), tickets a year after their last message, 60 messages each.
+- The site never names the model, provider or engines (test in `kb.rs`).
+
 ## Policy
 
 - **Two tabs, one skeleton.** The table above is the order on both pages;

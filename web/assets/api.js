@@ -120,6 +120,24 @@ export class Api {
   payment(id) {
     return this.request("GET", `/v1/checkout/payments/${encodeURIComponent(id)}`);
   }
+
+  // The site wardens' support chat (docs/specs/website.md, "Support chat").
+  // `conversation` is the secret the first answer hands back; the page keeps
+  // it in localStorage so the thread, and any reply from the team, is there
+  // next visit.
+  supportHistory({ conversation, warden }) {
+    return this.request("POST", "/v1/support/history", { conversation: conversation ?? null, warden });
+  }
+  // Either `message` (typed) or `topic` (a chip's topic id).
+  supportChat({ conversation, warden, message, topic }) {
+    return this.request("POST", "/v1/support/chat", { conversation: conversation ?? null, warden, message: message ?? null, topic: topic ?? null });
+  }
+  supportTicket({ conversation, email }) {
+    return this.request("POST", "/v1/support/ticket", { conversation, email: email || null });
+  }
+  supportTickets() {
+    return this.request("GET", "/v1/support/tickets");
+  }
 }
 
 // The server's alphabet (`ramwarden-cloud` `user_code()`): consonants only, as

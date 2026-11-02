@@ -245,6 +245,38 @@ async function run() {
     await p.waitForSelector("text=No devices yet");
   });
 
+  t("the corner pet answers questions and opens a ticket", async () => {
+    const p = await page();
+    await p.goto(`${base}/index.html?mock=1`);
+    await p.click(".pet-ask");
+    await p.waitForSelector("#warden-chat:not([hidden]) >> text=I'm your warden");
+    assert.equal(await p.getAttribute(".pet-ask", "aria-expanded"), "true");
+    // A typed question gets the price; the pet's jokes stay out of the way.
+    await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
+    await p.press('#warden-chat input[name="message"]', "Enter");
+    await p.waitForSelector("#warden-chat >> text=Pro is $5 every 2 months");
+    assert.equal(await p.isVisible("[data-say]"), false);
+    assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");
+    // A problem offers a ticket.
+    await p.fill('#warden-chat input[name="message"]', "my download is not working");
+    await p.click('#warden-chat .chat-form button');
+    await p.waitForSelector(".chat-ticket:not([hidden])");
+    await p.fill('.chat-ticket input[type="email"]', "visitor@example.com");
+    await p.click(".chat-ticket button");
+    await p.waitForSelector("#warden-chat >> text=Ticket RW-BCD234 is open");
+    // The conversation key is remembered, and Escape closes the panel.
+    assert.match(await p.evaluate(() => localStorage.getItem("rw.support.ram")), /^rwsc_/);
+    await p.keyboard.press("Escape");
+    assert.equal(await p.isVisible("#warden-chat"), false);
+    // Offline, the chat says so instead of failing silently.
+    const q = await page();
+    await q.route("https://api.ramwarden.app/**", (r) => r.abort());
+    await q.goto(`${base}/threat.html`);
+    await q.click("[data-pet] img");
+    await q.waitForSelector("#warden-chat >> text=can't reach the RamWarden server");
+    assert.deepEqual(p.errors, []);
+  });
+
   t("without the server, sign-in explains that it could not be reached", async () => {
     const p = await page(fakeMetaMask);
     await p.route("https://api.ramwarden.app/**", (r) => r.abort());

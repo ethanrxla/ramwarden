@@ -112,6 +112,12 @@ async fn run() -> Result<(), String> {
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),
                 public_url: cc.public_url.clone(),
                 releases_url: cc.releases_url.clone(),
+                support: {
+                    if cc.support_token.is_none() {
+                        tracing::info!("support staff routes off (RAMWARDEN_SUPPORT_TOKEN not set); the site chat still answers");
+                    }
+                    ramwarden_api::support::SupportDesk::new(cc.support_token)
+                },
             })
         }
     };

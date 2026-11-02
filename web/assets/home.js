@@ -1,10 +1,12 @@
 // Both warden tabs: the rotating catchline, the hero clip, the install box
-// and pricing (shared components), and the pets.
+// and pricing (shared components), and the pets, whose corner one is also
+// the support chat.
 
 import { makeApi, mockBanner } from "./common.js";
 import { InstallBox, detectOs } from "./install.js";
 import { PetColor, PetStage, WardenPet, loadLines } from "./pets.js";
 import { Pricing } from "./pricing.js";
+import { SupportChat } from "./support.js";
 
 export { detectOs };
 
@@ -86,7 +88,11 @@ async function main() {
   const stage = document.querySelector("[data-stage]");
   if (stage) new PetStage(stage, lines, color).start();
   const pet = document.querySelector("[data-pet]");
-  if (pet) new WardenPet(pet, lines).start();
+  if (pet) {
+    new WardenPet(pet, lines).start();
+    // The same pet is the chat launcher: sales and support (spec 2.6).
+    new SupportChat(pet, { api, warden }).start();
+  }
 }
 
 if (typeof document !== "undefined") main();

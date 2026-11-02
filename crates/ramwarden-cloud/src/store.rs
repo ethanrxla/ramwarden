@@ -93,7 +93,10 @@ impl From<mongodb::error::Error> for StoreError {
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 #[async_trait]
-pub trait Store: Send + Sync {
+/// Everything the hosted API stores. The site wardens' conversations are a
+/// trait of their own ([`crate::support::SupportStore`]) so this one stays about
+/// accounts and money.
+pub trait Store: crate::support::SupportStore + Send + Sync {
     // --- device sign-in (RFC 8628)
     /// A new attempt. Returns the raw device code, for the daemon only.
     async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)>;
@@ -168,9 +171,14 @@ struct Inner {
 #[derive(Default)]
 pub struct MemoryStore {
     inner: Mutex<Inner>,
+    support: crate::support::MemorySupport,
 }
 
 impl MemoryStore {
+    pub(crate) fn support(&self) -> std::sync::MutexGuard<'_, HashMap<Id, crate::support::Conversation>> {
+        self.support.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -435,6 +443,7 @@ pub mod contract {
         accounts_and_billing(s).await;
         devices_and_sessions(s).await;
         challenges_and_payments(s).await;
+        crate::support::contract::run(s).await;
     }
 
     async fn device_codes(s: &dyn Store) {

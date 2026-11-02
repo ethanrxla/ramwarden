@@ -37,11 +37,14 @@ pub mod mail;
 pub mod routes;
 pub mod signin;
 pub mod stripe;
+pub mod support;
 pub mod upstream;
 pub mod wallet;
 
 #[cfg(test)]
 mod flows;
+#[cfg(test)]
+mod support_flows;
 
 pub use config::Config;
 pub use routes::{AppState, router};

@@ -85,6 +85,15 @@ impl Limits {
         Ok(per_day - u.in_day)
     }
 
+    /// Whether today's upstream budget has room. For callers that have
+    /// their own per-visitor limits but share the server's spend, like the
+    /// site wardens' chat.
+    pub fn budget_left(&self, now: u64) -> bool {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        roll_day(&mut g, now);
+        g.input_tokens < self.daily_input_tokens
+    }
+
     /// Count upstream input tokens against today's budget.
     pub fn spend(&self, input_tokens: u64, now: u64) {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());

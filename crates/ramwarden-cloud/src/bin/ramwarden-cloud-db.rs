@@ -52,13 +52,14 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
                 model::EMAIL_CODES,
                 model::PAYMENTS,
                 model::USAGE_DAILY,
+                ramwarden_cloud::support::SUPPORT_CONVERSATIONS,
             ] {
                 let n = db
                     .database()
                     .collection::<mongodb::bson::Document>(name)
                     .estimated_document_count()
                     .await?;
-                println!("{name:16} {n}");
+                println!("{name:22} {n}");
             }
         }
         other => return Err(format!("unknown command {other:?}; use ping, init or stats").into()),
