@@ -234,8 +234,8 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     let trial_end = sub["trial_end"].as_u64();
 
     let mut u = BillingUpdate {
-        tier: Some(if plan.tier == "pro" { Tier::Pro } else { Tier::Ram }),
-        interval: Some(if plan.interval == "year" { Interval::Year } else { Interval::Month }),
+        tier: None,
+        interval: None,
         billing: Some(Billing { method: BillingMethod::Card, reference: sub["id"].as_str().unwrap_or("").to_string() }),
         trial_used: trial_end.map(|_| true),
         cancelled: Some(status == "canceled" || sub["cancel_at_period_end"].as_bool() == Some(true)),
@@ -245,6 +245,9 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     // past-due or incomplete one already shows the next period's end, which
     // nobody has paid for. Grace covers past-due.
     if matches!(status, "trialing" | "active") {
+        // A failed upgrade must preserve the previously paid tier.
+        u.tier = Some(if plan.tier == "pro" { Tier::Pro } else { Tier::Ram });
+        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::Month });
         u.paid_until = period_end.max(trial_end);
     }
     if status == "trialing" {
@@ -303,7 +306,12 @@ pub(crate) mod tests {
         assert_eq!(confirmed_payment(&e), None, "not in good standing");
         let (_, u) = update_from_event(&e, &plans).unwrap();
         assert_eq!(u.paid_until, None, "an unpaid period is not service");
-        assert_eq!(u.tier, Some(Tier::Ram));
+        assert_eq!(u.tier, None, "an unpaid plan change must preserve the paid tier");
+        for status in ["incomplete", "past_due", "unpaid"] {
+            let e = subscription_event("customer.subscription.updated", "a1", 2, status, 9000, None);
+            let (_, u) = update_from_event(&e, &plans).unwrap();
+            assert_eq!((u.tier, u.interval, u.paid_until), (None, None, None), "{status} must not unlock Pro");
+        }
 
         let e = subscription_event("customer.subscription.deleted", "a1", 1, "canceled", 9000, None);
         assert_eq!(update_from_event(&e, &plans).unwrap().1.cancelled, Some(true));
