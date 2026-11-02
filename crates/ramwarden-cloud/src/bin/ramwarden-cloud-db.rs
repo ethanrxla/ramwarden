@@ -55,6 +55,14 @@ async fn run(cmd: &str, rest: &[String]) -> Result<(), Box<dyn std::error::Error
             db.ensure_decision_indexes(decisions::DEFAULT_TEXT_DIMS).await?;
             println!("ok: indexes ready in {:?}", cfg.database);
         }
+        "support-indexes" => {
+            db.ensure_support_indexes().await?;
+            use futures::TryStreamExt;
+            let indexes: Vec<_> = db.database().collection::<mongodb::bson::Document>(
+                ramwarden_cloud::support::SUPPORT_CONVERSATIONS).list_indexes().await?.try_collect().await?;
+            for index in indexes { println!("{:?}: {:?}",index.options,index.keys); }
+            println!("ok: support indexes verified in {:?}",cfg.database);
+        }
         "stats" => {
             for name in [
                 model::ACCOUNTS,
@@ -65,6 +73,7 @@ async fn run(cmd: &str, rest: &[String]) -> Result<(), Box<dyn std::error::Error
                 model::EMAIL_CODES,
                 model::PAYMENTS,
                 model::USAGE_DAILY,
+                ramwarden_cloud::support::SUPPORT_CONVERSATIONS,
                 decisions::DECISIONS,
             ] {
                 let n = db
@@ -72,7 +81,7 @@ async fn run(cmd: &str, rest: &[String]) -> Result<(), Box<dyn std::error::Error
                     .collection::<mongodb::bson::Document>(name)
                     .estimated_document_count()
                     .await?;
-                println!("{name:16} {n}");
+                println!("{name:22} {n}");
             }
         }
         "decisions" => decisions_cmd(&db, rest).await?,

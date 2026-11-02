@@ -26,15 +26,14 @@ Both warden tabs share one skeleton, in this order, with the same components:
 
 | # | Section | RamWarden | ThreatWarden |
 | --- | --- | --- | --- |
-| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Media: the looping ram clip (`assets/world/ram-hero.mp4`) | Same, "Catch threats. Keep your peace.". Media: the radar with the cyborg ram |
+| 1 | Hero | Rotating italic catchline, "Free your RAM. Keep your peace.", one line, **Start free trial** and **How it works**. Graphic: the radar with RamWarden's own pixel ram (crimson sweep) | Same, "Catch threats. Keep your peace.". Graphic: the radar with the cyborg ram |
 | 2 | Install (`#get`) | `assets/install.js`, the same on both | same |
-| 3 | Scroll world | The promo film scrubbed by scroll | The radar scene, threats caught as you scroll |
-| 4 | Pet | The ram, talking, with the color picker | The cyborg ram |
+| 3 | Scroll world | The promo film scrubbed by scroll | The green clip (`assets/world/threat-scrub.mp4`) scrubbed by scroll |
+| 4 | Pet | The ram, talking, with the app's look controls | The cyborg ram, plus a visor color |
 | 5 | How it works (`#how`) | Measures, Triggers, Protects, Decides; then three questions | Host, Files, Network, Traffic; then Acts, Protected, Plain words |
 | 6 | Pricing (`#pricing`) | `assets/pricing.js`, the same on both | same |
 | 7 | FAQ (`#faq`) | Short | Short |
-| 8 | Try it (`#demo`) | The simulated memory demo | The four status levels |
-| 9 | Footer | Same | Same |
+| 8 | Footer | Same | Same |
 
 ### API routes the site calls
 
@@ -49,13 +48,13 @@ never sees the token.
 | --- | --- | --- |
 | `GET /v1/device/lookup` | `?user_code=XXXX-XXXX` | `{status, device_name, platform, expires_at}`; 404 when unknown, expired or used |
 | `POST /v1/auth/challenge` | `{chain: "evm"\|"solana", address, user_code: string\|null}` | `{message, expires_at}` |
-| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{account, linked_device}` and the cookie; 409 when the account has 5 devices |
+| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{account, linked_device}` and the cookie; 409 at the account's device limit |
 | `POST /v1/auth/email/start` | `{email, user_code?}` | `{sent, expires_at}`; 429 within a minute; 503 when email sign-in is off |
 | `POST /v1/auth/email/verify` | `{email, code}` | as `verify` |
 | `POST /v1/auth/logout` | *session* | `{ok}`, cookie cleared |
 | `GET /v1/account` | *session* | `account` (below) |
 | `PUT /v1/account/prefs` | *session*, any object up to 4 KB | `{prefs}` |
-| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4); 402 without a live plan, 409 at 5 devices. Installers are plain release downloads that sign in through the device page |
+| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4); 402 without a live plan, 409 at the device limit. Installers are plain release downloads that sign in through the device page |
 | `DELETE /v1/account/devices/{id}` | *session* | `{ok: true}` |
 | `GET /v1/checkout/config` | | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], base: {chain_id, network, contract, usdc}\|null, solana: null, stripe: bool, stripe_test: bool}` |
 | `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, trial, approval_usd, transactions: [{to, data, value}]}`; 409 while subscribed |
@@ -69,7 +68,12 @@ trial_available, billing: {method}|null, entitlement_until, entitlements,
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`.
 
-Plans and pricing follow `contracts/plans.json`; see `docs/specs/hosted-api.md`.
+Plans are the contract's ids: 1 Plus every 2 months ($4), 2 Pro every 2
+months ($5), 3 Plus annual ($20), 4 Pro annual ($24). The 2-month plans
+charge every 60 days (interval `2mo`). Device limits: Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
+14-day trial; Pro is charged from day one (`trial_days: 0`). Both renew until
+cancelled. RamWarden Lite has no plan: a signed-in account with nothing
+bought, on 1 device, with no AI.
 
 Sign-in:
 
@@ -97,6 +101,49 @@ Checkout:
 - When `checkout/config` fails or lists no method, the page says checkout
   opens soon and sells nothing.
 
+### Support chat (the corner pet)
+
+Product spec 2.6. The pet at the bottom right of each page opens a chat when
+clicked (or its "Ask me" button). It never opens itself, and its jokes are
+hidden while it is open. Code: `web/assets/support.js` and
+`crates/ramwarden-api/src/support/`.
+
+| Route | Body / auth | Answer |
+|---|---|---|
+| `POST /v1/support/history` | `{conversation?, warden}` | `{greeting, chips:[{topic,label}], live, thread?:{messages:[{from,text,at}], ticket?}}` |
+| `POST /v1/support/chat` | `{conversation?, warden, message? \| topic?}`; session cookie optional | `{conversation?` (only when a new one starts), `reply:{text, topic, chips, offer_ticket}, ticket?}`. 422 empty or over 2000 characters, 429 over 8 a minute or 80 a day per conversation |
+| `POST /v1/support/ticket` | `{conversation, email?}` | `{ticket:{reference, status, subject, opened_at}, reply:{text}}`. Once per conversation; 404 expired, 422 bad email |
+| `GET /v1/support/tickets` | session | the account's tickets |
+| `GET /v1/support/staff/tickets?status=` | `Bearer RAMWARDEN_SUPPORT_TOKEN` | the queue, newest first, with each thread, email and the topics answered |
+| `POST /v1/support/staff/tickets/{ref}/reply` | staff, `{text}` | the thread; the ticket becomes `answered` |
+| `POST /v1/support/staff/tickets/{ref}/status` | staff, `{status}` | `open`, `answered` or `closed` |
+
+- **Answers are curated, not generated.** Jev routes a message to a topic in
+  `support/kb.rs` (and says whether it needs a person); the visitor only ever
+  reads text from that file. Jev unreachable, unsure or over the daily budget:
+  a keyword router. Nothing matched: "I don't know" and a ticket offer.
+- **Signed in**, "what plan am I on" reads the account's own plan, trial or
+  renewal date and device count. Nothing else, and nothing changes.
+- **Storage**: MongoDB `support_conversations`, keyed by the SHA-256 of a
+  `rwsc_` secret the page keeps in `localStorage`. Chats expire after 30 days
+  (TTL index), tickets a year after their last message, 60 messages each.
+- The site never names the model, provider or engines (test in `kb.rs`).
+
+### Production and personal testing models
+
+`RAMWARDEN_API_PROFILE=production` requires the host's `OPENAI_API_KEY` and
+uses `OPENAI_MODEL_ID=gpt-6-luna`. Sales topic routing goes directly to this
+model; the curated answer bank remains the source of product claims.
+Hosted decision analysis keeps its primary typed decision service and uses
+Luna if that service fails. Model outputs must match every requested question,
+valid choice labels and probabilities before the API accepts them.
+
+The default `development` profile does not enable OpenAI just because a key
+exists. Personal desktop chat and analysis retain the existing Nemotron
+configuration. This production setting does not alter local model settings
+or cloud consent. See `packaging/ramwarden-api.production.env.example` for
+host-only settings. Production credentials never belong in website assets.
+
 ## Policy
 
 - **Two tabs, one skeleton.** The table above is the order on both pages;
@@ -106,25 +153,42 @@ Checkout:
   and cards. Pages never name the engines or providers behind a warden and
   never say "our server"; attributions live on `notices.html`. No em dashes
   anywhere under `web/`. A unit test enforces both.
-- **No free tier on the site.** The product is paid with a 14-day trial.
-  The open-source repo is the free option and appears as one line under the
-  pricing cards and a small card beside the install box, never as a tier.
-- **The install box knows who you are.** Signed out: OS tabs and Start free
-  trial, no command. Trial or active: a personal one-liner and installer
+- **Three cards: Lite, Plus, Pro** (changed 2026-11-01; was "no free tier").
+  Lite (free) is the memory algorithm with no AI and no warden pet, on 1 device, with a free account
+  (email or wallet, no card), because device limits are counted per account.
+  Plus adds the AI and the warden pet on 3 computers and is the only plan with a trial. Pro adds
+  ThreatWarden and has no trial. Bullets say what the visitor gets and promise
+  only what ships; engines are still never named. The open-source repo stays
+  as one line under the cards and a small card beside the install box.
+- **Upgrades are a few clicks.** The account page offers Upgrade to Plus on
+  Lite and Upgrade to Pro on Plus. Upgrading calls the normal checkout with the
+  Pro plan while Plus is live: Base answers `{upgrade: true, payer,
+  transactions}`, sent from the paying wallet; card answers `{upgrade: true,
+  url: null}`, changed in place and prorated, so the page follows the payment.
+  The limits themselves (Lite: no AI, 1 device) are enforced by the server and
+  the signed entitlement, never by the page.
+- **The install box knows who you are.** Signed out: OS tabs and Choose a
+  plan, no command. Trial or active: a personal one-liner and installer
   download from `POST /v1/install/link`. Lapsed or cancelled: Renew. No
   command from `raw.githubusercontent.com` appears on the site.
-- **Scroll drives the world.** `assets/world.js` scrubs the RamWarden film by
+- **Scroll drives the world.** `assets/world.js` scrubs each tab's clip by
   scroll position (fetched as a Blob, coalesced seeks, a lighter phone
-  encode) and sets `--p` and `[data-at]` states for the ThreatWarden scene.
+  encode with a keyframe every 4 frames).
   Reduced motion shows the final state and all copy.
-- **The pets talk, a little.** The corner pet says a line per section and,
-  now and then, a joke: one every 45 to 90 s, at most 6 a visit, never while
-  typing, and one click mutes it (remembered). Lines live in
+- **The pets talk, a little, and are never annoying.** The corner pet says
+  each section's line once a visit and, now and then, a joke: one every 2.5 to
+  5 minutes, at most 3 a visit, never while typing, and one click mutes it
+  (remembered). The stage pet's lines change every 9 s while it is on screen. Lines live in
   `assets/pets/<warden>-lines.json`. Comments may react to the page (the
   demo slider), never to the visitor's machine, which the site cannot see.
-- **Warden color.** Six presets and a hue slider recolor the sprite by
-  palette swap, keeping outline and eyes. Kept in `localStorage`; signed in,
-  also saved to the account's `prefs`.
+- **Warden look.** The Mac app's Colors pane on the page: wool, horns,
+  hooves and eyes color wells, the pupil style (slits, round, none), Reset
+  eyes and Original, plus six wool presets (ThreatWarden adds a visor
+  color). `assets/sprite.js` redraws the sprite from the app's pixel grid with
+  the app's tint factors, so each warden keeps its own shape (RamWarden never
+  gets the cyborg's antenna or plates). The original look draws exactly the
+  shipped SVG. Kept in `localStorage` (`rw.pet.look.<warden>`); signed in,
+  also saved to `prefs.wardens.<warden>.look`.
 
 - **No third-party code on pages that sign.** No wallet SDK, analytics or
   CDN. Each page carries a CSP of `script-src 'self'`; its `connect-src`
@@ -144,12 +208,12 @@ Checkout:
 
 - `node --test web/tests/*.test.mjs`: user-code normalisation against the
   server's alphabet, base58, hex encoding, wallet error wording, OS detection,
-  the API client's session handling, pet recoloring, pricing math, and the
+  the API client's session handling, the pet's look, pricing math, and the
   copy rules (no em dashes, no engine or provider names, no "our server").
 - `node web/tests/e2e.cjs`: Chromium against the mock with injected fake
   MetaMask (EIP-6963) and Phantom. Both tabs have the same section order;
   the install box in signed-out, trial and lapsed states; the pricing toggle;
-  pet jokes, mute and color. Device link signs a message bound to the
+  pet jokes, mute and look controls. Device link signs a message bound to the
   code; bad and expired codes re-prompt; a rejected signature offers a retry;
   sign in with Phantom and start a trial on Base with MetaMask (chain switch,
   capped approve then startTrial, install line appears); revoke; unreachable server.

@@ -270,6 +270,7 @@ struct AssistantView: View {
     var dismiss: () -> Void
     var settings: () -> Void
     @State private var message = ""
+    @FocusState private var inputFocused: Bool
     var body: some View {
         VStack(alignment:.leading,spacing:8) {
             HStack(spacing:8) {
@@ -320,18 +321,19 @@ struct AssistantView: View {
             }
             if model.thinking { ProgressView("Thinking…").controlSize(.small) }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
-            if !model.tier.isEmpty { Text(model.tier == "facts" ? "Observed facts · local checks" : "AI interpretation · \(model.tier) provider").font(.caption).foregroundStyle(.secondary) }
             if model.proposedToken != nil {
                 Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
                     .help(model.proposedLabel)
             }
             HStack {
-                TextField("Ask your ram…",text:$message).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
+                TextField("Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
                 Button(action:send) { Image(systemName:"arrow.up.circle.fill").font(.system(size:19)) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(model.thinking || message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             }
         }.padding(12).frame(width:288,height:model.turns.isEmpty ? 64 : 224)
             .modifier(ChatGlass())
             .padding(8)
+            .onAppear { inputFocused = true }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { _ in inputFocused = true }
             .onExitCommand(perform:dismiss)
     }
     func send() { model.send(message); message = "" }
@@ -367,7 +369,7 @@ struct ColorsView: View {
 final class PetPanel: NSPanel { override var canBecomeKey: Bool { false } }
 final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeMain: Bool { true }
 }
 final class PetHost: NSHostingView<PixelRam> {
     var onClick: (() -> Void)?
@@ -454,8 +456,9 @@ final class Companion: NSObject, NSWindowDelegate {
         model.speaking = false
         if pet == nil { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet(); model.companionVisible = true }
         if chat == nil {
-            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless],backing:.buffered,defer:false)
             w.title = "Ram chat"; w.isReleasedWhenClosed = false
+            w.isFloatingPanel = true; w.becomesKeyOnlyIfNeeded = false
             w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
             w.level = .floating; w.hidesOnDeactivate = false
             w.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
@@ -464,7 +467,9 @@ final class Companion: NSObject, NSWindowDelegate {
         }
         resizeChat(hasTurns:!model.turns.isEmpty)
         positionChat(movePet:true)
+        NSApp.activate(ignoringOtherApps:true)
         chat?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("WardenChatOpened"), object: nil) }
     }
     func windowDidMove(_ notification: Notification) {
         guard notification.object as? NSWindow === pet else { return }

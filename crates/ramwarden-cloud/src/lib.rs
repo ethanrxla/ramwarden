@@ -1,5 +1,5 @@
 //! RamWarden's hosted service storage: accounts, sign-ins, devices,
-//! subscriptions and payments.
+//! subscriptions, payments, and the site wardens' support conversations.
 //!
 //! The HTTP API (`ramwarden-api`) sees only the [`store::Store`] trait.
 //! [`mongo::MongoStore`] implements it on MongoDB Atlas, enforcing each money
@@ -15,6 +15,7 @@ pub mod model;
 pub mod mongo;
 pub mod secret;
 pub mod store;
+pub mod support;
 
 pub use config::CloudConfig;
 pub use mongo::MongoStore;

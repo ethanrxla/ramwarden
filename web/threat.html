@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.com; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>ThreatWarden: catch threats, keep your peace</title>
   <meta name="description" content="ThreatWarden watches your computer for threats, removes the real ones, and explains every call in plain words. Included with RamWarden Pro.">
@@ -11,6 +11,7 @@
   <meta property="og:description" content="Catch threats. Keep your peace.">
   <link rel="icon" href="assets/pets/threat.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="assets/support.css">
   <script type="module" src="assets/home.js"></script>
   <script type="module" src="assets/world.js"></script>
 </head>
@@ -27,7 +28,7 @@
         <a class="hide-sm" href="#pricing">Pricing</a>
         <a class="hide-sm" href="#faq">FAQ</a>
         <a href="account.html">Account</a>
-        <a class="button small" href="#pricing">Start free trial</a>
+        <a class="button small" href="#pricing">Get Pro</a>
       </nav>
     </div>
   </header>
@@ -42,8 +43,9 @@
           <h1>Catch threats.<br><em>Keep your peace.</em></h1>
           <p class="lede">Watches this computer for threats and removes the real ones. Explains every call in plain words.</p>
           <div class="actions">
-            <a class="button" href="#pricing">Start free trial</a>
+            <a class="button" href="#pricing">Get Pro</a>
             <a class="button secondary" href="#how">How it works</a>
+            <a class="button secondary" href="https://github.com/ethanrxla/ramwarden">View on GitHub</a>
           </div>
         </div>
         <div class="hero-media radar" aria-hidden="true">
@@ -64,27 +66,22 @@
       </div>
     </section>
 
-    <!-- 3. Scroll world: the same component, a scene instead of a film -->
-    <section class="world world-scene" id="world" data-scrub data-section="world" aria-label="ThreatWarden at work, driven by scrolling">
+    <!-- 3. Scroll world -->
+    <section class="world world-threat" id="world" data-scrub data-section="world" aria-label="ThreatWarden at work, driven by scrolling">
       <div class="world-sticky">
-        <div class="scene" aria-hidden="true">
-          <div class="scene-radar"></div>
-          <span class="threat t1" data-at="0.18"><b data-at="0.5"></b></span>
-          <span class="threat t2" data-at="0.28"><b data-at="0.58"></b></span>
-          <span class="threat t3" data-at="0.36"><b data-at="0.66"></b></span>
-          <img class="scene-pet" data-sprite="threat" src="assets/pets/threat.svg" alt="">
-        </div>
+        <video class="world-video" muted playsinline preload="none" poster="assets/world/threat-poster.jpg"
+               data-src="assets/world/threat-scrub.mp4" data-src-mobile="assets/world/threat-scrub-mobile.mp4" aria-hidden="true"></video>
         <div class="world-shade"></div>
         <div class="world-copy wrap">
           <div class="beat" data-from="0" data-to="0.38">
             <p class="world-line">Something new just landed<br>in <em>Downloads.</em></p>
           </div>
           <div class="beat" data-from="0.38" data-to="0.72">
-            <p class="world-line">Your warden checks it. If it's real,<br>it's <em>quarantined, and you can undo it.</em></p>
+            <p class="world-line">Your warden checks it.<br>You see <em>what needs a closer look.</em></p>
           </div>
           <div class="beat" data-from="0.72" data-to="1.01">
             <p class="world-line">Catch threats. <em>Keep your peace.</em></p>
-            <div class="actions"><a class="button" href="#pricing">Start free trial</a></div>
+            <div class="actions"><a class="button" href="#pricing">Get Pro</a></div>
           </div>
         </div>
         <div class="world-progress"><i data-progress></i></div>
@@ -101,12 +98,8 @@
         </div>
         <div>
           <h2>Meet your security warden.</h2>
-          <p class="sub">It explains every call, cracks the odd joke, and wears any color you like.</p>
-          <div class="colors" data-colors>
-            <div class="swatches" data-swatches></div>
-            <label class="hue">Any color <input type="range" min="0" max="359" value="265" aria-label="Warden hue"></label>
-            <button type="button" class="button secondary small" data-reset>Original</button>
-          </div>
+          <p class="sub">It explains every call, cracks the odd joke, and dresses the way you like: wool, horns, eyes and visor.</p>
+          <div class="colors" data-colors></div>
         </div>
       </div>
     </section>
@@ -135,7 +128,7 @@
     <section class="block" id="pricing" data-section="pricing">
       <div class="wrap">
         <h2>Two intelligent desktop companions.</h2>
-        <p class="sub">Performance and security, starting at $24 a year.</p>
+        <p class="sub">Performance and security, starting at $5 every 2 months or $24 a year.</p>
         <div class="pricing" data-pricing></div>
       </div>
     </section>
@@ -147,29 +140,14 @@
         <details><summary>Does it replace my antivirus?</summary>
           <p>No. It works alongside it and never turns your existing protection off.</p></details>
         <details><summary>Will it delete my files?</summary>
-          <p>Only confirmed threats are quarantined, and every quarantine can be undone. Anything you allow is left alone.</p></details>
+          <p>No. Current detection is read-only. Quarantine and blocking controls are planned.</p></details>
         <details><summary>Can I allow something it flags?</summary>
-          <p>Yes. One tap on any finding allows that file, folder, app or site.</p></details>
+          <p>You can review findings. Per-finding allow controls are planned.</p></details>
         <details><summary>How do I get it?</summary>
-          <p>It comes with RamWarden Pro, on the same 5 devices, with a 14-day free trial.</p></details>
+          <p>It comes with RamWarden Pro on up to 5 computers. Pro is paid from day one; the 14-day trial is for Plus.</p></details>
       </div>
     </section>
 
-    <!-- 8. Try it -->
-    <section class="block" id="demo" data-section="demo">
-      <div class="wrap demo-layout">
-        <div>
-          <h2>One status, in plain words.</h2>
-          <p class="sub">Every finding rolls up into one level and what to do next.</p>
-        </div>
-        <div class="levels">
-          <div class="clear"><strong>Clear</strong><span>Nothing needs you.</span></div>
-          <div class="watch"><strong>Watch</strong><span>Worth a look.</span></div>
-          <div class="alert"><strong>Alert</strong><span>Act now. Here's how.</span></div>
-          <div class="off"><strong>Off</strong><span>Not set up yet.</span></div>
-        </div>
-      </div>
-    </section>
   </main>
 
   <aside class="pet" data-pet aria-live="polite">
@@ -180,7 +158,7 @@
 
   <footer>
     <div class="wrap">
-      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $24 a year.</span>
+      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $5 every 2 months or $24 a year.</span>
       <span><a href="privacy.html">Privacy</a> · <a href="notices.html">Open-source notices</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
     </div>
   </footer>

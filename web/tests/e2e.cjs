@@ -68,13 +68,20 @@ function fakePhantom({ reject = false } = {}) {
 async function run() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined });
   const failures = [];
   const tests = [];
   const t = (name, fn) => tests.push({ name, fn });
 
   async function page(init, arg) {
     const ctx = await browser.newContext();
+    // Fixture tests never depend on a public API being reachable.
+    await ctx.route("https://api.ramwarden.com/**", (route) => route.abort());
+    // These installer assertions deliberately exercise Linux, on every test host.
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", {get: () => "Linux x86_64"});
+      Object.defineProperty(navigator, "userAgentData", {get: () => ({platform: "Linux"})});
+    });
     if (init) await ctx.addInitScript(init, arg);
     const p = await ctx.newPage();
     p.errors = [];
@@ -90,17 +97,23 @@ async function run() {
     await p.waitForSelector('[data-install][data-state="signed-out"]');
     assert.deepEqual(await p.$$eval("[data-os-panel]", (ps) => ps.filter((x) => x.offsetParent !== null).map((x) => x.dataset.osPanel)), ["linux"]);
     assert.equal(await p.$$eval("[data-install] .cmd", (c) => c.length), 0);
-    assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Start free trial'));
+    assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Choose a plan'));
     // Pricing: monthly by default, the toggle switches prices and plan links.
-    assert.equal(await p.textContent('.tier-ram [data-price="month"]'), "$4 / month");
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.equal(await p.textContent('.tier-ram [data-price="2mo"]'), "$4 / 2 months");
+    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
     assert.match(await p.getAttribute('[data-buy="pro"]', "href"), /plan=2$/);
+    // Three cards: Free signs up, Plus has the trial, Pro has none.
+    assert.equal(await p.$$eval(".price-cards .price", (c) => c.map((x) => x.dataset.tier).join()), "lite,ram,pro");
+    assert.equal((await p.textContent(".tier-lite h3")).trim(), "RamWarden Lite");
+    assert.equal((await p.textContent('[data-buy="ram"]')).trim(), "Start 14-day free trial");
+    assert.equal((await p.textContent('[data-buy="pro"]')).trim(), "Get Pro");
     await p.click('[data-interval="year"]');
     assert.ok(await p.isVisible('.tier-pro >> text=$24'));
     assert.match(await p.getAttribute('[data-buy="ram"]', "href"), /plan=3$/);
     assert.ok(await p.isVisible("text=open source on GitHub"));
-    // The hero clip loops.
-    await p.waitForFunction(() => !document.querySelector("[data-hero-clip]").paused);
+    // The hero is the radar with RamWarden's own ram; the demo is in How it works.
+    assert.ok(await p.isVisible('#top .radar img[data-sprite="ram"]'));
+    assert.ok(await p.isVisible("#how [data-memory-lab]"));
     // The film is scrubbed by scroll.
     await p.waitForFunction(() => document.querySelector("[data-scrub]").classList.contains("live"));
     await p.evaluate(() => { const w = document.querySelector("[data-scrub]"); scrollTo(0, w.offsetTop + (w.offsetHeight - innerHeight) * 0.6); });
@@ -108,21 +121,27 @@ async function run() {
     assert.ok(await p.isVisible(".world .beat.on .world-line"), "second beat shows mid-film");
     // The pet speaks for the section in view, jokes on cue, and mutes.
     await p.evaluate(() => document.getElementById("pricing").scrollIntoView());
-    await p.waitForFunction(() => /Two weeks free/.test(document.querySelector("[data-say]").textContent));
+    await p.waitForFunction(() => /Free to start/.test(document.querySelector("[data-say]").textContent));
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), true);
     await p.click("[data-mute]");
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), false);
-    // Color: a swatch recolors every ram sprite and is remembered.
-    await p.click('.swatch[data-hue="205"]');
-    await p.waitForFunction(() => [...document.querySelectorAll('img[data-sprite="ram"]')].every((i) => i.src.startsWith("data:image/svg+xml")));
+    // Look: the app's controls are all there; a swatch and the pupil picker
+    // redraw every ram sprite, and the look is remembered.
+    for (const part of ["wool", "horns", "hooves", "eyes", "pupil"]) assert.ok(await p.isVisible(`#meet [data-part="${part}"]`), part);
+    assert.ok(await p.isVisible("#meet [data-reset-eyes]"));
+    await p.click('.swatch[data-wool="#3fa2f2"]');
+    await p.selectOption('#meet [data-part="pupil"]', "round");
+    await p.waitForFunction(() => [...document.querySelectorAll('img[data-sprite="ram"]')].every((i) => i.src.startsWith("data:image/svg+xml") && i.src.includes("3fa2f2")));
+    assert.equal(await p.inputValue('#meet [data-part="wool"]'), "#3fa2f2");
     await p.reload();
-    await p.waitForFunction(() => document.querySelector('[data-pet] img').src.startsWith("data:image/svg+xml"));
+    await p.waitForFunction(() => document.querySelector('[data-pet] img').src.includes("3fa2f2"));
+    assert.equal(await p.inputValue('#meet [data-part="pupil"]'), "round");
     assert.equal(await p.isVisible("[data-say]"), false, "mute is remembered");
     assert.deepEqual(p.errors, []);
   });
 
-  t("ThreatWarden tab: same skeleton, own theme, scene reacts to scroll", async () => {
+  t("ThreatWarden tab: same skeleton, own theme, green clip scrubbed by scroll", async () => {
     const p = await page();
     await p.goto(`${base}/threat.html`);
     assert.equal(await p.getAttribute('.warden-tabs a[aria-current="page"]', "href"), "threat.html");
@@ -131,9 +150,13 @@ async function run() {
     assert.match(await p.textContent(".catchline em"), /click every link/);
     assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     await p.waitForSelector('[data-install][data-state="signed-out"]');
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
+    assert.ok(await p.isVisible('#top .radar img[data-sprite="threat"]'), "the radar stays in the hero");
+    assert.ok(await p.isVisible('#meet [data-part="visor"]'));
+    assert.ok(await p.isVisible('.tier-pro >> text=Paid from day one'));
+    await p.waitForFunction(() => document.querySelector("[data-scrub]").classList.contains("live"));
     await p.evaluate(() => { const w = document.querySelector("[data-scrub]"); scrollTo(0, w.offsetTop + (w.offsetHeight - innerHeight) * 0.8); });
-    await p.waitForFunction(() => document.querySelectorAll(".world .threat b.on").length === 3);
+    await p.waitForFunction(() => document.querySelector(".world-video").currentTime > 3);
     assert.deepEqual(p.errors, []);
   });
 
@@ -147,6 +170,28 @@ async function run() {
     await p.goto(`${base}/index.html?mock=1&as=lapsed`);
     await p.waitForSelector('[data-install][data-state="renew"]');
     assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Renew'));
+    assert.deepEqual(p.errors, []);
+  });
+
+  t("Lite gets its install line and Upgrade to Plus; Plus offers Upgrade to Pro", async () => {
+    const p = await page();
+    await p.goto(`${base}/index.html?mock=1&as=lite`);
+    await p.waitForSelector('[data-install][data-state="lite"] [data-os-panel="linux"] .cmd');
+    await p.goto(`${base}/account.html?mock=1&as=lite`);
+    await p.waitForSelector("h2:text('RamWarden Lite')");
+    await p.waitForSelector(".os-panel:not([hidden]) >> text=Download installer");
+    assert.ok(await p.isVisible("h2:text('Upgrade from Lite')"));
+    assert.equal((await p.textContent("[data-upgrade]")).trim(), "Upgrade to Plus");
+    await p.goto(`${base}/account.html?mock=1&as=trial`);
+    await p.waitForSelector("h2:text('RamWarden Plus')");
+    assert.equal(await p.isVisible("#buy"), false, "no plan picker until asked");
+    await p.click('[data-upgrade="pro"]');
+    await p.waitForSelector("h2:text('Upgrade to Pro')");
+    assert.equal(await p.isChecked('input[name=tier][value="pro"]'), true);
+    assert.match(await p.textContent("#buy p.muted"), /charged today/);
+    // A card upgrade changes the plan in place, without a checkout page.
+    await p.click("#buy button.wallet:has-text('Card')");
+    await p.waitForSelector("h2:text('RamWarden Pro')");
     assert.deepEqual(p.errors, []);
   });
 
@@ -191,7 +236,7 @@ async function run() {
     await p.addInitScript(fakePhantom);
     await p.goto(`${base}/account.html?mock=1`);
     await p.getByRole("button", { name: /^Phantom/ }).click();
-    await p.waitForSelector("h2:text('Start your 14-day free trial')");
+    await p.waitForSelector("h2:text('Plus is free for 14 days')");
     assert.ok(await p.isVisible("text=Nothing is charged today"));
     await p.getByRole("button", { name: /USDC on Base/ }).click();
     await p.getByRole("button", { name: /MetaMask/ }).click();
@@ -206,7 +251,7 @@ async function run() {
   });
 
   t("account page: ?plan= preselects a plan the server sells, ignores others", async () => {
-    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "month"], ["99", "ram", "month"], ["", "ram", "month"]]) {
+    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "2mo"], ["99", "ram", "2mo"], ["", "ram", "2mo"]]) {
       const p = await page(fakeMetaMask);
       await p.goto(`${base}/account.html?mock=1&plan=${q}`);
       await p.getByRole("button", { name: /MetaMask/ }).click();
@@ -227,7 +272,7 @@ async function run() {
     await p.waitForSelector("text=That code is wrong");
     await p.fill("input[name=code]", "123456");
     await p.click("button:text('Sign in')");
-    await p.waitForSelector("h2:text('Start your 14-day free trial')");
+    await p.waitForSelector("h2:text('Plus is free for 14 days')");
     await p.getByRole("button", { name: /Card or Apple Pay/ }).click();
     await p.waitForSelector("text=Your trial has started");
     await p.click("button:text('Cancel plan')");
@@ -245,9 +290,42 @@ async function run() {
     await p.waitForSelector("text=No devices yet");
   });
 
+  t("the corner pet answers questions and opens a ticket", async () => {
+    const p = await page();
+    await p.goto(`${base}/index.html?mock=1`);
+    await p.click(".pet-ask");
+    await p.waitForSelector("#warden-chat:not([hidden]) >> text=I'm your warden");
+    assert.equal(await p.getAttribute(".pet-ask", "aria-expanded"), "true");
+    // A typed question gets the price; the pet's jokes stay out of the way.
+    await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
+    await p.press('#warden-chat input[name="message"]', "Enter");
+    await p.waitForSelector("#warden-chat >> text=Pro is $5 every 2 months");
+    assert.ok((await p.getAttribute(".chat-offers a", "href")).endsWith("mock=1#pricing"));
+    assert.equal(await p.isVisible("[data-say]"), false);
+    assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");
+    // A problem offers a ticket.
+    await p.fill('#warden-chat input[name="message"]', "my download is not working");
+    await p.click('#warden-chat .chat-form button');
+    await p.waitForSelector(".chat-ticket:not([hidden])");
+    await p.fill('.chat-ticket input[type="email"]', "visitor@example.com");
+    await p.click(".chat-ticket button");
+    await p.waitForSelector("#warden-chat >> text=Ticket RW-BCD234 is open");
+    // The conversation key is remembered, and Escape closes the panel.
+    assert.match(await p.evaluate(() => localStorage.getItem("rw.support.ram")), /^rwsc_/);
+    await p.keyboard.press("Escape");
+    assert.equal(await p.isVisible("#warden-chat"), false);
+    // Offline, the chat says so instead of failing silently.
+    const q = await page();
+    await q.route("https://api.ramwarden.com/**", (r) => r.abort());
+    await q.goto(`${base}/threat.html`);
+    await q.click("[data-pet] img");
+    await q.waitForSelector("#warden-chat >> text=can't reach the RamWarden server");
+    assert.deepEqual(p.errors, []);
+  });
+
   t("without the server, sign-in explains that it could not be reached", async () => {
     const p = await page(fakeMetaMask);
-    await p.route("https://api.ramwarden.app/**", (r) => r.abort());
+    await p.route("https://api.ramwarden.com/**", (r) => r.abort());
     await p.goto(`${base}/link.html?code=BCDF-GHJK`);
     await p.waitForSelector("text=could not be reached");
   });
@@ -268,3 +346,4 @@ async function run() {
 }
 
 run();
+

@@ -74,6 +74,7 @@ from them on every request.
 | `email_codes` | email sign-in | `_id` = email, `code_hash`, `user_code?`, `attempts`, `created_at` | TTL on `expire_at` |
 | `payments` | checkout started | `account_id`, `plan` (1 to 4), `method` (base, card), `status` (pending, confirmed, failed), `payer?`, `external_id?` (Base `<tx>:<log>`, Stripe subscription id) | `(account_id, created_at)` |
 | `usage_daily` | account per UTC day | `day`, `count` | TTL on `expire_at` |
+| `support_conversations` | site warden chat (`crates/ramwarden-cloud/src/support.rs`) | `_id` = SHA-256 of the page's `rwsc_` secret, `warden`, `account_id?`, `messages [{from: visitor \| warden \| staff, text, at, topic?}]` (newest 60), `ticket? {reference RW-XXXXXX, status open \| answered \| closed, subject, email?, opened_at}`, `expires_at` | TTL on `expire_at` (30 days; a ticket, 1 year after its last message), unique `ticket.reference` (partial), `(ticket.status, updated_at)`, `(account_id, updated_at)` |
 
 EVM addresses are stored lowercased (EIP-55 capitals are only a checksum), so
 the same MetaMask wallet cannot become two accounts. Solana addresses keep their

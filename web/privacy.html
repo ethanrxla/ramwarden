@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.com; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="robots" content="index">
   <title>Privacy · RamWarden</title>
@@ -27,7 +27,7 @@
       <p class="muted">Draft. Last updated 1 November 2026.</p>
 
       <h2>The short version</h2>
-      <p>RamWarden runs on your computer. When it needs a decision about something it might close, it sends a short description of that one thing, gets an answer, and the description is forgotten. The open-source build sends nothing at all.</p>
+      <p>RamWarden runs on your computer. When it needs a decision about something it might close, it sends a short description of that one thing, gets an answer, and the description is forgotten. The open-source build sends nothing unless you add your own AI or API keys, and then only to the services those keys belong to.</p>
 
       <h2>What stays on your computer</h2>
       <ul>
@@ -49,6 +49,9 @@
         <li><strong>Preferences</strong>: your warden's color and whether its comments are muted.</li>
       </ul>
       <p>On-chain payments are public by nature: anyone can see a payment from your wallet to RamWarden's checkout contract.</p>
+
+      <h2>Chatting with a warden</h2>
+      <p>The pet in the corner of the site answers questions and can open a support ticket. What you type, the warden's answers, and the email you give for a reply (if any) are kept for 30 days so the team can help, or for a year after the last message if the chat became a ticket. If you're signed in, the chat is linked to your account so you can see your tickets, and the warden can read your own plan, trial date and device count to answer questions about them. It can't change anything. Your browser keeps a key to the chat in local storage so the thread is there when you come back.</p>
 
       <h2>This website</h2>
       <p>No analytics, no trackers and no third-party scripts. Signing in keeps a session in your browser. Your warden's color and mute setting are kept in your browser's local storage.</p>

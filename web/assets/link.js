@@ -78,7 +78,7 @@ async function start(code) {
     walletArea,
   );
 
-  // A 409 (the account already has 5 devices) is shown in place.
+  // A 409 (the account is at its device limit) is shown in place.
   await chooseSignIn(walletArea, api, { userCode: code, purpose: "Sign in with your wallet or your email. Signing costs nothing." });
 
   show(

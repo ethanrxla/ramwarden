@@ -30,9 +30,10 @@ export class ApiError extends Error {
 // injected into it could not steal one; every call just sends the cookie.
 
 export class Api {
-  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
+  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis), timeoutMs = 8000 } = {}) {
     this.base = base.replace(/\/+$/, "");
     this.fetch = fetchImpl;
+    this.timeoutMs = timeoutMs;
   }
 
   async request(method, path, body) {
@@ -45,6 +46,7 @@ export class Api {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: "include",
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new ApiError(0, "The RamWarden server could not be reached.");
@@ -72,7 +74,7 @@ export class Api {
   }
 
   // Both sign-ins answer `{account, linked_device}` and set the cookie.
-  // 409 means the account already has its 5 devices.
+  // 409 means the account is at its device limit (Lite 1, Plus 3, Pro 5).
   verify({ chain, address, message, signature }) {
     return this.request("POST", "/v1/auth/verify", { chain, address, message, signature });
   }
@@ -119,6 +121,24 @@ export class Api {
   }
   payment(id) {
     return this.request("GET", `/v1/checkout/payments/${encodeURIComponent(id)}`);
+  }
+
+  // The site wardens' support chat (docs/specs/website.md, "Support chat").
+  // `conversation` is the secret the first answer hands back; the page keeps
+  // it in localStorage so the thread, and any reply from the team, is there
+  // next visit.
+  supportHistory({ conversation, warden }) {
+    return this.request("POST", "/v1/support/history", { conversation: conversation ?? null, warden });
+  }
+  // Either `message` (typed) or `topic` (a chip's topic id).
+  supportChat({ conversation, warden, message, topic }) {
+    return this.request("POST", "/v1/support/chat", { conversation: conversation ?? null, warden, message: message ?? null, topic: topic ?? null });
+  }
+  supportTicket({ conversation, email }) {
+    return this.request("POST", "/v1/support/ticket", { conversation, email: email || null });
+  }
+  supportTickets() {
+    return this.request("GET", "/v1/support/tickets");
   }
 }
 

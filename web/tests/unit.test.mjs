@@ -93,3 +93,16 @@ test("challenge sends a null user code for a plain web sign-in", async () => {
   await api.challenge({ chain: "solana", address: "So1" });
   assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { chain: "solana", address: "So1", user_code: null });
 });
+
+
+test("an unresponsive API times out and reports offline", async () => {
+  const api = new Api("https://api.example", { timeoutMs: 10, fetchImpl: (_url, {signal}) =>
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), {once: true});
+      // Keep the test alive while the native timeout signal is unreferenced.
+      setTimeout(() => reject(new Error("deadline exceeded")), 100);
+    }) });
+  const start = Date.now();
+  await assert.rejects(api.account(), (e) => e instanceof ApiError && e.offline);
+  assert.ok(Date.now() - start < 90);
+});

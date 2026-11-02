@@ -10,7 +10,7 @@
 export const config = {
   // The hosted API (`ramwarden-api`). Changing it also means changing the
   // `connect-src` in each page's Content-Security-Policy.
-  apiBase: "https://api.ramwarden.app",
+  apiBase: "https://api.ramwarden.com",
 
   repo: "https://github.com/ethanrxla/ramwarden",
   releases: "https://github.com/ethanrxla/ramwarden/releases/latest",
@@ -19,16 +19,68 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
-  // Two tiers, each monthly or yearly, both with a 14-day trial
-  // (docs/product-spec.md 1.2). Ids are the checkout contract's plan ids.
+  // Three cards (docs/product-spec.md 1.2, as changed 2026-11-01/02):
+  // - Lite (free): the memory algorithm with no AI and no warden pet, on one
+  //   computer. A free account (email or wallet, no card) is what makes
+  //   "1 computer" true: devices are counted per account.
+  // - Plus (tier id "ram"): the AI and the warden pet, 3 computers. The only
+  //   plan with a trial.
+  // - Pro: adds ThreatWarden, 5 computers. Paid from day one.
+  // Upgrades are enforced by the server and the signed entitlement, not by
+  // the page. Every bullet is something the code does, with its number where
+  // it has one (README, docs/specs/browser-memory.md, threatwarden.md).
+  // `soon` marks a part that is specified but not shipped yet.
   trialDays: 14,
+  lite: {
+    name: "RamWarden Lite",
+    tagline: "Keep it tidy.",
+    cta: "Get it free",
+    features: [
+      "Memory measured the way your OS charges it: shared browser memory counted once, not per tab",
+      "Acts on memory stalls (time lost waiting on RAM), not on a full meter",
+      "A 4-step reclaim algorithm: compress cold memory, page it out, unload idle tabs, pause idle apps you list",
+      "Every app ranked least recently used first",
+      "Tab budget: your 6 most recent tabs stay, others close after 60 idle minutes, with a reopen list",
+      "Every pause undone the moment memory recovers",
+      "Games, anti-cheat, calls, terminals and VMs are never touched",
+      "1 computer, free account, no card",
+    ],
+  },
   tiers: {
-    ram: { name: "RamWarden", blurb: "AI-powered memory management and system resource optimization.", devices: 5 },
-    pro: { name: "RamWarden Pro", blurb: "Everything in RamWarden, plus the ThreatWarden security companion.", devices: 5 },
+    ram: {
+      name: "RamWarden Plus",
+      tagline: "Let it decide.",
+      badge: "Most popular",
+      trialDays: 14,
+      devices: 3,
+      features: [
+        "Everything in Lite, plus:",
+        "A customizable AI warden pet that picks what you won't miss",
+        "Scores each idle app: your chance of coming back within the hour",
+        "Pauses an app only when 70% sure you won't return, closes one only at 85%",
+        "Closes tabs you won't return to, each saved to a reopen list",
+        "3 computers: Windows, macOS and Linux",
+      ],
+    },
+    pro: {
+      name: "RamWarden Pro",
+      tagline: "Fast and safe.",
+      trialDays: 0,
+      devices: 5,
+      features: [
+        "Everything in Plus, plus ThreatWarden:",
+        "Sentinel: file integrity, log analysis, rootkit and vulnerable software checks",
+        { text: "Antivirus: malware sweeps when memory is free, plus scan on demand", soon: true },
+        { text: "Network monitor: catches attacks and malware calling home, shows who each app talks to", soon: true },
+        "Security findings with explanations; quarantine and blocking controls are planned",
+        "The cyborg warden pet",
+        "5 computers",
+      ],
+    },
   },
   plans: [
-    { id: 1, tier: "ram", interval: "month", usd: 4 },
-    { id: 2, tier: "pro", interval: "month", usd: 5 },
+    { id: 1, tier: "ram", interval: "2mo", usd: 4 },
+    { id: 2, tier: "pro", interval: "2mo", usd: 5 },
     { id: 3, tier: "ram", interval: "year", usd: 20 },
     { id: 4, tier: "pro", interval: "year", usd: 24 },
   ],
@@ -39,10 +91,15 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against twelve months, in whole percent.
+// What a year of the annual plan saves against six 2-month payments, in whole percent.
 export function annualSaving(plans, tier) {
-  const m = planFor(plans, tier, "month");
+  const m = planFor(plans, tier, "2mo");
   const y = planFor(plans, tier, "year");
   if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * 12)) * 100);
+  return Math.round((1 - y.usd / (m.usd * PER_YEAR["2mo"])) * 100);
 }
+
+// Billing periods (owner's decision, 2026-11-02): every 2 months, or yearly.
+// The contract and the card subscription charge on the same 60-day cycle.
+export const PERIOD = { "2mo": "2 months", year: "year" };
+export const PER_YEAR = { "2mo": 6, year: 1 };

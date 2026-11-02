@@ -1,6 +1,7 @@
 //! The website's and the daemon's flows end to end, against the router: wallets
 //! that sign the way MetaMask and Phantom do, a mailer that keeps its codes,
-//! contract logs as the watcher reads them, and a fake Stripe.
+//! contract logs as the watcher reads them, and a fake Stripe. The site
+//! wardens' support chat has its own file, `support_flows.rs`, on this harness.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -30,20 +31,21 @@ use crate::upstream::Upstream;
 use crate::wallet::iso8601;
 use crate::wallet::testing::{EvmWallet, SolWallet};
 
-const NOW: u64 = 1_793_000_000;
+pub(crate) const NOW: u64 = 1_793_000_000;
 const DAY: u64 = 86_400;
 const SEED: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
-const ORIGIN: &str = "https://ramwarden.app";
+pub(crate) const ORIGIN: &str = "https://ramwarden.app";
 const WHSEC: &str = "whsec_test_secret";
+pub(crate) const STAFF: &str = "rwstaff_test_token_0123456789";
 
-struct App {
-    router: axum::Router,
-    store: Arc<MemoryStore>,
-    mailer: Arc<MemoryMailer>,
+pub(crate) struct App {
+    pub(crate) router: axum::Router,
+    pub(crate) store: Arc<MemoryStore>,
+    pub(crate) mailer: Arc<MemoryMailer>,
 }
 
 #[derive(Clone, Copy)]
-enum Auth<'a> {
+pub(crate) enum Auth<'a> {
     None,
     Cookie(&'a str),
     Bearer(&'a str),
@@ -54,7 +56,7 @@ struct Opts {
     stripe: Option<String>,
 }
 
-fn app() -> App {
+pub(crate) fn app() -> App {
     app_with(Opts { downloads: None, stripe: None })
 }
 
@@ -75,6 +77,7 @@ fn app_with(o: Opts) -> App {
         siwe_chain_id: BASE_SEPOLIA,
         public_url: "https://api.ramwarden.app".into(),
         releases_url: crate::install::DEFAULT_RELEASES_URL.into(),
+        support: crate::support::SupportDesk::new(Some(crate::config::hash_token(STAFF))),
     };
     let state = AppState {
         tokens: Default::default(),
@@ -97,7 +100,7 @@ fn session_from(h: &HeaderMap) -> Option<String> {
 }
 
 impl App {
-    async fn raw(&self, method: &str, uri: &str, auth: Auth<'_>, origin: &str, body: Option<Value>) -> (StatusCode, Value, HeaderMap) {
+    pub(crate) async fn raw(&self, method: &str, uri: &str, auth: Auth<'_>, origin: &str, body: Option<Value>) -> (StatusCode, Value, HeaderMap) {
         let mut r = Request::builder().method(method).uri(uri).header(header::ORIGIN, origin);
         match auth {
             Auth::None => {}
@@ -115,7 +118,7 @@ impl App {
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null), headers)
     }
 
-    async fn call(&self, method: &str, uri: &str, auth: Auth<'_>, body: Option<Value>) -> (StatusCode, Value) {
+    pub(crate) async fn call(&self, method: &str, uri: &str, auth: Auth<'_>, body: Option<Value>) -> (StatusCode, Value) {
         let (s, v, _) = self.raw(method, uri, auth, ORIGIN, body).await;
         (s, v)
     }
@@ -133,7 +136,7 @@ impl App {
         (s, v, session_from(&h))
     }
 
-    async fn web(&self, w: &EvmWallet) -> (String, String) {
+    pub(crate) async fn web(&self, w: &EvmWallet) -> (String, String) {
         let (s, v, cookie) = self.sign_in_evm(w, None).await;
         assert_eq!(s, StatusCode::OK, "{v}");
         (cookie.unwrap(), v["account"]["id"].as_str().unwrap().to_string())

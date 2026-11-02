@@ -111,6 +111,7 @@ impl MongoStore {
         self.raw(PAYMENTS)
             .create_index(index(doc! { "account_id": 1, "created_at": -1 }, named("by_account")))
             .await?;
+        self.ensure_support_indexes().await?;
         Ok(())
     }
 }

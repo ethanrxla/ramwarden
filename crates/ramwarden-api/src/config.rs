@@ -34,6 +34,8 @@ pub struct Config {
     pub jev_model: String,
     pub jev_key: Secret,
     pub jev_timeout: Duration,
+    /// Set only for the explicit production profile, never by key presence alone.
+    pub production_model: Option<(Secret, String)>,
     /// Phase 1 access list. Accounts and device sign-in replace it.
     pub tokens: Vec<TokenHash>,
     /// Path to extra question definitions (see [`crate::catalog`]).
@@ -62,6 +64,10 @@ pub struct CloudConfig {
     pub base: Option<BaseConfig>,
     pub stripe: Option<StripeKeys>,
     pub mail: MailConfig,
+    /// SHA-256 of `RAMWARDEN_SUPPORT_TOKEN`: the team's key to the ticket
+    /// queue. Unset, the site chat still answers and opens tickets; nobody
+    /// can read them through the API until it is set.
+    pub support_token: Option<TokenHash>,
     /// This API's public URL (`RAMWARDEN_PUBLIC_URL`), named in install lines.
     pub public_url: String,
     /// `RAMWARDEN_RELEASES_URL`: where install scripts fetch release assets.
@@ -120,6 +126,14 @@ impl Config {
         }
 
         let jev_key = Secret::new(var("JEV_API_KEY").ok_or("JEV_API_KEY is not set")?);
+        let production_model = match var("RAMWARDEN_API_PROFILE").as_deref() {
+            None | Some("development") => None,
+            Some("production") => Some((
+                Secret::new(var("OPENAI_API_KEY").ok_or("OPENAI_API_KEY is required for production")?),
+                var("OPENAI_MODEL_ID").unwrap_or_else(|| "gpt-6-luna".into()),
+            )),
+            Some(_) => return Err("RAMWARDEN_API_PROFILE must be development or production".into()),
+        };
 
         let cloud = Self::cloud_from(&var)?;
 
@@ -146,6 +160,7 @@ impl Config {
             jev_base_url: var("JEV_BASE_URL").unwrap_or_else(|| "https://api.typesafe.ai".into()),
             jev_model: var("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
             jev_key,
+            production_model,
             jev_timeout: Duration::from_secs(num("JEV_TIMEOUT_SECONDS", var("JEV_TIMEOUT_SECONDS"), 10)?),
             tokens,
             catalog_path: var("RAMWARDEN_API_CATALOG"),
@@ -225,6 +240,13 @@ impl Config {
         if !reqwest::Url::parse(&public_url).is_ok_and(|url| safe_service_url(&url) && url.query().is_none() && url.fragment().is_none()) || public_url.contains('\'') {
             return Err("RAMWARDEN_PUBLIC_URL must be an https:// URL".into());
         }
+        let support_token = match var("RAMWARDEN_SUPPORT_TOKEN") {
+            Some(t) if t.trim().len() < MIN_TOKEN_LEN => {
+                return Err(format!("RAMWARDEN_SUPPORT_TOKEN must be at least {MIN_TOKEN_LEN} characters"));
+            }
+            Some(t) => Some(hash_token(t.trim())),
+            None => None,
+        };
         let releases_url = var("RAMWARDEN_RELEASES_URL")
             .map(|u| u.trim_end_matches('/').to_string())
             .unwrap_or_else(|| crate::install::DEFAULT_RELEASES_URL.into());
@@ -241,6 +263,7 @@ impl Config {
             base,
             stripe,
             mail,
+            support_token,
         }))
     }
 }
@@ -255,6 +278,17 @@ mod tests {
     fn cfg(pairs: &[(&str, &str)]) -> Result<Config, String> {
         let m: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         Config::from_lookup(|k| m.get(k).cloned())
+    }
+
+    #[test]
+    fn an_openai_key_does_not_switch_personal_development_to_production() {
+        let base = [("JEV_API_KEY", "test-jev"), ("RAMWARDEN_API_TOKENS", TOKEN), ("OPENAI_API_KEY", "openai-test")];
+        assert!(cfg(&base).unwrap().production_model.is_none());
+        let mut production = base.to_vec();
+        production.push(("RAMWARDEN_API_PROFILE", "production"));
+        assert_eq!(cfg(&production).unwrap().production_model.unwrap().1, "gpt-6-luna");
+        production.retain(|(key, _)| *key != "OPENAI_API_KEY");
+        assert!(cfg(&production).unwrap_err().contains("OPENAI_API_KEY"));
     }
 
     #[test]

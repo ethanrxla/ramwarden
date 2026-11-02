@@ -44,7 +44,10 @@ async fn run() -> Result<(), String> {
         tracing::info!("loaded {n} extra question definitions from {path}");
     }
 
-    let upstream = Upstream::new(&cfg.jev_base_url, &cfg.jev_model, cfg.jev_key.clone(), cfg.jev_timeout)?;
+    let mut upstream = Upstream::new(&cfg.jev_base_url, &cfg.jev_model, cfg.jev_key.clone(), cfg.jev_timeout)?;
+    if let Some((key, model)) = &cfg.production_model {
+        upstream = upstream.with_openai(key.clone(), model.clone());
+    }
     tracing::info!(
         "jev {} model {} key {}; {} tokens; {} questions; {}/min {}/day per token; {} input tokens/day",
         cfg.jev_base_url,
@@ -112,6 +115,12 @@ async fn run() -> Result<(), String> {
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),
                 public_url: cc.public_url.clone(),
                 releases_url: cc.releases_url.clone(),
+                support: {
+                    if cc.support_token.is_none() {
+                        tracing::info!("support staff routes off (RAMWARDEN_SUPPORT_TOKEN not set); the site chat still answers");
+                    }
+                    ramwarden_api::support::SupportDesk::new(cc.support_token)
+                },
             })
         }
     };
