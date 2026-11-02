@@ -42,6 +42,7 @@ final class VoiceModel: ObservableObject {
     @Published var busy = false
     /// Called on the main thread when the bubble or the pet changes.
     var onChange: (() -> Void)?
+    var onFocusRequested: (() -> Void)?
 
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
@@ -65,6 +66,7 @@ final class VoiceModel: ObservableObject {
     }
 
     func answer(_ choice: String) {
+        if choice == "focus" { onFocusRequested?(); return }
         guard let b = bubble, !busy else { return }
         busy = true
         Task {

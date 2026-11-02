@@ -70,6 +70,24 @@ separate implementation in `web/` and never comment on anything real.
 
 ## API
 
+### Current focus on macOS
+
+The pet can ask **What are you working on?** with a **Tell Warden** button.
+It opens the chat input to save a local eight-hour focus session. The pet's
+right-click menu also has **Set current focus**, and the input offers **Clear
+focus**. The question observes the bubble caps/mute and is asked no more than
+once per eight hours, including after restarts.
+
+`GET /warden/focus` reads the current goal; `POST /warden/focus` accepts
+`{goal}` (at most 500 characters, empty to clear). The local `focus.json`
+stores the session expiry and prompt throttle. Matching uses meaningful words
+from the supplied topic against tab titles and sites, rather than claiming
+semantic understanding. Matching tabs are excluded from automatic unload and
+close candidates while the session lasts. It never grants permission to act
+on other tabs. The current goal is also available to the assistant's context.
+
+Production website sales chat remains separate from this local focus session.
+
 | Route | Does |
 |---|---|
 | `GET /warden/bubble` | `{"bubble": Bubble or null, "pet": bool, "muted": bool, "muted_until": unix or null}` |

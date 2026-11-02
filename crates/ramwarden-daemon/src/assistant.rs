@@ -105,7 +105,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     let direct_release = requests_memory_release(&r.message);
     let facts = json!({"memory_percent":m.percent(),"used_mb":m.used() / 1048576,
         "total_mb":m.total / 1048576,"processes":processes,"recent_actions":actions,
-        "cloud_opt_in":cloud_allowed,"platform":st.platform.name,
+        "focus_goal":st.voice.focus.goal(crate::voice::unix_now()),"cloud_opt_in":cloud_allowed,"platform":st.platform.name,
         "browser_snapshot_available":browser.is_some(),
         "connected_browsers":browser.map(|b|b.0),"eligible_idle_tabs":browser.map(|b|b.1),
         "unload_batch_limit":crate::browser::BATCH_LIMIT});

@@ -1,7 +1,7 @@
 use super::*;
 
 fn cfg() -> config::Voice {
-    config::Voice::default()
+    config::Voice { ask_about_focus: false, ..Default::default() }
 }
 
 fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
@@ -11,6 +11,8 @@ fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
         inactive_minutes: idle,
         eligible: true,
         closeable: true,
+        auto_closeable: true,
+        work: false,
         status: "candidate",
         reason: String::new(),
         priority: 0,
@@ -26,6 +28,17 @@ fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
 }
 
 const DAY0: u64 = 20_000 * 86_400 + 3_600;
+
+#[test]
+fn a_focus_check_in_offers_a_way_to_answer_without_closing_any_tab() {
+    let voice = Voice::default();
+    let mut settings = cfg(); settings.ask_about_focus = true;
+    let bubble = voice.speak(&settings, &scene(&[], &[], Instant::now(), DAY0)).unwrap();
+    assert_eq!(bubble.kind, Kind::Focus);
+    assert!(bubble.text.contains("What are you working on?"));
+    assert_eq!(bubble.choices[0].id, "focus");
+    assert!(bubble.tab.is_none());
+}
 
 fn scene<'a>(rows: &'a [Row], closing: &'a [Target], now: Instant, unix: u64) -> Scene<'a> {
     Scene { rows, closing, percent: 60.0, now, unix }

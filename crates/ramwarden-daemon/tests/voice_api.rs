@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 
 fn state() -> AppState {
-    let cfg = Config::default();
+    let mut cfg = Config::default();
+    cfg.voice.ask_about_focus = false;
     let platform = Arc::new(fake::platform(Default::default()));
     AppState {
         cfg: Arc::new(cfg.clone()),
@@ -69,10 +70,13 @@ fn browser(st: &AppState, confirm: bool) -> tokio::task::JoinHandle<Vec<Value>> 
         let mut seen = Vec::new();
         while let Some(raw) = rx.recv().await {
             let msg: Value = serde_json::from_str(&raw).unwrap();
-            if msg["action"] == "close" && confirm {
-                other.hub.lock().unwrap().deliver_close("brave", vec![1]);
+            if msg["action"] == "get_tabs" {
+                other.hub.lock().unwrap().deliver_tabs("brave", vec![tab(1)]);
             }
-            let stop = msg["action"] == "close";
+            if msg["action"] == "close_safe" && confirm {
+                other.hub.lock().unwrap().deliver_discard("brave", msg["requestId"].as_str().unwrap(), vec![1]);
+            }
+            let stop = msg["action"] == "close_safe";
             seen.push(msg);
             if stop { break; }
         }
@@ -99,7 +103,7 @@ async fn the_warden_asks_about_a_tab_and_closes_it_when_told_to() {
     let (status, r) = send(st.clone(), "/warden/answer", "POST", json!({"id": bubble["id"], "choice": "close"})).await;
     assert_eq!(status, 200, "{r}");
     assert_eq!(r["closed"], true);
-    assert!(worker.await.unwrap().iter().any(|m| m["action"] == "close" && m["tabIds"] == json!([1])));
+    assert!(worker.await.unwrap().iter().any(|m| m["action"] == "close_safe" && m["tabs"][0]["id"] == 1));
     // It goes in the reopen list like any other close.
     let (_, history) = send(st.clone(), "/history", "GET", Value::Null).await;
     assert_eq!(history["closed_tabs"][0]["url"], "https://example.org/1", "{history}");
@@ -149,4 +153,24 @@ async fn keep_holds_the_tab_and_mute_silences_every_client() {
 
     let (status, _) = send(st.clone(), "/warden/answer", "POST", json!({"id": "x", "choice": "maybe"})).await;
     assert_eq!(status, 422, "unknown choices are rejected");
+}
+
+#[tokio::test]
+async fn a_focus_session_protects_matching_tabs_and_can_be_cleared() {
+    let st = state();
+    let worker = browser(&st, true);
+    let (status, response) = send(st.clone(), "/warden/focus", "POST", json!({"goal":"old article"})).await;
+    assert_eq!(status, 200);
+    assert_eq!(response["matched_tabs"], 1);
+    let rows = ramwarden_daemon::tabreview::snapshot(&st);
+    assert!(!rows[0].auto_closeable && !rows[0].eligible);
+    assert!(rows[0].reason.contains("focus"));
+    let (_, current) = send(st.clone(), "/warden/focus", "GET", Value::Null).await;
+    assert_eq!(current["goal"], "old article");
+    let (status, _) = send(st.clone(), "/warden/focus", "POST", json!({"goal":"x".repeat(501)})).await;
+    assert_eq!(status, 422);
+    let (status, _) = send(st.clone(), "/warden/focus", "POST", json!({"goal":""})).await;
+    assert_eq!(status, 200);
+    assert!(!ramwarden_daemon::tabreview::snapshot(&st)[0].reason.contains("focus"));
+    worker.abort();
 }

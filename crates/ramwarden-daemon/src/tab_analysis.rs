@@ -196,6 +196,8 @@ mod tests {
             inactive_minutes: 300,
             eligible,
             closeable,
+            auto_closeable: closeable,
+            work: false,
             status,
             reason: String::new(),
             priority: 0,

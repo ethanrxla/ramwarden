@@ -353,6 +353,7 @@ pub struct Voice {
     pub enabled: bool,
     /// Ask "coming back to this tab?" before the sweep closes it.
     pub ask_about_tabs: bool,
+    pub ask_about_focus: bool,
     /// Light comments about memory and tabs.
     pub quips: bool,
     /// Only tabs idle at least this long are asked about.
@@ -379,6 +380,7 @@ impl Default for Voice {
         Voice {
             enabled: true,
             ask_about_tabs: true,
+            ask_about_focus: true,
             quips: true,
             ask_after_minutes: 60.0,
             min_gap_minutes: 30.0,

@@ -25,6 +25,7 @@
 //! jokes can never crowd out a question. See `docs/specs/warden-voice.md`.
 
 pub mod lines;
+pub mod focus;
 pub mod routes;
 
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ const MANY_TABS: usize = 20;
 pub enum Kind {
     Activity,
     CheckIn,
+    Focus,
     Quip,
     Reply,
 }
@@ -104,6 +106,7 @@ pub enum Pick {
     Close,
     Later,
     Dismiss,
+    Focus,
 }
 
 /// What an answer asks the caller to do.
@@ -183,6 +186,7 @@ struct Inner {
 /// across an await.
 pub struct Voice {
     inner: Mutex<Inner>,
+    pub focus: focus::Focus,
     /// Where the mute is kept. `None`: in memory only (tests).
     store: Option<PathBuf>,
 }
@@ -243,6 +247,7 @@ impl Voice {
             .and_then(|b| serde_json::from_slice::<Stored>(&b).ok())
             .and_then(|s| s.muted_until);
         Voice {
+            focus: focus::Focus::new(store.as_ref().map(|p| p.with_file_name("focus.json"))),
             inner: Mutex::new(Inner {
                 current: None,
                 last_any: None,
@@ -310,6 +315,8 @@ impl Voice {
             let line = s.pick(&lines.check_in);
             let text = fill(&line, &[("title", &tab_name(row)), ("idle", &idle_text(row.inactive_minutes))]);
             (Kind::CheckIn, text, Some(TabRef { target: row.target.clone(), title: row.title.clone() }))
+        } else if cfg.ask_about_focus && self.focus.ask(scene.unix) {
+            (Kind::Focus, "What are you working on? Tell me a topic and I'll keep matching tabs out of automatic cleanup for eight hours. The rest still get the usual safety checks.".into(), None)
         } else if cfg.quips && s.jokes_today < cfg.max_quips_per_day && !within(s.last_quip, minutes(cfg.quip_every_minutes), now) {
             let tabs = scene.rows.len();
             let q = &lines.quips;
@@ -342,13 +349,13 @@ impl Voice {
             }
             _ => {}
         }
-        let life = if kind == Kind::CheckIn { QUESTION_LIFE } else { REMARK_LIFE };
+        let life = if matches!(kind, Kind::CheckIn | Kind::Focus) { QUESTION_LIFE } else { REMARK_LIFE };
         let bubble = Bubble {
             id: uuid::Uuid::new_v4().to_string(),
             warden: "ram",
             kind,
             text,
-            choices: if kind == Kind::CheckIn { CHECK_IN_CHOICES.to_vec() } else { Vec::new() },
+            choices: match kind { Kind::CheckIn => CHECK_IN_CHOICES.to_vec(), Kind::Focus => vec![Choice {id:"focus",label:"Tell Warden"}], _ => Vec::new() },
             tab,
             expires_in_s: life.as_secs(),
         };
@@ -393,7 +400,7 @@ impl Voice {
                 s.answers.put_hot(tab.target, (Answer::Keep, now));
                 Ok(Answered::Said(s.reply(&lines.replies.keep, now)))
             }
-            (Some(tab), Pick::Later | Pick::Dismiss) => {
+            (Some(tab), Pick::Later | Pick::Dismiss | Pick::Focus) => {
                 s.answers.put_hot(tab.target, (Answer::Later, now));
                 let text = if pick == Pick::Later { s.reply(&lines.replies.later, now) } else { String::new() };
                 Ok(Answered::Said(text))
