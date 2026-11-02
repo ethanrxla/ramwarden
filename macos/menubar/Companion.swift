@@ -100,7 +100,7 @@ final class CompanionModel: ObservableObject {
                 var req = URLRequest(url:base.appendingPathComponent("warden/focus"))
                 req.httpMethod = "POST"; req.timeoutInterval = 48
                 req.setValue("application/json",forHTTPHeaderField:"Content-Type")
-                req.httpBody = try JSONSerialization.data(withJSONObject:["goal":goal])
+                req.httpBody = try JSONSerialization.data(withJSONObject:["goal":goal,"name":name])
                 let (data,response) = try await URLSession.shared.data(for:req)
                 guard (response as? HTTPURLResponse)?.statusCode == 200,
                       let obj = try JSONSerialization.jsonObject(with:data) as? [String:Any],
