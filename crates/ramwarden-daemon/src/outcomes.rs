@@ -76,6 +76,8 @@ mod tests {
             inactive_minutes: 300,
             eligible: true,
             closeable: true,
+            auto_closeable: true,
+            work: false,
             status: "candidate",
             reason: String::new(),
             priority: 1,

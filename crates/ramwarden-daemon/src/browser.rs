@@ -18,7 +18,13 @@ pub struct Row {
     pub title: String,
     pub inactive_minutes: i64,
     pub eligible: bool,
+    /// The user may close it by hand (manual close, the review checklist).
     pub closeable: bool,
+    /// The sweep may close it unattended: [`can_auto_close_at`]. Stricter than
+    /// `closeable`; a legacy extension's tabs are closeable but never this.
+    pub auto_closeable: bool,
+    /// A signed-in console, account or form page ([`tabpolicy::is_work_page`]).
+    pub work: bool,
     pub status: &'static str,
     pub reason: String,
     /// Release order: higher goes first. `est_mb / (p_return + ε)`, see `tabrank`.
@@ -48,6 +54,9 @@ pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
         .unwrap_or(0.0);
     rank_at(browser, tabs, threshold, now_ms)
 }
+
+/// How much longer a work page's return chance lasts than an ordinary page's.
+const WORK_FACTOR: f64 = 4.0;
 
 /// Tabs this recently used count as "what the user is doing right now".
 const ACTIVE_WINDOW_MINUTES: i64 = 15;
@@ -83,6 +92,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             } else {
                 threshold.saturating_mul(2)
             };
+            let work = tabpolicy::is_work_page(&t.url);
             let (status, reason) = if t.active == Some(true) {
                 ("protected", "active tab")
             } else if t.pinned == Some(true) {
@@ -91,6 +101,10 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 ("protected", "playing audio")
             } else if t.incognito {
                 ("protected", "private tab")
+            } else if tabpolicy::is_disposable_browser_page(&t.url) {
+                ("browser page", "browser settings page; holds no work")
+            } else if work && t.inactive_minutes < tabpolicy::PROTECTION_RELEASE_MINUTES {
+                ("protected", "signed-in console, account or form page")
             } else if tabpolicy::is_protected_for(&t.url, t.inactive_minutes) {
                 ("protected", "editor, internal page or protected URL")
             } else if t.discard_supported != Some(true)
@@ -130,7 +144,10 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             let mb = tabrank::est_mb(class);
             let frec = tabrank::frecency(&t.activations, now_ms) + f64::from(t.negative_feedback.min(4));
             let related = tabrank::site_key(&t.url).is_some_and(|k| active_sites.contains(&k));
-            let mult = tabrank::half_life_multiplier(frec, related);
+            // A work page keeps its return chance four times longer, so it is the
+            // last thing unloaded once its protection lifts. It is never closed
+            // automatically at all (see `can_auto_close_at`).
+            let mult = tabrank::half_life_multiplier(frec, related) * if work { WORK_FACTOR } else { 1.0 };
             let p_rules = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
             let features = crate::tabintel::Features {
                 class: tabrank::class_name(class),
@@ -138,6 +155,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 frecency: frec,
                 related,
                 duplicate,
+                work,
             };
             // Advisory model tier: a cached answer adjusts the estimate or vetoes the
             // unload. Absent (disabled, not asked yet, breaker open) means no change.
@@ -162,7 +180,9 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 title: t.title.clone(),
                 inactive_minutes: t.inactive_minutes.max(0),
                 eligible,
-                closeable: can_auto_close_at(t, now_ms),
+                closeable: can_close(t),
+                auto_closeable: can_auto_close_at(t, now_ms),
+                work,
                 status,
                 reason,
                 priority: if eligible { tabrank::score(mb, p).round() as i64 } else { 0 },
@@ -193,6 +213,7 @@ pub fn snapshot(reg: &crate::tabs::Registry, threshold: i64) -> Vec<Row> {
             for row in &mut ranked {
                 row.eligible = false;
                 row.closeable = false;
+                row.auto_closeable = false;
                 row.status = "stale";
                 row.reason = "waiting for a fresh browser report".into();
                 row.priority = 0;
@@ -355,13 +376,28 @@ mod selection_tests {
 
 /// Every automatic-close path uses the same floor. Budgets and duplicates
 /// may influence ordering, never authorize a closure by themselves.
+///
+/// # Why the 2026-11-02 closures happened
+///
+/// The old sweep had a tab budget: any tab outside the six most recently used,
+/// idle an hour, was closed, *including* tabs ranked "recent", and Jev was never
+/// asked about those. A signed-in Oracle Cloud console, an Agensi submit form and
+/// a twice-reopened Namecheap tab were all "ordinary pages" to the rules (no
+/// protection matched their hosts), so an hour in another tab was enough. A
+/// `chrome://extensions` tab survived because every non-web page was protected
+/// forever. Now: the budget and same-site rules are gone, work pages are never
+/// auto-closed, browser settings pages go first, and every pick must clear the
+/// same idle floor and return-chance ceiling.
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
     let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
-    let mut picked: Vec<_> = rows.iter().filter(|r| r.closeable
-        && matches!(r.status, "candidate" | "unloaded")
+    let mut picked: Vec<_> = rows.iter().filter(|r| r.auto_closeable
+        && !r.work
         && r.inactive_minutes >= min_idle
-        && r.p_return < cfg.close_below_return.min(0.3)).collect();
-    picked.sort_by(|a,b| b.duplicate.cmp(&a.duplicate)
+        && (r.status == "browser page"
+            || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
+    // Browser pages first, then exact copies, then the least likely to be wanted.
+    picked.sort_by(|a,b| (b.status == "browser page").cmp(&(a.status == "browser page"))
+        .then(b.duplicate.cmp(&a.duplicate))
         .then(a.p_return.total_cmp(&b.p_return))
         .then(b.inactive_minutes.cmp(&a.inactive_minutes)));
     picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
@@ -377,11 +413,11 @@ pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
         && tab.last_active_ms <= now_ms
         && now_ms - tab.last_active_ms >= 3_600_000.0
         && tab.inactive_minutes >= 60
-        && !tabpolicy::is_protected(&tab.url)
+        && (tabpolicy::is_disposable_browser_page(&tab.url) || !tabpolicy::is_protected(&tab.url))
 }
 
 pub fn can_close(tab: &Tab) -> bool {
-    !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes)
+    (tabpolicy::is_disposable_browser_page(&tab.url) || !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes))
         && !tab.incognito
         && tab.active != Some(true)
         && tab.pinned != Some(true)
@@ -550,7 +586,7 @@ mod safety_regressions {
     #[test]
     fn recently_reopened_missing_activity_and_dirty_work_are_never_auto_closed() {
         let now=2_000_000_000_000.0;
-        let mut t=Tab {id:1,url:"https://www.namecheap.com/shoppingcart/".into(),
+        let mut t=Tab {id:1,url:"https://example.org/some/article".into(),
             inactive_minutes:3000,last_active_ms:now-3000.0*60000.0,activity_version:1,
             active:Some(false),pinned:Some(false),audible:Some(false),auto_discardable:Some(true),
             status:Some("complete".into()),..Default::default()};
@@ -566,5 +602,57 @@ mod safety_regressions {
         let a=Tab{id:1,url:"https://namecheap.com/shoppingcart/".into(),..Default::default()};
         let b=Tab{id:2,url:"https://namecheap.com/domains/".into(),..Default::default()};
         assert!(rank_at("b",&[a,b],30,1.0).iter().all(|r|!r.duplicate));
+    }
+
+    fn idle(id: i64, url: &str, minutes: i64) -> Tab {
+        serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":minutes,
+            "active":false,"pinned":false,"audible":false,"discarded":false,"autoDiscardable":true,
+            "status":"complete","discardSupported":true,"activityVersion":1,
+            "lastActiveMs": ramwarden_core::history::unix_now() as f64 * 1000.0 - minutes as f64 * 60000.0})).unwrap()
+    }
+
+    /// The user's report: the sweep closed the tabs they were working in and kept
+    /// `chrome://extensions`. The same strip, two days idle, must now close the
+    /// browser page and the forgotten article first and never the work tabs.
+    #[test]
+    fn work_tabs_are_never_auto_closed_and_browser_pages_go_first() {
+        let cfg = ramwarden_core::config::Tabs::default();
+        let tabs = vec![
+            idle(1, "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase?region=us-ashburn-1", 2880),
+            idle(2, "https://agensi.io/creators/submit-a-skill", 2880),
+            idle(3, "https://ap.www.namecheap.com/domains/list/", 2880),
+            idle(4, "chrome://extensions/", 2880),
+            idle(5, "https://example.org/some/article", 2880),
+        ];
+        let rows = rank("b", &tabs, 30);
+        for id in [1, 2, 3] {
+            let row = rows.iter().find(|r| r.target.id == id).unwrap();
+            assert!(row.work, "tab {id} is a work page");
+        }
+        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids.first(), Some(&4), "the browser page goes first: {ids:?}");
+        assert!(!ids.iter().any(|id| [1, 2, 3].contains(id)), "work tabs stay: {ids:?}");
+    }
+
+    #[test]
+    fn a_work_page_is_protected_from_unloading_while_recent_and_ranks_last_after() {
+        let rows = rank("b", &[idle(1, "https://cloud.oracle.com/db", 90)], 30);
+        assert_eq!(rows[0].status, "protected");
+        let late = rank("b", &[
+            idle(1, "https://cloud.oracle.com/db", 600),
+            idle(2, "https://example.org/some/article", 600),
+        ], 30);
+        let work = late.iter().find(|r| r.target.id == 1).unwrap();
+        let plain = late.iter().find(|r| r.target.id == 2).unwrap();
+        assert!(work.p_return > plain.p_return, "work keeps its return chance longer");
+        assert!(work.priority < plain.priority, "the plain page unloads first");
+    }
+
+    #[test]
+    fn a_legacy_extension_tab_is_closeable_by_hand_but_never_unattended() {
+        let t: Tab = serde_json::from_value(serde_json::json!({"id":7,"url":"https://example.org/article","inactiveMinutes":5000})).unwrap();
+        let rows = rank("b", &[t], 30);
+        assert!(rows[0].closeable);
+        assert!(!rows[0].auto_closeable);
     }
 }

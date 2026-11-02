@@ -9,7 +9,7 @@ pub struct Proposal { pub token:String, pub expires_at:u64, pub tabs:Vec<Row> }
 pub struct ReviewState { pending:Option<Proposal>, last_prompt:u64 }
 impl ReviewState {
     fn offer(&mut self,rows:Vec<Row>,now:u64)->Option<Proposal> {
-        if let Some(p)=&self.pending { if now<p.expires_at { return Some(p.clone()); } }
+        if let Some(p)=&self.pending && now<p.expires_at { return Some(p.clone()); }
         self.pending=None;
         if rows.is_empty() || now.saturating_sub(self.last_prompt)<1800 {return None;}
         let p=Proposal{token:uuid::Uuid::new_v4().to_string(),expires_at:now+600,tabs:rows};
@@ -27,7 +27,7 @@ pub fn snapshot(st:&AppState)->Vec<Row> {
         let feedback=st.history.lock().ok().and_then(|h|h.tab_protection(&r.target.url,now).ok());
         match feedback {
             Some((until,n)) if until<=now => {r.p_return=(r.p_return+f64::from(n.min(4))*0.1).min(1.0);}
-            _ => {r.eligible=false;r.closeable=false;r.status="protected";r.reason="kept or reopened recently; retain for reuse".into();}
+            _ => {r.eligible=false;r.closeable=false;r.auto_closeable=false;r.status="protected";r.reason="kept or reopened recently; retain for reuse".into();}
         }
     }
     rows
