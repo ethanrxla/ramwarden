@@ -296,8 +296,11 @@ impl AppState {
         let auto = crate::browser::close_candidates(&rows, &self.cfg.tabs);
         let mut result = DiscardResult::default();
         for target in requested {
-            let valid = rows.iter().any(|r| &r.target==target && r.closeable
-                && matches!(r.status,"candidate"|"unloaded"|"retained")
+            // Approved closes (the review checklist) need only what a manual close
+            // needs; unattended ones must pass every automatic guard.
+            let valid = rows.iter().any(|r| &r.target==target
+                && if approved { r.closeable } else { r.auto_closeable }
+                && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
                 && (approved || auto.contains(target)));
             if !valid { result.refused.push(target.clone()); continue; }
             let request=uuid::Uuid::new_v4().to_string();
@@ -323,7 +326,8 @@ impl AppState {
     }
     pub fn note_tab(&self,url:&str,kind:&str) {
         if let Ok(h)=self.history.lock()
-            && let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64) {
+            && let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64)
+        {
             tracing::warn!("could not save tab feedback: {e}");
         }
     }

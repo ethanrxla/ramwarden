@@ -42,6 +42,9 @@ pub struct Features {
     pub frecency: f64,
     pub related: bool,
     pub duplicate: bool,
+    /// A signed-in console, account, checkout or form page. Without it Jev saw an
+    /// Oracle Cloud database console as "an ordinary web page" (2026-11-02).
+    pub work: bool,
 }
 
 fn idle_bucket(minutes: i64) -> &'static str {
@@ -82,12 +85,13 @@ fn class_text(class: &str) -> &'static str {
 /// fewer calls, and a coarse text says less about the user.
 pub fn describe(f: &Features) -> String {
     format!(
-        "A browser tab the user left in the background. Site type: {}. Idle for {}. Visit history: {}. {} {}",
+        "A browser tab the user left in the background. Site type: {}. Idle for {}. Visit history: {}. {} {}{}",
         class_text(f.class),
         idle_bucket(f.idle_minutes),
         visits_bucket(f.frecency),
         if f.related { "It is on the same site as a tab the user is working in now." } else { "It is unrelated to the tabs the user is working in now." },
         if f.duplicate { "A newer copy of the same page is open." } else { "No other copy of the page is open." },
+        if f.work { " The page is a signed-in console, account, checkout or form page where the user was in the middle of something." } else { "" },
     )
 }
 
@@ -397,6 +401,7 @@ pub fn borderline_states(rows: &[crate::browser::Row], cfg: &config::Jev) -> Vec
                 frecency: r.frecency,
                 related: r.related,
                 duplicate: r.duplicate,
+                work: r.work,
             })
         })
         .collect()
@@ -407,7 +412,7 @@ mod tests {
     use super::*;
 
     fn feat() -> Features {
-        Features { class: "page", idle_minutes: 840, frecency: 0.0, related: false, duplicate: false }
+        Features { class: "page", idle_minutes: 840, frecency: 0.0, related: false, duplicate: false, work: false }
     }
 
     fn cfg() -> config::Jev {
@@ -454,7 +459,7 @@ mod tests {
 
     #[test]
     fn the_description_carries_features_and_no_identifying_text() {
-        let text = describe(&Features { class: "feed", idle_minutes: 400, frecency: 2.0, related: true, duplicate: true });
+        let text = describe(&Features { class: "feed", idle_minutes: 400, frecency: 2.0, related: true, duplicate: true, work: false });
         assert!(text.contains("social feed") && text.contains("6 to 12 hours") && text.contains("regularly"));
         assert!(text.contains("same site as a tab") && text.contains("newer copy"));
         for leak in ["http", "www", ".com", "title"] {
@@ -572,6 +577,8 @@ mod tests {
             inactive_minutes: 500 + id * 400,
             eligible,
             closeable: true,
+            auto_closeable: true,
+            work: false,
             status: "candidate",
             reason: String::new(),
             priority: 0,

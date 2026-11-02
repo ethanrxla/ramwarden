@@ -52,6 +52,7 @@ impl Row {
             frecency: self.frecency,
             related: self.related,
             duplicate: self.duplicate,
+            work: self.work,
         };
         if self.p_rules < cfg.band_low || self.p_rules > cfg.band_high {
             return Some(json!({
@@ -102,6 +103,8 @@ impl Row {
                 "class": self.class,
                 "related": self.related,
                 "duplicate": self.duplicate,
+                "work": self.work,
+                "auto_closeable": self.auto_closeable,
                 "priority": self.priority,
                 "site": crate::tabrank::site_key(&self.target.url),
             }),

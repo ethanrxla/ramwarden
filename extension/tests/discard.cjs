@@ -138,3 +138,25 @@ test('safe closing confirms selected identity only and reopening protects a new 
   f.context.observeReopen({...f.tab,id:9});
   assert.ok(vm.runInContext('safety.pages["https://example.org/article"].until>Date.now()',f.context));
 });
+
+test('safe closing never takes a work page but does take a browser settings page',async()=>{
+  for (const url of ['https://cloud.oracle.com/db/adb','https://agensi.io/creators/submit-a-skill','https://ap.www.namecheap.com/domains/list/']) {
+    const f=fixture({url});let removed=0;f.chrome.tabs.remove=(id,cb)=>{removed++;cb();};
+    const cmd={requestId:'r',tabs:[{id:7,url}],minInactiveMinutes:60,expiresAt:Date.now()+10000};
+    assert.equal((await f.context.closeSafe(cmd)).length,0,url);assert.equal(removed,0,url);
+  }
+  const url='chrome://extensions/';
+  const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
+  assert.deepEqual(Array.from(await f.context.closeSafe({requestId:'r',tabs:[{id:7,url}],minInactiveMinutes:60,expiresAt:Date.now()+10000})),[7]);
+  assert.equal(f.context.isDisposableBrowserPage('chrome-extension://abc/popup.html'),false);
+});
+test('reopening the same site at a different URL protects it, and every reopen counts',async()=>{
+  const f=fixture();f.chrome.tabs.remove=(id,cb)=>cb();
+  await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000});
+  f.context.observeReopen({...f.tab,id:9,url:'https://www.example.org/'});
+  assert.ok(vm.runInContext('safety.sites["example.org"].until>Date.now()',f.context));
+  assert.equal(vm.runInContext('safety.sites["example.org"].negative',f.context),1);
+  f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:9,url:'https://www.example.org/deals'}]);
+  const report=await f.context.buildTabReport({});
+  assert.ok(report[0].protectedUntilMs>Date.now(),'a different page on the reopened site is protected');
+});

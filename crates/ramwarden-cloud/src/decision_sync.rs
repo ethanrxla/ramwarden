@@ -283,6 +283,10 @@ pub struct OpenTab {
     pub status: String,
     #[serde(default)]
     pub closeable: bool,
+    /// What the sweep may close unattended (`Row::auto_closeable`). Older
+    /// daemons report only `closeable`.
+    #[serde(default)]
+    pub auto_closeable: Option<bool>,
 }
 
 impl OpenTab {
@@ -296,7 +300,7 @@ impl OpenTab {
 
     /// Only tabs the sweep could close are worth a query.
     fn closeable_now(&self) -> bool {
-        self.closeable && matches!(self.status.as_str(), "candidate" | "unloaded")
+        self.auto_closeable.unwrap_or(self.closeable) && matches!(self.status.as_str(), "candidate" | "unloaded")
     }
 }
 
@@ -405,9 +409,22 @@ mod tests {
 
     #[test]
     fn hosts_are_read_without_credentials_ports_or_www() {
-        let t = |url: &str| OpenTab { browser: "b".into(), id: 1, url: url.into(), title: String::new(), status: String::new(), closeable: true };
+        let t = |url: &str| OpenTab { browser: "b".into(), id: 1, url: url.into(), title: String::new(), status: String::new(), closeable: true, auto_closeable: None };
         assert_eq!(t("https://www.Example.com/a?b").host(), "example.com");
         assert_eq!(t("https://user:pw@docs.example.com:8443/x").host(), "docs.example.com");
+    }
+
+    #[test]
+    fn recall_asks_only_about_tabs_the_sweep_could_close_unattended() {
+        let tab = |v: serde_json::Value| serde_json::from_value::<OpenTab>(v).unwrap();
+        let base = serde_json::json!({"browser":"b","id":1,"url":"https://x.test/","status":"candidate","closeable":true});
+        assert!(tab(base.clone()).closeable_now(), "an older daemon reports only closeable");
+        let mut manual_only = base.clone();
+        manual_only["auto_closeable"] = false.into();
+        assert!(!tab(manual_only).closeable_now());
+        let mut recent = base;
+        recent["status"] = "recent".into();
+        assert!(!tab(recent).closeable_now());
     }
 
     #[test]
