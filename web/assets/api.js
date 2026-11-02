@@ -72,7 +72,7 @@ export class Api {
   }
 
   // Both sign-ins answer `{account, linked_device}` and set the cookie.
-  // 409 means the account already has its 5 devices.
+  // 409 means the account is at its device limit (Lite 1, Plus 3, Pro 5).
   verify({ chain, address, message, signature }) {
     return this.request("POST", "/v1/auth/verify", { chain, address, message, signature });
   }
