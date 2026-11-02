@@ -4,6 +4,11 @@ import SwiftUI
 import Foundation
 
 let base = URL(string: "http://127.0.0.1:1")!
+// Voice.swift shares main.swift's small HTTP helper. All test traffic is mocked.
+func fetchJSON(_ path: String) async -> Any? {
+    guard let (data, _) = try? await URLSession.shared.data(from: base.appendingPathComponent(path)) else { return nil }
+    return try? JSONSerialization.jsonObject(with: data)
+}
 
 final class ReviewProtocol: URLProtocol {
     static var requests: [[String: Any]] = []
