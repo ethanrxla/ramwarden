@@ -306,3 +306,12 @@ on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
   test logs only; Stripe against a fake. Going live needs a deployed contract
   on Base Sepolia, Stripe test keys, a Resend key, then an outside audit
   before mainnet.
+
+### Durable account storage is required
+
+With hosted accounts enabled, missing `MONGODB_URI` is a startup error. Configure
+Atlas before accepting sign-ins or payments. `RAMWARDEN_DEV_MEMORY_STORE=1` is an
+explicit escape hatch for disposable local testing only: account IDs, device
+sessions, and payment mappings disappear on restart, and blockchain replay cannot
+reconstruct the lost wallet-to-account mapping. Never accept real payments in
+this mode.

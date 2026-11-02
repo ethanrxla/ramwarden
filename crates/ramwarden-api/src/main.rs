@@ -146,10 +146,27 @@ async fn open_store() -> Result<Arc<dyn Store>, String> {
             m.ensure_indexes().await.map_err(|e| e.to_string())?;
             Ok(Arc::new(m))
         }
-        Err(ConfigError::Missing(_)) => {
-            tracing::warn!("no MONGODB_URI: accounts are held in memory and a restart signs everyone out");
-            Ok(Arc::new(MemoryStore::new()))
-        }
+        Err(ConfigError::Missing(_)) => development_store(
+            std::env::var("RAMWARDEN_DEV_MEMORY_STORE").as_deref() == Ok("1")
+        ),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+// A missing production secret must never quietly discard account/payment state.
+fn development_store(explicitly_enabled: bool) -> Result<Arc<dyn Store>, String> {
+    if !explicitly_enabled {
+        return Err("MONGODB_URI is required for hosted accounts. For disposable local development only, set RAMWARDEN_DEV_MEMORY_STORE=1; all accounts and payment mappings disappear on restart.".into());
+    }
+    tracing::warn!("RAMWARDEN_DEV_MEMORY_STORE=1: disposable accounts; do not accept real payments");
+    Ok(Arc::new(MemoryStore::new()))
+}
+
+#[cfg(test)]
+mod startup_tests {
+    #[test]
+    fn missing_database_fails_closed_unless_development_is_explicit() {
+        assert!(super::development_store(false).is_err());
+        assert!(super::development_store(true).is_ok());
     }
 }
