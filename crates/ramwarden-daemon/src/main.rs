@@ -121,7 +121,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider = ai::provider(&cfg);
     ramwarden_daemon::embedder::attach(&provider);
+    let desktop = Arc::new(ramwarden_daemon::desktop::DesktopCtl::from_config(&cfg));
     let state = AppState {
+        desktop,
         cfg: Arc::new(cfg),
         platform,
         det: Arc::new(RwLock::new(detector)),
@@ -147,6 +149,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     monitor::spawn(state.clone(), tokio::runtime::Handle::current());
+
+    // Add-on wardens poll in the background; each does nothing until unlocked
+    // and enabled.
+    ramwarden_daemon::wardens::Wardens::global(&state.cfg).spawn(&tokio::runtime::Handle::current());
 
     // CORS and the origin guard are part of the router; see `guard`.
     let app = routes::router(state.clone());

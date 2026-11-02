@@ -25,37 +25,26 @@ export class ApiError extends Error {
   }
 }
 
-const SESSION_KEY = "rw.session";
+// The session is an HttpOnly cookie (`rw_session`, Secure, SameSite=Strict)
+// that the sign-in routes set. The page never sees the token, so a script
+// injected into it could not steal one; every call just sends the cookie.
 
 export class Api {
-  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis), storage = globalThis.sessionStorage } = {}) {
+  constructor(base, { fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
     this.base = base.replace(/\/+$/, "");
     this.fetch = fetchImpl;
-    this.storage = storage;
-  }
-
-  // The web session is per tab: it lives in sessionStorage, so closing the tab
-  // signs out, and it never sits on disk for another site or user to find.
-  get session() {
-    return this.storage?.getItem(SESSION_KEY) || null;
-  }
-  set session(token) {
-    if (!this.storage) return;
-    if (token) this.storage.setItem(SESSION_KEY, token);
-    else this.storage.removeItem(SESSION_KEY);
   }
 
   async request(method, path, body) {
     const headers = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    if (this.session) headers.Authorization = `Bearer ${this.session}`;
     let resp;
     try {
       resp = await this.fetch(this.base + path, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        credentials: "omit",
+        credentials: "include",
       });
     } catch {
       throw new ApiError(0, "The RamWarden server could not be reached.");
@@ -66,10 +55,7 @@ export class Api {
     } catch {
       // An empty or non-JSON body is fine for errors; the status says enough.
     }
-    if (!resp.ok) {
-      if (resp.status === 401) this.session = null;
-      throw new ApiError(resp.status, (data && data.error) || `Request failed (${resp.status}).`);
-    }
+    if (!resp.ok) throw new ApiError(resp.status, (data && data.error) || `Request failed (${resp.status}).`);
     return data;
   }
 
@@ -85,20 +71,34 @@ export class Api {
     return this.request("POST", "/v1/auth/challenge", { chain, address, user_code: userCode ?? null });
   }
 
-  async verify({ chain, address, message, signature }) {
-    const r = await this.request("POST", "/v1/auth/verify", { chain, address, message, signature });
-    this.session = r.session;
-    return r;
+  // Both sign-ins answer `{account, linked_device}` and set the cookie.
+  // 409 means the account already has its 5 devices.
+  verify({ chain, address, message, signature }) {
+    return this.request("POST", "/v1/auth/verify", { chain, address, message, signature });
+  }
+  emailStart({ email, userCode }) {
+    return this.request("POST", "/v1/auth/email/start", { email, user_code: userCode ?? null });
+  }
+  emailVerify({ email, code }) {
+    return this.request("POST", "/v1/auth/email/verify", { email, code });
+  }
+  logout() {
+    return this.request("POST", "/v1/auth/logout");
   }
 
   account() {
     return this.request("GET", "/v1/account");
   }
+  // Replaces the whole prefs object (4 KB at most), so send all of it.
+  savePrefs(prefs) {
+    return this.request("PUT", "/v1/account/prefs", prefs);
+  }
+  // A personal install line for a new computer: single use, 30 minutes.
+  installLink() {
+    return this.request("POST", "/v1/install/link", {});
+  }
   revokeDevice(id) {
     return this.request("DELETE", `/v1/account/devices/${encodeURIComponent(id)}`);
-  }
-  signOut() {
-    this.session = null;
   }
 
   checkoutConfig() {
@@ -112,6 +112,10 @@ export class Api {
   }
   checkoutStripe(plan) {
     return this.request("POST", "/v1/checkout/stripe", { plan });
+  }
+  // Base: transactions for the paying wallet to send. Card: done server side.
+  cancel() {
+    return this.request("POST", "/v1/checkout/cancel");
   }
   payment(id) {
     return this.request("GET", `/v1/checkout/payments/${encodeURIComponent(id)}`);

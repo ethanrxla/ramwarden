@@ -251,6 +251,17 @@ const ANTI_CHEAT: &[&str] = &[
     "eaanticheat.gameservice", "faceit", "faceitservice", "gameguard",
 ];
 
+/// The security stack's own agents, on every platform. A memory manager that
+/// can freeze the security agent is a way to switch the security agent off, so
+/// these are system processes whatever the watchlist says. Prefixes, because
+/// Linux truncates `comm` to 15 bytes (`wazuh-logcollec`) and Windows names the
+/// agent `wazuh-agent.exe` and its service `WazuhSvc`. See `docs/specs/wardens.md`.
+/// ThreatWarden's other engines (ClamAV, Suricata, ntopng) are protected the
+/// same way; see `docs/specs/threatwarden.md`.
+const SECURITY_AGENT_PREFIXES: &[&str] = &[
+    "wazuh-", "wazuhsvc", "ossec-", "ossec_", "clamd", "clamscan", "freshclam", "suricata", "ntopng",
+];
+
 /// Games recognised by name. Most Unreal titles are also caught by the
 /// `-shipping` suffix their builds carry.
 const GAMES: &[&str] = &[
@@ -314,7 +325,11 @@ pub fn classify(name: &str, cmdline: &str, uid: Option<u32>) -> Role {
     if SYNC.contains(&name) || WIN_SYNC.contains(&name) {
         return Role::Sync;
     }
-    if SYSTEM_NAMES.contains(&name) || WIN_SYSTEM.contains(&name) || uid == Some(0) {
+    if SYSTEM_NAMES.contains(&name)
+        || WIN_SYSTEM.contains(&name)
+        || starts_with_any(&lower, SECURITY_AGENT_PREFIXES)
+        || uid == Some(0)
+    {
         return Role::System;
     }
     Role::App
@@ -353,6 +368,23 @@ mod tests {
     /// exact-name check did not run first. Getting this wrong protects the
     /// terminal for the wrong reason and, worse, suggests the compositor is a
     /// terminal.
+    /// Wazuh's agent and manager daemons on Linux and macOS (as `comm`, so
+    /// truncated to 15 bytes), and its Windows agent and service.
+    #[test]
+    fn threatwardens_engines_are_structural() {
+        for name in [
+            "wazuh-agentd", "wazuh-execd", "wazuh-logcollec", "wazuh-modulesd", "wazuh-syscheckd",
+            "wazuh-analysisd", "wazuh-remoted", "wazuh-db", "wazuh-apid",
+            "wazuh-agent", "WazuhSvc", "ossec-agent", "ossec-agentd",
+            "clamd", "clamscan", "freshclam", "Suricata-Main", "suricata", "ntopng",
+        ] {
+            let role = role_of(name);
+            assert_eq!(role, Role::System, "{name}");
+            assert!(role.is_structural(), "{name} must be protected");
+        }
+        assert_eq!(role_of("wazuhfan"), Role::App, "only the agent's own names");
+    }
+
     #[test]
     fn exact_names_beat_prefixes() {
         assert_eq!(role_of("cosmic-term"), Role::Terminal);

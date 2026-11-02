@@ -5197,6 +5197,7 @@ version = "0.2.1"
 dependencies = [
  "nvml-wrapper",
  "ramwarden-nt",
+ "ramwarden-platform",
  "reqwest",
  "serde",
  "serde_json",
@@ -5263,11 +5264,14 @@ dependencies = [
 name = "ramwarden-core"
 version = "0.2.1"
 dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
  "libc",
  "ramwarden-kernel",
  "ramwarden-mac",
  "ramwarden-nt",
  "ramwarden-platform",
+ "ramwarden-wm",
  "rusqlite",
  "serde",
  "serde_json",
@@ -5282,7 +5286,9 @@ name = "ramwarden-daemon"
 version = "0.2.1"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "candle-core",
+ "ed25519-dalek",
  "futures",
  "ramwarden-ai",
  "ramwarden-core",
@@ -5291,6 +5297,8 @@ dependencies = [
  "ramwarden-ml",
  "ramwarden-nt",
  "ramwarden-platform",
+ "ramwarden-wazuh",
+ "ramwarden-wm",
  "serde",
  "serde_json",
  "tempfile",
@@ -5388,6 +5396,7 @@ name = "ramwarden-platform"
 version = "0.2.1"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -5423,6 +5432,36 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon",
  "windows",
+]
+
+[[package]]
+name = "ramwarden-wazuh"
+version = "0.2.1"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "ramwarden-platform",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ramwarden-wm"
+version = "0.2.1"
+dependencies = [
+ "ramwarden-platform",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

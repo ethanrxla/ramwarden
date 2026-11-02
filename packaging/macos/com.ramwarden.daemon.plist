@@ -14,6 +14,9 @@
     <string>__HOME__/.config/ramwarden/config.toml</string>
     <key>RAMWARDEN_LOG</key>
     <string>info</string>
+    <!-- launchd does not inherit the interactive shell's Homebrew PATH. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

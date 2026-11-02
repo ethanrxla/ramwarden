@@ -230,12 +230,21 @@ where
 /// model's visible thinking — all of which a 4B model emits readily even when
 /// told not to.
 pub fn extract_json(raw: &str) -> Result<Recommendation, String> {
+    extract(raw)
+}
+
+/// [`extract_json`] for any JSON object, for callers with their own reply shape.
+pub fn extract_object(raw: &str) -> Result<serde_json::Value, String> {
+    extract::<serde_json::Map<String, serde_json::Value>>(raw).map(serde_json::Value::Object)
+}
+
+fn extract<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, String> {
     let text = raw.trim();
     if text.is_empty() {
         return Err("empty reply".into());
     }
 
-    if let Ok(r) = serde_json::from_str::<Recommendation>(text) {
+    if let Ok(r) = serde_json::from_str::<T>(text) {
         return Ok(r);
     }
 
@@ -243,7 +252,7 @@ pub fn extract_json(raw: &str) -> Result<Recommendation, String> {
     let end = text.rfind('}');
     if let (Some(s), Some(e)) = (start, end)
         && e > s
-        && let Ok(r) = serde_json::from_str::<Recommendation>(&text[s..=e])
+        && let Ok(r) = serde_json::from_str::<T>(&text[s..=e])
     {
         return Ok(r);
     }

@@ -7,6 +7,7 @@ repository.workspace = true
 description = "RamWarden's model tier: local Nemotron, GPU goal re-ranking, and VRAM accounting."
 
 [dependencies]
+ramwarden-platform = { path = "../ramwarden-platform" }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 reqwest    = { workspace = true }

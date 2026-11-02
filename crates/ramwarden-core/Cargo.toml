@@ -8,12 +8,16 @@ description = "RamWarden policy: activity detection, the reclaim gate, and the r
 
 [dependencies]
 ramwarden-platform = { path = "../ramwarden-platform" }
+ramwarden-wm       = { path = "../ramwarden-wm" }
 thiserror = { workspace = true }
 tracing   = { workspace = true }
 serde     = { workspace = true }
 serde_json = { workspace = true }
 toml      = { workspace = true }
 rusqlite  = { workspace = true }
+# Checking the signed entitlement record (wardens.rs).
+ed25519-dalek = "2.1"
+base64    = "0.22"
 
 # Linux-only modules (terminals, private) and the `Detector::linux` /
 # `Actuator::linux` conveniences read the kernel crate directly.
