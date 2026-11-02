@@ -30,9 +30,11 @@ final class ThreatState: ObservableObject {
             detail = "The local security report is unavailable. A companion on screen does not mean this Mac is protected."
             engines = []; return
         }
+        let previousHeadline = headline
         level = status["level"] as? String ?? "off"
         headline = status["headline"] as? String ?? "Setup needed"
         detail = status["detail"] as? String ?? "Check the security agent and connection."
+        if headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat") }
         let engineRows = (report["report"] as? [String:Any])?["engines"] as? [[String:Any]] ?? []
         engines = engineRows.map { "\($0["name"] as? String ?? "Engine"): \($0["state"] as? String ?? "unknown")" }
     }
@@ -55,10 +57,12 @@ private struct ThreatSprite: View {
     }
 }
 private struct ThreatReport: View {
+    @AppStorage("threat.speech") private var spoken = false
     @ObservedObject var state: ThreatState
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
             Text("ThreatWarden").font(.headline)
+            Toggle("Spoken status",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("threat") } }
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled)
             ForEach(state.engines,id:\.self) { Text($0).font(.caption) }
@@ -93,7 +97,7 @@ final class ThreatCompanion {
     var visible: Bool { UserDefaults.standard.bool(forKey:"threat.visible") }
     func restore() { if visible { show() } }
     func toggle() {
-        if visible { UserDefaults.standard.set(false,forKey:"threat.visible"); panel?.orderOut(nil); panel = nil; report?.orderOut(nil) }
+        if visible { CompanionSpeech.shared.stop("threat"); UserDefaults.standard.set(false,forKey:"threat.visible"); panel?.orderOut(nil); panel = nil; report?.orderOut(nil) }
         else { UserDefaults.standard.set(true,forKey:"threat.visible"); show() }
     }
     @MainActor func poll() async { if visible { await state.poll() } }

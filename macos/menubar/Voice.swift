@@ -43,6 +43,7 @@ final class VoiceModel: ObservableObject {
     /// Called on the main thread when the bubble or the pet changes.
     var onChange: (() -> Void)?
     var onFocusRequested: (() -> Void)?
+    var allowSpeech: (() -> Bool)?
 
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
@@ -52,7 +53,10 @@ final class VoiceModel: ObservableObject {
             bubble = next
             muted = obj["muted"] as? Bool ?? false
             pet = obj["pet"] as? Bool ?? true
-            if changed { onChange?() }
+            if changed {
+                onChange?()
+                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram") }
+            }
         }
     }
 
@@ -77,6 +81,7 @@ final class VoiceModel: ObservableObject {
     }
 
     func mute(_ hours: Double?) {
+        CompanionSpeech.shared.stop("ram")
         Task {
             var body: [String: Any] = ["muted": true]
             if let h = hours { body["hours"] = h }

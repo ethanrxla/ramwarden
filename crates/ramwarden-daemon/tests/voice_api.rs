@@ -161,7 +161,15 @@ async fn a_focus_session_protects_matching_tabs_and_can_be_cleared() {
     let worker = browser(&st, true);
     let (status, response) = send(st.clone(), "/warden/focus", "POST", json!({"goal":"old article"})).await;
     assert_eq!(status, 200);
-    assert_eq!(response["matched_tabs"], 1);
+    assert_eq!(response["proposal"]["tabs"].as_array().unwrap().len(), 1);
+    assert_eq!(st.voice.focus.goal(ramwarden_daemon::voice::unix_now()), "", "suggestions alone must not change preferences");
+    let tab = json!({"browser":"brave","id":1,"url":"https://example.org/1"});
+    let (status, _) = send(st.clone(), "/warden/focus/feedback", "POST", json!({"token":response["proposal"]["token"],"selected":[{"browser":"brave","id":999,"url":"https://other.example"}]})).await;
+    assert_eq!(status, 400, "unknown identities cannot be added to the checklist");
+    let (status, _) = send(st.clone(), "/warden/focus/feedback", "POST", json!({"token":response["proposal"]["token"],"selected":[tab]})).await;
+    assert_eq!(status, 200);
+    let (status, _) = send(st.clone(), "/warden/focus/feedback", "POST", json!({"token":response["proposal"]["token"],"selected":[]})).await;
+    assert_eq!(status, 409, "feedback is applied once");
     let rows = ramwarden_daemon::tabreview::snapshot(&st);
     assert!(!rows[0].auto_closeable && !rows[0].eligible);
     assert!(rows[0].reason.contains("focus"));
@@ -171,6 +179,20 @@ async fn a_focus_session_protects_matching_tabs_and_can_be_cleared() {
     assert_eq!(status, 422);
     let (status, _) = send(st.clone(), "/warden/focus", "POST", json!({"goal":""})).await;
     assert_eq!(status, 200);
-    assert!(!ramwarden_daemon::tabreview::snapshot(&st)[0].reason.contains("focus"));
+    assert_eq!(st.voice.focus.goal(ramwarden_daemon::voice::unix_now()), "");
+    // Explicitly marking a tab relevant also persists positive tab feedback.
+    assert_eq!(ramwarden_daemon::tabreview::snapshot(&st)[0].status,"protected");
     worker.abort();
+}
+
+#[tokio::test]
+async fn speech_rejects_invalid_or_muted_requests_before_calling_a_provider() {
+    let st = state();
+    let (status, _) = send(st.clone(), "/warden/speech", "POST", json!({"warden":"unknown","text":"hello"})).await;
+    assert_eq!(status, 422);
+    let (status, _) = send(st.clone(), "/warden/speech", "POST", json!({"warden":"ram","text":"x".repeat(801)})).await;
+    assert_eq!(status, 422);
+    st.voice.set_mute(true,None,ramwarden_daemon::voice::unix_now());
+    let (status, _) = send(st, "/warden/speech", "POST", json!({"warden":"ram","text":"hello"})).await;
+    assert_eq!(status, 403);
 }

@@ -27,6 +27,8 @@
 pub mod lines;
 pub mod focus;
 pub mod routes;
+pub mod focus_chat;
+pub mod speech;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -187,6 +189,7 @@ struct Inner {
 pub struct Voice {
     inner: Mutex<Inner>,
     pub focus: focus::Focus,
+    focus_pending: Mutex<Option<focus_chat::Pending>>,
     /// Where the mute is kept. `None`: in memory only (tests).
     store: Option<PathBuf>,
 }
@@ -247,6 +250,7 @@ impl Voice {
             .and_then(|b| serde_json::from_slice::<Stored>(&b).ok())
             .and_then(|s| s.muted_until);
         Voice {
+            focus_pending: Mutex::new(None),
             focus: focus::Focus::new(store.as_ref().map(|p| p.with_file_name("focus.json"))),
             inner: Mutex::new(Inner {
                 current: None,
@@ -316,7 +320,7 @@ impl Voice {
             let text = fill(&line, &[("title", &tab_name(row)), ("idle", &idle_text(row.inactive_minutes))]);
             (Kind::CheckIn, text, Some(TabRef { target: row.target.clone(), title: row.title.clone() }))
         } else if cfg.ask_about_focus && self.focus.ask(scene.unix) {
-            (Kind::Focus, "What are you working on? Tell me a topic and I'll keep matching tabs out of automatic cleanup for eight hours. The rest still get the usual safety checks.".into(), None)
+            (Kind::Focus, "What are you working on? I'll pull together a few tabs for you to mark as relevant.".into(), None)
         } else if cfg.quips && s.jokes_today < cfg.max_quips_per_day && !within(s.last_quip, minutes(cfg.quip_every_minutes), now) {
             let tabs = scene.rows.len();
             let q = &lines.quips;

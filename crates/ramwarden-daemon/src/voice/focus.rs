@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 const SESSION: u64 = 8 * 3600;
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
-struct Session { goal: String, until: u64, asked_at: u64 }
+struct Session { goal: String, until: u64, asked_at: u64, confirmed_urls: Option<HashSet<String>> }
 pub struct Focus { state: Mutex<Session>, path: Option<PathBuf> }
 impl Focus {
     pub fn new(path: Option<PathBuf>) -> Self {
@@ -26,8 +26,15 @@ impl Focus {
     pub fn set(&self, goal: &str, now: u64) {
         let mut state = self.state.lock().unwrap();
         state.goal = goal.trim().to_string();
+        state.confirmed_urls = None;
         state.until = if state.goal.is_empty() { 0 } else { now.saturating_add(SESSION) };
         state.asked_at = now;
+        self.save(&state);
+    }
+    pub fn set_selected(&self, goal: &str, urls: HashSet<String>, now: u64) {
+        self.set(goal, now);
+        let mut state = self.state.lock().unwrap();
+        state.confirmed_urls = Some(urls);
         self.save(&state);
     }
     pub fn goal(&self, now: u64) -> String {
@@ -42,6 +49,11 @@ impl Focus {
         true
     }
     pub fn matches(&self, title: &str, url: &str, now: u64) -> bool {
+        {
+            let state = self.state.lock().unwrap();
+            if now >= state.until { return false; }
+            if let Some(urls) = &state.confirmed_urls { return urls.contains(url); }
+        }
         let goal = self.goal(now);
         let terms = words(&goal);
         let page = words(&format!("{title} {url}"));

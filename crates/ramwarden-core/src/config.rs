@@ -829,6 +829,13 @@ fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
 
 /// `var` from the environment, else from the first `.env` that sets it. The
 /// environment wins, as it does for every other key.
+/// Read an integration secret without adding it to debug-printable configuration.
+pub fn integration_secret(cfg: &Config, var: &str) -> Option<String> {
+    let mut paths = vec![config_dir().join("ramwarden").join(".env")];
+    if let Some(parent) = cfg.source.as_ref().and_then(|p|p.parent()) { paths.insert(0,parent.join(".env")); }
+    secret_from_env(var,&paths)
+}
+
 fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
     if let Ok(v) = std::env::var(var)
         && !v.trim().is_empty()

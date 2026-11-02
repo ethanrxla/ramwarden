@@ -20,24 +20,13 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/warden/bubble", get(bubble))
         .route("/warden/answer", post(answer))
         .route("/warden/mute", post(mute))
-        .route("/warden/focus", get(focus).post(set_focus))
+        .route("/warden/focus", get(focus).post(super::focus_chat::suggest))
+        .route("/warden/focus/feedback", post(super::focus_chat::feedback))
+        .route("/warden/speech", post(super::speech::speak))
 }
 
 async fn focus(State(st): State<AppState>) -> Json<Value> {
     Json(json!({"goal":st.voice.focus.goal(unix_now())}))
-}
-#[derive(Deserialize)]
-struct FocusRequest { goal: String }
-async fn set_focus(State(st): State<AppState>, Json(request): Json<FocusRequest>) -> Result<Json<Value>, StatusCode> {
-    if request.goal.chars().count() > 500 { return Err(StatusCode::UNPROCESSABLE_ENTITY); }
-    st.voice.focus.set(&request.goal, unix_now());
-    st.voice.inner.lock().unwrap().current = None;
-    let goal = st.voice.focus.goal(unix_now());
-    let matched = crate::tabreview::snapshot(&st).iter().filter(|row|
-        st.voice.focus.matches(&row.title, &row.target.url, unix_now())).count();
-    let reply = if goal.is_empty() { "Focus cleared. Normal safety checks still apply.".to_string() }
-        else { format!("Focus saved for eight hours. {matched} reported tabs match words in their titles or sites and are protected from automatic cleanup. New matching tabs will be protected too. Unrelated tabs still get the usual safety checks.") };
-    Ok(Json(json!({"ok":true,"goal":goal,"matched_tabs":matched,"reply":reply})))
 }
 
 pub async fn bubble(State(st): State<AppState>) -> Json<Value> {
