@@ -28,6 +28,9 @@ pub struct Quitter {
     /// When a dry-run "would quit" was last announced per app: nothing is acted
     /// on in dry-run, so the same line every minute is noise.
     announced: std::collections::HashMap<String, Instant>,
+    /// The last reason Jev's answers kept each candidate, so the decision log
+    /// gets one `keep` row per change, not one a minute.
+    judged: std::collections::HashMap<String, String>,
     last: Instant,
     quits: VecDeque<Instant>,
     in_flight: Arc<AtomicBool>,
@@ -35,7 +38,7 @@ pub struct Quitter {
 
 impl Quitter {
     pub fn new() -> Self {
-        Quitter { kept: Default::default(), announced: Default::default(), last: Instant::now() - Duration::from_secs(3600), quits: VecDeque::new(), in_flight: Arc::new(AtomicBool::new(false)) }
+        Quitter { kept: Default::default(), announced: Default::default(), judged: Default::default(), last: Instant::now() - Duration::from_secs(3600), quits: VecDeque::new(), in_flight: Arc::new(AtomicBool::new(false)) }
     }
 }
 
@@ -135,7 +138,16 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
     for (app, f, text) in &cands {
         let j = intel.lookup_app(text, now);
         match appintel::judge(f, j.as_ref(), cfg, jev) {
-            Decision::Keep(why) => tracing::info!("quit: keep {app}: {why}"),
+            Decision::Keep(why) => {
+                if q.judged.get(app) != Some(&why) {
+                    tracing::info!("quit: keep {app}: {why}");
+                    if let Ok(h) = state.history.lock() {
+                        let d = crate::decisionlog::app_decision(f, j.as_ref(), "keep", "kept", &format!("memory {used_pct:.0}% used"), why.clone());
+                        let _ = h.record_decision(&d, ramwarden_core::history::unix_now() as i64);
+                    }
+                    q.judged.insert(app.clone(), why);
+                }
+            }
             Decision::Quit { p } => {
                 let live = cfg.mode == "live";
                 if !live && q.announced.get(app).is_some_and(|t| t.elapsed() < Duration::from_secs(30 * 60)) {
@@ -163,6 +175,19 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
                         notes: format!("p={p:.2}; asked to quit, app may still hold a save prompt"),
                     });
                 }
+                if let Ok(h) = state.history.lock() {
+                    let result = if !live { "dry_run" } else if ok { "confirmed" } else { "refused" };
+                    let reason = format!(
+                        "quiet {:.0} min, {:.0} MB, safe-to-quit chance {p:.2}; memory {used_pct:.0}% used{}",
+                        f.quiet_minutes, f.rss_mb,
+                        if ok { "; asked to quit, a save prompt may keep it open" } else { "" },
+                    );
+                    let mut d = crate::decisionlog::app_decision(f, j.as_ref(), "quit", result, &format!("memory {used_pct:.0}% used"), reason);
+                    d.inputs["p_blended"] = serde_json::json!(p);
+                    d.bytes = if ok { (f.rss_mb * 1048576.0) as i64 } else { 0 };
+                    let _ = h.record_decision(&d, ramwarden_core::history::unix_now() as i64);
+                }
+                q.judged.remove(app);
                 if live && ok {
                     q.quits.push_back(Instant::now());
                 }

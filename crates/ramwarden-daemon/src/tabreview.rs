@@ -53,8 +53,8 @@ async fn respond(State(st):State<AppState>,Json(body):Json<Response>)->Result<Js
         let p=hub.tab_review.pending.as_ref().ok_or(StatusCode::CONFLICT)?;
         if body.tabs.iter().any(|t|!p.tabs.iter().any(|r|&r.target==t)) {return Err(StatusCode::BAD_REQUEST);}
         hub.tab_review.consume(&body.token,ramwarden_core::history::unix_now()).ok_or(StatusCode::CONFLICT)?};
-    let _=proposal;
     if body.action=="keep" {
+        crate::decisionlog::record_user_keep(&st,&proposal.tabs,&body.tabs);
         for t in &body.tabs {
             st.history.lock().map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.tab_feedback(&t.url,"keep",ramwarden_core::history::unix_now() as i64).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
             st.hub.lock().unwrap().send(&t.browser,&serde_json::json!({"action":"keep_tabs","tabs":[t]}));
@@ -73,7 +73,9 @@ async fn feedback(State(st):State<AppState>,Json(body):Json<Feedback>)->Result<S
     if body.url.len()>8192 || !matches!(body.kind.as_str(),"reopened"|"manual_close"|"confirmed") {return Err(StatusCode::BAD_REQUEST);}
     let url=url::Url::parse(&body.url).map_err(|_|StatusCode::BAD_REQUEST)?;
     if !matches!(url.scheme(),"http"|"https") {return Err(StatusCode::BAD_REQUEST);}
-    st.history.lock().map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.tab_feedback(&body.url,&body.kind,ramwarden_core::history::unix_now() as i64).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let h=st.history.lock().map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    h.tab_feedback(&body.url,&body.kind,ramwarden_core::history::unix_now() as i64).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if body.kind=="reopened" { crate::decisionlog::note_reopened(&h,&body.url); }
     Ok(StatusCode::NO_CONTENT)
 }
 #[cfg(test)]

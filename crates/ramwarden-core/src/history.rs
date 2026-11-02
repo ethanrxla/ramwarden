@@ -192,6 +192,11 @@ impl History {
         &self.path
     }
 
+    /// For sibling modules that keep their own tables here (`decisions`).
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Create what is missing, touch what exists.
     ///
     /// `goal_context` is added separately because v1 shipped without it and
@@ -275,6 +280,7 @@ impl History {
             "ALTER TABLE closed_tabs ADD COLUMN goal_context TEXT NOT NULL DEFAULT ''",
             [],
         );
+        crate::decisions::migrate(&self.conn)?;
         Ok(())
     }
 
@@ -454,12 +460,29 @@ impl History {
     }
 
     pub fn recent_actions(&self, limit: u32) -> Result<Vec<Action>> {
-        let mut stmt = self.conn.prepare(
+        self.query_actions(
             "SELECT id, at, rung, trigger, psi_some, psi_full, action, target,
                     bytes_freed, succeeded, notes
-               FROM actions ORDER BY id DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([limit], |r| {
+               FROM actions WHERE id > ?1 ORDER BY id DESC LIMIT ?2",
+            0,
+            limit,
+        )
+    }
+
+    /// Actions with an id past `after`, oldest first: what a sync has not sent.
+    pub fn actions_after(&self, after: i64, limit: u32) -> Result<Vec<Action>> {
+        self.query_actions(
+            "SELECT id, at, rung, trigger, psi_some, psi_full, action, target,
+                    bytes_freed, succeeded, notes
+               FROM actions WHERE id > ?1 ORDER BY id LIMIT ?2",
+            after,
+            limit,
+        )
+    }
+
+    fn query_actions(&self, sql: &str, after: i64, limit: u32) -> Result<Vec<Action>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params![after, limit], |r| {
             Ok(Action {
                 id: r.get(0)?,
                 at: r.get(1)?,

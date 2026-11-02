@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     let router = Router::new()
         .merge(crate::tabreview::routes())
+        .merge(crate::decisionlog::routes())
         // â”€â”€ Contracts the shipped extensions depend on â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         .route("/api/tabs", post(poll_tabs))
         .route("/ws", get(crate::ws::handler))
@@ -1067,7 +1068,9 @@ struct DiscardBody { targets: Vec<crate::browser::Target> }
 async fn browser_discard(State(st): State<AppState>, Json(body): Json<DiscardBody>) -> Json<crate::hub::DiscardResult> {
     // A fresh socket report can veto a stale selection before dispatch.
     st.request_all_tabs().await;
+    let rows = crate::decisionlog::rows_by_target(&st);
     let result = st.discard_tabs(&body.targets).await;
+    crate::decisionlog::record_manual(&st, &rows, &result, "unload");
     let notes = format!("{} unloaded, {} queued (not confirmed), {} refused; tabs remain open",
         result.confirmed.len(),result.queued.len(),result.refused.len());
     tracing::info!("browser unload: {notes}");
@@ -1087,8 +1090,10 @@ async fn browser_close(State(st): State<AppState>, Json(body): Json<DiscardBody>
         let hub=st.hub.lock().unwrap();
         body.targets.into_iter().partition(|t| !hub.reg.is_socket(&t.browser) || hub.reg.reported_since(&t.browser,requested_at))
     };
+    let rows = crate::decisionlog::rows_by_target(&st);
     let mut result=st.close_selected_tabs(&fresh).await;
     result.refused.extend(stale);
+    crate::decisionlog::record_manual(&st, &rows, &result, "close");
     tracing::info!(confirmed=result.confirmed.len(),queued=result.queued.len(),refused=result.refused.len(),"manual tab close completed");
     Json(result)
 }

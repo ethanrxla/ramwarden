@@ -5,6 +5,12 @@ Rust layer is `crates/ramwarden-cloud`; the HTTP API and payment watchers call
 its `Db` type and never touch MongoDB directly. The daemon, the GTK app and the
 browser extension never talk to the database at all.
 
+The same crate also syncs a machine's **decision log** (every close, unload,
+quit and keep, with Jev's answers and outcomes) into a `decisions` collection
+with Atlas Vector Search, for debugging and reopen recall. That is a separate,
+opt-in process run against your own cluster; see
+[specs/decision-log.md](specs/decision-log.md) and "Decision log" below.
+
 ## Setting up Atlas
 
 1. **Cluster.** Flex (or M0 Free while developing), AWS, `us-east-1`. Move to
@@ -95,6 +101,23 @@ single atomic update rather than a read followed by a write.
   one revokes the whole device.
 - **No browsing data is stored.** Usage rows hold counts only. Request bodies
   (tab titles, hostnames) never reach the database.
+
+## Decision log
+
+```sh
+ramwarden-cloud-db init                          # also creates the decisions vector indexes
+ramwarden-cloud-db decisions sync                # send new decisions and outcomes once
+ramwarden-cloud-db decisions sync --watch 5      # keep syncing (and refreshing recall.json) every 5 min
+ramwarden-cloud-db decisions recent docs.google.com
+ramwarden-cloud-db decisions why "Q3 planning doc"
+ramwarden-cloud-db decisions similar <device>:<id>
+```
+
+| Collection | One document per | Key fields | Indexes |
+|---|---|---|---|
+| `decisions` | decision on one device | `_id` `<device>:<id>`, `kind` (tab, app, ladder), `action`, `result`, `subject` (host or app), `title?`, `reason`, `inputs`, `jev?`, `vector` (16), `text_vector?` (1024), `outcome?` | `(device, at)`, `(kind, action, at)`, `(subject, at)`; vector search `decision_features`, `decision_text` |
+
+Full URLs never leave the machine; `--no-titles` keeps titles local too.
 
 ## Not here yet
 
