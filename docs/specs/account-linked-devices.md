@@ -10,16 +10,16 @@ claim that installation or a green test proves coverage.
 | Requirement | Evidence needed before completion | Current evidence / remaining work |
 | --- | --- | --- |
 | Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Neither device has a saved token. User supplied developer email and manager address in the task; do not put the email in public repository files. |
-| Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Windows service and Mac agent processes run. Manager delivery not verified. Manager is agents.ramwarden.com. |
-| ClamAV | Current signatures, scan-only execution and safe test detection delivered through Wazuh on both devices | Not verified. Keep Defender enabled. No automatic deletion/quarantine. |
-| Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows service runs; capture/delivery not verified. Mac installation not verified. Check Npcap availability/licensing on Windows. |
-| App/extension sign-in | Extension opens wallet/email device approval; daemon alone stores its device token; both show the same account | Hosted device-code endpoints exist on PR23/PR5 stack; local bridge and extension UI remain to implement. |
+| Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Manager agents 001 (Windows) and 002 (Mac) confirmed active on 2026-11-02; records from both arrive. Neither is yet proven bound to the developer account. |
+| ClamAV | Current signatures, scan-only execution and safe test detection delivered through Wazuh on both devices | Windows scan records reach the manager; Mac installation not found in Homebrew. Keep Defender enabled. No automatic deletion/quarantine. |
+| Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
+| App/extension sign-in | Extension opens wallet/email device approval; daemon alone stores its device token; both show the same account | Bridge and popup implemented in PR34; real Chrome popup flow passes with a mocked backend. Live email approval and installation remain. |
 | Tailscale integration | Account-bound discovery and selection, authenticated pairing, cross-account denial, revocation | Both existing host clients are online. No RamWarden integration yet. |
-| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Limits exist in API source; end-to-end verification and network identity mapping remain. |
+| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Confirmed gap: MongoStore::register_device counts then inserts without a transaction, using the stored cap rather than the active plan cap. Fix before enrollment rollout. |
 | Request limits based on real use | Representative measured request totals, costs, restart handling and documented Plus/Pro sizing | Mac reports 4 calls in preceding hour, 1724 input / 272 output tokens since daemon startup; not a daily baseline. Do not set quotas from this sample. |
 | Personalized behavior | Account-scoped learning data, device/OS identity, bounded feedback, isolation and offline behavior tests | Local activity protections exist. Cross-device account learning is not verified. |
 | Repeatable setup | Versioned installation/enrollment/rollback steps, a fresh-device reproduction, optional setup skill | Read-only readiness probe added; full setup runbook/skill remains. |
-| Hosting | Existing Oracle resources assessed, manager/API/indexer health and capacity verified | Inspect existing server first; only quote a paid alternative if required. No droplet purchased. |
+| Hosting | Existing Oracle resources assessed, manager/API/indexer health and capacity verified | Oracle manager/indexer active; about 7.8 GiB available memory and 71 GiB free disk on 2026-11-02. Hosted app API is not deployed there; no droplet needed for current capacity. |
 | Sales/support | Verified sign-in, truthful plan answers, chat-ticket-reply-revisit behavior | Support PR23 browser tests pass; production email sign-in still needs verification. |
 
 ## Transport and licensing boundaries
@@ -61,3 +61,44 @@ account sign-in are separate gates from agent installation.
 
 Keep the full objective above open until every acceptance row is proven. Respect
 the user's latest 20% usage reserve and save a handoff before reaching it.
+
+## Local account bridge (PR34)
+
+The loopback daemon exposes `GET /account`, `POST /account/start`,
+`POST /account/refresh` and `POST /account/disconnect`. Existing Origin/Host
+guards apply; none of these routes exists on a network listener. The extension
+also refuses account operations when configured for a remote daemon.
+
+Start returns the public approval URL and user code only. A daemon task polls
+the configured hosted API, respects its interval and the ten-minute expiry,
+and completes even if the popup closes. It stores `device-token` and
+`account.json` in the daemon's configuration directory using atomic replacement
+(0600 on Unix). Windows uses the daemon account's configuration directory;
+a readiness probe running as a different user cannot establish whether its
+credential exists. Credentials are never returned to the extension.
+
+`entitlement.json` remains beside the daemon history database. Refresh verifies
+the compiled signing key, account, device and issue time before replacing it.
+An unauthorized response removes the local credential and plan; a temporary
+outage preserves a previously verified plan until its own expiry. Disconnect
+also cancels pending approval locally. It does not revoke the server device or
+free a slot; the account page does that. A failed write after a one-use device
+claim tells the user to remove the newly registered device before retrying.
+
+Still required for live coverage:
+
+- Configure the API entitlement signer and matching public key in app builds.
+  The current Mac local API has a Resend provider but no entitlement key in its
+  process environment. Email delivery is not proven by configuration alone.
+- Implement the hosted `/v1/wardens/threat/enroll` and `/status` handlers and
+  account-scoped agent mapping. Currently those paths exist only in the client
+  and fixtures, so a signed plan alone cannot provide hosted threat status.
+- Fix atomic plan-specific registration before relying on device limits.
+- Validate a live sign-in and signed plan on both devices, then deploy verified
+  builds with rollback artifacts and preserved user settings.
+
+Validation at 2d3ebb4: 188 daemon unit tests, account/warden route checks and
+daemon all-target clippy pass on Mac; 22 extension unit tests and the real
+Chrome popup flow pass. The popup uses mocked backend responses and a disposable
+browser profile. No production account, payment record or installed app was
+changed by these tests.
