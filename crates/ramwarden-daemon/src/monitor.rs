@@ -30,7 +30,7 @@ use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::signals::Signals;
 use ramwarden_ai::jev::Jev;
 use ramwarden_ai::secret::Secret;
-use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement};
+use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement, Prejudged};
 use ramwarden_core::ladder::{self, TabCloser, World};
 
 use crate::hub::AppState;
@@ -184,8 +184,16 @@ fn sweep_tabs(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Inst
     });
 }
 
-/// Bridges the ladder's judge to Jev, the same way [`Tabs`] bridges to the
-/// browsers: the ladder is synchronous, so block on the request here.
+/// Bridges the ladder's judge to Jev.
+///
+/// It blocks on the request, so it must never be called with a lock held: the
+/// monitor asks it through [`Ladder::judge_requests`](ladder::Ladder::judge_requests)
+/// *before* the step, with the detector and ladder released, and hands the
+/// step a [`Prejudged`] copy of the answers. Asking from inside the step, as
+/// the first version did, held the ladder mutex and the detector read lock for
+/// a whole network round trip (up to `ladder_timeout_ms`), and every HTTP
+/// handler that wanted either — the window's status poll among them — sat on a
+/// runtime worker waiting for Jev.
 struct JevJudge {
     jev: Jev,
     suspend_threshold: f64,
@@ -267,6 +275,7 @@ enum Phase {
     Desktop,
     Sample,
     Pressure,
+    Judge,
     Ladder,
     Gpu,
     Behaviour,
@@ -274,11 +283,12 @@ enum Phase {
 }
 
 impl Phase {
-    const ALL: [Phase; 8] = [
+    const ALL: [Phase; 9] = [
         Phase::Waiting,
         Phase::Desktop,
         Phase::Sample,
         Phase::Pressure,
+        Phase::Judge,
         Phase::Ladder,
         Phase::Gpu,
         Phase::Behaviour,
@@ -301,6 +311,7 @@ impl Phase {
             Phase::Desktop => "desktop probe (windows, focus, audio)",
             Phase::Sample => "process sample",
             Phase::Pressure => "pressure read",
+            Phase::Judge => "asking Jev (no lock held)",
             Phase::Ladder => "ladder step",
             Phase::Gpu => "VRAM policy",
             Phase::Behaviour => "behaviour log",
@@ -501,6 +512,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
     let cfg = Arc::clone(&state.cfg);
     let mut judge = jev_judge(&cfg, &handle);
+    // The monitor samples the process table itself, outside the detector's
+    // write lock, and takes the lock only to score the result.
+    let mut source = state.det.write().unwrap().take_source();
     let mut gpu_policy = crate::gpu::GpuPolicy::default();
     // Train soon after start when no model exists yet, then once a day.
     let mut last_train = if state.predictor.model_path().exists() {
@@ -551,10 +565,15 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         Phase::Desktop.enter();
         let desktop = probe.sample();
         Phase::Sample.enter();
-        if let Err(e) = state.det.write().unwrap().sample(&desktop) {
-            tracing::warn!("sampling failed: {e}");
-            continue;
-        }
+        let table = match source.sample() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("sampling failed: {e}");
+                continue;
+            }
+        };
+        let degraded = source.accounting_degraded();
+        state.det.write().unwrap().ingest(table, &desktop, degraded);
 
         // 1b. Has the user come back to a tab we unloaded? Cheap: one query per
         // browser, then a hash lookup per reported tab.
@@ -574,7 +593,35 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         };
         let available = ladder::available_bytes(state.platform.memory.as_ref());
 
-        // 3. Act.
+        // 3. Judge, with no lock held. Collect what the step will ask under
+        // the locks, release them, ask Jev, and let the step re-check every
+        // answer against the detector it then holds. Only at the suspend rung
+        // and above, and only with Jev configured; otherwise this is free.
+        let mut prejudged = match judge.as_mut() {
+            Some(j) => {
+                let requests = {
+                    let det = state.det.read().unwrap();
+                    let ladder = state.ladder.lock().unwrap();
+                    ladder.judge_requests(&World {
+                        det: &det,
+                        groups: None,
+                        psi: pressure,
+                        available_bytes: available,
+                        watchlist: &cfg.watchlist,
+                        goal: String::new(),
+                        tabs: None,
+                        judge: None,
+                    })
+                };
+                if !requests.is_empty() {
+                    Phase::Judge.enter();
+                }
+                Some(Prejudged::ask(j, &requests))
+            }
+            None => None,
+        };
+
+        // 4. Act.
         Phase::Ladder.enter();
         let mut closer = Tabs::new(state.clone(), handle.clone());
         let det = state.det.read().unwrap();
@@ -586,7 +633,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             watchlist: &cfg.watchlist,
             goal: String::new(),
             tabs: Some(&mut closer),
-            judge: judge.as_mut().map(|j| j as &mut dyn Judge),
+            judge: prejudged.as_mut().map(|j| j as &mut dyn Judge),
         };
 
         let report = {

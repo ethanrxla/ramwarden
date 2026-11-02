@@ -5,24 +5,16 @@
 //! or actuates the thing, so Linux behaviour is exactly what it was before the
 //! seam existed.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use ramwarden_platform as p;
-use ramwarden_platform::{Outcome, Owner, ProcessSample};
+use ramwarden_platform::Outcome;
 
 use crate::cgroup::{Hierarchy, Scope};
 use crate::procfd::PidFd;
 use crate::psi::{self, Psi, Trigger};
-use crate::{Error, Root, helper, madvise, meminfo, net, process, smaps, zram};
-
-/// Resident size below which PSS is approximated rather than measured.
-///
-/// Reading `smaps_rollup` costs a syscall and a parse per process. For a 4 MB
-/// helper the distinction between RSS and PSS cannot change any decision, so the
-/// cheap figure from `stat` is used instead. v1 paid full price for every process.
-const PSS_MEASURE_FLOOR: u64 = 24 * 1024 * 1024;
+use crate::{Error, Root, helper, madvise, meminfo, smaps, zram};
 
 /// How long a stall must last within the window to wake the monitor.
 ///
@@ -152,135 +144,7 @@ impl p::MemorySource for LinuxMemory {
 
 // ── Processes ───────────────────────────────────────────────────────────────
 
-/// Samples `/proc`, measuring PSS where it can change a decision.
-pub struct LinuxProcesses {
-    root: Root,
-    uid: u32,
-    /// Set when `smaps_rollup` could not be read for a process large enough to
-    /// matter, so PSS fell back to RSS.
-    ///
-    /// This must be visible. A silent fallback is a silent return to v1's
-    /// accounting — the 2.3x browser overcount the whole rewrite exists to fix —
-    /// and the only symptom is every row reporting `pss == rss`, which looks
-    /// plausible. It was shipped that way once, caused by systemd mount-namespace
-    /// sandboxing on the service unit.
-    pss_unavailable: bool,
-}
-
-impl LinuxProcesses {
-    pub fn new(root: Root) -> Self {
-        LinuxProcesses {
-            root,
-            uid: current_uid(),
-            pss_unavailable: false,
-        }
-    }
-
-    /// pid -> cgroup scope name, for every process in the user's session.
-    ///
-    /// Processes outside it (system services, every Docker container) get no
-    /// scope, which is also a reminder that the ladder cannot reach them.
-    fn scope_map(&self) -> HashMap<i32, String> {
-        let mut out = HashMap::new();
-        let Ok(h) = Hierarchy::user_session(&self.root, self.uid) else {
-            return out;
-        };
-        let Ok(scopes) = h.scopes() else { return out };
-        for s in scopes {
-            if let Ok(pids) = s.pids() {
-                for pid in pids {
-                    out.insert(pid, s.name().to_string());
-                }
-            }
-        }
-        out
-    }
-
-    fn owner(&self, pid: i32) -> Owner {
-        match process::uid(&self.root, pid) {
-            Ok(0) => Owner::System,
-            Ok(u) if u == self.uid => Owner::CurrentUser,
-            Ok(_) => Owner::OtherUser,
-            Err(_) => Owner::Unknown,
-        }
-    }
-
-    /// PSS for a process large enough to matter, RSS otherwise.
-    fn proportional(&mut self, pid: i32, rss: u64) -> u64 {
-        if rss < PSS_MEASURE_FLOOR {
-            return rss;
-        }
-        match smaps::rollup(&self.root, pid) {
-            Ok(r) => r.pss,
-            Err(e) if e.is_missing() => rss, // the process just exited
-            Err(e) => {
-                // Not a vanished process: we are being denied. Say so loudly
-                // and once, because the fallback silently restores v1's
-                // overcount.
-                if !self.pss_unavailable {
-                    self.pss_unavailable = true;
-                    tracing::error!(
-                        "cannot read smaps_rollup ({e}) — accounting has fallen back \
-                         to summed RSS, which over-reports any process that shares \
-                         pages. If this daemon runs under systemd, check that the unit \
-                         sets no mount-namespace sandboxing (PrivateTmp, \
-                         ProtectKernelTunables, ProtectSystem)."
-                    );
-                }
-                rss
-            }
-        }
-    }
-}
-
-impl p::ProcessSource for LinuxProcesses {
-    fn sample(&mut self) -> p::Result<Vec<ProcessSample>> {
-        let now_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let boot = process::boot_time(&self.root).unwrap_or(0);
-        let sockets = net::sockets(&self.root).unwrap_or_default();
-        let scopes = self.scope_map();
-        let table = process::table(&self.root)?;
-
-        let mut out = Vec::with_capacity(table.len());
-        let mut measured_pss = false;
-        for e in table {
-            let rss = e.rss_bytes();
-            let pss = self.proportional(e.pid, rss);
-            measured_pss |= pss != rss;
-            out.push(ProcessSample {
-                pid: e.pid,
-                ppid: e.ppid,
-                cmdline: process::cmdline(&self.root, e.pid).unwrap_or_default(),
-                owner: self.owner(e.pid),
-                cpu_seconds: e.cpu_seconds(),
-                resident: rss,
-                proportional: pss,
-                state: e.state,
-                has_tty: e.has_tty(),
-                age_seconds: e.age_seconds(boot, now_epoch),
-                listening_ports: sockets.ports_for(e.pid).to_vec(),
-                established: sockets.established_for(e.pid),
-                group: scopes.get(&e.pid).cloned(),
-                name: e.comm,
-            });
-        }
-
-        // Recoverable: if the unit is fixed and reloaded, a later tick reads
-        // rollups again and the warning should be able to fire once more.
-        if self.pss_unavailable && measured_pss {
-            self.pss_unavailable = false;
-            tracing::info!("smaps_rollup is readable again — PSS accounting restored");
-        }
-        Ok(out)
-    }
-
-    fn accounting_degraded(&self) -> bool {
-        self.pss_unavailable
-    }
-}
+pub use crate::sampler::LinuxProcesses;
 
 // ── Process control ─────────────────────────────────────────────────────────
 

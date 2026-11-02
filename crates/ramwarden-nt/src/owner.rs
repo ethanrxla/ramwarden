@@ -4,10 +4,10 @@
 //! answers are cached by (pid, creation time): a process's owner and command
 //! line never change, and a reused PID has a different creation time.
 
-use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::Arc;
 
-use ramwarden_platform::Owner;
+use ramwarden_platform::{Instances, Owner};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::{
     EqualSid, GetLengthSid, GetTokenInformation, IsWellKnownSid, PSID, TOKEN_QUERY, TOKEN_USER,
@@ -26,14 +26,16 @@ use crate::snapshot::NtProcess;
 #[derive(Clone, Debug, Default)]
 pub struct Identity {
     pub owner: Owner,
-    pub cmdline: String,
+    /// Shared, so handing a cached identity out each tick copies a pointer,
+    /// not a command line.
+    pub cmdline: Arc<str>,
 }
 
 /// Resolves and caches [`Identity`] per process instance.
 pub struct Identities {
     my_sid: Vec<u8>,
     my_session: u32,
-    cache: HashMap<(u32, i64), Identity>,
+    cache: Instances<Identity>,
 }
 
 impl Default for Identities {
@@ -55,7 +57,7 @@ impl Identities {
         Identities {
             my_sid,
             my_session,
-            cache: HashMap::new(),
+            cache: Instances::new(),
         }
     }
 
@@ -65,29 +67,32 @@ impl Identities {
     }
 
     pub fn get(&mut self, p: &NtProcess) -> Identity {
-        let key = (p.pid, p.create_time);
-        if let Some(id) = self.cache.get(&key) {
-            return id.clone();
-        }
-        let id = self.resolve(p);
-        self.cache.insert(key, id.clone());
-        id
+        let (my_sid, cache) = (&self.my_sid, &mut self.cache);
+        let (id, _) = cache.entry(p.pid as i32, p.create_time as u64, || Self::resolve(my_sid, p));
+        id.clone()
+    }
+
+    /// Whether this process instance has been resolved before.
+    pub fn knows(&self, p: &NtProcess) -> bool {
+        self.cache.contains(p.pid as i32, p.create_time as u64)
     }
 
     /// Drop entries for processes no longer in `live`, so the cache tracks
     /// the process table rather than growing forever.
     pub fn retain(&mut self, live: &[NtProcess]) {
-        let keep: std::collections::HashSet<(u32, i64)> =
-            live.iter().map(|p| (p.pid, p.create_time)).collect();
-        self.cache.retain(|k, _| keep.contains(k));
+        self.cache.begin();
+        for p in live {
+            self.cache.get_mut(p.pid as i32, p.create_time as u64);
+        }
+        self.cache.sweep();
     }
 
-    fn resolve(&self, p: &NtProcess) -> Identity {
+    fn resolve(my_sid: &[u8], p: &NtProcess) -> Identity {
         // Session 0 is services; the kernel's pseudo-processes have no token.
         if p.session == 0 || p.is_kernel() {
             return Identity {
                 owner: Owner::System,
-                cmdline: String::new(),
+                cmdline: Arc::from(""),
             };
         }
         // Games and their anti-cheat are never opened, not even to read an owner
@@ -105,13 +110,13 @@ impl Identities {
         };
         let owner = match token_sid(h.raw()) {
             Some(sid) if sid_is_system(&sid) => Owner::System,
-            Some(sid) if !self.my_sid.is_empty() && sid_eq(&sid, &self.my_sid) => Owner::CurrentUser,
+            Some(sid) if !my_sid.is_empty() && sid_eq(&sid, my_sid) => Owner::CurrentUser,
             Some(_) => Owner::OtherUser,
             None => Owner::Unknown,
         };
         Identity {
             owner,
-            cmdline: command_line(&h).unwrap_or_default(),
+            cmdline: command_line(&h).unwrap_or_default().into(),
         }
     }
 }
