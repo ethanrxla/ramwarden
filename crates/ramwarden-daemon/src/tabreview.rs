@@ -30,6 +30,14 @@ pub fn snapshot(st:&AppState)->Vec<Row> {
             _ => {r.eligible=false;r.closeable=false;r.auto_closeable=false;r.status="protected";r.reason="kept or reopened recently; retain for reuse".into();}
         }
     }
+    for row in &mut rows {
+        if st.voice.focus.matches(&row.title, &row.target.url, now as u64) {
+            row.auto_closeable = false;
+            row.eligible = false;
+            row.status = "protected";
+            row.reason = "matches your current focus; kept out of automatic cleanup".into();
+        }
+    }
     rows
 }
 pub fn routes()->Router<AppState> {

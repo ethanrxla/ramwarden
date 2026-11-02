@@ -101,3 +101,13 @@ close_duplicates_after_hours = 4   # older tabs on a site you have open more rec
 keep_tabs = 6              # tab budget: keep the 6 most recently used tabs; 0 = off
 budget_idle_minutes = 60   # close any other tab untouched this long (hard-protected pages excepted)
 max_close_per_sweep = 10   # closed tabs are listed in the extension popup for reopening
+
+[voice]
+# The warden's speech bubble: "coming back to this tab?" and light comments.
+# See docs/specs/warden-voice.md. Mute from any app, or turn it off here.
+enabled = true
+ask_about_tabs = true      # ask before the sweep closes a tab; "keep" holds it for keep_hours
+quips = true               # light comments about memory and tabs
+min_gap_minutes = 30       # at least this long between two bubbles
+max_per_day = 6            # bubbles a day, all kinds
+max_quips_per_day = 3      # jokes a day, within max_per_day

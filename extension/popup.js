@@ -69,30 +69,104 @@ async function init() {
    .sort((a, b) => (b.closedMs || 0) - (a.closedMs || 0));
   renderHistory(merged);
 
-  document.getElementById("analyze-btn").addEventListener("click", async () => {
-    const btn = document.getElementById("analyze-btn");
-    btn.disabled = true;
-    btn.textContent = "Analyzing…";
-    try {
-      const response = await fetch((window.DAEMON_HTTP || DAEMON_HTTP) + "/browser/analyze", {
-        method: "POST", signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const analysis = await response.json();
-      document.getElementById("analysis-result").textContent =
-        `${analysis.tabs.length} tabs inspected; ${analysis.candidates} can be unloaded. Review and select them in RamWarden → Browser tabs.`;
-      btn.textContent = "Analysis ready";
-    } catch {
-      btn.textContent = "Daemon offline";
-    }
-    setTimeout(() => { btn.disabled = false; btn.textContent = "Analyze Now"; }, 3000);
-  });
+  document.getElementById("analyze-btn").addEventListener("click", analyzeNow);
 
   // Daemon host setting
   chrome.storage.sync.get("daemonHost", (r) => {
     document.getElementById("daemon-host-input").value = r.daemonHost || "localhost:7823";
   });
 }
+
+// ── The warden ────────────────────────────────────────────────────────────────
+
+async function wardenPost(path, body, timeout = 40000) {
+  const r = await fetch((window.DAEMON_HTTP || DAEMON_HTTP) + path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(timeout),
+  });
+  return { status: r.status, body: await r.json().catch(() => ({})) };
+}
+
+async function refreshWarden() {
+  const el = document.getElementById("warden");
+  let view = null;
+  try { view = wardenView(await daemonJSON("/warden/bubble")); } catch { /* older daemon: no voice */ }
+  el.innerHTML = wardenHTML(view);
+  el.hidden = !view;
+  el.dataset.id = view?.id || "";
+}
+
+function wardenSay(text) {
+  const el = document.getElementById("warden");
+  if (!text) return refreshWarden();
+  el.innerHTML = wardenHTML({ text, buttons: [], muted: true });
+  el.hidden = false;
+  setTimeout(refreshWarden, 6000);
+}
+
+document.getElementById("warden").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-choice]");
+  if (!b) return;
+  const el = document.getElementById("warden");
+  el.querySelectorAll("button").forEach(x => { x.disabled = true; });
+  try {
+    if (b.dataset.choice === "unmute") {
+      await wardenPost("/warden/mute", { muted: false });
+      return refreshWarden();
+    }
+    const r = await wardenPost("/warden/answer", { id: el.dataset.id, choice: b.dataset.choice });
+    chrome.runtime.sendMessage?.({ type: "warden-answered" });
+    wardenSay(r.body.reply);
+  } catch { wardenSay("I couldn't reach the daemon."); }
+});
+
+document.getElementById("warden").addEventListener("change", async (e) => {
+  if (!e.target.matches("select.warden-mute") || e.target.value === "") return;
+  const [, hours] = WARDEN_MUTE[Number(e.target.value)];
+  try {
+    const r = await wardenPost("/warden/mute", { muted: true, hours });
+    wardenSay(r.body.reply);
+  } catch { wardenSay("I couldn't reach the daemon."); }
+});
+
+// "Analyze now": the warden reads the tabs and memory and says what it would
+// release, with buttons for its suggestions. Nothing happens until one is pressed.
+let lastAnalysis = null;
+async function analyzeNow() {
+  const btn = document.getElementById("analyze-btn");
+  const out = document.getElementById("analysis-result");
+  btn.disabled = true;
+  btn.textContent = "Your warden is looking…";
+  try {
+    let r = await wardenPost("/browser/explain", {}, 60000);
+    if (r.status === 404) { // an older daemon: the rules' count only
+      r = await wardenPost("/browser/analyze", {}, 30000);
+      r.body = { reply: `${r.body.tabs.length} tabs inspected; ${r.body.candidates} can be unloaded.`, tier: "facts" };
+    } else if (r.status !== 200) throw new Error(r.status);
+    lastAnalysis = r.body;
+    out.innerHTML = analysisHTML(r.body);
+    out.hidden = false;
+  } catch {
+    out.innerHTML = analysisHTML({ reply: "I couldn't reach the daemon, so I have no opinion yet.", tier: "" });
+    out.hidden = false;
+  }
+  btn.disabled = false;
+  btn.textContent = "Analyze Now";
+}
+
+document.getElementById("analysis-result").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b || !lastAnalysis) return;
+  const act = b.dataset.act;
+  const targets = (lastAnalysis[act] || []).map(({ browser, id, url }) => ({ browser, id, url }));
+  if (act === "close" && !confirm(`Close ${targets.length} tab(s)? They go in the reopen list below.`)) return;
+  b.disabled = true;
+  try {
+    const r = await wardenPost(act === "close" ? "/browser/close" : "/browser/discard", { targets });
+    const done = (r.body.confirmed || []).length, queued = (r.body.queued || []).length;
+    b.textContent = act === "close" ? `Closed ${done}${queued ? `, ${queued} pending` : ""}` : `Unloaded ${done}${queued ? `, ${queued} pending` : ""}`;
+  } catch { b.textContent = "Daemon offline"; }
+});
 
 function renderRamBreakdown(report) {
   const el = document.getElementById("ram-breakdown");
@@ -198,3 +272,4 @@ function esc(s) {
 }
 
 init();
+refreshWarden();

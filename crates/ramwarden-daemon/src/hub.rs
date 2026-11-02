@@ -147,6 +147,8 @@ pub struct AppState {
     pub hold_until: Arc<Mutex<Option<Instant>>>,
     /// Tiling window manager control (`/desktop`); off or undetected is normal.
     pub desktop: Arc<crate::desktop::DesktopCtl>,
+    /// The warden's speech bubble: check-ins about tabs and comments.
+    pub voice: Arc<crate::voice::Voice>,
 }
 
 impl AppState {
@@ -296,6 +298,9 @@ impl AppState {
         let auto = crate::browser::close_candidates(&rows, &self.cfg.tabs);
         let mut result = DiscardResult::default();
         for target in requested {
+            if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {
+                result.refused.push(target.clone()); continue;
+            }
             // Approved closes (the review checklist) need only what a manual close
             // needs; unattended ones must pass every automatic guard.
             let valid = rows.iter().any(|r| &r.target==target

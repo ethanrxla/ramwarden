@@ -61,6 +61,25 @@ fn release_plan(browser: Option<(usize, usize)>) -> Value {
     }
 }
 
+/// Ask whichever model the user prefers, falling back to the other. `None`
+/// when neither answers in time: callers then report observed facts only.
+/// Shared by the chat and the extension's "Analyze now" (`crate::tab_analysis`).
+pub async fn ask_model(st: &AppState, messages: &[Value], cloud_allowed: bool) -> Option<(String, &'static str)> {
+    let local = async {
+        if st.ai.respect_vram && ramwarden_ai::vram::room_for_local_model() == Some(false) { return None; }
+        let p = st.ai.ollama.as_ref()?;
+        tokio::time::timeout(Duration::from_secs(20), p.explain(messages)).await.ok()?.ok()
+    };
+    let cloud = async {
+        if !cloud_allowed { return None; }
+        let p = st.ai.nim.as_ref()?;
+        tokio::time::timeout(Duration::from_secs(20), p.explain(messages, st.cfg.assistant.cloud_model.as_deref())).await.ok()?.ok()
+    };
+    if st.ai.prefer == ramwarden_ai::provider::Prefer::Cloud {
+        if let Some(s) = cloud.await { Some((s, "cloud")) } else { local.await.map(|s| (s, "local")) }
+    } else if let Some(s) = local.await { Some((s, "local")) } else { cloud.await.map(|s| (s, "cloud")) }
+}
+
 pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<Service>>, Json(r): Json<Request>) -> Result<Json<Value>, StatusCode> {
     if !validate(&r) { return Err(StatusCode::BAD_REQUEST); }
     let _permit = service.gate.try_acquire().map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
@@ -86,7 +105,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     let direct_release = requests_memory_release(&r.message);
     let facts = json!({"memory_percent":m.percent(),"used_mb":m.used() / 1048576,
         "total_mb":m.total / 1048576,"processes":processes,"recent_actions":actions,
-        "cloud_opt_in":cloud_allowed,"platform":st.platform.name,
+        "focus_goal":st.voice.focus.goal(crate::voice::unix_now()),"cloud_opt_in":cloud_allowed,"platform":st.platform.name,
         "browser_snapshot_available":browser.is_some(),
         "connected_browsers":browser.map(|b|b.0),"eligible_idle_tabs":browser.map(|b|b.1),
         "unload_batch_limit":crate::browser::BATCH_LIMIT});
@@ -94,19 +113,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     let mut messages = vec![json!({"role":"system","content":format!("{}\nObserved snapshot: {}\nCurrently frozen apps: {}",crate::assistant_prompt::SYSTEM,facts,json!(frozen))})];
     for t in r.history { messages.push(json!({"role":t.role,"content":t.content})); }
     messages.push(json!({"role":"user","content":r.message}));
-    let local = async {
-        if st.ai.respect_vram && ramwarden_ai::vram::room_for_local_model() == Some(false) { return None; }
-        let p = st.ai.ollama.as_ref()?;
-        tokio::time::timeout(Duration::from_secs(20), p.explain(&messages)).await.ok()?.ok()
-    };
-    let cloud = async {
-        if !cloud_allowed { return None; }
-        let p = st.ai.nim.as_ref()?;
-        tokio::time::timeout(Duration::from_secs(20), p.explain(&messages, st.cfg.assistant.cloud_model.as_deref())).await.ok()?.ok()
-    };
-    let result = if direct_release { Some((release_plan(browser).to_string(), "facts")) } else if st.ai.prefer == ramwarden_ai::provider::Prefer::Cloud {
-        if let Some(s) = cloud.await { Some((s,"cloud")) } else { local.await.map(|s|(s,"local")) }
-    } else if let Some(s) = local.await { Some((s,"local")) } else { cloud.await.map(|s|(s,"cloud")) };
+    let result = if direct_release { Some((release_plan(browser).to_string(), "facts")) } else { ask_model(&st, &messages, cloud_allowed).await };
     let top = processes.iter().take(3).map(|p| format!("{}: {:.0} MB", p["name"].as_str().unwrap_or("unknown"), p["memory_mb"].as_f64().unwrap_or(0.0))).collect::<Vec<_>>().join("; ");
     let recent = actions.iter().take(3).map(|a| format!("{} · {} · {}",a["action"].as_str().unwrap_or("action"),a["target"].as_str().unwrap_or(""),if a["succeeded"].as_bool().unwrap_or(false) {"succeeded"} else {"not confirmed successful"})).collect::<Vec<_>>().join("\n");
     let (raw_reply, tier) = result.unwrap_or_else(|| (
