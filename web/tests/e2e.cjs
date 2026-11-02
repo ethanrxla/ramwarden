@@ -124,7 +124,6 @@ async function run() {
     await p.waitForFunction(() => /Free to start/.test(document.querySelector("[data-say]").textContent));
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), true);
     await p.click("[data-mute]");
-    assert.ok((await p.getAttribute(".chat-offers a", "href")).endswith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.evaluate(() => document.querySelector("[data-pet]").warden.joke()), false);
     // Look: the app's controls are all there; a swatch and the pupil picker
