@@ -80,6 +80,15 @@ fi
 echo "==> Per-agent keys only: disable password enrolment"
 CONF=/var/ossec/etc/ossec.conf
 perl -0pi -e 's|(<auth>\s*<disabled>)no(</disabled>)|${1}yes${2}|' "$CONF"
+python3 - "$CONF" <<'POLICY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+if '<!-- ThreatWarden observe-only policy -->' not in s:
+    s += '\n<ossec_config><!-- ThreatWarden observe-only policy --><active-response><disabled>yes</disabled></active-response></ossec_config>\n'
+p.write_text(s)
+POLICY
 systemctl restart wazuh-manager
 
 systemctl is-active --quiet wazuh-manager wazuh-indexer

@@ -58,6 +58,8 @@ s = p.read_text()
 for file in ['/var/log/threatwarden/clamav.json', '/var/log/suricata/eve.json']:
     if f'<location>{file}</location>' not in s:
         s += f'\n<ossec_config><localfile><log_format>json</log_format><location>{file}</location></localfile></ossec_config>\n'
+if '<!-- ThreatWarden observe-only policy -->' not in s:
+    s += '\n<ossec_config><!-- ThreatWarden observe-only policy --><active-response><disabled>yes</disabled></active-response></ossec_config>\n'
 p.write_text(s)
 Path('/var/ossec/etc/rules/threatwarden_clamav.xml').write_text('''<group name="clamav,threatwarden,">
 <rule id="100510" level="3"><decoded_as>json</decoded_as><field name="engine">^threatwarden_clamav$</field><description>ThreatWarden ClamAV scan event</description></rule>
