@@ -37,7 +37,7 @@ async fn a_visitor_asks_about_price_then_opens_a_ticket_the_team_answers() {
     let secret = v["conversation"].as_str().unwrap().to_string();
     assert!(secret.starts_with("rwsc_"));
     assert_eq!(v["reply"]["topic"], "pricing");
-    assert!(v["reply"]["text"].as_str().unwrap().contains("Pro is $5 every 2 months or $24 a year"));
+    assert!(v["reply"]["text"].as_str().unwrap().contains("Pro is $5 per month or $24 a year"));
     assert_eq!(v["reply"]["offer_ticket"], false);
 
     // The same conversation continues; no new secret is handed out.
@@ -112,7 +112,7 @@ async fn a_signed_in_visitor_hears_their_own_plan_and_sees_their_tickets() {
             &id,
             &BillingUpdate {
                 tier: Some(Tier::Ram),
-                interval: Some(Interval::TwoMonths),
+                interval: Some(Interval::Month),
                 trial_ends_at: Some(NOW + 10 * 86_400),
                 paid_until: Some(NOW + 10 * 86_400),
                 ..Default::default()

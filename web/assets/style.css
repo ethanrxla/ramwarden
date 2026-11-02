@@ -416,7 +416,7 @@ footer a { color: var(--muted); }
 .price.tier-lite { background:var(--panel); }
 .price.tier-lite .button { background:transparent; color:var(--text); border:1px solid var(--line); }
 .price.tier-ram { box-shadow:0 18px 50px #f2445533; }
-.pricing[data-interval="2mo"] [data-price="year"], .pricing[data-interval="year"] [data-price="2mo"] { display:none; }
+.pricing[data-interval="month"] [data-price="year"], .pricing[data-interval="year"] [data-price="month"] { display:none; }
 .price .alt { color:var(--muted); font-size:14px; margin:-8px 0 0; }
 .price.tier-ram { --accent:#f24455; --accent-ink:#fff; --panel:#21181d; --line:#443039; border-color:#f24455; background:#21181d; }
 .price.tier-pro { --accent:#39ff88; --accent-ink:#03140a; --accent-2:#a78bfa; background:linear-gradient(160deg,#1b1030,#07050b); border-color:#8b5cf6; color:#ece8f7; }
@@ -437,3 +437,5 @@ footer a { color: var(--muted); }
 .row-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
 .how-note { color:var(--muted); font-size:14px; margin:18px 0 0; }
+
+.annual-reference { font-size: .5em; opacity: .6; margin-right: .4em; }

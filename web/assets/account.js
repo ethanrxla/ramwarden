@@ -47,7 +47,12 @@ class AccountPage {
         return;
       }
     }
-    if (!this.account) await this.signIn();
+    const emailOnly = new URLSearchParams(location.search).get("signin") === "email";
+    if (!this.account || emailOnly) await this.signIn(emailOnly);
+    if (emailOnly) {
+      const url = new URL(location.href); url.searchParams.delete("signin");
+      history.replaceState(null, "", url);
+    }
     await this.loadCheckout();
     this.render();
     // Back from card checkout: follow the payment until it confirms.
@@ -59,10 +64,11 @@ class AccountPage {
     }
   }
 
-  async signIn() {
+  async signIn(emailOnly = false) {
     const area = h("div");
-    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
-    this.account = (await chooseSignIn(area, api)).account;
+    show(root, h("h1", {}, emailOnly ? "Email sign-in" : "Your account"),
+      h("p", {}, emailOnly ? "Enter your email, then request a code or use one you already received. Signing in switches this browser to the account for that email." : "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api, { emailOnly })).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -105,6 +111,7 @@ class AccountPage {
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
+              h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
               next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
               ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
@@ -192,7 +199,7 @@ class AccountPage {
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
     let tier = this.upgrading || wanted?.tier || "ram";
-    let interval = wanted?.interval || "2mo";
+    let interval = wanted?.interval || "month";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
     const refresh = () => {
@@ -216,13 +223,13 @@ class AccountPage {
         h("strong", {}, label),
         sub ? h("span", {}, sub) : null,
       );
-    const m = (t) => planFor(this.plans, t, "2mo");
+    const m = (t) => planFor(this.plans, t, "month");
     const y = (t) => planFor(this.plans, t, "year");
     const picker = h(
       "div",
       {},
-      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / 2 months`))),
-      h("div", { class: "plans" }, choice("interval", "2mo", "Every 2 months"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
+      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / month`))),
+      h("div", { class: "plans" }, choice("interval", "month", "Monthly"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
     );
     const method = (key, label, sub, run) =>
       this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan().id, area) }, h("strong", {}, label), h("span", {}, sub)) : null;

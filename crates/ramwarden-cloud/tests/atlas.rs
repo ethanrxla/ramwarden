@@ -19,7 +19,24 @@ async fn atlas_keeps_the_store_contract() {
     };
     let cfg = CloudConfig { mongodb_uri: Secret::new(uri), database: format!("ramwarden-test-{}", &random_token("")[..8]) };
     let store = MongoStore::connect(&cfg).await.expect("connect");
+    // Reproduce earlier deployment schemas without dropping their indexes.
+    use mongodb::{IndexModel, bson::{Document, doc}, options::IndexOptions};
+    for (collection, keys, name, ttl) in [
+        ("devices", doc! {"account_id":1,"revoked_at":1}, "by_account", false),
+        ("device_codes", doc! {"expires_at":1}, "expire", true),
+        ("sessions", doc! {"expire_at":1}, "expire", true),
+    ] {
+        let mut options = IndexOptions::builder().name(name.to_string()).build();
+        if ttl { options.expire_after = Some(std::time::Duration::ZERO); }
+        store.database().collection::<Document>(collection)
+            .create_index(IndexModel::builder().keys(keys).options(options).build()).await.expect("legacy index");
+    }
+    store.database().collection::<Document>("device_codes")
+        .create_index(IndexModel::builder().keys(doc! {"user_code":1})
+            .options(IndexOptions::builder().name("user_code_unique".to_string()).unique(true).build()).build())
+        .await.expect("legacy user-code uniqueness");
     store.ensure_indexes().await.expect("indexes");
+    store.ensure_indexes().await.expect("idempotent indexes");
 
     let outcome = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async { contract::run(&store).await; decisions_sync_is_idempotent_and_takes_late_outcomes(&store).await; })).await;
     for name in store.database().list_collection_names().await.expect("list test collections") {

@@ -68,9 +68,11 @@ trial_available, billing: {method}|null, entitlement_until, entitlements,
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`.
 
-Plans are the contract's ids: 1 Plus every 2 months ($4), 2 Pro every 2
-months ($5), 3 Plus annual ($20), 4 Pro annual ($24). The 2-month plans
-charge every 60 days (interval `2mo`). Device limits: Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
+Current plan ids: 1 Plus monthly ($4), 2 Pro monthly ($5), 3 Plus annual
+($20), 4 Pro annual ($24). Annual cards show the equivalent twelve-month cost
+crossed out ($48/$60), with 58%/60% savings, labeled against monthly billing.
+Live checkout remains gated until deployed plan terms match. Device limits:
+Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
 14-day trial; Pro is charged from day one (`trial_days: 0`). Both renew until
 cancelled. RamWarden Lite has no plan: a signed-in account with nothing
 bought, on 1 device, with no AI.

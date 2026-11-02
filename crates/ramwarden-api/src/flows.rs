@@ -311,7 +311,7 @@ async fn the_sixth_device_is_refused_on_the_link_page() {
     let w = EvmWallet::new(12);
     let (cookie, id) = a.web(&w).await;
     // Plus covers 3 devices and Pro 5 (user decision, 2026-11-02).
-    let plus = BillingUpdate { tier: Some(Tier::Ram), interval: Some(Interval::TwoMonths), paid_until: Some(NOW + 60 * DAY), ..Default::default() };
+    let plus = BillingUpdate { tier: Some(Tier::Ram), interval: Some(Interval::Month), paid_until: Some(NOW + 60 * DAY), ..Default::default() };
     a.store.update_billing(&id, &plus).await.unwrap();
     for i in 0..3 {
         a.store.register_device(&id, &format!("pc{i}"), Platform::Linux, NOW).await.unwrap().unwrap();
@@ -391,7 +391,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
 
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(24)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(48)));
     assert_eq!(co["transactions"].as_array().unwrap().len(), 2, "approve one year, then startTrial");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
@@ -405,7 +405,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
     assert_eq!((p["status"].as_str(), p["account_status"].as_str()), (Some("confirmed"), Some("trial")));
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
-    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("2mo"), Some("trial")));
+    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("month"), Some("trial")));
     assert_eq!(acct["trial_ends_at"], iso8601(trial_end));
     assert_eq!(acct["billing"]["method"], "base");
     assert_eq!(acct["trial_available"], false);
@@ -443,7 +443,7 @@ async fn pro_on_base_is_charged_at_once_and_keeps_the_trial_unused() {
     let (device_token, cookie, account_id) = a.sign_in_device(&w).await;
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(30)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(60)));
     let mut r = [0u8; 32];
     r.copy_from_slice(&hex::decode(co["payment_id"].as_str().unwrap()).unwrap());
 

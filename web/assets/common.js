@@ -137,12 +137,12 @@ export async function signIn(api, wallet, userCode) {
 // Wallet or email, one account either way (docs/product-spec.md 3.1).
 // Resolves with the server's `{account, linked_device}` once one of them
 // succeeds; a failure is shown in place and the visitor can try again.
-export function chooseSignIn(container, api, { userCode = null, purpose = "You sign a short message. It costs nothing." } = {}) {
+export function chooseSignIn(container, api, { userCode = null, emailOnly = false, purpose = "You sign a short message. It costs nothing." } = {}) {
   return new Promise((resolve) => {
     const problem = h("div");
     const walletArea = h("div");
     const emailArea = h("div");
-    show(container, problem, walletArea, h("p", { class: "or" }, "or"), emailArea);
+    show(container, problem, emailOnly ? null : walletArea, emailOnly ? null : h("p", { class: "or" }, "or"), emailArea);
 
     const wallets = async () => {
       const wallet = await pickWallet(walletArea, { purpose });
@@ -177,17 +177,20 @@ export function chooseSignIn(container, api, { userCode = null, purpose = "You s
           },
           input,
           h("button", { class: "button secondary", type: "submit" }, "Email me a code"),
+          h("button", { class: "linkish", type: "button", onclick: () => {
+            if (input.reportValidity()) askCode(input.value.trim());
+          } }, "I already have a code"),
         ),
         status,
       );
     };
 
     const askCode = (address) => {
-      const input = h("input", { name: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", placeholder: "123456", "aria-label": "Six-digit code" });
+      const input = h("input", { name: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", placeholder: "123456", pattern: "[0-9]{6}", required: true, "aria-label": "Six-digit code" });
       const status = h("div");
       show(
         emailArea,
-        h("p", {}, `We sent a six-digit code to ${address}.`),
+        h("p", {}, `Enter the six-digit code from the email to ${address}.`),
         h(
           "form",
           {
@@ -210,7 +213,7 @@ export function chooseSignIn(container, api, { userCode = null, purpose = "You s
       input.focus();
     };
 
-    wallets();
+    if (!emailOnly) wallets();
     email();
   });
 }

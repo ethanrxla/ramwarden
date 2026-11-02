@@ -87,13 +87,15 @@ confirmed by the user 2026-11-01):
 | Card | Plan | Tier id | Price | Trial | Wardens | Devices |
 | --- | --- | --- | --- | --- | --- | --- |
 | RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI, no warden pet | 1 |
-| RamWarden Plus | 1, 3 | `ram` | $4 / 2 months, $20 / year | 14 days | `ram` | 3 |
-| RamWarden Pro | 2, 4 | `pro` | $5 / 2 months, $24 / year | none | `ram`, `threat` | 5 |
+| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 3 |
+| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
 
-Plans 1 and 2 bill every 60 days (`interval: "2mo"`, `days: 60`; by card,
-Stripe's every-2-months recurrence), and the device limits are Lite 1, Plus
-3, Pro 5 (user decision, 2026-11-02). Account records written before then
-say `interval: "month"`, which reads as `2mo`.
+Plans 1 and 2 now bill monthly (`interval: "month"`, 30-day crypto periods;
+Stripe calendar-month recurrence), per owner clarification 2026-11-02.
+Existing `2mo` records retain their legacy meaning and must not be silently
+converted. A deployed checkout contract must be configured and verified against
+these new plan definitions before payments are enabled. Device limits remain
+Lite 1, Plus 3, Pro 5.
 
 **The warden pet** comes with a paid plan. `pet` in the account says whether
 to show it; on a device, the daemon's `GET /wardens` has `pet`, true while
@@ -118,7 +120,7 @@ subscription upgrades with the method that pays for it.
 
 RamWarden plans (1 and 3) start with a 14-day trial; Pro plans (2 and 4) are
 charged at once (user decision, 2026-11-01). Every plan then renews every
-60 days or every year until cancelled. One trial per account: an account that had
+month or every year until cancelled. One trial per account: an account that had
 one is charged at once. `trial` in `plans.json` and the contract's `Plan`
 carry this, and `trial_days` in `checkout/config` is 14 or 0.
 
@@ -164,7 +166,7 @@ approved, unless the account already has `device_limit` devices (409, shown
 on the link page).
 
 **Account.** `{id, identity: {kind: "wallet", chain, address} | {kind:
-"email", email}, tier: "ram" | "pro" | null, interval: "2mo" | "year" |
+"email", email}, tier: "ram" | "pro" | null, interval: "month" | "2mo" | "year" |
 null, status, trial_ends_at, paid_until, trial_available, billing: {method:
 "base" | "card"} | null, plan: "lite" | "plus" | "pro", pet, entitlement_until, entitlements: {slug: iso time},
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],

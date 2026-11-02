@@ -84,8 +84,8 @@ pub const TOPICS: &[Topic] = &[
         meaning: "comparing the plans or tiers (Lite, Plus, Pro), or which one to choose",
         keywords: &["plan", "plans", "tier", "tiers", "which one", "difference", "compare", "plus", "pro", "lite", "upgrade"],
         answer: "There are three plans. RamWarden Lite is free: the memory algorithm with no AI, on 1 computer. \
-                 RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $4 every 2 months or $20 a year, with a 14-day free trial. \
-                 RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $5 every 2 months or $24 a year. \
+                 RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $4 per month or $20 a year, with a 14-day free trial. \
+                 RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $5 per month or $24 a year. \
                  If you mostly want memory back, start with the Plus trial. If you also want security, Pro.",
         next: &["trial", "lite", "threatwarden"],
         ticket: false,
@@ -94,8 +94,8 @@ pub const TOPICS: &[Topic] = &[
         id: "pricing",
         meaning: "how much it costs, prices, billing period, monthly or yearly",
         keywords: &["price", "prices", "cost", "costs", "how much", "$", "dollar", "cheap", "expensive", "per month", "monthly", "yearly", "annual", "billing"],
-        answer: "Lite is free. Plus is $4 every 2 months or $20 a year. Pro is $5 every 2 months or $24 a year. \
-                 You're charged every 60 days or once a year, whichever you pick, until you cancel. The yearly plans save about 17% for Plus and 20% for Pro.",
+        answer: "Lite is free. Plus is $4 per month or $20 a year. Pro is $5 per month or $24 a year. \
+                 You're charged monthly or once a year, whichever you pick, until you cancel. Annual billing saves about 58% for Plus and 60% for Pro compared with monthly billing.",
         next: &["trial", "payment", "cancel"],
         ticket: false,
     },
@@ -103,8 +103,7 @@ pub const TOPICS: &[Topic] = &[
         id: "trial",
         meaning: "the free trial: how long, which plan has it, what happens when it ends",
         keywords: &["trial", "free trial", "try", "try it", "14 day", "14-day", "trial end", "after the trial"],
-        answer: "RamWarden Plus has a 14-day free trial. Nothing is charged during it. When it ends, the payment method you chose is charged every 2 months or yearly until you cancel, \
-                 and if you cancel first you're never charged. There's one trial per account and per computer. Pro is paid from day one, so if you want to try the AI first, start with Plus and upgrade in a few clicks.",
+        answer: "Plus is free for your first 14 days. After that, your selected card or supported wallet payment is charged $4 per month or $20 per year, depending on the plan you choose, until you cancel. Cancel before the trial ends and you pay nothing. There's one trial per account and per computer. Pro is $5 per month or $24 per year and is paid from day one.",
         next: &["cancel", "payment", "plans"],
         ticket: false,
     },
@@ -301,7 +300,7 @@ mod tests {
         };
         let pricing = topic("pricing").unwrap().answer;
         for (tier, name) in [("ram", "Plus"), ("pro", "Pro")] {
-            let two = format!("{name} is ${} every 2 months or ${} a year", usd(tier, "2mo"), usd(tier, "year"));
+            let two = format!("{name} is ${} per month or ${} a year", usd(tier, "month"), usd(tier, "year"));
             assert!(pricing.contains(&two), "pricing answer is stale: wanted `{two}`");
         }
         let devices = topic("devices").unwrap().answer;
