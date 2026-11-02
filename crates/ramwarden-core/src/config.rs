@@ -340,6 +340,58 @@ impl Default for Tabs {
     }
 }
 
+/// The warden's voice: speech-bubble check-ins about tabs, light comments
+/// and reports of what it did. See `docs/specs/warden-voice.md`.
+///
+/// Every limit here is a ceiling on how often the warden speaks; none of them
+/// widens what may be closed. With the voice off, closing behaves exactly as
+/// it did without it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Voice {
+    /// Off silences the warden entirely.
+    pub enabled: bool,
+    /// Ask "coming back to this tab?" before the sweep closes it.
+    pub ask_about_tabs: bool,
+    /// Light comments about memory and tabs.
+    pub quips: bool,
+    /// Only tabs idle at least this long are asked about.
+    pub ask_after_minutes: f64,
+    /// At least this long between any two bubbles.
+    pub min_gap_minutes: f64,
+    /// At least this long between two check-ins.
+    pub ask_every_minutes: f64,
+    /// At least this long between two quips.
+    pub quip_every_minutes: f64,
+    /// At most this many bubbles a day (replies to a choice not counted).
+    pub max_per_day: usize,
+    /// At most this many jokes a day, within `max_per_day`. The user asked
+    /// for a warden that is never annoying; the website allows 3 a visit.
+    pub max_quips_per_day: usize,
+    /// "Yes, keep it" holds a tab out of automatic closing this long.
+    pub keep_hours: f64,
+    /// "Ask me later" (or ignoring the question) waits this long to ask again.
+    pub later_hours: f64,
+}
+
+impl Default for Voice {
+    fn default() -> Self {
+        Voice {
+            enabled: true,
+            ask_about_tabs: true,
+            quips: true,
+            ask_after_minutes: 60.0,
+            min_gap_minutes: 30.0,
+            ask_every_minutes: 45.0,
+            quip_every_minutes: 120.0,
+            max_per_day: 6,
+            max_quips_per_day: 3,
+            keep_hours: 24.0,
+            later_hours: 6.0,
+        }
+    }
+}
+
 /// VRAM policy: unload idle local models when a game needs the card.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -605,6 +657,7 @@ pub struct Config {
     pub gpu: Gpu,
     pub wardens: Wardens,
     pub tabs: Tabs,
+    pub voice: Voice,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -633,6 +686,7 @@ struct Raw {
     gpu: Gpu,
     wardens: Wardens,
     tabs: Tabs,
+    voice: Voice,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -712,6 +766,7 @@ impl Default for Config {
             gpu: Gpu::default(),
             wardens: Wardens::default(),
             tabs: Tabs::default(),
+            voice: Voice::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -925,6 +980,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         gpu: raw.gpu,
         wardens: raw.wardens,
         tabs: raw.tabs,
+        voice: raw.voice,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),

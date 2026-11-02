@@ -20,6 +20,8 @@ pub struct Snapshot {
     pub tidy: Option<TidyState>,
     pub gpu: Option<GpuReport>,
     pub debloat: Option<DebloatState>,
+    /// What the warden is saying, from `/warden/bubble`.
+    pub speech: Option<crate::voice::Speech>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
     /// What is being done about it: starting the daemon, or where to look.
@@ -40,6 +42,11 @@ pub enum Command {
     DebloatApply { name: String, include_optional: bool },
     DebloatRevert(String),
     GpuUnload(Option<String>),
+    /// An answer to the warden's bubble: `keep`, `close`, `later` or `dismiss`.
+    Answer { id: String, choice: String },
+    /// Quiet the warden for this many hours, or until unmuted with `None`.
+    Mute(Option<f64>),
+    Unmute,
 }
 
 pub struct Poller {
@@ -66,13 +73,16 @@ impl Poller {
                 // only does it when it runs without a tray.
                 let mut launcher = DaemonLauncher::new(Duration::from_secs(if full { 20 } else { 6 }));
                 loop {
-                    let (state, tidy) = if full {
-                        tokio::join!(client.state(), client.tidy())
+                    let (state, tidy, speech) = if full {
+                        tokio::join!(client.state(), client.tidy(), client.bubble())
                     } else {
-                        (client.state().await, Err(crate::client::Error::Transport(String::new())))
+                        let (state, speech) = tokio::join!(client.state(), client.bubble());
+                        (state, Err(crate::client::Error::Transport(String::new())), speech)
                     };
                     {
                         let mut s = shared.lock().unwrap();
+                        // A daemon without the voice (older, or restarting) is a quiet warden.
+                        s.speech = speech.ok();
                         match state {
                             Ok(st) => {
                                 s.state = Some(st);
@@ -125,7 +135,9 @@ impl Poller {
                     repaint();
                     let message = Self::run(&client, cmd).await;
                     Self::refresh_slow(&client, &shared).await;
+                    let speech = client.bubble().await.ok();
                     let mut s = shared.lock().unwrap();
+                    s.speech = speech;
                     s.message = Some(message);
                     s.busy = false;
                     drop(s);
@@ -184,6 +196,19 @@ impl Poller {
                     if n == 0 { "no local models were loaded".into() } else { format!("unloaded {n} model(s)") }
                 }
                 Err(e) => format!("unload: {e}"),
+            },
+            Command::Answer { id, choice } => match client.answer(&id, &choice).await {
+                Ok(r) if r.reply.is_empty() => "Okay.".into(),
+                Ok(r) => r.reply,
+                Err(e) => format!("answer: {e}"),
+            },
+            Command::Mute(hours) => match client.mute(true, hours).await {
+                Ok(r) => r.reply,
+                Err(e) => format!("mute: {e}"),
+            },
+            Command::Unmute => match client.mute(false, None).await {
+                Ok(_) => "Your warden can talk again.".into(),
+                Err(e) => format!("unmute: {e}"),
             },
         }
     }

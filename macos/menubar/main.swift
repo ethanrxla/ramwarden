@@ -74,6 +74,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() async {
         guard !refreshing else { return }; refreshing = true
         let s = await loadSnapshot(previous:snap)
+        await companion.voice.poll()
         await MainActor.run {
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
@@ -117,7 +118,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func rebuild() {
         menu.removeAllItems()
-        add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
+        // The warden's question, answerable here when the ram is hidden.
+        if companion.pet == nil, companion.voice.pet, let b = companion.voice.bubble, b.isQuestion {
+            header("YOUR WARDEN ASKS")
+            add("🐏 \(b.text)", nil)
+            for c in b.choices {
+                let m = NSMenuItem(title: "    \(c.label)", action: #selector(answerWarden(_:)), keyEquivalent: "")
+                m.target = self; m.representedObject = c.id
+                menu.addItem(m)
+            }
+            menu.addItem(.separator())
+        }
+        if companion.voice.pet {
+            add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
+        }
         add("Open assistant", #selector(openAssistant))
         add("Customize ram colors…", #selector(customizeRam))
         menu.addItem(.separator())
@@ -183,6 +197,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func toggleCompanion() { companion.toggle(); rebuild() }
+    @objc func answerWarden(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? String else { return }
+        companion.voice.answer(choice)
+    }
     @objc func openAssistant() { companion.openChat() }
     @objc func customizeRam() { companion.openColors() }
 

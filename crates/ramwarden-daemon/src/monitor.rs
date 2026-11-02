@@ -117,17 +117,25 @@ impl TabCloser for Tabs {
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
     let threshold = state.cfg.thresholds.inactivity_minutes as i64;
-    let (to_unload, to_close, titles) = {
+    let (to_unload, to_close, titles, est_mb) = {
         let hub = state.hub.lock().unwrap();
         let rows = crate::browser::snapshot(&hub.reg, threshold);
-        let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        let mut close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        // A tab the user said they are coming back to, or one the warden is
+        // asking about right now, is not closed behind their back.
+        let held = state.voice.hold_back(&state.cfg.voice, &mut close, Instant::now());
+        if held > 0 {
+            tracing::info!("tabs: {held} held back by the user's answers");
+        }
         let titles: std::collections::HashMap<_, _> = rows.iter()
             .filter(|r| close.contains(&r.target))
             .map(|r| (r.target.clone(), r.title.clone())).collect();
+        let est_mb: std::collections::HashMap<_, _> = rows.iter()
+            .map(|r| (r.target.clone(), r.est_mb as u64)).collect();
         let unload: Vec<_> = rows.into_iter()
             .filter(|r| r.eligible && !close.contains(&r.target))
             .take(crate::browser::BATCH_LIMIT).map(|r| r.target).collect();
-        (unload, close, titles)
+        (unload, close, titles, est_mb)
     };
 
     let unloaded = state.discard_tabs(&to_unload).await;
@@ -154,6 +162,10 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
         let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
     }
+    // Only what a browser confirmed is worth telling the user about.
+    let freed: u64 = unloaded.confirmed.iter().chain(&closed.confirmed)
+        .map(|t| est_mb.get(t).copied().unwrap_or(0)).sum();
+    state.voice.note_release(unloaded.confirmed.len(), closed.confirmed.len(), freed, Instant::now());
     if unloaded.confirmed.is_empty() && closed.confirmed.is_empty() && closed.queued.is_empty() {
         return;
     }

@@ -67,6 +67,7 @@ fn state(desktop: DesktopCtl) -> AppState {
         started: std::time::Instant::now(),
         hold_until: Default::default(),
         desktop: Arc::new(desktop),
+        voice: Default::default(),
     }
 }
 

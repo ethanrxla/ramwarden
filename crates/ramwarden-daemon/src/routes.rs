@@ -88,12 +88,16 @@ pub fn router(state: AppState) -> Router {
         .route("/wardens/{id}/icon.svg", get(crate::wardens::icon_svg))
         .route("/wardens/{id}/setup", post(crate::wardens::setup))
         .merge(crate::desktop::routes())
+        // The warden's speech bubble. See docs/specs/warden-voice.md.
+        .merge(crate::voice::routes::routes())
         ;
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {
         router.route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
             .route("/assistant/action", post(crate::assistant::act))
+            // "Analyze now" in the extension: the warden's read of the tabs.
+            .route("/browser/explain", post(crate::tab_analysis::explain))
             .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::new())))
     } else { router };
     router.with_state(state)

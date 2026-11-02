@@ -146,6 +146,8 @@ pub struct AppState {
     pub hold_until: Arc<Mutex<Option<Instant>>>,
     /// Tiling window manager control (`/desktop`); off or undetected is normal.
     pub desktop: Arc<crate::desktop::DesktopCtl>,
+    /// The warden's speech bubble: check-ins about tabs and comments.
+    pub voice: Arc<crate::voice::Voice>,
 }
 
 impl AppState {

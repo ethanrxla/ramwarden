@@ -322,8 +322,10 @@ final class PetHost: NSHostingView<PixelRam> {
 }
 final class Companion: NSObject, NSWindowDelegate {
     let model = CompanionModel()
+    let voice = VoiceModel()
     var pet: PetPanel?
     var chat: ChatPanel?
+    var bubble: BubblePanel?
     var positioning = false
     var subscriptions = Set<AnyCancellable>()
     override init() {
@@ -331,17 +333,50 @@ final class Companion: NSObject, NSWindowDelegate {
         model.$turns.sink { [weak self] turns in
             DispatchQueue.main.async { self?.resizeChat(hasTurns:!turns.isEmpty) }
         }.store(in:&subscriptions)
+        voice.onChange = { [weak self] in self?.updateBubble() }
     }
+    /// Show, move or hide the speech bubble to match what the warden is saying.
+    /// Pets come with Plus and Pro: without one, the ram is put away (the
+    /// user's own show/hide choice is kept for when it comes back).
+    func updateBubble() {
+        if !voice.pet {
+            hideBubble()
+            if pet != nil { closeChat(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; model.companionVisible = false }
+            return
+        }
+        if pet == nil && visible { showPet() }
+        guard voice.bubble != nil, let pet = pet, chat?.isVisible != true else { hideBubble(); return }
+        if bubble == nil {
+            let p = BubblePanel(contentRect:NSRect(x:0,y:0,width:272,height:96),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+            p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true
+            p.level = .floating; p.hidesOnDeactivate = false
+            p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
+            p.contentView = NSHostingView(rootView:BubbleView(voice:voice))
+            bubble = p
+        }
+        guard let b = bubble else { return }
+        let size = b.contentView?.fittingSize ?? NSSize(width:272,height:96)
+        b.setContentSize(size)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? pet.frame
+        let x = max(bounds.minX,min(pet.frame.midX-size.width/2,bounds.maxX-size.width))
+        // Above the ram, or below it when the ram sits at the top of the screen.
+        let above = pet.frame.maxY - 20
+        let y = above + size.height <= bounds.maxY ? above : max(bounds.minY,pet.frame.minY-size.height)
+        b.setFrameOrigin(NSPoint(x:x,y:y))
+        b.orderFrontRegardless()
+    }
+    func hideBubble() { bubble?.orderOut(nil) }
     var colors: NSWindow?
     var visible: Bool { UserDefaults.standard.bool(forKey:"ram.visible") }
-    func restore() { if visible { showPet() } }
+    func restore() { if visible && voice.pet { showPet() } }
     func toggle() {
-        if pet != nil { closeChat(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; UserDefaults.standard.set(false,forKey:"ram.visible") }
+        if pet != nil { closeChat(); hideBubble(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; UserDefaults.standard.set(false,forKey:"ram.visible") }
         else { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet() }
         model.companionVisible = pet != nil
     }
     func showPet() {
-        guard pet == nil else { return }
+        guard pet == nil, voice.pet else { return }
         let p = PetPanel(contentRect:NSRect(x:100,y:100,width:180,height:180),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
         p.level = .floating; p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]; p.hidesOnDeactivate = false
@@ -365,6 +400,7 @@ final class Companion: NSObject, NSWindowDelegate {
     }
     func openChat() {
         model.speaking = false
+        hideBubble()
         if pet == nil { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet(); model.companionVisible = true }
         if chat == nil {
             let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
@@ -381,6 +417,7 @@ final class Companion: NSObject, NSWindowDelegate {
     func windowDidMove(_ notification: Notification) {
         guard notification.object as? NSWindow === pet else { return }
         positionChat(movePet:false)
+        updateBubble()
     }
     func positionChat(movePet: Bool) {
         guard !positioning, let pet = pet, let chat = chat else { return }
@@ -403,6 +440,7 @@ final class Companion: NSObject, NSWindowDelegate {
     }
     func closeChat() {
         chat?.orderOut(nil); colors?.close(); NSColorPanel.shared.orderOut(nil)
+        DispatchQueue.main.async { [weak self] in self?.updateBubble() }
     }
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === colors {

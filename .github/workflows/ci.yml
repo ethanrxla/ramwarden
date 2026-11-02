@@ -75,6 +75,8 @@ jobs:
           node-version: 22
       - name: Unit tests
         run: node --test web/tests/*.test.mjs
+      - name: Extension tests
+        run: node --test extension/tests/*.cjs
       - name: Browser tests
         run: |
           npm install --no-save --no-package-lock playwright@1

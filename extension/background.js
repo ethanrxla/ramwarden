@@ -13,6 +13,23 @@ if (IS_FIREFOX && chrome.alarms) {
   });
 }
 
+// The warden's questions: a "?" badge while one waits, answered in the popup.
+// Once a minute is plenty; the daemon spaces its questions 45 minutes apart.
+const WARDEN_ALARM = "ramwarden-warden";
+async function _checkWarden() {
+  try {
+    const r = await fetch(_httpUrl + "/warden/bubble");
+    const s = r.ok ? await r.json() : null;
+    _asking = !!(s && s.pet !== false && s.bubble && (s.bubble.choices || []).length);
+  } catch { _asking = false; }
+  if (_connected) _badge(true);
+}
+if (chrome.alarms) {
+  chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === WARDEN_ALARM) _checkWarden(); });
+  chrome.alarms.create(WARDEN_ALARM, { periodInMinutes: 1 });
+}
+chrome.runtime.onMessage?.addListener((msg) => { if (msg?.type === "warden-answered") _checkWarden(); });
+
 let _host    = DEFAULT_HOST;
 let _wsUrl   = `ws://${DEFAULT_HOST}/ws`;
 let _httpUrl = `http://${DEFAULT_HOST}`;
@@ -324,11 +341,13 @@ async function _leaveIdleGroup(tab) {
 // the tab strip looking the same, so without it nothing seems to happen.
 let _connected = false;
 let _unloaded = 0;
+// The warden has a question waiting (a "coming back to this tab?" check-in).
+let _asking = false;
 
 function _badge(connected) {
   _connected = connected;
-  chrome.action.setBadgeText({ text: !connected ? "!" : _unloaded ? String(_unloaded) : "" });
-  chrome.action.setBadgeBackgroundColor({ color: connected ? "#22c55e" : "#ef4444" });
+  chrome.action.setBadgeText({ text: !connected ? "!" : _asking ? "?" : _unloaded ? String(_unloaded) : "" });
+  chrome.action.setBadgeBackgroundColor({ color: !connected ? "#ef4444" : _asking ? "#c0392b" : "#22c55e" });
   chrome.action.setTitle?.({ title: connected
     ? `RamWarden: ${_unloaded} tab(s) unloaded (they stay in the tab strip and reload when clicked)`
     : "RamWarden: daemon offline" });
