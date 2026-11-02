@@ -6,9 +6,12 @@
 import { annualSaving, config, planFor } from "./config.js";
 import { h, pageHref } from "./common.js";
 
-// A yearly price as a monthly figure: $20 a year is $1.67 a month.
-export function perMonth(usd) {
-  return (Math.floor((usd / 12) * 100) / 100).toFixed(2);
+// One bullet: plain text, or {text, soon} for a part that hasn't shipped.
+// A first line ending in ":" leads the list ("Everything in Lite, plus:").
+function bullet(x, i) {
+  const text = typeof x === "string" ? x : x.text;
+  const soon = typeof x === "object" && x.soon;
+  return h("li", { class: i === 0 && text.endsWith(":") ? "lead" : null }, text, soon ? h("i", { class: "soon" }, "Soon") : null);
 }
 
 export class Pricing {
@@ -17,7 +20,7 @@ export class Pricing {
     this.plans = plans;
     this.tiers = tiers;
     this.lite = lite;
-    this.interval = "month";
+    this.interval = "2mo";
   }
 
   render() {
@@ -25,7 +28,7 @@ export class Pricing {
     const toggle = h(
       "div",
       { class: "interval", role: "group", "aria-label": "Billing" },
-      h("button", { type: "button", "data-interval": "month", onclick: () => this.set("month") }, "Monthly"),
+      h("button", { type: "button", "data-interval": "2mo", onclick: () => this.set("2mo") }, "Every 2 months"),
       h("button", { type: "button", "data-interval": "year", onclick: () => this.set("year") }, "Annual", h("small", {}, `save up to ${best}%`)),
     );
     this.el.replaceChildren(
@@ -47,14 +50,14 @@ export class Pricing {
       h("p", { class: "tagline" }, f.tagline),
       h("div", { class: "amount" }, "$0"),
       h("p", { class: "alt" }, "forever"),
-      h("ul", {}, f.features.map((x) => h("li", {}, x))),
+      h("ul", {}, f.features.map((x, i) => bullet(x, i))),
       h("a", { class: "button secondary", "data-lite": "", href: pageHref("account.html") }, f.cta),
     );
   }
 
   card(tier) {
     const t = this.tiers[tier];
-    const m = planFor(this.plans, tier, "month");
+    const m = planFor(this.plans, tier, "2mo");
     const y = planFor(this.plans, tier, "year");
     return h(
       "div",
@@ -65,16 +68,16 @@ export class Pricing {
       h(
         "div",
         { class: "amount" },
-        h("span", { "data-price": "month" }, `$${m.usd}`, h("small", {}, " / month")),
+        h("span", { "data-price": "2mo" }, `$${m.usd}`, h("small", {}, " / 2 months")),
         h("span", { "data-price": "year" }, `$${y.usd}`, h("small", {}, " / year")),
       ),
       h(
         "p",
         { class: "alt" },
-        h("span", { "data-price": "month" }, `or $${y.usd} / year`),
-        h("span", { "data-price": "year" }, `$${perMonth(y.usd)} a month, billed yearly`),
+        h("span", { "data-price": "2mo" }, `or $${y.usd} / year`),
+        h("span", { "data-price": "year" }, `instead of $${m.usd * 6} paid every 2 months`),
       ),
-      h("ul", {}, t.features.map((x, i) => h("li", { class: i === 0 && x.endsWith(":") ? "lead" : null }, x))),
+      h("ul", {}, t.features.map((x, i) => bullet(x, i))),
       h("a", { class: "button", "data-buy": tier, href: "#" }, t.trialDays ? `Start ${t.trialDays}-day free trial` : `Get ${t.name.replace(/^RamWarden /, "")}`),
       h("p", { class: "fine" }, t.trialDays ? "No charge for 14 days. Cancel any time." : "Paid from day one. Cancel any time."),
     );

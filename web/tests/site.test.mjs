@@ -96,11 +96,11 @@ test("pupil styles change the eyes and bad input falls back", () => {
 test("plans match the product spec", () => {
   assert.deepEqual(
     config.plans.map((p) => [p.id, p.tier, p.interval, p.usd]),
-    [[1, "ram", "month", 4], [2, "pro", "month", 5], [3, "ram", "year", 20], [4, "pro", "year", 24]],
+    [[1, "ram", "2mo", 4], [2, "pro", "2mo", 5], [3, "ram", "year", 20], [4, "pro", "year", 24]],
   );
   assert.equal(planFor(config.plans, "pro", "year").id, 4);
-  assert.equal(annualSaving(config.plans, "ram"), 58);
-  assert.equal(annualSaving(config.plans, "pro"), 60);
+  assert.equal(annualSaving(config.plans, "ram"), 17);
+  assert.equal(annualSaving(config.plans, "pro"), 20);
   assert.equal(config.trialDays, 14);
 });
 
@@ -130,7 +130,7 @@ test("marketing hooks appear verbatim", () => {
     "Your PC has 32GB of RAM. So why does it still feel slow?",
     "Your task manager isn't telling you the whole story.",
     "Two intelligent desktop companions.",
-    "Performance and security, starting at $24 a year.",
+    "Performance and security, starting at $5 every 2 months or $24 a year.",
     "Free your RAM.<br><em>Keep your peace.</em>",
     "A small guardian for a crowded computer. It watches memory pressure, tries reversible fixes first, and protects what you're using.",
   ]) assert.ok(index.includes(hook), hook);

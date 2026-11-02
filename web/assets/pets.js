@@ -3,9 +3,10 @@
 // 2.5).
 //
 // Lines live in assets/pets/<warden>-lines.json so they can be edited without
-// touching code. The comments are light: one joke every 45 to 90 seconds at
-// most, 6 a visit, never while the visitor is typing, and one click mutes
-// them for good. The site cannot see the visitor's machine, so a comment is
+// touching code. The comments stay out of the way (owner: "don't make the
+// warden annoying"): one line per section, said once a visit; one joke every
+// 2.5 to 5 minutes at most, 3 a visit; never while the visitor is typing;
+// and one click mutes them for good. The site cannot see the visitor's machine, so a comment is
 // only ever about the page (the section in view, the demo slider).
 
 import { DEFAULT_LOOKS, PUPILS, normalizeLook, spriteSvg, tint } from "./sprite.js";
@@ -118,7 +119,7 @@ const MUTE_KEY = "rw.pet.muted";
 const COUNT_KEY = "rw.pet.jokes";
 
 export class WardenPet {
-  constructor(el, lines, { minGap = 45_000, maxGap = 90_000, maxJokes = 6 } = {}) {
+  constructor(el, lines, { minGap = 150_000, maxGap = 300_000, maxJokes = 3 } = {}) {
     this.el = el;
     this.say = el.querySelector("[data-say]");
     this.muteButton = el.querySelector("[data-mute]");
@@ -127,6 +128,7 @@ export class WardenPet {
     this.lastKey = 0;
     this.joking = false;
     this.section = null;
+    this.said = new Set(); // sections already introduced this visit
     el.warden = this; // lets the tests call joke() without waiting a minute
   }
 
@@ -173,6 +175,8 @@ export class WardenPet {
         for (const [t, r] of seen) if (!best || r > seen.get(best)) best = t;
         if (!best || seen.get(best) <= 0 || this.joking) return;
         this.section = best.id;
+        if (this.said.has(best.id)) return;
+        this.said.add(best.id);
         this.speak(this.lines.sections[best.id]);
       },
       { threshold: [0, 0.25, 0.5, 0.75, 1] },
@@ -229,10 +233,7 @@ export class WardenPet {
     }
     this.joking = true;
     this.speak(jokes[Math.floor(Math.random() * jokes.length)]);
-    setTimeout(() => {
-      this.joking = false;
-      if (this.section) this.speak(this.lines.sections[this.section]);
-    }, 9000);
+    setTimeout(() => (this.joking = false), 9000);
     return true;
   }
 }
@@ -265,7 +266,7 @@ export class PetStage {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     new IntersectionObserver(([e]) => {
       clearInterval(timer);
-      if (e.isIntersecting) timer = setInterval(next, 4200);
+      if (e.isIntersecting) timer = setInterval(next, 9000);
     }).observe(this.el);
   }
 

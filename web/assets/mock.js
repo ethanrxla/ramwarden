@@ -29,9 +29,9 @@ export class MockApi {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {
         tier: AS === "trial" ? "ram" : "pro", // only Plus has a trial
-        interval: "month",
+        interval: "2mo",
         status: AS,
-        device_limit: 5,
+        device_limit: AS === "trial" ? 3 : 5,
         trial_ends_at: AS === "trial" ? new Date(Date.now() + 14 * DAY).toISOString() : null,
         paid_until: AS === "active" ? new Date(Date.now() + 30 * DAY).toISOString() : AS === "lapsed" ? new Date(Date.now() - 3 * DAY).toISOString() : null,
       });
@@ -155,8 +155,8 @@ export class MockApi {
     return {
       // docs/product-spec.md 1.2; the test network sells every plan.
       plans: [
-        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "month", days: 30, trial_days: 14, approval_usd: 48, wardens: ["ram"] },
-        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 30, trial_days: 0, approval_usd: 60, wardens: ["ram", "threat"] },
+        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "2mo", days: 60, trial_days: 14, approval_usd: 24, wardens: ["ram"] },
+        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "2mo", days: 60, trial_days: 0, approval_usd: 30, wardens: ["ram", "threat"] },
         { id: 3, tier: "ram", name: "RamWarden Plus", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
         { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 0, approval_usd: 24, wardens: ["ram", "threat"] },
       ],
@@ -214,7 +214,7 @@ export class MockApi {
         trial_ends_at: trial ? new Date(Date.now() + 14 * DAY).toISOString() : null,
         paid_until: trial ? null : new Date(Date.now() + plan.days * DAY).toISOString(),
         trial_available: trial ? false : this.account_.trial_available,
-        device_limit: 5,
+        device_limit: plan.tier === "pro" ? 5 : 3, // Plus 3, Pro 5
         billing: { method: p.method, payer: this.payer },
       });
       Object.assign(p, { account_status: this.account_.status, tier: plan.tier, trial_ends_at: this.account_.trial_ends_at });

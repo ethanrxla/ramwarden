@@ -6,7 +6,7 @@
 // Upgrade to Pro. The server enforces every limit; this page only offers the
 // step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
-import { config, planFor } from "./config.js";
+import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
 import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
@@ -23,7 +23,7 @@ const STATUS = {
 
 function priceText(a) {
   const plan = planFor(config.plans, a.tier, a.interval);
-  return plan ? `$${plan.usd} a ${a.interval}` : "your plan's price";
+  return plan ? `$${plan.usd} every ${PERIOD[a.interval] || a.interval}` : "your plan's price";
 }
 
 const root = document.getElementById("flow");
@@ -192,20 +192,21 @@ class AccountPage {
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
     let tier = this.upgrading || wanted?.tier || "ram";
-    let interval = wanted?.interval || "month";
+    let interval = wanted?.interval || "2mo";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
     const refresh = () => {
       const p = plan();
       for (const i of picker.querySelectorAll("input")) i.checked = i.value === (i.name === "tier" ? tier : interval);
-      const approve = p?.approval_usd ?? (p && (p.interval === "month" ? p.usd * 12 : p.usd));
+      const approve = p?.approval_usd ?? (p && p.usd * (PER_YEAR[p.interval] || 1));
+      const per = `every ${PERIOD[interval] || interval}`;
       // Only Plus has a trial; Pro is paid from day one.
       const trialDays = p ? (p.trial_days ?? config.tiers[p.tier]?.trialDays ?? 0) : 0;
       terms.textContent = !p
         ? ""
         : this.account.trial_available === false || !trialDays
-          ? `$${p.usd} a ${interval}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
-          : `Nothing is charged today. After ${trialDays} days, $${p.usd} a ${interval} until you cancel. A wallet approves $${approve} at most (one year).`;
+          ? `$${p.usd} ${per}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
+          : `Nothing is charged today. After ${trialDays} days, $${p.usd} ${per} until you cancel. A wallet approves $${approve} at most (one year).`;
     };
     const choice = (name, value, label, sub) =>
       h(
@@ -215,13 +216,13 @@ class AccountPage {
         h("strong", {}, label),
         sub ? h("span", {}, sub) : null,
       );
-    const m = (t) => planFor(this.plans, t, "month");
+    const m = (t) => planFor(this.plans, t, "2mo");
     const y = (t) => planFor(this.plans, t, "year");
     const picker = h(
       "div",
       {},
-      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / month`))),
-      h("div", { class: "plans" }, choice("interval", "month", "Monthly"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
+      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / 2 months`))),
+      h("div", { class: "plans" }, choice("interval", "2mo", "Every 2 months"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
     );
     const method = (key, label, sub, run) =>
       this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan().id, area) }, h("strong", {}, label), h("span", {}, sub)) : null;

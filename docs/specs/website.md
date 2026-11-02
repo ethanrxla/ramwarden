@@ -48,13 +48,13 @@ never sees the token.
 | --- | --- | --- |
 | `GET /v1/device/lookup` | `?user_code=XXXX-XXXX` | `{status, device_name, platform, expires_at}`; 404 when unknown, expired or used |
 | `POST /v1/auth/challenge` | `{chain: "evm"\|"solana", address, user_code: string\|null}` | `{message, expires_at}` |
-| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{account, linked_device}` and the cookie; 409 when the account has 5 devices |
+| `POST /v1/auth/verify` | `{chain, address, message, signature}` | `{account, linked_device}` and the cookie; 409 at the account's device limit |
 | `POST /v1/auth/email/start` | `{email, user_code?}` | `{sent, expires_at}`; 429 within a minute; 503 when email sign-in is off |
 | `POST /v1/auth/email/verify` | `{email, code}` | as `verify` |
 | `POST /v1/auth/logout` | *session* | `{ok}`, cookie cleared |
 | `GET /v1/account` | *session* | `account` (below) |
 | `PUT /v1/account/prefs` | *session*, any object up to 4 KB | `{prefs}` |
-| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4); 402 without a live plan, 409 at 5 devices. Installers are plain release downloads that sign in through the device page |
+| `POST /v1/install/link` | *session*, live plan | `{expires_at, commands: {macos, windows, linux}, installers: {macos, windows, linux}}`: single use, 30 minutes, links the new device on first run (product spec 2.4); 402 without a live plan, 409 at the device limit. Installers are plain release downloads that sign in through the device page |
 | `DELETE /v1/account/devices/{id}` | *session* | `{ok: true}` |
 | `GET /v1/checkout/config` | | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], base: {chain_id, network, contract, usdc}\|null, solana: null, stripe: bool, stripe_test: bool}` |
 | `POST /v1/checkout/base` | *session*, `{plan, payer}` | `{payment_id, chain_id, trial, approval_usd, transactions: [{to, data, value}]}`; 409 while subscribed |
@@ -68,8 +68,9 @@ trial_available, billing: {method}|null, entitlement_until, entitlements,
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`.
 
-Plans are the contract's ids: 1 Plus monthly ($4), 2 Pro monthly ($5),
-3 Plus annual ($20), 4 Pro annual ($24). Plus (tier id `ram`) starts with a
+Plans are the contract's ids: 1 Plus every 2 months ($4), 2 Pro every 2
+months ($5), 3 Plus annual ($20), 4 Pro annual ($24). The 2-month plans
+charge every 60 days (interval `2mo`). Device limits: Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
 14-day trial; Pro is charged from day one (`trial_days: 0`). Both renew until
 cancelled. RamWarden Lite has no plan: a signed-in account with nothing
 bought, on 1 device, with no AI.
@@ -110,9 +111,9 @@ Checkout:
   never say "our server"; attributions live on `notices.html`. No em dashes
   anywhere under `web/`. A unit test enforces both.
 - **Three cards: Lite, Plus, Pro** (changed 2026-11-01; was "no free tier").
-  Lite (free) is the fixed-rules engine with no AI, on 1 device, with a free account
+  Lite (free) is the memory algorithm with no AI and no warden pet, on 1 device, with a free account
   (email or wallet, no card), because device limits are counted per account.
-  Plus adds the AI warden and is the only plan with a trial. Pro adds
+  Plus adds the AI and the warden pet on 3 computers and is the only plan with a trial. Pro adds
   ThreatWarden and has no trial. Bullets say what the visitor gets and promise
   only what ships; engines are still never named. The open-source repo stays
   as one line under the cards and a small card beside the install box.
@@ -131,9 +132,10 @@ Checkout:
   scroll position (fetched as a Blob, coalesced seeks, a lighter phone
   encode with a keyframe every 4 frames).
   Reduced motion shows the final state and all copy.
-- **The pets talk, a little.** The corner pet says a line per section and,
-  now and then, a joke: one every 45 to 90 s, at most 6 a visit, never while
-  typing, and one click mutes it (remembered). Lines live in
+- **The pets talk, a little, and are never annoying.** The corner pet says
+  each section's line once a visit and, now and then, a joke: one every 2.5 to
+  5 minutes, at most 3 a visit, never while typing, and one click mutes it
+  (remembered). The stage pet's lines change every 9 s while it is on screen. Lines live in
   `assets/pets/<warden>-lines.json`. Comments may react to the page (the
   demo slider), never to the visitor's machine, which the site cannot see.
 - **Warden look.** The Mac app's Colors pane on the page: wool, horns,

@@ -19,25 +19,30 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
-  // Three cards (docs/product-spec.md 1.2, as changed 2026-11-01):
-  // - Lite (free): the fixed-rules engine with no AI, on one computer. A free
-  //   account (email or wallet, no card) is what makes "1 computer" true:
-  //   devices are counted per account.
-  // - Plus (tier id "ram"): adds the AI warden. Upgrades are enforced by
-  //   the signed entitlement, not by the page. The only plan with a trial.
-  // - Pro: adds ThreatWarden. Paid from day one.
-  // Plan ids are the checkout contract's. Bullets promise only what ships.
+  // Three cards (docs/product-spec.md 1.2, as changed 2026-11-01/02):
+  // - Lite (free): the memory algorithm with no AI and no warden pet, on one
+  //   computer. A free account (email or wallet, no card) is what makes
+  //   "1 computer" true: devices are counted per account.
+  // - Plus (tier id "ram"): the AI and the warden pet, 3 computers. The only
+  //   plan with a trial.
+  // - Pro: adds ThreatWarden, 5 computers. Paid from day one.
+  // Upgrades are enforced by the server and the signed entitlement, not by
+  // the page. Every bullet is something the code does, with its number where
+  // it has one (README, docs/specs/browser-memory.md, threatwarden.md).
+  // `soon` marks a part that is specified but not shipped yet.
   trialDays: 14,
   lite: {
     name: "RamWarden Lite",
     tagline: "Keep it tidy.",
     cta: "Get it free",
     features: [
-      "See what's really eating your memory, live",
-      "Frees memory on simple, built-in rules",
-      "Tab budget: old tabs close on their own",
-      "Games, calls, terminals and VMs are never touched",
-      "Your warden in its original colors",
+      "Memory measured the way your OS charges it: shared browser memory counted once, not per tab",
+      "Acts on memory stalls (time lost waiting on RAM), not on a full meter",
+      "A 4-step reclaim algorithm: compress cold memory, page it out, unload idle tabs, pause idle apps you list",
+      "Every app ranked least recently used first",
+      "Tab budget: your 6 most recent tabs stay, others close after 60 idle minutes, with a reopen list",
+      "Every pause undone the moment memory recovers",
+      "Games, anti-cheat, calls, terminals and VMs are never touched",
       "1 computer, free account, no card",
     ],
   },
@@ -47,16 +52,15 @@ export const config = {
       tagline: "Let it decide.",
       badge: "Most popular",
       trialDays: 14,
-      devices: 5,
+      devices: 3,
       features: [
         "Everything in Lite, plus:",
-        "An AI warden that picks what you won't miss",
-        "Learns your habits and keeps what you'll reopen",
-        "Never closes a tab with unsaved work",
-        "Pauses idle apps when memory gets tight, resumed the moment you return",
-        "Explains every call in plain words",
-        "Dress up your warden: wool, horns, hooves, eyes",
-        "5 computers: Windows, macOS and Linux",
+        "A customizable AI warden pet that picks what you won't miss",
+        "AI scores each idle app: your chance of coming back within the hour",
+        "Pauses an app only when 70% sure you won't return, closes one only at 85%",
+        "Closes tabs you won't return to, each saved to a reopen list",
+        "A model trained daily on your own habits, used only once it beats plain least recently used",
+        "3 computers: Windows, macOS and Linux",
       ],
     },
     pro: {
@@ -65,18 +69,19 @@ export const config = {
       trialDays: 0,
       devices: 5,
       features: [
-        "Everything in Plus, plus:",
-        "ThreatWarden watches this computer for threats",
-        "One plain status: Clear, Watch or Alert",
-        "Every alert explained in plain words",
-        "Its own pane in your menu bar or tray",
-        "The cyborg warden",
+        "Everything in Plus, plus ThreatWarden:",
+        "Sentinel: file integrity, log analysis, rootkit and vulnerable software checks",
+        { text: "Antivirus: malware sweeps when memory is free, plus scan on demand", soon: true },
+        { text: "Network monitor: catches attacks and malware calling home, shows who each app talks to", soon: true },
+        "AI triage: every alert explained, with a quarantine or block button you approve",
+        "The cyborg warden pet, with its own pane in your menu bar or tray",
+        "5 computers",
       ],
     },
   },
   plans: [
-    { id: 1, tier: "ram", interval: "month", usd: 4 },
-    { id: 2, tier: "pro", interval: "month", usd: 5 },
+    { id: 1, tier: "ram", interval: "2mo", usd: 4 },
+    { id: 2, tier: "pro", interval: "2mo", usd: 5 },
     { id: 3, tier: "ram", interval: "year", usd: 20 },
     { id: 4, tier: "pro", interval: "year", usd: 24 },
   ],
@@ -87,10 +92,15 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against twelve months, in whole percent.
+// What a year of the annual plan saves against six 2-month payments, in whole percent.
 export function annualSaving(plans, tier) {
-  const m = planFor(plans, tier, "month");
+  const m = planFor(plans, tier, "2mo");
   const y = planFor(plans, tier, "year");
   if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * 12)) * 100);
+  return Math.round((1 - y.usd / (m.usd * PER_YEAR["2mo"])) * 100);
 }
+
+// Billing periods (owner's decision, 2026-11-02): every 2 months, or yearly.
+// The contract and the card subscription charge on the same 60-day cycle.
+export const PERIOD = { "2mo": "2 months", year: "year" };
+export const PER_YEAR = { "2mo": 6, year: 1 };

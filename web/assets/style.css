@@ -416,7 +416,7 @@ footer a { color: var(--muted); }
 .price.tier-lite { background:var(--panel); }
 .price.tier-lite .button { background:transparent; color:var(--text); border:1px solid var(--line); }
 .price.tier-ram { box-shadow:0 18px 50px #f2445533; }
-.pricing[data-interval="month"] [data-price="year"], .pricing[data-interval="year"] [data-price="month"] { display:none; }
+.pricing[data-interval="2mo"] [data-price="year"], .pricing[data-interval="year"] [data-price="2mo"] { display:none; }
 .price .alt { color:var(--muted); font-size:14px; margin:-8px 0 0; }
 .price.tier-ram { --accent:#f24455; --accent-ink:#fff; --panel:#21181d; --line:#443039; border-color:#f24455; background:#21181d; }
 .price.tier-pro { --accent:#39ff88; --accent-ink:#03140a; --accent-2:#a78bfa; background:linear-gradient(160deg,#1b1030,#07050b); border-color:#8b5cf6; color:#ece8f7; }
@@ -435,3 +435,12 @@ footer a { color: var(--muted); }
 .email-form input { flex:1; min-width:200px; font:inherit; background:var(--bg-2); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 14px; }
 .linkish { background:none; border:0; padding:0; color:var(--accent-2); font:inherit; font-size:14px; text-decoration:underline; cursor:pointer; }
 .row-actions { display:flex; gap:10px; flex-wrap:wrap; }
+
+/* How it works: the open-source card beside the heading */
+.how-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,320px); gap:28px; align-items:center; margin-bottom:28px; }
+.how-head .sub { margin-bottom:0; }
+.oss-card { display:flex; flex-direction:column; gap:8px; text-decoration:none; color:var(--text); }
+.oss-card:hover { border-color:var(--accent); }
+.oss-card span:not(.num):not(.button) { color:var(--muted); font-size:14px; }
+.oss-card .button { align-self:flex-start; margin-top:4px; }
+@media (max-width:800px) { .how-head { grid-template-columns:1fr; } }

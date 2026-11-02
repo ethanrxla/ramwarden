@@ -92,8 +92,8 @@ async function run() {
     assert.equal(await p.$$eval("[data-install] .cmd", (c) => c.length), 0);
     assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Choose a plan'));
     // Pricing: monthly by default, the toggle switches prices and plan links.
-    assert.equal(await p.textContent('.tier-ram [data-price="month"]'), "$4 / month");
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.equal(await p.textContent('.tier-ram [data-price="2mo"]'), "$4 / 2 months");
+    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
     assert.match(await p.getAttribute('[data-buy="pro"]', "href"), /plan=2$/);
     // Three cards: Free signs up, Plus has the trial, Pro has none.
     assert.equal(await p.$$eval(".price-cards .price", (c) => c.map((x) => x.dataset.tier).join()), "lite,ram,pro");
@@ -143,7 +143,7 @@ async function run() {
     assert.match(await p.textContent(".catchline em"), /click every link/);
     assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     await p.waitForSelector('[data-install][data-state="signed-out"]');
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.equal(await p.textContent('.tier-pro [data-price="2mo"]'), "$5 / 2 months");
     assert.ok(await p.isVisible('#top .radar img[data-sprite="threat"]'), "the radar stays in the hero");
     assert.ok(await p.isVisible('#meet [data-part="visor"]'));
     assert.ok(await p.isVisible('.tier-pro >> text=Paid from day one'));
@@ -244,7 +244,7 @@ async function run() {
   });
 
   t("account page: ?plan= preselects a plan the server sells, ignores others", async () => {
-    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "month"], ["99", "ram", "month"], ["", "ram", "month"]]) {
+    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "2mo"], ["99", "ram", "2mo"], ["", "ram", "2mo"]]) {
       const p = await page(fakeMetaMask);
       await p.goto(`${base}/account.html?mock=1&plan=${q}`);
       await p.getByRole("button", { name: /MetaMask/ }).click();
