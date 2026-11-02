@@ -1,5 +1,5 @@
 //! `ramwarden-tray`: the Windows tray icon; `--window` is the window process
-//! it launches, `--hidden` starts in the tray without opening the window.
+//! it launches (`--window --threat` opens it on the ThreatWarden pane), `--hidden` starts in the tray without opening the window.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
@@ -18,7 +18,12 @@ fn main() {
     };
     let args: Vec<String> = std::env::args().collect();
     let result = if args.iter().any(|a| a == "--window") {
-        ramwarden_ui::tray::run_window(client)
+        let pane = if args.iter().any(|a| a == "--threat") {
+            ramwarden_ui::tray::Pane::Threat
+        } else {
+            ramwarden_ui::tray::Pane::Ram
+        };
+        ramwarden_ui::tray::run_window(client, pane)
     } else {
         ramwarden_ui::tray::run_tray(client, args.iter().any(|a| a == "--hidden"))
     };

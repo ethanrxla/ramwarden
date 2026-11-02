@@ -302,7 +302,7 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
         ui.filter.connect_search_changed(move |_| repopulate(&u));
     }
 
-    window.set_child(Some(&outer));
+    window.set_child(Some(&panes(&outer, &client)));
     window.present();
 
     // ── refresh loop ────────────────────────────────────────────────────────
@@ -320,6 +320,47 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
             glib::timeout_future(REFRESH).await;
         }
     });
+}
+
+/// The window as one pane per warden: the RAM pane is the memory view above,
+/// ThreatWarden's is `crate::threat`. A linked pair of toggles switches them;
+/// ThreatWarden's carries its level dot so an alert is visible from the RAM
+/// pane too.
+fn panes(ram: &gtk4::Box, client: &Rc<Client>) -> gtk4::Box {
+    let stack = gtk4::Stack::builder().transition_type(gtk4::StackTransitionType::Crossfade).build();
+    stack.add_named(ram, Some("ram"));
+    let threat = crate::threat::pane(Rc::clone(client));
+    stack.add_named(&threat.widget, Some("threat"));
+
+    let ram_button = gtk4::ToggleButton::with_label("RAM");
+    ram_button.set_active(true);
+    let threat_button = gtk4::ToggleButton::new();
+    let inner = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    inner.append(&gtk4::Label::new(Some("ThreatWarden")));
+    inner.append(&threat.badge);
+    threat_button.set_child(Some(&inner));
+    threat_button.set_group(Some(&ram_button));
+    for (button, name) in [(&ram_button, "ram"), (&threat_button, "threat")] {
+        button.set_hexpand(true);
+        let stack = stack.clone();
+        button.connect_toggled(move |b| {
+            if b.is_active() {
+                stack.set_visible_child_name(name);
+            }
+        });
+    }
+    let switcher = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    switcher.add_css_class("linked");
+    switcher.set_margin_top(10);
+    switcher.set_margin_start(14);
+    switcher.set_margin_end(14);
+    switcher.append(&ram_button);
+    switcher.append(&threat_button);
+
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    root.append(&switcher);
+    root.append(&stack);
+    root
 }
 
 /// A comparator for one column, in GTK's own sorter form.
@@ -746,21 +787,19 @@ fn repopulate(ui: &Rc<Ui>) {
     let rows = ui.rows.borrow().clone();
     let filtered = model::filter(&rows, &ui.filter.text());
 
-    let vertical = ui.process_scroll.vadjustment();
-    let horizontal = ui.process_scroll.hadjustment();
-    let (y, x) = (vertical.value(), horizontal.value());
     let objects: Vec<_> = filtered.into_iter().map(RowObject::new).collect();
-    ui.store.splice(0, ui.store.n_items(), &objects);
-    // ColumnView recomputes adjustments during layout, after idle callbacks.
-    // Restore on the next completed layout rather than before it resets them.
-    let frames=std::cell::Cell::new(0);
-    ui.process_scroll.add_tick_callback(move |_, _| {
-        frames.set(frames.get() + 1);
-        if frames.get() < 2 { return glib::ControlFlow::Continue; }
-        vertical.set_value(y.min((vertical.upper() - vertical.page_size()).max(0.0)));
-        horizontal.set_value(x.min((horizontal.upper() - horizontal.page_size()).max(0.0)));
-        glib::ControlFlow::Break
-    });
+    // Replacing the entire model briefly removes every visible row, so GTK
+    // loses its scroll anchor even when the replacement has the same size.
+    // Keep the model populated while replacing rows, then adjust its tail.
+    // GTK then keeps the user's position by itself. Do not also put back a
+    // position saved before the splice: a restore that runs a frame or two
+    // later puts back a stale value over a scroll the user made in between.
+    // That was the CI failure on a single-CPU runner.
+    let shared = ui.store.n_items().min(objects.len() as u32);
+    for i in 0..shared {
+        ui.store.splice(i, 1, &objects[i as usize..i as usize + 1]);
+    }
+    ui.store.splice(shared, ui.store.n_items() - shared, &objects[shared as usize..]);
 }
 
 async fn refresh(client: &Rc<Client>, ui: &Rc<Ui>) {
@@ -944,6 +983,8 @@ mod live_tests {
                         "/browser/tabs" | "/browser/analyze" => r#"{"browsers_connected":1,"candidates":1,"tabs":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article","title":"Fixture browser tab","inactive_minutes":120,"eligible":true,"status":"candidate","reason":"idle background tab","priority":120}]}"#,
                         "/browser/discard" => r#"{"confirmed":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article"}],"queued":[],"refused":[]}"#,
                         "/watchlist" => r#"{"patterns":[]}"#,
+                        "/wardens/threat" => r#"{"id":"threat","name":"ThreatWarden","role":"Watches for attacks.","icon":"/wardens/threat/icon.svg","access":"pro","unlocked":false,"enabled":true,"status":{"level":"locked","headline":"ThreatWarden is a Pro warden","detail":"","checked_at":0},"price":"In RamWarden Pro, from $5 a month","upgrade_url":"https://ramwarden.app/#pricing","report":null}"#,
+                        "/wardens/threat/icon.svg" => r##"<svg viewBox="0 0 2 2"><rect x="0" y="0" width="1" height="1" fill="#ff2b3a"/></svg>"##,
                         _ => "{}",
                     };
                     let body = if path == "/state" {
@@ -1010,6 +1051,12 @@ mod live_tests {
             until(||browser_text("1 unloaded")).await;
             assert!(!unload.is_sensitive());
             crate::browser::test_refresh_stability().await;
+            // The ThreatWarden pane: locked, with the upgrade and the cyborg icon.
+            let threat = tree.iter().find(|w| w.widget_name() == "threatwarden").unwrap().clone();
+            let threat_buttons = || widgets(&threat).into_iter().filter_map(|w| w.downcast::<gtk4::Button>().ok()).collect::<Vec<_>>();
+            until(|| threat_buttons().iter().any(|b| b.label().is_some_and(|l| l == "Get RamWarden Pro"))).await;
+            let picture = widgets(&threat).into_iter().find_map(|w| w.downcast::<gtk4::Picture>().ok()).unwrap();
+            until(|| picture.paintable().is_some()).await;
         });
         window.close();
         stop.store(true, Ordering::SeqCst);

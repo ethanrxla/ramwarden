@@ -12,7 +12,10 @@ pub mod model;
 pub mod row_object;
 
 pub mod runtime;
+pub mod wardens;
 #[cfg(feature = "tray")]
 pub mod tray;
 #[cfg(feature = "gui")]
 pub mod browser;
+#[cfg(feature = "gui")]
+pub mod threat;
