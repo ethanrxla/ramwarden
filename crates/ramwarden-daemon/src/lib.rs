@@ -37,3 +37,6 @@ pub mod companion;
 pub mod assistant_prompt;
 
 pub mod tabreview;
+
+pub mod decisionlog;
+pub mod recall;
