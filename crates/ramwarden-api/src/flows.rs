@@ -514,17 +514,23 @@ async fn plus_upgrades_to_pro_on_base_in_one_wallet_call() {
 // ------------------------------------------------------------- Stripe
 
 type Seen = Arc<Mutex<Vec<(String, String)>>>;
+type PaymentStoreProbe = Arc<Mutex<Option<Arc<MemoryStore>>>>;
 
 /// Answers Checkout Session creation and subscription updates like Stripe.
-async fn fake_stripe() -> (String, Seen) {
+async fn fake_stripe() -> (String, Seen, PaymentStoreProbe) {
     use axum::routing::post;
     let seen: Seen = Arc::default();
+    let probe: PaymentStoreProbe = Arc::default();
+    let check_store = probe.clone();
     let s1 = seen.clone();
     let s2 = seen.clone();
     let app = axum::Router::new()
         .route(
             "/v1/checkout/sessions",
             post(move |body: String| async move {
+                let store = check_store.lock().unwrap().clone().expect("payment-store probe");
+                let pid = body.split('&').find_map(|part| part.strip_prefix("subscription_data%5Bmetadata%5D%5Bpayment_id%5D=")).expect("payment metadata");
+                assert!(store.payment(pid).await.unwrap().is_some(), "payment must exist before Stripe is called");
                 s1.lock().unwrap().push(("checkout".into(), body));
                 Json(json!({"id": "cs_test_1", "url": "https://checkout.stripe.com/c/pay/cs_test_1"}))
             }),
@@ -541,13 +547,14 @@ async fn fake_stripe() -> (String, Seen) {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", l.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
-    (url, seen)
+    (url, seen, probe)
 }
 
 #[tokio::test]
 async fn a_card_trial_starts_from_a_signed_webhook() {
-    let (url, seen) = fake_stripe().await;
+    let (url, seen, probe) = fake_stripe().await;
     let a = app_with(Opts { downloads: None, stripe: Some(url) });
+    *probe.lock().unwrap() = Some(a.store.clone());
     let (s, _) = a.call("POST", "/v1/auth/email/start", Auth::None, Some(json!({"email": "card@example.com"}))).await;
     assert_eq!(s, StatusCode::OK);
     let code = a.mailer.last_code("card@example.com").unwrap();

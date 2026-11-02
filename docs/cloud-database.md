@@ -99,8 +99,9 @@ single atomic update rather than a read followed by a write.
   Revoking a device deletes it and so its token.
 - **Expired sign-in material disappears on its own** through TTL indexes on
   `expire_at`.
-- **No browsing data is stored.** Usage rows hold counts only. Request bodies
-  (tab titles, hostnames) never reach the database.
+- **Hosted usage stores counts only.** Hosted request bodies (tab titles,
+  hostnames) are not persisted. The separate opt-in decision-log sync below
+  can store titles and hostnames in the operator's own cluster.
 
 The shared behaviour tests in `ramwarden_cloud::store::contract` run against
 `MemoryStore` in every build and against Atlas with
