@@ -436,11 +436,3 @@ footer a { color: var(--muted); }
 .linkish { background:none; border:0; padding:0; color:var(--accent-2); font:inherit; font-size:14px; text-decoration:underline; cursor:pointer; }
 .row-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
-/* How it works: the open-source card beside the heading */
-.how-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,320px); gap:28px; align-items:center; margin-bottom:28px; }
-.how-head .sub { margin-bottom:0; }
-.oss-card { display:flex; flex-direction:column; gap:8px; text-decoration:none; color:var(--text); }
-.oss-card:hover { border-color:var(--accent); }
-.oss-card span:not(.num):not(.button) { color:var(--muted); font-size:14px; }
-.oss-card .button { align-self:flex-start; margin-top:4px; }
-@media (max-width:800px) { .how-head { grid-template-columns:1fr; } }
