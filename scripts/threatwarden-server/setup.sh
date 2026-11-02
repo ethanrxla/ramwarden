@@ -37,6 +37,7 @@ if ! swapon --show | grep -q /swapfile; then
 fi
 
 echo "==> Packages"
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/99threatwarden-lock-timeout
 apt-get update -y
 apt-get install -y curl iptables-persistent
 
