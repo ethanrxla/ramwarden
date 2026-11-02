@@ -40,9 +40,9 @@ pub fn starters(warden: &str) -> &'static [&'static str] {
 pub fn greeting(warden: &str) -> &'static str {
     match warden {
         "threat" => {
-            "I'm ThreatWarden's warden. Ask me about security, plans or setup. If I can't answer, I'll open a ticket for the team."
+            "I'm ThreatWarden's warden. Ask me about security, plans or setup. If I can't answer, I can help you open a ticket for the team."
         }
-        _ => "I'm your warden. Ask me about plans, the free trial, installing, or how I free memory. If I can't answer, I'll open a ticket for the team.",
+        _ => "I'm your warden. Ask me about plans, the free trial, installing, or how I free memory. If I can't answer, I can help you open a ticket for the team.",
     }
 }
 
@@ -84,7 +84,7 @@ pub const TOPICS: &[Topic] = &[
         meaning: "comparing the plans or tiers (Lite, Plus, Pro), or which one to choose",
         keywords: &["plan", "plans", "tier", "tiers", "which one", "difference", "compare", "plus", "pro", "lite", "upgrade"],
         answer: "There are three plans. RamWarden Lite is free: the memory algorithm with no AI, on 1 computer. \
-                 RamWarden Plus adds the AI warden pet that picks what you won't miss, on 3 computers, for $4 every 2 months or $20 a year, with a 14-day free trial. \
+                 RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $4 every 2 months or $20 a year, with a 14-day free trial. \
                  RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $5 every 2 months or $24 a year. \
                  If you mostly want memory back, start with the Plus trial. If you also want security, Pro.",
         next: &["trial", "lite", "threatwarden"],
@@ -132,7 +132,7 @@ pub const TOPICS: &[Topic] = &[
         meaning: "how to download, install or set up the app",
         keywords: &["install", "installer", "download", "set up", "setup", "get started", "one line", "command", "curl", "powershell", "update"],
         answer: "Sign in on the website (a free Lite account works), then the install section shows a personal one-line command for macOS, Windows or Linux, plus an installer download. \
-                 The command works once, for 30 minutes, and signs that computer in for you, so there's nothing to configure. Updates come through the app afterwards.",
+                 When a release is available, the command works once, for 30 minutes, and signs that computer in for you. If installation is unavailable, I can help you open a ticket.",
         next: &["platforms", "extension", "devices"],
         ticket: true,
     },
@@ -158,7 +158,7 @@ pub const TOPICS: &[Topic] = &[
         id: "payment",
         meaning: "how to pay: crypto wallet, MetaMask, Phantom, card, Apple Pay",
         keywords: &["pay", "payment", "wallet", "crypto", "metamask", "phantom", "usdc", "card", "credit card", "apple pay", "google pay", "stripe", "base", "solana"],
-        answer: "You can pay with a crypto wallet (MetaMask, Phantom and other common wallets) or with a card or Apple Pay. \
+        answer: "You can pay with a supported wallet on Base, or with a card when checkout is enabled. Apple Pay availability depends on your device. Solana payments are not available yet. \
                  With a wallet, your wallet shows the exact amount it approves before you sign, and it can never be charged more than one period's price at a time.",
         next: &["trial", "cancel", "signin"],
         ticket: true,
@@ -221,9 +221,9 @@ pub const TOPICS: &[Topic] = &[
         id: "threatwarden",
         meaning: "ThreatWarden, security, antivirus, malware, threats, network monitoring",
         keywords: &["threatwarden", "threat", "security", "secure", "antivirus", "virus", "malware", "hack", "hacked", "network", "firewall", "rootkit", "sentinel", "quarantine"],
-        answer: "ThreatWarden is the security companion in RamWarden Pro. Today its sentinel checks file integrity, analyses logs, and looks for rootkits and vulnerable software, \
-                 and every alert comes explained, with a quarantine or block button you approve. Antivirus sweeps and a network monitor are coming soon. \
-                 It runs on all three systems and covers 5 computers.",
+        answer: "ThreatWarden is the security companion in RamWarden Pro. It monitors file changes and security events, and helps you understand findings. \
+                 Antivirus scans and network monitoring are being integrated into the app. Quarantine and blocking controls are planned, not available yet. \
+                 Pro covers 5 computers; security setup availability depends on your platform and release.",
         next: &["pricing", "privacy", "platforms"],
         ticket: false,
     },
