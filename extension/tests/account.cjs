@@ -12,6 +12,7 @@ test('approval links refuse script URLs, credentials and insecure remote sites',
   for (const url of ['javascript:alert(1)', 'http://example.org/link.html?code=X', 'https://user:pass@example.org/link.html?code=X', 'https://example.org/link.html', 'https://example.org/other?code=X']) assert.equal(accountApprovalURL(url), null);
 });
 test('linked without a verified plan never promises threat coverage', () => {
+  assert.equal(accountView({status:'unverified_device'}).linked, true, 'legacy credential can be disconnected');
   const v = accountView({status:'linked', verified:false, tier:'pro', device_token:'should-never-be-displayed'});
   assert.match(v.text, /not verified/);
   assert.doesNotMatch(JSON.stringify(v), /should-never-be-displayed/);

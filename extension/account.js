@@ -18,6 +18,9 @@ function accountApprovalURL(raw) {
 }
 
 function accountView(s) {
+  if (s?.status === 'unverified_device') return {
+    text: 'Existing device sign-in needs attention', detail: s.message, linked: true,
+  };
   if (s?.status === 'pending') return {
     text: `Approve this computer on the sign-in page. Code: ${s.user_code || ''}`,
     detail: 'Email and wallet sign-in are available on that page. You can close this popup while signing in.',

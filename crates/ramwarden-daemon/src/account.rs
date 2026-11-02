@@ -130,6 +130,9 @@ impl Service {
                 "threat_unlocked":ent.as_ref().is_some_and(|e| e.allows(&wardens::THREAT, wardens::now())),
                 "message":state.message});
         }
+        if self.token().is_some() {
+            return json!({"status":"unverified_device", "message":"An existing device credential needs to be linked again. Disconnect this app, then sign in."});
+        }
         json!({"status":"signed_out", "message":state.message})
     }
 
@@ -642,6 +645,22 @@ mod tests {
                 .contains("offline")
         );
         s.clear().unwrap();
+        assert_eq!(s.view().await["status"], "signed_out");
+    }
+
+    #[tokio::test]
+    async fn legacy_credential_has_a_visible_disconnect_path() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Arc::new(Service::new(
+            "http://127.0.0.1:1",
+            d.path().join("config"),
+            d.path().join("entitlement.json"),
+            None,
+        ));
+        private_write(&s.dir.join("device-token"), token().as_bytes()).unwrap();
+        assert_eq!(s.view().await["status"], "unverified_device");
+        assert!(s.start().await.is_err());
+        assert_eq!(disconnect(Extension(s.clone())).await.0, StatusCode::OK);
         assert_eq!(s.view().await["status"], "signed_out");
     }
 }
