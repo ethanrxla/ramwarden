@@ -20,6 +20,7 @@ final class ThreatState: ObservableObject {
     @Published var detail = "Waiting for the local security report."
     @Published var level = "setup"
     @Published var engines: [String] = []
+    @Published var pixelScale = PetSizing.scale("threat")
     var lastPoll = Date.distantPast
     var busy = false
     var isVisible: (() -> Bool)?
@@ -50,11 +51,11 @@ private struct ThreatSprite: View {
                 for pixel in ThreatPixels.sprite {
                     context.fill(Path(CGRect(x:pixel.x*scale,y:pixel.y*scale,width:pixel.width*scale,height:pixel.height*scale)),with:.color(pixel.color))
                 }
-            }.frame(width:144,height:144).accessibilityLabel("ThreatWarden companion. Click for protection status.")
+            }.frame(width:CGFloat(48*state.pixelScale),height:CGFloat(48*state.pixelScale)).accessibilityLabel("ThreatWarden companion. Click for protection status.")
             Text(state.headline).font(.system(size:10,weight:.semibold)).lineLimit(2)
                 .foregroundStyle(state.level == "clear" ? Color.green : Color.orange)
                 .padding(5).background(.ultraThinMaterial,in:Capsule())
-        }.frame(width:160,height:180)
+        }.frame(width:PetSizing.size("threat",scale:state.pixelScale).width,height:PetSizing.size("threat",scale:state.pixelScale).height)
     }
 }
 private struct ThreatReport: View {
@@ -65,6 +66,7 @@ private struct ThreatReport: View {
         VStack(alignment:.leading,spacing:12) {
             Text("ThreatWarden").font(.headline)
             Toggle("Spoken status",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("threat") } }
+            PetSizeControl(warden:"threat",label:"Threat companion size")
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled)
             ForEach(state.engines,id:\.self) { Text($0).font(.caption) }
@@ -85,10 +87,24 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
     var report: (() -> Void)?
     var hide: (() -> Void)?
     var dragged = false
-    override func mouseDown(with event: NSEvent) { dragged = false }
+    var dragStart: NSPoint = .zero
+    var windowStart: NSPoint = .zero
+    override func mouseDown(with event: NSEvent) {
+        dragged = false; dragStart = NSEvent.mouseLocation
+        windowStart = window?.frame.origin ?? .zero
+    }
     override func mouseDragged(with event: NSEvent) {
-        dragged = true; window?.performDrag(with:event)
-        if let point = window?.frame.origin { UserDefaults.standard.set(point.x,forKey:"threat.x"); UserDefaults.standard.set(point.y,forKey:"threat.y") }
+        guard let window = window else { return }
+        let mouse = NSEvent.mouseLocation
+        guard dragged || hypot(mouse.x-dragStart.x,mouse.y-dragStart.y) > 3 else { return }
+        dragged = true
+        let desired = NSPoint(x:windowStart.x+mouse.x-dragStart.x,y:windowStart.y+mouse.y-dragStart.y)
+        let bounds = NSScreen.screens.first(where: { $0.frame.contains(mouse) })?.visibleFrame ?? window.screen?.visibleFrame
+        if let bounds = bounds {
+            window.setFrame(PetSizing.resizedFrame(NSRect(origin:desired,size:window.frame.size),size:window.frame.size,bounds:bounds),display:true)
+        } else { window.setFrameOrigin(desired) }
+        UserDefaults.standard.set(window.frame.minX,forKey:"threat.x")
+        UserDefaults.standard.set(window.frame.minY,forKey:"threat.y")
     }
     override func mouseUp(with event: NSEvent) { if !dragged { report?() } }
     override func rightMouseDown(with event: NSEvent) {
@@ -105,6 +121,14 @@ final class ThreatCompanion {
     let state = ThreatState()
     var panel: NSPanel?
     var report: NSWindow?
+    private var sizeObserver: NSObjectProtocol?
+    init() {
+        sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
+            guard notification.userInfo?["warden"] as? String == "threat" else { return }
+            self?.resizePet()
+        }
+    }
+    deinit { if let observer = sizeObserver { NotificationCenter.default.removeObserver(observer) } }
     var visible: Bool { UserDefaults.standard.bool(forKey:"threat.visible") }
     func restore() { state.isVisible = { [weak self] in self?.visible == true }; if visible { show() } }
     func hide() {
@@ -119,7 +143,9 @@ final class ThreatCompanion {
     @MainActor func poll() async { if visible { await state.poll() } }
     func show() {
         guard panel == nil else { return }
-        let p = PetPanel(contentRect:NSRect(x:300,y:100,width:160,height:180),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+        state.pixelScale = PetSizing.scale("threat")
+        let size = PetSizing.size("threat",scale:state.pixelScale)
+        let p = PetPanel(contentRect:NSRect(origin:NSPoint(x:300,y:100),size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.level = .floating; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
         let host = ThreatHost(rootView:ThreatSprite(state:state)); host.report = { [weak self] in self?.showReport() }; host.hide = { [weak self] in self?.hide() }
@@ -128,8 +154,17 @@ final class ThreatCompanion {
         let bounds = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1000,height:800)
         let x = d.object(forKey:"threat.x") as? Double ?? bounds.maxX-190
         let y = d.object(forKey:"threat.y") as? Double ?? bounds.minY+100
-        p.setFrameOrigin(NSPoint(x:max(bounds.minX,min(x,bounds.maxX-160)),y:max(bounds.minY,min(y,bounds.maxY-180))))
+        p.setFrame(PetSizing.resizedFrame(NSRect(origin:NSPoint(x:x,y:y),size:size),size:size,bounds:bounds),display:false)
         panel = p; p.orderFrontRegardless(); Task { @MainActor in await state.poll() }
+    }
+    func resizePet() {
+        state.pixelScale = PetSizing.scale("threat")
+        guard let panel = panel else { return }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:panel.frame.midX,y:panel.frame.midY)) }) ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? panel.frame
+        panel.setFrame(PetSizing.resizedFrame(panel.frame,size:PetSizing.size("threat",scale:state.pixelScale),bounds:bounds),display:true)
+        UserDefaults.standard.set(panel.frame.minX,forKey:"threat.x")
+        UserDefaults.standard.set(panel.frame.minY,forKey:"threat.y")
     }
     func showReport() {
         if report == nil {
@@ -137,6 +172,7 @@ final class ThreatCompanion {
             window.title = "ThreatWarden status"; window.isReleasedWhenClosed = false; window.level = .floating
             window.contentView = NSHostingView(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide() })); window.center(); report = window
         }
+        if let content = report?.contentView { report?.setContentSize(content.fittingSize) }
         NSApp.activate(ignoringOtherApps:true); report?.makeKeyAndOrderFront(nil)
     }
 }
