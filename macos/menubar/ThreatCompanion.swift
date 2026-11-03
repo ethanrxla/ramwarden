@@ -20,6 +20,8 @@ final class ThreatState: ObservableObject {
     @Published var detail = "Waiting for the local security report."
     @Published var level = "setup"
     @Published var engines: [String] = []
+    @Published var checkedAt: Double = 0
+    @Published var alertCount = 0
     @Published var pixelScale = PetSizing.scale("threat")
     var lastPoll = Date.distantPast
     var busy = false
@@ -32,6 +34,8 @@ final class ThreatState: ObservableObject {
             detail = "The local security report is unavailable. A companion on screen does not mean this Mac is protected."
             engines = []; return
         }
+        checkedAt = status["checked_at"] as? Double ?? 0
+        alertCount = ((report["report"] as? [String:Any])?["alerts"] as? [[String:Any]])?.count ?? 0
         let previousHeadline = headline
         level = status["level"] as? String ?? "off"
         headline = status["headline"] as? String ?? "Setup needed"
@@ -69,11 +73,16 @@ private struct ThreatReport: View {
 
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled)
+            HStack {
+                Text(state.checkedAt > 0 ? "Reported alerts: \(state.alertCount)" : "Alerts unverified")
+                Spacer()
+                Text(state.checkedAt > 0 ? Date(timeIntervalSince1970:state.checkedAt).formatted(date:.omitted,time:.shortened) : "Not checked")
+            }.font(.caption).foregroundStyle(.secondary)
             ForEach(state.engines,id:\.self) { Text($0).font(.caption) }
             HStack {
                 Button("Hide companion", action:hide)
                 Spacer()
-                Button("Get Pro…") {
+                Button(state.level == "locked" ? "Get Pro…" : "Manage account…") {
                     let site = UserDefaults.standard.string(forKey:"website.url") ?? "https://ramwarden.com"
                     if let url = URL(string:site + "/account.html?plan=2") { NSWorkspace.shared.open(url) }
                 }
