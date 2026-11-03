@@ -680,7 +680,7 @@ async fn the_install_line_links_the_new_device_once() {
     let cmd = v["commands"]["linux"].as_str().unwrap();
     assert!(cmd.starts_with("curl -fsSL https://api.ramwarden.app/v1/install/rwdc_") && cmd.ends_with("/sh | sh"), "{cmd}");
     assert!(v["commands"]["windows"].as_str().unwrap().starts_with("irm "));
-    assert!(v["installers"]["macos"].as_str().unwrap().ends_with("/RamWarden.pkg"));
+    assert!(v["installers"]["macos"].as_str().unwrap().ends_with("/RamWarden.dmg"));
     let token = cmd.split("/v1/install/").nth(1).unwrap().split('/').next().unwrap().to_string();
 
     // Fetching the script doesn't use the token up.

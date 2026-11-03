@@ -16,6 +16,10 @@ struct SetupView: View {
     @State private var copied = false
     @State private var installing = false
     @State private var installResult = ""
+    @State private var connecting = false
+    @State private var connectStatus = ""
+    @State private var connectURL: URL?
+    @State private var loginProcess: Process?
     private let titles = ["Welcome", "Your account", "Install or update", "Check your warden", "Bring your other PCs"]
     private var site: String { ProcessInfo.processInfo.environment["RAMWARDEN_SETUP_SITE"] == "http://localhost:8000" ? "http://localhost:8000" : "https://ramwarden.com" }
     var body: some View {
@@ -34,6 +38,9 @@ struct SetupView: View {
                 case 1:
                     Text("Sign in with your email, wallet, or GitHub when available. Use the same Warden account on all your computers. Approve each computer’s own name and code.")
                     Button("Open my account") { open("/account.html") }
+                    Button(connecting ? "Waiting for account approval…" : "Connect this Mac") { Task { await connect() } }.disabled(connecting)
+                    if let url = connectURL { Button("Approve this computer in browser") { NSWorkspace.shared.open(url) } }
+                    if !connectStatus.isEmpty { Text(connectStatus).font(.callout).textSelection(.enabled) }
                     Text("GitHub sign-in does not grant remote access. Tailscale remains optional and separately authorized.").font(.callout).foregroundStyle(.secondary)
                 case 2:
                     Text("Everything needed for this Mac is bundled here. Install the daemon, menu bar companion, and browser extension without downloading another installer. Existing settings and account credentials stay in place.")
@@ -54,11 +61,39 @@ struct SetupView: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             Spacer()
             HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text("Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { NSApp.terminate(nil) } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red) }
-        }.padding(32)
+        }.padding(32).onDisappear { loginProcess?.terminate() }
     }
     private func open(_ path: String) { if let url = URL(string: site + path) { NSWorkspace.shared.open(url) } }
     private var prompt: String {
         "Help me set up RamWarden on up to \(allowance) of my chosen computers within my account’s remaining device allowance. Follow https://github.com/ethanrxla/ramwarden/blob/main/agent/skills/ramwarden/SKILL.md. Check each OS and existing installation first; update in place and preserve settings, credentials, and history. Use only remote access I already authorized. Sign each computer in separately using its own approval code; never copy tokens, fingerprints, signed passes, or reuse an install link. Ask me before granting remote access or changing network/security settings. Verify daemon health, companion, and browser extension per computer. Do not buy anything. Report actual results."
+    }
+    @MainActor private func connect() async {
+        guard let helper = Bundle.main.resourceURL?.appendingPathComponent("payload/ramwarden-usage-sync"), FileManager.default.isExecutableFile(atPath: helper.path) else { connectStatus = "Open the complete disk image to connect this Mac."; return }
+        connecting = true; connectURL = nil; connectStatus = "Starting this computer’s sign-in…"
+        defer { connecting = false; loginProcess = nil }
+        let process = Process(); process.executableURL = helper; process.arguments = ["login"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["RAMWARDEN_ACCOUNT_API"] = site == "http://localhost:8000" ? site : "https://api.ramwarden.com"
+        process.environment = environment
+        let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe; loginProcess = process
+        do { try process.run() } catch { connectStatus = "Sign-in could not start: " + error.localizedDescription; return }
+        let result: String = await Task.detached {
+            var output = ""
+            while true {
+                let data = pipe.fileHandleForReading.availableData
+                if data.isEmpty { break }
+                output += String(data: data, encoding: .utf8) ?? ""
+                for line in output.split(separator: "\n") {
+                    if let url = URL(string: String(line)), url.path == "/link.html", (url.scheme == "https" && url.host == "ramwarden.com") || (url.scheme == "http" && url.host == "localhost" && url.port == 8000) {
+                        await MainActor.run { connectURL = url; connectStatus = "Approve this Mac’s name and code in your browser. This does not buy a plan." }
+                    }
+                }
+                if output.utf8.count > 8192 { output = String(output.suffix(4096)) }
+            }
+            process.waitUntilExit()
+            return process.terminationStatus == 0 ? "This Mac is connected to your account." : "Sign-in did not finish. Try again when the account service is reachable."
+        }.value
+        connectStatus = result; connectURL = nil
     }
     @MainActor private func install() async {
         installing = true; defer { installing = false }

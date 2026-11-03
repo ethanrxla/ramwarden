@@ -417,9 +417,9 @@ struct AssistantView: View {
                         ProgressView().controlSize(.small)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(lines[Int(tick.date.timeIntervalSince1970 / 3) % lines.count])
-                            Text("Reviewing your request · no fix applied yet").font(.caption2).foregroundStyle(.secondary)
+                            Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)
                         }
-                    }.accessibilityLabel("Reviewing your request. No fix applied yet.")
+                    }.accessibilityLabel("Waiting for a response.")
                 }
             }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }

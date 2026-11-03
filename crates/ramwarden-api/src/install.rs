@@ -77,7 +77,7 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
         // Plain release downloads: a downloaded installer can't carry the
         // token yet, so it signs in through the device page on first run.
         "installers": {
-            "macos": format!("{rel}/RamWarden.pkg"),
+            "macos": format!("{rel}/RamWarden.dmg"),
             "windows": format!("{rel}/ramwarden-windows-x86_64.exe"),
             "linux": format!("{rel}/ramwarden-linux-x86_64.deb"),
         },

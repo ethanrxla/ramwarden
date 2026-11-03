@@ -37,7 +37,9 @@ fn accept(original: &[Value], candidate: &[Value]) -> bool {
     }
     shorter || original == candidate
 }
-pub async fn compress(messages: &[Value]) -> Result<Vec<Value>, ()> {
+#[derive(Debug)]
+pub struct CompressionUnavailable;
+pub async fn compress(messages: &[Value]) -> Result<Vec<Value>, CompressionUnavailable> {
     let size: usize = messages.iter().map(|v| v.to_string().len()).sum();
     if size < 8000 {
         return Ok(messages.to_vec());
@@ -51,7 +53,7 @@ pub async fn compress(messages: &[Value]) -> Result<Vec<Value>, ()> {
     let raw = std::env::var("NYQUEST_COMPRESS_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:5400/v2/compress".into());
     let Ok(url) = reqwest::Url::parse(&raw) else {
-        return Err(());
+        return Err(CompressionUnavailable);
     };
     // This adapter deliberately accepts a private loopback sidecar only. A public
     // proxy requires a separately configured authenticated server integration.
@@ -62,25 +64,43 @@ pub async fn compress(messages: &[Value]) -> Result<Vec<Value>, ()> {
         || url.password().is_some()
         || url.query().is_some()
     {
-        return Err(());
+        return Err(CompressionUnavailable);
     }
     let Ok(http) = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .redirect(reqwest::redirect::Policy::none())
         .build()
     else {
-        return Err(());
+        return Err(CompressionUnavailable);
     };
-    let result=tokio::time::timeout(Duration::from_secs(2),async{
-  let response=http.post(url).json(&json!({"messages":messages,"policy":{"mode":"safe","compress_system_prose":false,"compress_user_prose":false,"compress_tool_content":false,"allow_semantic_condensation":false,"allow_context_pruning":false,"preserve_code":true}})).send().await.ok()?;
-  if !response.status().is_success(){return None;}
-  let mut response=response;let mut bytes=Vec::new();
-  while let Some(chunk)=response.chunk().await.ok()?{if bytes.len()+chunk.len()>128*1024{return None;}bytes.extend_from_slice(&chunk);}
-  let value:Value=serde_json::from_slice(&bytes).ok()?;
-  let proposed=value.get("messages")?.as_array()?;
-  accept(messages,proposed).then(||proposed.clone())
- }).await;
-    result.ok().flatten().ok_or(())
+    // The compression envelope is not a model conversation. Only selected
+    // assistant narrative is compressible; restore all roles before inference.
+    let mut wire = messages.to_vec();
+    for (message, original) in wire.iter_mut().zip(messages) {
+        message["role"] = json!(if prose(original) { "system" } else { "user" });
+    }
+    let result = tokio::time::timeout(Duration::from_secs(2), async {
+        let response = http.post(url).json(&json!({
+            "messages": wire,
+            "policy": {"mode":"safe","compress_system_prose":true,"compress_user_prose":false,"compress_tool_content":false,"allow_semantic_condensation":false,"allow_context_pruning":false,"preserve_code":true}
+        })).send().await.ok()?;
+        if !response.status().is_success() { return None; }
+        let mut response=response;
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.ok()? {
+            if bytes.len()+chunk.len()>128*1024 { return None; }
+            bytes.extend_from_slice(&chunk);
+        }
+        let value:Value=serde_json::from_slice(&bytes).ok()?;
+        let mut proposed=value.get("messages")?.as_array()?.clone();
+        if proposed.len()!=messages.len() { return None; }
+        for ((message,sent),original) in proposed.iter_mut().zip(&wire).zip(messages) {
+            if message["role"]!=sent["role"] { return None; }
+            message["role"]=original["role"].clone();
+        }
+        accept(messages,&proposed).then_some(proposed)
+    }).await;
+    result.ok().flatten().ok_or(CompressionUnavailable)
 }
 #[cfg(test)]
 mod tests {
@@ -116,5 +136,27 @@ mod tests {
             &code,
             &[json!({"role":"assistant","content":"Remove it."})]
         ));
+    }
+}
+
+#[cfg(test)]
+mod live_sidecar {
+    use super::*;
+    #[tokio::test]
+    #[ignore = "requires the private Nyquest service on loopback port 5400"]
+    async fn long_narrative_compresses_without_changing_original_request() {
+        let narrative = "It is important to note that I am taking a look at the applications which are not currently being used. In order to understand the situation, I will explain the memory readings in a clear and concise manner. ".repeat(65);
+        let original = vec![
+            json!({"role":"system","content":"Policy must stay exact: ask before running commands."}),
+            json!({"role":"assistant","content":narrative}),
+            json!({"role":"user","content":"Keep /tmp/receipt.txt and do not delete it."}),
+        ];
+        let result = compress(&original)
+            .await
+            .expect("private sidecar must answer");
+        assert_eq!(result[0], original[0]);
+        assert_eq!(result[2], original[2]);
+        assert_eq!(result[1]["role"], "assistant");
+        assert!(result[1]["content"].as_str().unwrap().len() < narrative.len());
     }
 }

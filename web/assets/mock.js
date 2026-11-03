@@ -143,7 +143,7 @@ export class MockApi {
         windows: `irm https://get.ramwarden.app/i/${token}/ps | iex`,
       },
       installers: {
-        macos: `https://get.ramwarden.app/i/${token}/RamWarden.pkg`,
+        macos: `https://get.ramwarden.app/i/${token}/RamWarden.dmg`,
         windows: `https://get.ramwarden.app/i/${token}/RamWarden.msi`,
         linux: `https://get.ramwarden.app/i/${token}/ramwarden.deb`,
       },

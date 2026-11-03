@@ -89,3 +89,19 @@ References:
 - https://developers.openai.com/api/docs/models/gpt-6.1-terra
 - https://developers.openai.com/api/docs/models/gpt-6-sol
 - https://github.com/Nyquest-ai/nyquest-rust-fullstack
+
+## November 3 validation
+
+The private Oracle Nyquest 3.2.29 service is running on loopback only, with
+384 MiB maximum memory and half a CPU core quota. No public proxy port was
+opened. A synthetic compression fixture measured 3,902 to 3,326 input tokens;
+its immutable policy and exact file request were unchanged. This is one fixture,
+not a production savings or task-quality guarantee. An SSH tunnel provides
+loopback access for Mac development; production's API and sidecar should be
+co-located and need no customer tunnel or VPN.
+
+The preview DMG contains the setup app, Applications shortcut, daemon, account
+helper, menu app, browser extension and default configuration. A staged installation
+test preserves existing config, secrets and history. It does not run live launchd
+jobs in the test. Public distribution still requires completed Developer ID signing
+and notarization; the local preview is not a public release.
