@@ -7,7 +7,7 @@
 // step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
 import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
-import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { chooseSignIn, errorText, formatDate, h, identityLabel, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -106,7 +106,7 @@ class AccountPage {
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
             h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
-            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", { class: "muted" }, "Account: ", identityLabel(a.identity), "."),
             h(
               "div",
               { class: "row-actions" },
@@ -145,8 +145,8 @@ class AccountPage {
     const identities = this.account.identities || [this.account.identity].filter(Boolean);
     return h("section", {class:"panel",id:"sign-in-methods"},
       h("h2", {}, "Sign-in methods"),
-      h("p", {}, "Use a wallet, email, or both for this same account and subscription."),
-      h("ul", {}, identities.map(i => h("li", {}, i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("p", {}, "Your verified sign-in methods open this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, identityLabel(i)))),
       h("div", {class:"row-actions"},
         h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
         h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email")));

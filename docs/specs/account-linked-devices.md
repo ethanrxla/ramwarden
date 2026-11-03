@@ -9,7 +9,7 @@ claim that installation or a green test proves coverage.
 
 | Requirement | Evidence needed before completion | Current evidence / remaining work |
 | --- | --- | --- |
-| Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Neither device has a saved token. User supplied developer email and manager address in the task; do not put the email in public repository files. |
+| Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Live email sign-in verified on 2026-11-03. Account page reports Lite, zero devices, and existing email/wallet/GitHub identities. Neither device is linked yet; Pro entitlement remains pending. Keep personal identifiers out of repository files. |
 | Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Manager agents 001 (Windows) and 002 (Mac) confirmed active on 2026-11-02; records from both arrive. Neither is yet proven bound to the developer account. |
 | ClamAV | Current signatures, scan-only execution and safe test detection delivered through Wazuh on both devices | Windows scan records reach the manager; Mac installation not found in Homebrew. Keep Defender enabled. No automatic deletion/quarantine. |
 | Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
@@ -20,7 +20,7 @@ claim that installation or a green test proves coverage.
 | Personalized behavior | Account-scoped learning data, device/OS identity, bounded feedback, isolation and offline behavior tests | Local activity protections exist. Cross-device account learning is not verified. |
 | Repeatable setup | Versioned installation/enrollment/rollback steps, a fresh-device reproduction, optional setup skill | Read-only readiness probe added; full setup runbook/skill remains. |
 | Hosting | Existing Oracle resources assessed, manager/API/indexer health and capacity verified | Oracle manager/indexer active; about 7.8 GiB available memory and 71 GiB free disk on 2026-11-02. Hosted app API is not deployed there; no droplet needed for current capacity. |
-| Sales/support | Verified sign-in, truthful plan answers, chat-ticket-reply-revisit behavior | Support PR23 browser tests pass; production email sign-in still needs verification. |
+| Sales/support | Verified sign-in, truthful plan answers, chat-ticket-reply-revisit behavior | Support PR23 browser tests pass. Real email delivery and sign-in verified against the Mac preview API on 2026-11-03; this is not a production API deployment. |
 
 ## Transport and licensing boundaries
 
@@ -90,7 +90,8 @@ Still required for live coverage:
 
 - Configure the API entitlement signer and matching public key in app builds.
   The current Mac local API has a Resend provider but no entitlement key in its
-  process environment. Email delivery is not proven by configuration alone.
+  process environment. Real email delivery and sign-in are now verified on
+  the Mac preview, but entitlement signing remains unverified.
 - Implement the hosted `/v1/wardens/threat/enroll` and `/status` handlers and
   account-scoped agent mapping. Currently those paths exist only in the client
   and fixtures, so a signed plan alone cannot provide hosted threat status.
@@ -163,3 +164,20 @@ hide revoked devices, preserve reservations, and allow the same numeric agent ID
 on a separate deployment. All 21 cloud library tests and API/cloud all-target
 clippy pass on the Mac. The next implementation step is a server-controlled
 enrollment/status handler using these bindings and live device authorization.
+
+### Live email sign-in checkpoint (2026-11-03)
+
+The user received the real sign-in email and supplied its code. The account
+page authenticated successfully and reported Lite with zero registered devices.
+No plan was granted, payment made, or device credential installed. A GitHub
+identity added by newer backend work was incorrectly rendered as an Ethereum
+wallet with an undefined address. The frontend now labels identity kinds
+explicitly in both the account summary and sign-in-method list.
+
+All 23 website unit/site tests and focused identity-label checks pass locally.
+An unrelated POSIX installer execution test fails on Windows; it must be run
+on a supported host before claiming a full installer-suite pass. The Mac went
+offline after sign-in, before the preview patch could be copied or applied;
+live confirmation of the label fix and device linking remain pending. The
+signed-in browser session is preserved for continuation. Do not save email
+codes, sessions, or personal install links in this document or shared memory.
