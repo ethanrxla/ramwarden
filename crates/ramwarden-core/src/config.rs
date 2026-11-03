@@ -606,7 +606,7 @@ impl Default for Wazuh {
         Wazuh {
             enabled: true,
             mode: "hosted".to_string(),
-            cloud_url: "https://api.ramwarden.app".to_string(),
+            cloud_url: "https://api.ramwarden.com".to_string(),
             manager_url: String::new(),
             api_user: "wazuh-wui".to_string(),
             api_password: String::new(),
@@ -1015,7 +1015,7 @@ mod tests {
         let d = Config::default().wardens.threat;
         assert!(d.enabled, "a pass is all a user should need");
         assert_eq!(d.mode, "hosted");
-        assert_eq!(d.cloud_url, "https://api.ramwarden.app");
+        assert_eq!(d.cloud_url, "https://api.ramwarden.com");
         let cfg = parse(
             r#"
 [wardens.threat]
