@@ -130,6 +130,8 @@ impl MongoStore {
                 index(doc! { "tier": 1 }, named("by_tier"))]),
             (DEVICES, vec![index(doc! { "token_hash": 1 }, unique("token_unique")),
                 index(doc! { "account_id": 1, "created_at": 1 }, named("account_created"))]),
+            ("threat_agents", vec![index(doc! { "deployment": 1, "agent_id": 1 }, unique("deployment_agent_unique")),
+                index(doc! { "account_id": 1 }, named("by_account"))]),
             (DEVICE_CODES, vec![index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
                 index(doc! { "expire_at": 1 }, ttl())]),
             (SESSIONS, vec![index(doc! { "account_id": 1 }, named("by_account"))]),
@@ -459,6 +461,36 @@ impl Store for MongoStore {
     async fn revoke_device(&self, account_id: &str, device_id: &str) -> Result<bool> {
         let r = self.devices().delete_one(doc! { "_id": device_id, "account_id": account_id }).await?;
         Ok(r.deleted_count == 1)
+    }
+
+    async fn bind_threat_agent(&self, binding: &ThreatAgentBinding) -> Result<bool> {
+        if self.devices().find_one(doc! {"_id": &binding.device_id, "account_id": &binding.account_id}).await?.is_none() {
+            return Ok(false);
+        }
+        let collection = self.db.collection::<ThreatAgentBinding>("threat_agents");
+        match collection.insert_one(binding).await {
+            Ok(_) => Ok(true),
+            Err(e) if is_duplicate_key(&e) => {
+                // _id protects the device; the unique deployment/agent index
+                // protects ownership when separate API instances race.
+                Ok(collection.find_one(doc! {"_id": &binding.device_id}).await?.is_some_and(|b|
+                    b.account_id == binding.account_id && b.deployment == binding.deployment && b.agent_id == binding.agent_id))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn threat_agents(&self, account_id: &str) -> Result<Vec<ThreatAgentBinding>> {
+        use futures::TryStreamExt;
+        // Join live devices on every read. A concurrent revoke can leave a
+        // binding reserved, but cannot make it an active ownership record.
+        let documents: Vec<Document> = self.raw("threat_agents").aggregate([
+            doc! {"$match": {"account_id": account_id}},
+            doc! {"$lookup": {"from": DEVICES, "localField": "_id", "foreignField": "_id", "as": "device"}},
+            doc! {"$match": {"device.account_id": account_id}},
+            doc! {"$unset": "device"},
+        ]).await?.try_collect().await?;
+        documents.into_iter().map(|d| bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))).collect()
     }
 
     async fn create_payment(&self, p: Payment) -> Result<()> {

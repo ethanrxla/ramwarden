@@ -132,3 +132,34 @@ index initialization, and decision-sync idempotence. The test uses a fresh
 `ramwarden-test-*` database and removes its test collections afterward.
 No application database migration or billing change was needed. Full CI is
 green at 6c31773 (run 41576589262); this is source validation, not deployment.
+
+### Agent ownership storage
+
+The `threat_agents` collection reserves one Wazuh agent for one registered
+device and account. Its primary key is the device ID; a unique index on
+`deployment, agent_id` prevents two API instances from assigning the same agent
+to different devices. The deployment identifier comes from operator
+configuration, not a URL or hostname supplied by a customer. No agent key,
+alert content, email address or browser data belongs in this record.
+
+The store operation is for a server that has already verified the Wazuh agent's
+ownership. It must not become a route where a customer can claim an arbitrary
+agent ID. Existing developer agents require explicit verified mapping; matching
+their hostname alone is insufficient. Enrollment must revalidate the device
+token before handing out an agent key.
+
+Bindings are immutable and retryable. Revocation removes a device from the
+active binding query immediately on subsequent reads, while retaining the
+reservation so its historical alerts cannot silently move to another account.
+This reservation has no TTL. Any future operator reclamation must first remove
+the agent credentials and address historical indexer records. This storage
+change does not itself revoke Wazuh access, implement the hosted endpoints,
+bind either existing developer agent, or deploy indexes to the application DB.
+
+The memory contract and isolated Atlas contract (28.80 seconds) both pass with
+these bindings. They race two accounts for the same agent, reject foreign-device
+claims and binding replacement, verify idempotent retries and original timestamps,
+hide revoked devices, preserve reservations, and allow the same numeric agent ID
+on a separate deployment. All 21 cloud library tests and API/cloud all-target
+clippy pass on the Mac. The next implementation step is a server-controlled
+enrollment/status handler using these bindings and live device authorization.

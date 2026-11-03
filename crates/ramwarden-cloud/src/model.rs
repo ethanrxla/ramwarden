@@ -320,6 +320,20 @@ pub struct Device {
     pub token_hash: String,
 }
 
+/// Server-verified Wazuh ownership. No agent key or alert contents are stored.
+/// Retained after device revocation to prevent silently assigning its agent
+/// (and historical alerts) to a different device or account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreatAgentBinding {
+    #[serde(rename = "_id")]
+    pub device_id: Id,
+    pub account_id: Id,
+    /// Stable operator-selected deployment identity, never a client URL.
+    pub deployment: String,
+    pub agent_id: String,
+    pub created_at: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DeviceCodeStatus {
