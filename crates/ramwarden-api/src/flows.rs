@@ -60,10 +60,13 @@ pub(crate) fn app() -> App {
     app_with(Opts { downloads: None, stripe: None })
 }
 
-fn app_with(o: Opts) -> App {
+fn app_with(o: Opts) -> App { app_with_threat(o,crate::threat::ThreatDesk::default()) }
+
+fn app_with_threat(o:Opts,threat:crate::threat::ThreatDesk)->App {
     let store = Arc::new(MemoryStore::new());
     let mailer = Arc::new(MemoryMailer::default());
     let cloud = Cloud {
+        threat,
         store: store.clone(),
         plans: Arc::new(Plans::built_in()),
         site: Site { domain: "ramwarden.app".into(), origin: ORIGIN.into() },
@@ -847,4 +850,66 @@ async fn an_existing_session_explicitly_approves_its_named_device() {
     assert_eq!(s,StatusCode::OK,"{token}");assert_eq!(token["account_id"],id);
     let(_,prefs)=a.call("GET","/v1/usage/config",Auth::Bearer(token["device_token"].as_str().unwrap()),None).await;
     assert_eq!(prefs["enabled"],false,"enrolling is not usage consent");
+}
+
+#[tokio::test]
+async fn hosted_threat_reports_require_pro_and_only_query_the_bound_device() {
+    use axum::{routing::{get,post},extract::Query};
+    let manager = axum::Router::new()
+        .route("/security/user/authenticate",post(||async{Json(json!({"data":{"token":"test-token"}}))}))
+        .route("/agents",get(|Query(q):Query<std::collections::HashMap<String,String>>|async move{
+            assert_eq!(q.get("name").unwrap(),"account-a-mac");
+            Json(json!({"data":{"affected_items":[{"id":"042","name":"account-a-mac","status":"active"}]}}))
+        }))
+        .route("/wazuh-alerts-*/_search",post(|Json(body):Json<Value>|async move{
+            assert_eq!(body["query"]["bool"]["filter"][0]["term"]["agent.name"],"account-a-mac");
+            Json(json!({"hits":{"hits":[]}}))
+        }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url=format!("http://{}",listener.local_addr().unwrap());
+    let server=tokio::spawn(async move{axum::serve(listener,manager).await.unwrap()});
+    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let (dc,code)=a.start_device().await;
+    let (_,v,_)=a.sign_in_evm(&EvmWallet::new(87),Some(&code)).await;
+    let account=v["account"]["id"].as_str().unwrap();
+    let (_,token)=a.call("POST","/v1/device/token",Auth::None,Some(json!({"device_code":dc}))).await;
+    let token=token["device_token"].as_str().unwrap();
+    assert_eq!(a.call("GET","/v1/wardens/threat/status",Auth::None,None).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(a.call("GET","/v1/wardens/threat/status",Auth::Bearer(token),None).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(a.call("POST","/v1/wardens/threat/enroll",Auth::Bearer(token),Some(json!({"os":"linux","arch":"x86_64"}))).await.0,StatusCode::FORBIDDEN);
+    a.store.update_billing(account,&BillingUpdate{tier:Some(Tier::Pro),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+    let device=a.store.devices(account).await.unwrap().remove(0);
+    let binding=ramwarden_cloud::model::SecurityBinding{agent_id:"042".into(),agent_name:"account-a-mac".into(),group:"acct-a".into()};
+    assert!(a.store.bind_security(account,&device.id,&binding).await.unwrap());
+    let (status,result)=a.call("GET","/v1/wardens/threat/status?agent=other-account",Auth::Bearer(token),None).await;
+    assert_eq!(status,StatusCode::OK,"{result}");assert_eq!(result["agents"][0]["id"],"042");
+    a.store.revoke_device(account,&device.id).await.unwrap();
+    assert_eq!(a.call("GET","/v1/wardens/threat/status",Auth::Bearer(token),None).await.0,StatusCode::UNAUTHORIZED,"cached reports cannot bypass revocation");
+    server.abort();
+}
+
+#[tokio::test]
+async fn hosted_enrollment_uses_server_identity_and_returns_only_its_own_key() {
+    use axum::{routing::{get,post,put},extract::Query};
+    use base64::Engine;
+    let name=Arc::new(Mutex::new(None::<String>));let read=name.clone();let create=name.clone();let key=name.clone();
+    let manager=axum::Router::new()
+        .route("/security/user/authenticate",post(||async{Json(json!({"data":{"token":"test-token"}}))}))
+        .route("/groups",get(|Query(q):Query<std::collections::HashMap<String,String>>|async move{Json(json!({"data":{"affected_items":[{"name":q["groups_list"]}]}}))}))
+        .route("/agents",get(move ||{let n=read.lock().unwrap().clone();async move{Json(json!({"data":{"affected_items":n.map(|name|vec![json!({"id":"043","name":name,"status":"never_connected"})]).unwrap_or_default()}}))}})
+            .post(move |Json(body):Json<Value>|{let n=create.clone();async move{*n.lock().unwrap()=Some(body["name"].as_str().unwrap().to_string());Json(json!({"data":{"affected_items":[{"id":"043"}]}}))}}))
+        .route("/agents/043/group/{group}",put(||async{Json(json!({"data":{"affected_items":["043"],"failed_items":[]}}))}))
+        .route("/agents/043/key",get(move ||{let name=key.lock().unwrap().clone().unwrap();async move{let key=base64::engine::general_purpose::STANDARD.encode(format!("043 {name} any {}","a".repeat(64)));Json(json!({"data":{"affected_items":[{"key":key}]}}))}}));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());let server=tokio::spawn(async move{axum::serve(listener,manager).await.unwrap()});
+    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let (dc,code)=a.start_device().await;let (_,v,_)=a.sign_in_evm(&EvmWallet::new(88),Some(&code)).await;
+    let account=v["account"]["id"].as_str().unwrap();a.store.update_billing(account,&BillingUpdate{tier:Some(Tier::Pro),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+    let (_,token)=a.call("POST","/v1/device/token",Auth::None,Some(json!({"device_code":dc}))).await;let token=token["device_token"].as_str().unwrap();
+    let body=json!({"os":"linux","arch":"x86_64","hostname":"other-account-hostname"});
+    let (status,response,headers)=a.raw("POST","/v1/wardens/threat/enroll",Auth::Bearer(token),ORIGIN,Some(body.clone())).await;
+    assert_eq!(status,StatusCode::OK,"{response}");assert_eq!(headers["cache-control"],"no-store");
+    assert!(response["agent_name"].as_str().unwrap().starts_with("rw-"));assert_ne!(response["agent_name"],"other-account-hostname");
+    let bound=a.store.devices(account).await.unwrap().remove(0).security.unwrap();assert_eq!(bound.agent_name,response["agent_name"]);assert_eq!(bound.agent_id,"043");
+    assert_eq!(a.call("POST","/v1/wardens/threat/enroll",Auth::Bearer(token),Some(body)).await.0,StatusCode::TOO_MANY_REQUESTS);
+    server.abort();
 }

@@ -82,8 +82,8 @@ pub struct Alert {
 
 /// A read-only client for one Wazuh deployment.
 pub struct Client {
-    http: reqwest::Client,
-    manager: Option<Url>,
+    pub(crate) http: reqwest::Client,
+    pub(crate) manager: Option<Url>,
     indexer: Option<Url>,
     ep: Endpoints,
     token: Mutex<Option<(String, Instant)>>,
@@ -98,9 +98,9 @@ impl Client {
         let mut b = reqwest::Client::builder()
             .timeout(if ep.timeout.is_zero() { Duration::from_secs(10) } else { ep.timeout });
         if let Some(pem) = &ep.ca_pem {
-            let cert = reqwest::Certificate::from_pem(pem)
+            let certs = reqwest::Certificate::from_pem_bundle(pem)
                 .map_err(|e| Error::CaFile("ca_file".into(), e.to_string()))?;
-            b = b.add_root_certificate(cert);
+            for cert in certs { b = b.add_root_certificate(cert); }
         }
         let http = b.build().map_err(|e| Error::Unreachable("manager", e.to_string()))?;
         Ok(Client { http, manager, indexer, ep, token: Mutex::new(None) })
@@ -115,7 +115,7 @@ impl Client {
     }
 
     /// A manager token, from the cache or a fresh sign-in.
-    async fn token(&self, fresh: bool) -> Result<String> {
+    pub(crate) async fn token(&self, fresh: bool) -> Result<String> {
         if !fresh
             && let Some((t, at)) = self.token.lock().unwrap().as_ref()
             && at.elapsed() < TOKEN_REUSE

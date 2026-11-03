@@ -508,3 +508,6 @@ footer a { color: var(--muted); }
 .account-method { display:flex; gap:10px; align-items:center; font-size:12px; overflow-wrap:anywhere; }
 .account-method span:last-child { min-width:0; }
 @media(max-width:1150px) { .site-header .account-identity { max-width:100px; } .site-header nav:last-child {gap:10px;} }
+
+.site-header nav a { white-space:nowrap; }
+.site-header .account-identity { max-width:128px; }

@@ -308,8 +308,14 @@ pub enum Platform {
     Macos,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityBinding { pub agent_id: String, pub agent_name: String, pub group: String }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
+    /// Server-only binding. Names supplied by clients never select Wazuh data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<SecurityBinding>,
     /// Unique seat within the account. Legacy records reserve virtual seats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<u32>,

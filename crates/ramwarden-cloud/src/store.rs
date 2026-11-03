@@ -144,6 +144,7 @@ pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>>;
     /// The live device a token belongs to; records that it was seen.
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>>;
+    async fn bind_security(&self, account_id:&str, device_id:&str, binding:&SecurityBinding)->Result<bool>;
     async fn devices(&self, account_id: &str) -> Result<Vec<Device>>;
     /// Deletes the device and so its token. False if not this account's.
     async fn revoke_device(&self, account_id: &str, device_id: &str) -> Result<bool>;
@@ -376,6 +377,7 @@ impl Store for MemoryStore {
         }
         let raw = random_token("rwdt_");
         let d = Device {
+            security:None,
             slot: None,
             id: new_id(),
             account_id: account_id.to_string(),
@@ -398,6 +400,13 @@ impl Store for MemoryStore {
         }))
     }
 
+    async fn bind_security(&self, account_id:&str, device_id:&str, binding:&SecurityBinding)->Result<bool> {
+        let mut g=self.lock();
+        if g.devices.values().any(|d|d.id!=device_id && d.security.as_ref().is_some_and(|b|b.agent_id==binding.agent_id)) {return Ok(false);}
+        let Some(d)=g.devices.get_mut(device_id).filter(|d|d.account_id==account_id) else {return Ok(false)};
+        if let Some(current)=&d.security {return Ok(current==binding);}
+        d.security=Some(binding.clone());Ok(true)
+    }
     async fn devices(&self, account_id: &str) -> Result<Vec<Device>> {
         let mut v: Vec<Device> = self.lock().devices.values().filter(|d| d.account_id == account_id).cloned().collect();
         v.sort_by_key(|d| d.created_at);
@@ -467,6 +476,7 @@ pub mod contract {
         diagnostics_retry_without_double_counting(s).await;
         devices_and_sessions(s).await;
         concurrent_seat_limits(s).await;
+        security_bindings(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
     }
@@ -580,6 +590,17 @@ pub mod contract {
         assert_eq!(s.account(&a.id).await.unwrap().unwrap().prefs, prefs);
     }
 
+    async fn security_bindings(s:&dyn Store) {
+        let (a,_)=s.account_for_identity(&wallet(85),NOW).await.unwrap();
+        let (b,_)=s.account_for_identity(&wallet(86),NOW).await.unwrap();
+        let da=s.register_device(&a.id,"a",Platform::Macos,NOW).await.unwrap().unwrap().0;
+        let db=s.register_device(&b.id,"b",Platform::Macos,NOW).await.unwrap().unwrap().0;
+        let binding=SecurityBinding{agent_id:"042".into(),agent_name:"private-agent".into(),group:"acct-a".into()};
+        assert!(!s.bind_security(&b.id,&da.id,&binding).await.unwrap());
+        assert!(s.bind_security(&a.id,&da.id,&binding).await.unwrap());
+        assert!(s.bind_security(&a.id,&da.id,&binding).await.unwrap());
+        assert!(!s.bind_security(&b.id,&db.id,&binding).await.unwrap(),"one manager agent cannot belong to two devices/accounts");
+    }
     async fn concurrent_seat_limits(s: &dyn Store) {
         let (a, _) = s.account_for_identity(&wallet(88), NOW).await.unwrap();
         for (tier, expected) in [(None,1),(Some(Tier::Ram),3),(Some(Tier::Pro),5)] {
