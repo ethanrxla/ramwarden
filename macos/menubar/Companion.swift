@@ -413,7 +413,7 @@ struct AssistantView: View {
             }
             if model.thinking {
                 TimelineView(.periodic(from: .now, by: 3)) { tick in
-                    let lines = ["Discombobulating…", "Babooning…", "Larping…", "Mogging…", "67ing…", "Deez nutzing…"]
+                    let lines = model.profile.thinkingLines
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         VStack(alignment: .leading, spacing: 2) {

@@ -3,14 +3,14 @@ import SwiftUI
 import Combine
 
 class WardenProfile {
-    let id:String; let name:String; let placeholder:String
-    init(id:String,name:String,placeholder:String) {self.id=id;self.name=name;self.placeholder=placeholder}
+    let id:String; let name:String; let placeholder:String; let thinkingLines:[String]
+    init(id:String,name:String,placeholder:String,thinkingLines:[String] = ["Discombobulating…","Babooning…","Larping…","Mogging…","67ing…","Deez nutzing…"]) {self.id=id;self.name=name;self.placeholder=placeholder;self.thinkingLines=thinkingLines}
 }
 final class RamWardenProfile: WardenProfile {
     init(){super.init(id:"ram",name:"Warden",placeholder:"Ask your ram…")}
 }
 final class ThreatWardenProfile: WardenProfile {
-    init(){super.init(id:"threat",name:"ThreatWarden",placeholder:"Ask about your protection…")}
+    init(){super.init(id:"threat",name:"ThreatWarden",placeholder:"Ask about your protection…",thinkingLines:["Reviewing telemetry…","Assessing the signals…","Waiting for analysis…"])}
 }
 // Shared identity, conversation transport, glass panel and speech-bubble lifecycle.
 // Memory and security companions specialize their observations, not each other's actions.

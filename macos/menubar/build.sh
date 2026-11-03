@@ -19,7 +19,7 @@ cat > "$STAGE/RamWarden.app/Contents/Info.plist" <<'PL'
   <key>CFBundleIdentifier</key><string>com.ramwarden.menubar</string>
   <key>CFBundleExecutable</key><string>RamWarden</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>0.2.2</string>
+  <key>CFBundleVersion</key><string>0.3.0</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>

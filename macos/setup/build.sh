@@ -8,7 +8,7 @@ cp ../../assets/brand/RamWarden.icns "$DEST/Contents/Resources/"
 ditto ../../agent/skills/ramwarden "$DEST/Contents/Resources/agent-skill"
 cat > "$DEST/Contents/Info.plist" <<'PL'
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>RamWardenSetup</string><key>CFBundleIdentifier</key><string>com.ramwarden.setup</string><key>CFBundleName</key><string>RamWarden Setup</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>RamWarden.icns</string><key>CFBundleVersion</key><string>0.2.2</string><key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>CFBundleExecutable</key><string>RamWardenSetup</string><key>CFBundleIdentifier</key><string>com.ramwarden.setup</string><key>CFBundleName</key><string>RamWarden Setup</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>RamWarden.icns</string><key>CFBundleVersion</key><string>0.3.0</string><key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PL
 SETUP_SITE="${RAMWARDEN_SETUP_SITE:-https://ramwarden.com}"
