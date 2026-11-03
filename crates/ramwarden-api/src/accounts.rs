@@ -55,13 +55,7 @@ pub const PRO_DEVICE_LIMIT: u32 = 5;
 /// plan is in good standing, else the free tier's. Devices already linked
 /// stay linked when a plan lapses; only adding one is refused.
 pub fn device_limit(a: &Account, now: u64) -> u32 {
-    let plan = match plan_name(a, now) {
-        "pro" => PRO_DEVICE_LIMIT,
-        "plus" => PLUS_DEVICE_LIMIT,
-        _ => FREE_DEVICE_LIMIT,
-    };
-    // The stored limit is a per-account cap the operator can lower.
-    plan.min(a.device_limit)
+    a.effective_device_limit(now)
 }
 
 /// The card the account is on: `lite`, `plus` or `pro`.
@@ -235,7 +229,8 @@ pub async fn account_json(c: &Cloud, a: &Account, now: u64) -> Result<Value, Res
         "status": a.status(now).map(|s| s.as_str()),
         "trial_ends_at": a.trial_ends_at.filter(|&t| t > 0).map(iso8601),
         "paid_until": a.paid_until.map(iso8601),
-        "trial_available": !a.trial_used,
+        "trial_available": !a.trial_used && !a.developer_access,
+        "developer_access": a.developer_access,
         "billing": a.billing.as_ref().map(|b| json!({"method": b.method})),
         "entitlement_until": (until > now).then(|| iso8601(until)),
         "entitlements": wardens.iter().map(|(w, &t)| (w.clone(), json!(iso8601(t)))).collect::<Map<_, _>>(),
@@ -363,4 +358,25 @@ async fn download(
     }
     tracing::info!(account = %a.id, %warden, %file, "download");
     Ok(r)
+}
+
+#[cfg(test)]
+mod developer_tests {
+    use super::*;
+    use ramwarden_cloud::model::{Identity, Tier};
+    #[test]
+    fn complimentary_access_keeps_plan_limits_and_expiry() {
+        let now = 1_000_000;
+        let mut a = Account::new("owner".into(), Identity::email("owner@example.com"), now);
+        a.developer_access = true;
+        assert_eq!(device_limit(&a, now), 1);
+        for (tier, limit, threat) in [(Tier::Ram,3,false),(Tier::Pro,5,true)] {
+            a.tier = Some(tier); a.paid_until = Some(now+100);
+            assert_eq!(device_limit(&a,now),limit);
+            assert!(a.active("ram",now)); assert_eq!(a.active("threat",now),threat);
+        }
+        a.cancelled = true;
+        assert_eq!(device_limit(&a,now+101),1);
+        assert!(!a.active("threat",now+101));
+    }
 }

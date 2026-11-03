@@ -106,15 +106,15 @@ class AccountPage {
             "section",
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
-            h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
+            h("p", {}, a.developer_access ? "Developer access · complimentary. No card or wallet will be charged." : a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
             h("p", { class: "muted" }, "Account: ", a.identity?.kind === "github" ? `GitHub account ${a.identity.id}` : a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
               h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
-              next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
-              ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
+              next && !a.developer_access ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
+              !a.developer_access && ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
           )
         : null,

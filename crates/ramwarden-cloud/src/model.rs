@@ -166,6 +166,10 @@ pub struct Account {
     pub billing: Option<Billing>,
     #[serde(default = "default_device_limit")]
     pub device_limit: u32,
+    /// Operator-managed complimentary developer access. Never accepted from
+    /// account preferences or checkout; paid_until still bounds signed passes.
+    #[serde(default)]
+    pub developer_access: bool,
     /// What the site and the apps share: warden colors, the pet-comment mute.
     #[serde(default)]
     pub prefs: serde_json::Map<String, serde_json::Value>,
@@ -189,6 +193,7 @@ impl Account {
             trial_used: false,
             billing: None,
             device_limit: DEVICE_LIMIT,
+            developer_access: false,
             prefs: Default::default(),
         }
     }
@@ -229,6 +234,14 @@ impl Account {
             Some(t) if until > 0 => t.wardens().iter().map(|w| (w.to_string(), until)).collect(),
             _ => BTreeMap::new(),
         }
+    }
+
+    /// Plan ceiling and any lower operator cap, also enforced in storage.
+    pub fn effective_device_limit(&self, now: u64) -> u32 {
+        let plan = if self.active("ram", now) {
+            match self.tier { Some(Tier::Pro) => 5, Some(Tier::Ram) => 3, None => 1 }
+        } else { 1 };
+        plan.min(self.device_limit)
     }
 
     /// Whether `warden` is served at `now`.
@@ -297,6 +310,9 @@ pub enum Platform {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
+    /// Unique seat within the account. Legacy records reserve virtual seats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<u32>,
     #[serde(rename = "_id")]
     pub id: Id,
     pub account_id: Id,

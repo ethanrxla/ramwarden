@@ -141,6 +141,9 @@ impl MongoStore {
             self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
         }
         self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
+        self.ensure_named_index(DEVICES, index(doc!{"account_id":1,"slot":1}, IndexOptions::builder()
+            .name("account_slot_unique".to_string()).unique(true)
+            .partial_filter_expression(doc!{"slot":{"$type":"number"}}).build())).await?;
         self.ensure_support_indexes().await?;
         self.ensure_usage_indexes().await?;
         Ok(())
@@ -403,25 +406,29 @@ impl Store for MongoStore {
     }
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
-        let limit = self.account(account_id).await?.map_or(DEVICE_LIMIT, |a| a.device_limit);
-        // Two devices linking in the same instant could both pass; the cost is
-        // one device over the limit until the user removes one.
-        let n = self.devices().count_documents(doc! { "account_id": account_id }).await?;
-        if n >= u64::from(limit) {
-            return Ok(None);
+        let Some(account) = self.account(account_id).await? else { return Ok(None) };
+        let limit = account.effective_device_limit(now);
+        // A unique account/seat index arbitrates simultaneous registrations.
+        for _ in 0..=DEVICE_LIMIT {
+            let current = Store::devices(self, account_id).await?;
+            if current.len() >= limit as usize { return Ok(None); }
+            let mut occupied: std::collections::HashSet<u32> = current.iter().filter_map(|d|d.slot).collect();
+            for _ in current.iter().filter(|d|d.slot.is_none()) {
+                let mut slot = 0;
+                while occupied.contains(&slot) { slot += 1; }
+                occupied.insert(slot);
+            }
+            let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
+            let raw = random_token("rwdt_");
+            let d = Device { slot:Some(slot), id:new_id(), account_id:account_id.to_string(),
+                name:name.to_string(), platform, created_at:now, last_seen_at:now, token_hash:hash(&raw) };
+            match self.devices().insert_one(&d).await {
+                Ok(_) => return Ok(Some((d,raw))),
+                Err(error) if is_duplicate_key(&error) => continue,
+                Err(error) => return Err(error.into()),
+            }
         }
-        let raw = random_token("rwdt_");
-        let d = Device {
-            id: new_id(),
-            account_id: account_id.to_string(),
-            name: name.to_string(),
-            platform,
-            created_at: now,
-            last_seen_at: now,
-            token_hash: hash(&raw),
-        };
-        self.devices().insert_one(&d).await?;
-        Ok(Some((d, raw)))
+        Ok(None)
     }
 
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>> {

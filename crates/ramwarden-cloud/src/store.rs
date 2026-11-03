@@ -369,12 +369,14 @@ impl Store for MemoryStore {
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
         let mut g = self.lock();
-        let limit = g.accounts.get(account_id).map_or(DEVICE_LIMIT, |a| a.device_limit) as usize;
+        let Some(account) = g.accounts.get(account_id) else { return Ok(None) };
+        let limit = account.effective_device_limit(now) as usize;
         if g.devices.values().filter(|d| d.account_id == account_id).count() >= limit {
             return Ok(None);
         }
         let raw = random_token("rwdt_");
         let d = Device {
+            slot: None,
             id: new_id(),
             account_id: account_id.to_string(),
             name: name.to_string(),
@@ -464,6 +466,7 @@ pub mod contract {
         identity_claims_are_atomic(s).await;
         diagnostics_retry_without_double_counting(s).await;
         devices_and_sessions(s).await;
+        concurrent_seat_limits(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
     }
@@ -577,10 +580,30 @@ pub mod contract {
         assert_eq!(s.account(&a.id).await.unwrap().unwrap().prefs, prefs);
     }
 
+    async fn concurrent_seat_limits(s: &dyn Store) {
+        let (a, _) = s.account_for_identity(&wallet(88), NOW).await.unwrap();
+        for (tier, expected) in [(None,1),(Some(Tier::Ram),3),(Some(Tier::Pro),5)] {
+            if let Some(tier) = tier {
+                s.update_billing(&a.id,&BillingUpdate {tier:Some(tier),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+            }
+            let attempts = (0..8).map(|_|s.register_device(&a.id,"parallel",Platform::Macos,NOW));
+            for result in futures::future::join_all(attempts).await { result.unwrap(); }
+            assert_eq!(s.devices(&a.id).await.unwrap().len(),expected,"simultaneous registration must respect plan seats");
+        }
+    }
+
     async fn devices_and_sessions(s: &dyn Store) {
         let (a, _) = s.account_for_identity(&wallet(2), NOW).await.unwrap();
         let mut tokens = vec![];
         for i in 0..DEVICE_LIMIT {
+            if i == 1 {
+                assert!(s.register_device(&a.id, "Lite overflow", Platform::Linux, NOW).await.unwrap().is_none());
+                s.update_billing(&a.id, &BillingUpdate {tier:Some(Tier::Ram),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+            }
+            if i == 3 {
+                assert!(s.register_device(&a.id, "Plus overflow", Platform::Linux, NOW).await.unwrap().is_none());
+                s.update_billing(&a.id, &BillingUpdate {tier:Some(Tier::Pro),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+            }
             let (d, tok) = s.register_device(&a.id, &format!("pc{i}"), Platform::Windows, NOW).await.unwrap().unwrap();
             assert!(!d.id.is_empty());
             tokens.push((d, tok));
