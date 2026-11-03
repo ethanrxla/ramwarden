@@ -50,6 +50,22 @@ fn save_token(path: &Path, token: &str) -> Result<(), Error> {
     std::fs::rename(&temporary, path)?;
     Ok(())
 }
+async fn refresh_entitlement(http: &reqwest::Client, base: &str) -> Result<(), Error> {
+    let token = config::device_token().ok_or("Connect this computer first")?;
+    let key = ramwarden_core::wardens::PUBLIC_KEY.ok_or("This build has no trusted entitlement key")?;
+    let response = http.get(format!("{base}/v1/entitlement")).bearer_auth(token).send().await?.error_for_status()?;
+    if response.content_length().is_some_and(|n|n > 65536) { return Err("Entitlement is too large".into()); }
+    let bytes = response.bytes().await?;
+    if bytes.len() > 65536 { return Err("Entitlement is too large".into()); }
+    let record: ramwarden_core::wardens::Entitlement = serde_json::from_slice(&bytes)?;
+    if !record.verify(key) || record.issued_at > now()+300 {
+        return Err("Entitlement signature or timestamp is invalid; existing pass retained".into());
+    }
+    let cfg = config::load()?;
+    save_token(&cfg.db_path.with_file_name("entitlement.json"),std::str::from_utf8(&bytes)?)?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct Settings {
     enabled: bool,
@@ -97,7 +113,8 @@ async fn login(http: &reqwest::Client, base: &str) -> Result<(), Error> {
             .send()
             .await?;
         if response.status().is_success() {
-            println!("This computer is already connected.");
+            refresh_entitlement(http, base).await?;
+            println!("This computer is already connected. Signed access refreshed.");
             return Ok(());
         }
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
@@ -144,6 +161,7 @@ async fn login(http: &reqwest::Client, base: &str) -> Result<(), Error> {
                 &config::config_dir().join("ramwarden").join("device-token"),
                 token,
             )?;
+            refresh_entitlement(http, base).await?;
             println!(
                 "This computer is connected. Usage sharing is controlled on your account page."
             );
@@ -166,8 +184,14 @@ async fn main() -> Result<(), Error> {
     if args.first().is_some_and(|s| s == "login") {
         return login(&http, &base).await;
     }
+    if args.first().is_some_and(|s| s == "refresh") {
+        refresh_entitlement(&http,&base).await?;
+        println!("Signed account access refreshed. No usage data uploaded.");
+        return Ok(());
+    }
     let watch = args.iter().any(|s| s == "--watch");
     loop {
+        if let Err(error) = refresh_entitlement(&http,&base).await { eprintln!("Account access refresh deferred: {error}"); }
         match upload(&http, &base).await {
             Ok(0) => println!("Usage sharing is off. No local activity was uploaded."),
             Ok(count) => println!("Uploaded {count} numeric daily summaries."),
