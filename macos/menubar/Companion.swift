@@ -24,6 +24,12 @@ struct FocusChoice: Decodable, Identifiable {
 }
 struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
 final class CompanionModel: ObservableObject {
+    let profile: WardenProfile
+    init(profile:WardenProfile = RamWardenProfile()) {
+        self.profile = profile
+        self.companionVisible = UserDefaults.standard.bool(forKey:"\(profile.id).visible")
+        self.name = UserDefaults.standard.string(forKey:"\(profile.id).name") ?? profile.name
+    }
     var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
     @Published var selectedReviewTabs: Set<String> = []
@@ -112,7 +118,7 @@ final class CompanionModel: ObservableObject {
                     focusSelected = Set(focusProposal?.tabs.filter { $0.selected }.map { $0.key } ?? [])
                 } else { focusProposal = nil }
                 turns.append(ChatTurn(role:"assistant",content:reply))
-                CompanionSpeech.shared.say(reply,warden:"ram")
+                if companionVisible { CompanionSpeech.shared.say(reply,warden:profile.id) }
             } catch { self.error = "Couldn't reach Warden to save your focus." }
         }
     }
@@ -135,6 +141,7 @@ final class CompanionModel: ObservableObject {
             } catch { self.error = "Couldn't update your tab preferences." }
         }
     }
+    func cancelConversation() { task?.cancel(); thinking=false }
     func send(_ message: String) {
         let message = boundedChatText(message.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !message.isEmpty, !thinking else { return }
@@ -148,13 +155,14 @@ final class CompanionModel: ObservableObject {
                 var req = URLRequest(url: base.appendingPathComponent("assistant/chat"))
                 req.httpMethod = "POST"; req.timeoutInterval = 48
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                req.httpBody = try JSONSerialization.data(withJSONObject: ["message":message,"history":history])
+                req.httpBody = try JSONSerialization.data(withJSONObject: ["message":message,"history":history,"warden":profile.id])
                 let (data, response) = try await URLSession.shared.data(for: req)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200 else {
                     error = status == 429 ? "The assistant is busy. Try again shortly." : "Assistant unavailable (\(status)). Check that the daemon is updated and running."
                     return
                 }
+                guard !Task.isCancelled else { return }
                 let obj = try JSONSerialization.jsonObject(with: data) as? [String:Any]
                 guard let reply = obj?["reply"] as? String else { error = "The assistant returned an unreadable response."; return }
                 tier = obj?["tier"] as? String ?? "facts"
@@ -162,14 +170,14 @@ final class CompanionModel: ObservableObject {
                     proposedToken = token; proposedLabel = label
                 }
                 turns.append(ChatTurn(role:"assistant",content:reply))
-                CompanionSpeech.shared.say(reply,warden:"ram")
+                if companionVisible { CompanionSpeech.shared.say(reply,warden:profile.id) }
                 if turns.count > 20 { turns.removeFirst(turns.count - 20) }
                 speaking = true
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     self.speaking = false
                 }
-            } catch { self.error = "Cannot reach the assistant. RamWarden will reconnect automatically." }
+            } catch { if !Task.isCancelled { self.error = "Cannot reach the assistant. RamWarden will reconnect automatically." } }
         }
     }
     func confirmAction() {
@@ -421,20 +429,21 @@ struct AssistantView: View {
                     .help(model.proposedLabel)
             }
             HStack {
-                TextField(model.focusMode ? "What are you working on?" : "Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
+                TextField(model.focusMode ? "What are you working on?" : model.profile.placeholder,text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
                 Button(action:send) { Image(systemName:"arrow.up.circle.fill").font(.system(size:19)) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(model.thinking || message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             }
         }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
             .onAppear { inputFocused = true }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { _ in inputFocused = true }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { note in if note.object as? String == model.profile.id { inputFocused = true } }
             .onExitCommand(perform:dismiss)
     }
     func send() { model.send(message); message = "" }
 }
 
 struct ColorsView: View {
+    @ObservedObject private var speech=CompanionSpeech.shared
     @AppStorage("ram.speech") private var spoken = false
     @ObservedObject var model: CompanionModel
     func binding(_ key: ReferenceWritableKeyPath<CompanionModel,String>) -> Binding<Color> {
@@ -449,6 +458,7 @@ struct ColorsView: View {
         VStack(spacing:12) {
             Text("Customize your ram").font(.title2.bold())
             Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
+            if let error=speech.errors["ram"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
             TextField("Name",text:Binding(get:{model.name},set:{ value in
                 let name = String(value.prefix(40)); model.name = name
                 UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Warden" : name,forKey:"ram.name")
@@ -519,8 +529,7 @@ final class PetHost: NSHostingView<PixelRam> {
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick?() } }
 }
-final class Companion: NSObject, NSWindowDelegate {
-    let model = CompanionModel()
+final class Companion: WardenCompanion, NSWindowDelegate {
     let voice = VoiceModel()
     var pet: PetPanel?
     var chat: ChatPanel?
@@ -529,7 +538,7 @@ final class Companion: NSObject, NSWindowDelegate {
     var positioning = false
     var subscriptions = Set<AnyCancellable>()
     override init() {
-        super.init()
+        super.init(profile:RamWardenProfile())
         reviewTimer=Timer.scheduledTimer(withTimeInterval:30,repeats:true) { [weak self] _ in
             Task { @MainActor in await self?.model.pollReview() }
         }
@@ -651,7 +660,7 @@ final class Companion: NSObject, NSWindowDelegate {
         positionChat(movePet:true)
         NSApp.activate(ignoringOtherApps:true)
         chat?.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("WardenChatOpened"), object: nil) }
+        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("WardenChatOpened"), object: self.model.profile.id) }
     }
     func windowDidMove(_ notification: Notification) {
         guard notification.object as? NSWindow === pet else { return }
@@ -672,6 +681,7 @@ final class Companion: NSObject, NSWindowDelegate {
         positionChat(movePet:true)
     }
     func closeChat() {
+        model.cancelConversation();CompanionSpeech.shared.stop("ram")
         chat?.orderOut(nil); colors?.close(); NSColorPanel.shared.orderOut(nil)
         DispatchQueue.main.async { [weak self] in self?.updateBubble() }
     }
