@@ -54,6 +54,7 @@ pub struct Config {
 
 #[derive(Clone)]
 pub struct CloudConfig {
+    pub threat: Option<crate::threat::Config>,
     /// The website's origin, e.g. `https://ramwarden.app`.
     pub site_origin: String,
     /// Its host, named in sign-in messages.
@@ -254,6 +255,7 @@ impl Config {
             return Err("RAMWARDEN_RELEASES_URL must be an https:// URL".into());
         }
         Ok(Some(CloudConfig {
+            threat: crate::threat::Config::from_lookup(var)?,
             public_url,
             releases_url,
             site_origin: origin,
@@ -385,7 +387,7 @@ mod tests {
     }
 }
 
-fn safe_service_url(url: &reqwest::Url) -> bool {
+pub(crate) fn safe_service_url(url: &reqwest::Url) -> bool {
     url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none()

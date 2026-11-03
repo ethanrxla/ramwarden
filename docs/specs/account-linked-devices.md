@@ -88,13 +88,11 @@ claim tells the user to remove the newly registered device before retrying.
 
 Still required for live coverage:
 
-- Configure the API entitlement signer and matching public key in app builds.
-  The current Mac local API has a Resend provider but no entitlement key in its
-  process environment. Real email delivery and sign-in are now verified on
-  the Mac preview, but entitlement signing remains unverified.
-- Implement the hosted `/v1/wardens/threat/enroll` and `/status` handlers and
-  account-scoped agent mapping. Currently those paths exist only in the client
-  and fixtures, so a signed plan alone cannot provide hosted threat status.
+- Verify the signer/public-key pairing for each release build. The installed
+  Mac daemon now accepts its signed Pro entitlement; Windows remains unverified.
+- Deploy and verify the hosted `/v1/wardens/threat/status` handler described
+  below, configure its read-only upstream access and explicitly verify existing
+  agent ownership. Implement `/enroll` separately; it is still absent.
 - Validate a live sign-in and signed plan on both devices, then deploy verified
   builds with rollback artifacts and preserved user settings.
 
@@ -162,8 +160,8 @@ these bindings. They race two accounts for the same agent, reject foreign-device
 claims and binding replacement, verify idempotent retries and original timestamps,
 hide revoked devices, preserve reservations, and allow the same numeric agent ID
 on a separate deployment. All 21 cloud library tests and API/cloud all-target
-clippy pass on the Mac. The next implementation step is a server-controlled
-enrollment/status handler using these bindings and live device authorization.
+clippy pass on the Mac. The status handler below uses these bindings and live
+device authorization; server-controlled enrollment remains outstanding.
 
 ### Live email sign-in checkpoint (2026-11-03)
 
@@ -171,7 +169,8 @@ Update after reconnecting: the current Mac preview already fixes the GitHub
 label and shows complimentary Pro with the Mac registered. All 27 website
 unit/site/installer tests pass on that Mac checkout. Its installed daemon
 accepts the signed Pro entitlement, but ThreatWarden reports that the hosted
-service cannot be reached. Hosted enrollment/status handlers are still absent.
+service cannot be reached. The installed hosted API does not yet have the
+status handler in this branch. Hosted enrollment is still absent.
 Account access must not be described as working threat coverage.
 
 PR34 now integrates the newer hosted-account branch, retaining GitHub sign-in,
@@ -179,8 +178,9 @@ audited developer access, diagnostics and setup changes. Registration keeps the
 account transaction and also reserves the numbered seat used by older API
 instances. The unique seat index therefore prevents an older instance racing
 the new transaction from taking the same remaining slot. Both limit helpers
-use one policy. Integration validation is pending; do not install this merge
-until its tests and CI pass.
+use one policy. At be5abc9, 83 API and 21 cloud library tests, API/cloud/daemon
+all-target clippy and the isolated Atlas contract (34.54 seconds) pass. CI is
+green in run 41690241767. No application billing records were changed.
 
 Earlier checkpoint:
 
@@ -191,10 +191,54 @@ identity added by newer backend work was incorrectly rendered as an Ethereum
 wallet with an undefined address. The frontend now labels identity kinds
 explicitly in both the account summary and sign-in-method list.
 
-All 23 website unit/site tests and focused identity-label checks pass locally.
-An unrelated POSIX installer execution test fails on Windows; it must be run
-on a supported host before claiming a full installer-suite pass. The Mac went
-offline after sign-in, before the preview patch could be copied or applied;
-live confirmation of the label fix and device linking remain pending. The
-signed-in browser session is preserved for continuation. Do not save email
-codes, sessions, or personal install links in this document or shared memory.
+The later Mac checkout independently fixed the identity label and passes all
+27 website unit/site/installer tests, superseding the Windows-only installer
+test failure. Its live account page and installed signed entitlement show Pro
+and one Mac device. Do not save email codes, sessions, or personal install links
+in this document or shared memory.
+
+### Hosted security status
+
+`GET /v1/wardens/threat/status` accepts a live device token and requires active
+ThreatWarden access. Web sessions and phase-one operator tokens do not authorize
+it. The account comes only from that token. Client-supplied account, hostname,
+deployment or agent parameters cannot select security data.
+
+The server reads live `threat_agents` bindings for its configured deployment,
+queries the manager with `agents_list` and the indexer with `terms agent.id`,
+and filters both responses by those same IDs. An empty scope performs no Wazuh
+request; it reports that no agents are linked. Missing agents, failed searches
+and partial indexer results report unavailable rather than an empty/all-clear
+result. Device access, plan access and the binding set are checked again after
+upstream I/O, before returning any data. Successful responses use `no-store`.
+
+The response includes at most 50 alerts of severity 7 or higher from the last
+24 hours. It explicitly says AI review is not available yet; no model verdict,
+explanation or advice is invented. Polls have a separate 30-request/minute/account
+limit shared across device tokens. This in-process limit resets on API restart
+and is not a distributed quota. Batches cap at 32 agents; excess records fail
+closed instead of silently implying full coverage. HTTP redirects are refused,
+upstream JSON is capped at 1 MiB and calls time out after ten seconds.
+
+Set all seven environment variables together, in the API's secret environment:
+
+- `RAMWARDEN_WAZUH_DEPLOYMENT`: stable identifier, retained across host moves.
+- `RAMWARDEN_WAZUH_MANAGER_URL`, `RAMWARDEN_WAZUH_API_USER`, `RAMWARDEN_WAZUH_API_PASSWORD`.
+- `RAMWARDEN_WAZUH_INDEXER_URL`, `RAMWARDEN_WAZUH_INDEXER_USER`, `RAMWARDEN_WAZUH_INDEXER_PASSWORD`.
+
+Optionally set `RAMWARDEN_WAZUH_CA_FILE` for a private CA. URLs require HTTPS,
+except HTTP on loopback, and may not embed credentials, queries or fragments.
+Use read-only manager agent-read and indexer alert-search credentials. These
+credentials and management ports must not be exposed to customers. No route
+lets a customer assign an existing agent ID to their account.
+
+Validation on the Mac: 91 API library tests plus its binary/integration tests,
+19 Wazuh library tests, four hosted-client tests and seven manager tests pass;
+one installer child-process helper is intentionally ignored. API, cloud, daemon
+and Wazuh all-target clippy passes with warnings denied. Fixtures deliberately
+return foreign-account data, reuse hostnames and revoke devices during I/O.
+They also check unavailable/partial data, empty and invalid scopes, response
+size, redirects and account-wide polling limits. This validates source behavior;
+live credentials, agent bindings and service deployment remain unverified.
+
+Reference: [Wazuh 4.14.9 API contract](https://github.com/wazuh/wazuh/blob/v4.14.9/api/api/spec/spec.yaml).

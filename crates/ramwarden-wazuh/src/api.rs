@@ -96,6 +96,7 @@ impl Client {
         let manager = parse_url(&ep.manager_url)?;
         let indexer = parse_url(&ep.indexer_url)?;
         let mut b = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(if ep.timeout.is_zero() { Duration::from_secs(10) } else { ep.timeout });
         if let Some(pem) = &ep.ca_pem {
             let cert = reqwest::Certificate::from_pem(pem)
@@ -136,7 +137,7 @@ impl Client {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(Error::Auth("manager")),
             s => return Err(Error::Status("manager", s.as_u16())),
         }
-        let body: Value = resp.json().await.map_err(|e| Error::Parse("manager", e.to_string()))?;
+        let body = bounded_json(resp, "manager").await?;
         let token = body["data"]["token"]
             .as_str()
             .ok_or_else(|| Error::Parse("manager", "no data.token in the sign-in answer".into()))?
@@ -153,6 +154,30 @@ impl Client {
         url.query_pairs_mut()
             .append_pair("name", name)
             .append_pair("select", "id,name,status,version,lastKeepAlive");
+        Ok(self.read_agents(url).await?.into_iter().find(|a| a.name == name))
+    }
+
+    /// Read only server-verified agent IDs. An empty list never means "all".
+    /// Filter the response too: upstream query filtering is not our tenant boundary.
+    pub async fn agents_by_ids(&self, ids: &[String]) -> Result<Vec<ManagerAgent>> {
+        validate_agent_ids(ids)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let base = self.manager.as_ref().ok_or(Error::Unreachable("manager", "not configured".into()))?;
+        let mut url = join(base, "agents");
+        url.query_pairs_mut()
+            .append_pair("agents_list", &ids.join(","))
+            .append_pair("limit", &MAX_ACCOUNT_AGENTS.to_string())
+            .append_pair("select", "id,name,status,version,lastKeepAlive");
+        let mut agents = self.read_agents(url).await?;
+        agents.retain(|a| ids.contains(&a.id));
+        agents.sort_by(|a, b| a.id.cmp(&b.id));
+        agents.dedup_by(|a, b| a.id == b.id);
+        Ok(agents)
+    }
+
+    async fn read_agents(&self, url: Url) -> Result<Vec<ManagerAgent>> {
         for fresh in [false, true] {
             let token = self.token(fresh).await?;
             let resp = self
@@ -168,8 +193,13 @@ impl Client {
                 s if !s.is_success() => return Err(Error::Status("manager", s.as_u16())),
                 _ => {}
             }
-            let body: Value = resp.json().await.map_err(|e| Error::Parse("manager", e.to_string()))?;
-            return Ok(parse_agents(&body)?.into_iter().find(|a| a.name == name));
+            let body = bounded_json(resp, "manager").await?;
+            if body["error"].as_u64().unwrap_or(0) != 0
+                || body["data"]["total_failed_items"].as_u64().unwrap_or(0) != 0
+            {
+                return Err(Error::Parse("manager", "agent lookup was incomplete".into()));
+            }
+            return parse_agents(&body);
         }
         Err(Error::Auth("manager"))
     }
@@ -177,13 +207,40 @@ impl Client {
     /// Alerts for `agent` at or above `min_level` in the last `hours`, newest
     /// first, at most [`MAX_ALERTS`].
     pub async fn alerts(&self, agent: &str, min_level: u8, hours: u32) -> Result<Vec<Alert>> {
+        let body = self.search(&alert_query(agent, min_level, hours)).await?;
+        parse_alerts(&body)
+    }
+
+    /// Account-scoped alert search by immutable agent ID, never by hostname.
+    pub async fn alerts_by_ids(&self, ids: &[String], min_level: u8, hours: u32) -> Result<Vec<Alert>> {
+        validate_agent_ids(ids)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = alert_query("", min_level, hours);
+        query["query"]["bool"]["filter"][0] = json!({"terms": {"agent.id": ids}});
+        query["_source"].as_array_mut().unwrap().push(json!("agent.id"));
+        let mut body = self.search(&query).await?;
+        let hits = body["hits"]["hits"].as_array_mut()
+            .ok_or_else(|| Error::Parse("indexer", "no hits.hits".into()))?;
+        hits.retain(|h| h["_source"]["agent"]["id"].as_str().is_some_and(|id| ids.iter().any(|a| a == id)));
+        hits.truncate(MAX_ALERTS);
+        let count = hits.len();
+        let alerts = parse_alerts(&body)?;
+        if alerts.len() != count {
+            return Err(Error::Parse("indexer", "invalid alert in scoped response".into()));
+        }
+        Ok(alerts)
+    }
+
+    async fn search(&self, query: &Value) -> Result<Value> {
         let base = self.indexer.as_ref().ok_or(Error::Unreachable("indexer", "not configured".into()))?;
         let url = join(base, "wazuh-alerts-*/_search");
         let resp = self
             .http
             .post(url)
             .basic_auth(&self.ep.indexer_user, Some(self.ep.indexer_password.expose()))
-            .json(&alert_query(agent, min_level, hours))
+            .json(query)
             .send()
             .await
             .map_err(|e| Error::Unreachable("indexer", e.without_url().to_string()))?;
@@ -192,9 +249,39 @@ impl Client {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(Error::Auth("indexer")),
             s => return Err(Error::Status("indexer", s.as_u16())),
         }
-        let body: Value = resp.json().await.map_err(|e| Error::Parse("indexer", e.to_string()))?;
-        parse_alerts(&body)
+        let body = bounded_json(resp, "indexer").await?;
+        if body["timed_out"].as_bool().unwrap_or(false) || body["_shards"]["failed"].as_u64().unwrap_or(0) > 0 {
+            return Err(Error::Parse("indexer", "alert search was incomplete".into()));
+        }
+        Ok(body)
     }
+}
+
+/// A bounded batch also accommodates accounts with legacy devices above today's seat limit.
+pub const MAX_ACCOUNT_AGENTS: usize = 32;
+
+fn validate_agent_ids(ids: &[String]) -> Result<()> {
+    if ids.len() > MAX_ACCOUNT_AGENTS || ids.iter().any(|id| {
+        !(3..=10).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_digit()) || id.bytes().all(|b| b == b'0')
+    }) {
+        return Err(Error::Parse("manager", "invalid agent scope".into()));
+    }
+    Ok(())
+}
+
+async fn bounded_json(mut resp: reqwest::Response, service: &'static str) -> Result<Value> {
+    const MAX_BYTES: usize = 1 << 20;
+    if resp.content_length().is_some_and(|n| n > MAX_BYTES as u64) {
+        return Err(Error::Parse(service, "response is too large".into()));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| Error::Parse(service, e.without_url().to_string()))? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
+            return Err(Error::Parse(service, "response is too large".into()));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|e| Error::Parse(service, e.to_string()))
 }
 
 /// `""` is "not configured". Anything else must be https, or http to this
@@ -205,6 +292,9 @@ pub(crate) fn parse_url(s: &str) -> Result<Option<Url>> {
         return Ok(None);
     }
     let url = Url::parse(s).map_err(|e| Error::BadUrl(s.to_string(), e.to_string()))?;
+    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+        return Err(Error::BadUrl("Wazuh endpoint".into(), "credentials, query and fragment are not allowed in the URL".into()));
+    }
     match url.scheme() {
         "https" => Ok(Some(url)),
         "http" if is_loopback(&url) => Ok(Some(url)),

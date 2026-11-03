@@ -120,6 +120,8 @@ pub struct Cloud {
     pub releases_url: String,
     /// The site wardens' chat and tickets: limits and the staff token.
     pub support: crate::support::SupportDesk,
+    /// Server-only Wazuh credentials and account-scoped read limits.
+    pub threat: Option<crate::threat::ThreatService>,
 }
 
 pub fn routes() -> axum::Router<Arc<AppState>> {
@@ -135,6 +137,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .merge(crate::install::routes())
         .merge(crate::support::routes())
         .merge(crate::usage::routes())
+        .merge(crate::threat::routes())
 }
 
 pub type Reply = Result<Response, Response>;
