@@ -292,12 +292,18 @@ struct PixelRam: View {
                 let originX=floor((size.width-cell*48)/2)
                 let bob = model.thinking ? (frame%2==0 ? 0.0 : 2.0) : (frame%8<4 ? 0.0 : 1.0)
                 let cells=sprite(frame)
+                // Batch disjoint pixel rectangles by color: parse each palette entry and
+                // submit one fill per color, rather than one per occupied pixel.
+                var paths: [Character: Path] = [:]
                 for y in 0..<48 { for x in 0..<48 {
                     let key=cells[y*48+x]
                     if key != "." {
-                        context.fill(Path(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell)),with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                        paths[key, default: Path()].addRect(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell))
                     }
                 } }
+                for (key,path) in paths {
+                    context.fill(path,with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                }
                 if !model.connected || model.thinking {
                     let label = !model.connected ? "Reconnecting…" : "Thinking…"
                     context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
