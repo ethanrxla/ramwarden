@@ -56,6 +56,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let threatCompanion = ThreatCompanion()
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        threatCompanion.statusButton = item.button
         item.autosaveName = "RamWarden"
         menu.delegate = self
         item.menu = menu
@@ -143,6 +144,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if companion.voice.pet {
             add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
         }
+        add("ThreatWarden status…", #selector(showThreatStatus))
         add(threatCompanion.visible ? "Hide threat companion" : "Show threat companion", #selector(toggleThreatCompanion))
         add("Customize ram colors…", #selector(customizeRam))
         menu.addItem(.separator())
@@ -212,6 +214,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let choice = sender.representedObject as? String else { return }
         companion.voice.answer(choice)
     }
+    @objc func showThreatStatus() { DispatchQueue.main.async { self.threatCompanion.showReport() } }
     @objc func toggleThreatCompanion() { threatCompanion.toggle(); rebuild() }
     @objc func customizeRam() { companion.openColors() }
 
