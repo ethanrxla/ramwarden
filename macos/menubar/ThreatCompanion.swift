@@ -63,10 +63,10 @@ private struct ThreatReport: View {
     @ObservedObject var state: ThreatState
     var hide: () -> Void
     var body: some View {
-        VStack(alignment:.leading,spacing:12) {
+        VStack(alignment:.leading,spacing:8) {
             Text("ThreatWarden").font(.headline)
             Toggle("Spoken status",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("threat") } }
-            PetSizeControl(warden:"threat",label:"Threat companion size")
+
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled)
             ForEach(state.engines,id:\.self) { Text($0).font(.caption) }
@@ -80,7 +80,7 @@ private struct ThreatReport: View {
             }
             Text("Upgrade opens checkout. Your card or wallet approval happens there.").font(.caption).foregroundStyle(.secondary)
             Text("Status comes from this Mac's daemon. Detection is read-only.").font(.caption).foregroundStyle(.secondary)
-        }.padding(20).frame(width:320).modifier(ChatGlass())
+        }.padding(14).frame(width:310).modifier(ChatGlass())
     }
 }
 private final class ThreatHost: NSHostingView<ThreatSprite> {
@@ -120,7 +120,8 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
 final class ThreatCompanion {
     let state = ThreatState()
     var panel: NSPanel?
-    var report: NSWindow?
+    var report: NSPopover?
+    weak var statusButton: NSStatusBarButton?
     private var sizeObserver: NSObjectProtocol?
     init() {
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
@@ -134,7 +135,7 @@ final class ThreatCompanion {
     func hide() {
         UserDefaults.standard.set(false,forKey:"threat.visible")
         CompanionSpeech.shared.stop("threat")
-        panel?.orderOut(nil); panel = nil; report?.orderOut(nil)
+        panel?.orderOut(nil); panel = nil; report?.performClose(nil)
     }
     func toggle() {
         if visible { hide() }
@@ -167,12 +168,14 @@ final class ThreatCompanion {
         UserDefaults.standard.set(panel.frame.minY,forKey:"threat.y")
     }
     func showReport() {
-        if report == nil {
-            let window = NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:260),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-            window.title = "ThreatWarden status"; window.isReleasedWhenClosed = false; window.level = .floating
-            window.contentView = NSHostingView(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide() })); window.center(); report = window
-        }
-        if let content = report?.contentView { report?.setContentSize(content.fittingSize) }
-        NSApp.activate(ignoringOtherApps:true); report?.makeKeyAndOrderFront(nil)
+        guard let button = statusButton else { return }
+        if report?.isShown == true { report?.performClose(nil); return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide(); self?.report?.performClose(nil) }))
+        popover.contentSize = NSSize(width:340,height:280)
+        report = popover
+        popover.show(relativeTo:button.bounds,of:button,preferredEdge:.minY)
+        Task { @MainActor in await state.poll() }
     }
 }

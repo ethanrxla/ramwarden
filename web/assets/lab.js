@@ -1,4 +1,4 @@
-// Illustrative simulator, not telemetry or benchmark data. No network requests.
+// Recorded, anonymized RAM samples plus a separately labeled pressure simulator.
 export function rungForPressure(stalls) {
   if (stalls >= 15) return 4;
   if (stalls >= 10) return 3;
@@ -44,5 +44,26 @@ if(typeof document!=='undefined') {
     root.querySelector('[data-pressure]').addEventListener('input',()=>{root.dataset.optimized='false';draw(root)});
     root.querySelector('[data-simulate]').addEventListener('click',()=>{root.dataset.optimized=root.dataset.optimized==='true'?'false':'true';draw(root)});
     draw(root);
+    fetch('assets/memory-sample.json').then(response=>{if(!response.ok)throw new Error('Sample unavailable');return response.json();}).then(recording=>{
+      const samples=recording.samples;
+      if(!samples?.length)return;
+      const last=samples[samples.length-1];
+      root.querySelector('.lab-stats strong').replaceChildren(document.createTextNode(String(Math.round(last.percent))),Object.assign(document.createElement('small'),{textContent:'%'}));
+      root.querySelector('.lab-stats div>span:last-child').textContent=`${(last.used_mb/1024).toFixed(1)} / ${(last.total_mb/1024).toFixed(1)} GB · recorded`;
+      const bar=root.querySelector('.memory-bar');
+      bar.setAttribute('aria-label',`Measured RAM: ${last.percent}% used; ${(100-last.percent).toFixed(1)}% available. No reclaimable breakdown measured.`);
+      bar.children[0].style.width=`${last.percent}%`;bar.children[1].style.width='0%';bar.children[2].style.width=`${100-last.percent}%`;
+      root.querySelector('.chart-legend').textContent='RAM in use / available · measured on a developer Mac';
+      root.querySelector('.demo-label').textContent='RECORDED DEVICE SAMPLE';
+      root.querySelector('.lab-footnote').textContent=`Measured ${new Date(recording.captured_at).toLocaleString()}: ${samples.length} samples, ${recording.interval_seconds}s apart. Only aggregate RAM totals are shared. Pressure and intervention controls below are simulations, not measured savings.`;
+      const path=samples.map((row,i)=>`${i?'L':'M'}${20+i*308/(samples.length-1)},${140-row.percent/100*116}`).join(' ');
+      root.querySelector('[data-chart-line]').setAttribute('d',path);
+      root.querySelector('[data-chart-area]').setAttribute('d',`${path} L328,140 L20,140 Z`);
+      root.querySelector('.chart-title').textContent='RECORDED RAM IN USE · % · 0–100';
+      root.querySelector('[data-chart-summary]').textContent=`Recorded memory use ranged from ${Math.min(...samples.map(s=>s.percent))}% to ${Math.max(...samples.map(s=>s.percent))}%. No cleanup was triggered for this sample.`;
+      const markSimulation=()=>{root.querySelector('.chart-title').textContent='SIMULATED MEMORY STALLS · %';root.querySelector('.demo-label').textContent='PRESSURE SIMULATOR';};
+      root.querySelector('[data-pressure]').addEventListener('input',markSimulation);
+      root.querySelector('[data-simulate]').addEventListener('click',markSimulation);
+    }).catch(()=>{});
   }
 }

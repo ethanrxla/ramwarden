@@ -491,3 +491,20 @@ footer a { color: var(--muted); }
 .scroll-reveal.in-view { opacity:1; transform:translateY(0); }
 @media(max-width:700px) { .landing main { background-attachment:scroll; background-size:auto 100vh; background-repeat:repeat-y; } }
 @media(prefers-reduced-motion:reduce) { .scroll-reveal { opacity:1; transform:none; transition:none; } .landing main { background-attachment:scroll; } }
+/* The account is always the last header item; its status comes from the API. */
+.site-header a.account-header { display:inline-flex; align-items:center; gap:9px; min-height:36px; white-space:nowrap; }
+.site-header a.account-connected { padding:4px 12px 4px 5px; border:1px solid #ffffff26; border-radius:24px; background:#101629c9; color:#f5f7ff; }
+.account-avatar { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#92273b,#391933); color:#ffe6ec; flex-shrink:0; }
+.account-avatar svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.account-identity { max-width:160px; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.account-online { width:6px; height:6px; background:#55e59b; border-radius:50%; flex-shrink:0; }
+@media(max-width:700px) { .account-identity { display:none; } .site-header a.account-connected { padding-right:8px; gap:5px; } }
+
+/* Keep the trial CTA on one line as the account badge gains a label. */
+.site-header nav:last-child { position:relative; gap:14px; }
+.site-header nav .button { flex-shrink:0; white-space:nowrap; }
+.site-header a.account-header { flex-shrink:0; }
+.account-details { position:absolute; top:calc(100% + 14px); right:0; z-index:100; width:min(340px,calc(100vw - 32px)); box-sizing:border-box; padding:18px; border:1px solid #ffffff26; border-radius:18px; background:#15121bf2; backdrop-filter:blur(22px); box-shadow:0 16px 48px #0008; display:grid; gap:14px; color:#f5f7ff; }
+.account-method { display:flex; gap:10px; align-items:center; font-size:12px; overflow-wrap:anywhere; }
+.account-method span:last-child { min-width:0; }
+@media(max-width:1150px) { .site-header .account-identity { max-width:100px; } .site-header nav:last-child {gap:10px;} }

@@ -582,6 +582,10 @@ final class Companion: NSObject, NSWindowDelegate {
             bubble = p
         }
         guard let b = bubble else { return }
+        // Rebuild the hosting root before measuring: SwiftUI may otherwise
+        // return the previous message's height and clip a longer reply.
+        b.contentView = NSHostingView(rootView:BubbleView(voice:voice))
+        b.contentView?.layoutSubtreeIfNeeded()
         let size = b.contentView?.fittingSize ?? NSSize(width:272,height:96)
         b.setContentSize(size)
         let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
