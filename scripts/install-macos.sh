@@ -12,6 +12,8 @@ DOMAIN="gui/$(id -u)"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ "${1:-}" = "uninstall" ]; then
+  launchctl bootout "$DOMAIN/com.ramwarden.usage" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/com.ramwarden.usage.plist" "$HOME/.local/bin/ramwarden-usage-sync"
   launchctl bootout "$DOMAIN/com.ramwarden.menubar" 2>/dev/null || true
   rm -f "$HOME/Library/LaunchAgents/com.ramwarden.menubar.plist"
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
@@ -21,10 +23,11 @@ if [ "${1:-}" = "uninstall" ]; then
 fi
 
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-cargo build --release -p ramwarden-daemon --manifest-path "$ROOT/Cargo.toml"
+cargo build --release -p ramwarden-daemon -p ramwarden-cloud --bin ramwarden-daemon --bin ramwarden-usage-sync --manifest-path "$ROOT/Cargo.toml"
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$CONF")" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 install -m 755 "$ROOT/target/release/ramwarden-daemon" "$BIN"
+install -m 755 "$ROOT/target/release/ramwarden-usage-sync" "$HOME/.local/bin/ramwarden-usage-sync"
 # Provider keys live in the repo-local, git-ignored .env; the launchd daemon
 # reads the per-user copy (mode 600), since it never sources a shell env.
 if [ -f "$ROOT/.env" ]; then install -m 600 "$ROOT/.env" "$(dirname "$CONF")/.env"; fi
@@ -52,3 +55,10 @@ launchctl bootstrap "$DOMAIN" "$MENU_PLIST"
 echo "installed. status:  launchctl list | grep ramwarden"
 echo "logs:              tail -f ~/Library/Logs/ramwarden.log"
 echo "api:               curl -s localhost:7823/actions | jq"
+
+# The optional numeric collector stays inert until device sign-in AND account opt-in.
+USAGE_PLIST="$HOME/Library/LaunchAgents/com.ramwarden.usage.plist"
+sed "s|__HOME__|$HOME|g" "$ROOT/packaging/macos/com.ramwarden.usage.plist" > "$USAGE_PLIST"
+launchctl bootout "$DOMAIN/com.ramwarden.usage" 2>/dev/null || true
+for _ in $(seq 1 50); do launchctl print "$DOMAIN/com.ramwarden.usage" >/dev/null 2>&1 || break; sleep 0.2; done
+launchctl bootstrap "$DOMAIN" "$USAGE_PLIST"

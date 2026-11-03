@@ -84,6 +84,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
             .iter().filter(|row| row.eligible).count(),
     ));
     let direct_release = requests_memory_release(&r.message);
+    let work = ramwarden_ai::routing::classify(&r.message);
     let facts = json!({"memory_percent":m.percent(),"used_mb":m.used() / 1048576,
         "total_mb":m.total / 1048576,"processes":processes,"recent_actions":actions,
         "cloud_opt_in":cloud_allowed,"platform":st.platform.name,
@@ -101,6 +102,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     };
     let cloud = async {
         if !cloud_allowed { return None; }
+        if ramwarden_ai::routed::enabled() { return ramwarden_ai::routed::explain(work, &messages).await; }
         let p = st.ai.nim.as_ref()?;
         tokio::time::timeout(Duration::from_secs(20), p.explain(&messages, st.cfg.assistant.cloud_model.as_deref())).await.ok()?.ok()
     };

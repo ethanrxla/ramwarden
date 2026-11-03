@@ -15,9 +15,20 @@ browser tabs next, freezing or closing apps last. Its agents are called
 | RAM Warden | memory pressure, reclaim, tab unloading | free; **Pro** adds hosted Jev decisions |
 | ThreatWarden | security alerts from the machine's Wazuh agent, read-only | paid pass |
 
-Current prices (the server's `/v1/checkout/config` is the authority, always
-quote from it): **RamWarden Pro $4 for 2 months, ThreatWarden $6 for 2 months,
-both $10**, paid in USDC on Base with MetaMask or Phantom.
+Current plans: Lite is free on **1 computer**; Plus is **$4/month or $20/year
+on 3 computers** with a 14-day trial; Pro is **$5/month or $24/year on 5
+computers** and includes ThreatWarden. Always fetch `/v1/checkout/config` before
+quoting prices or arranging checkout. Each computer must sign in separately;
+never copy a device token, install link, fingerprint, or signed pass to another PC.
+
+For multi-computer setup, ask which computers the owner wants to connect. Use
+only already-authorized remote access (for example their own Tailscale network),
+check platform and current installation first, and update in place. Open the
+account approval page for each computer; the user approves its displayed name
+and code. Read the account's remaining device allowance instead of assuming a
+plan. Never purchase an upgrade, join a tailnet, grant SSH access, or disable
+security controls to work around a device limit. Verify daemon health and
+extension connectivity on each computer, then report actual results.
 
 The daemon listens on `http://127.0.0.1:7823`. Every call below is plain HTTP
 from the user's own machine, for example `curl -s http://127.0.0.1:7823/health`

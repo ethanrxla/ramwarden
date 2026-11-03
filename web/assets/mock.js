@@ -56,6 +56,11 @@ export class MockApi {
     };
   }
 
+  async approveDevice(userCode) {
+    if (!this.signedIn || !this.pendingCodes.has(userCode)) throw new ApiError(401,"Sign in and check the code.");
+    this.pendingCodes.delete(userCode);return {approved:true};
+  }
+
   async lookupDevice(userCode) {
     const code = normaliseUserCode(userCode);
     const d = code && this.pendingCodes.get(code);

@@ -787,3 +787,59 @@ async fn linking_refuses_existing_accounts_and_normal_signin_proofs() {
     let (_,signed,_)=a.sign_in_evm(&wallet,None).await;
     assert_eq!(signed["account"]["id"],other);
 }
+
+#[tokio::test]
+async fn diagnostics_are_opt_in_numeric_device_scoped_and_retry_safe() {
+    let a=app();let(cookie,id)=a.web(&EvmWallet::new(61)).await;
+    let(device,token)=a.store.register_device(&id,"test-mac",Platform::Macos,NOW).await.unwrap().unwrap();
+    let day=NOW/86400*86400;
+    let payload=json!({"days":[{"day":day,"since":NOW,"counters":{"apps_paused":2},"bytes_recovered":2048}]});
+    let(s,_)=a.call("POST","/v1/usage/daily",Auth::Bearer(&token),Some(payload.clone())).await;
+    assert_eq!(s,StatusCode::FORBIDDEN);
+    let(s,prefs)=a.call("PUT","/v1/account/prefs",Auth::Cookie(&cookie),Some(json!({"share_usage":true,"usage_since":1}))).await;
+    assert_eq!(s,StatusCode::OK,"{prefs}");assert_eq!(prefs["prefs"]["usage_since"],NOW);
+    let(s,config)=a.call("GET","/v1/usage/config",Auth::Bearer(&token),None).await;
+    assert_eq!(s,StatusCode::OK);assert_eq!(config["enabled"],true);assert_eq!(config["device_id"],device.id);
+    for count in [2,1] {
+        let mut p=payload.clone();p["days"][0]["counters"]["apps_paused"]=json!(count);
+        let(s,result)=a.call("POST","/v1/usage/daily",Auth::Bearer(&token),Some(p)).await;
+        assert_eq!(s,StatusCode::OK,"{result}");
+    }
+    let(_,report)=a.call("GET","/v1/usage",Auth::Cookie(&cookie),None).await;
+    assert_eq!(report["days"].as_array().unwrap().len(),1);
+    assert_eq!(report["days"][0]["data"]["counters"]["apps_paused"],2);
+    let(other_cookie,_)=a.web(&EvmWallet::new(62)).await;
+    let(_,report)=a.call("GET","/v1/usage",Auth::Cookie(&other_cookie),None).await;
+    assert_eq!(report["days"].as_array().unwrap().len(),0);
+    let mut private=payload.clone();private["days"][0]["title"]=json!("private tab");
+    let(s,_)=a.call("POST","/v1/usage/daily",Auth::Bearer(&token),Some(private)).await;
+    assert_eq!(s,StatusCode::UNPROCESSABLE_ENTITY);
+    let(s,_)=a.call("POST","/v1/usage/daily",Auth::Cookie(&cookie),Some(payload.clone())).await;
+    assert_eq!(s,StatusCode::UNAUTHORIZED,"a website session is not a device token");
+    a.call("PUT","/v1/account/prefs",Auth::Cookie(&cookie),Some(json!({"share_usage":false}))).await;
+    let(s,_)=a.call("POST","/v1/usage/daily",Auth::Bearer(&token),Some(payload.clone())).await;
+    assert_eq!(s,StatusCode::FORBIDDEN);
+    a.call("PUT","/v1/account/prefs",Auth::Cookie(&cookie),Some(json!({"share_usage":true}))).await;
+    a.store.revoke_device(&id,&device.id).await.unwrap();
+    let(s,_)=a.call("POST","/v1/usage/daily",Auth::Bearer(&token),Some(payload)).await;
+    assert_eq!(s,StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn an_existing_session_explicitly_approves_its_named_device() {
+    let a=app();let(cookie,id)=a.web(&EvmWallet::new(63)).await;
+    let(raw,code)=a.start_device().await;
+    let body=json!({"user_code":code});
+    let(s,_)=a.call("POST","/v1/device/approve",Auth::None,Some(body.clone())).await;
+    assert_eq!(s,StatusCode::UNAUTHORIZED);
+    let(s,_,_)=a.raw("POST","/v1/device/approve",Auth::Cookie(&cookie),"https://other.example",Some(body.clone())).await;
+    assert_eq!(s,StatusCode::FORBIDDEN);
+    let(s,result)=a.call("POST","/v1/device/approve",Auth::Cookie(&cookie),Some(body.clone())).await;
+    assert_eq!(s,StatusCode::OK,"{result}");
+    let(s,_)=a.call("POST","/v1/device/approve",Auth::Cookie(&cookie),Some(body)).await;
+    assert_ne!(s,StatusCode::OK,"a code is approved once");
+    let(s,token)=a.call("POST","/v1/device/token",Auth::None,Some(json!({"device_code":raw}))).await;
+    assert_eq!(s,StatusCode::OK,"{token}");assert_eq!(token["account_id"],id);
+    let(_,prefs)=a.call("GET","/v1/usage/config",Auth::Bearer(token["device_token"].as_str().unwrap()),None).await;
+    assert_eq!(prefs["enabled"],false,"enrolling is not usage consent");
+}

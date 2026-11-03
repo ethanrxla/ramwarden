@@ -319,7 +319,18 @@ struct AssistantView: View {
                     Button("Later") { model.answerReview("later") }
                 }.font(.caption).disabled(model.reviewBusy)
             }
-            if model.thinking { ProgressView("Thinking…").controlSize(.small) }
+            if model.thinking {
+                TimelineView(.periodic(from: .now, by: 3)) { tick in
+                    let lines = ["Discombobulating…", "Babooning…", "Larping…", "Mogging…", "67ing…", "Deez nutzing…"]
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(lines[Int(tick.date.timeIntervalSince1970 / 3) % lines.count])
+                            Text("Reviewing your request · no fix applied yet").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }.accessibilityLabel("Reviewing your request. No fix applied yet.")
+                }
+            }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
             if model.proposedToken != nil {
                 Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))

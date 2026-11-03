@@ -200,7 +200,7 @@ async fn checkout_stripe(
     }
     let email = match &a.identity {
         Identity::Email { email } => Some(email.as_str()),
-        Identity::Wallet { .. } => None,
+        Identity::Wallet { .. } | Identity::Github { .. } => None,
     };
     let done = format!("{}/account.html?checkout=done&payment={id}", c.site.origin);
     let back = format!("{}/account.html?checkout=cancelled", c.site.origin);
