@@ -45,7 +45,7 @@ fn state() -> AppState {
 fn tab(id: i64) -> Tab {
     serde_json::from_value(json!({"id":id,"url":format!("https://example.org/{id}"),"title":"An old article",
         "inactiveMinutes":3000,"active":false,"pinned":false,"audible":false,"discarded":false,
-        "autoDiscardable":true,"status":"complete","discardSupported":true}))
+        "autoDiscardable":true,"status":"complete","discardSupported":true,"safeCloseSupported":true}))
     .unwrap()
 }
 

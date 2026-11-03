@@ -61,11 +61,17 @@ export class Api {
     return data;
   }
 
+  githubConfig() { return this.request("GET", "/v1/auth/github/config"); }
+  githubStart(body) { return this.request("POST", "/v1/auth/github/start", body); }
+  githubPoll(ticket) { return this.request("POST", "/v1/auth/github/poll", {ticket}); }
+
   // Device sign-in (RFC 8628). Shows which machine asked, so a user who was
   // sent someone else's code can see it is not theirs before signing.
   lookupDevice(userCode) {
     return this.request("GET", `/v1/device/lookup?user_code=${encodeURIComponent(userCode)}`);
   }
+
+  approveDevice(userCode) { return this.request("POST", "/v1/device/approve", {user_code:userCode}); }
 
   // `userCode` is set when signing in to link a device, and omitted for a
   // plain website sign-in (account page, checkout).

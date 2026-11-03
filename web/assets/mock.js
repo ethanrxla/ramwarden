@@ -56,6 +56,11 @@ export class MockApi {
     };
   }
 
+  async approveDevice(userCode) {
+    if (!this.signedIn || !this.pendingCodes.has(userCode)) throw new ApiError(401,"Sign in and check the code.");
+    this.pendingCodes.delete(userCode);return {approved:true};
+  }
+
   async lookupDevice(userCode) {
     const code = normaliseUserCode(userCode);
     const d = code && this.pendingCodes.get(code);
@@ -138,7 +143,7 @@ export class MockApi {
         windows: `irm https://get.ramwarden.app/i/${token}/ps | iex`,
       },
       installers: {
-        macos: `https://get.ramwarden.app/i/${token}/RamWarden.pkg`,
+        macos: `https://get.ramwarden.app/i/${token}/RamWarden.dmg`,
         windows: `https://get.ramwarden.app/i/${token}/RamWarden.msi`,
         linux: `https://get.ramwarden.app/i/${token}/ramwarden.deb`,
       },

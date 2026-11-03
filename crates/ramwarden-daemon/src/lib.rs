@@ -43,3 +43,5 @@ pub mod tabreview;
 
 pub mod decisionlog;
 pub mod recall;
+
+pub mod settings;

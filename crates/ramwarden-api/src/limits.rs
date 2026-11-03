@@ -45,6 +45,7 @@ struct Inner {
     day: u64,
     input_tokens: u64,
     tokens: HashMap<TokenHash, Usage>,
+    diagnostics: HashMap<TokenHash, Usage>,
 }
 
 pub struct Limits {
@@ -85,6 +86,17 @@ impl Limits {
         Ok(per_day - u.in_day)
     }
 
+    /// Diagnostics have their own inexpensive budget; sharing must never
+    /// spend the user's AI quota or depend on the upstream model budget.
+    pub fn take_diagnostics(&self,key:&TokenHash,now:u64)->bool {
+        let mut g=self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        roll_day(&mut g,now);
+        let u=g.diagnostics.entry(*key).or_default();
+        if u.minute != now/60 {u.minute=now/60;u.in_minute=0;}
+        if u.in_minute>=4 || u.in_day>=1000 {return false;}
+        u.in_minute+=1;u.in_day+=1;true
+    }
+
     /// Whether today's upstream budget has room. For callers that have
     /// their own per-visitor limits but share the server's spend, like the
     /// site wardens' chat.
@@ -108,6 +120,7 @@ fn roll_day(g: &mut Inner, now: u64) {
         g.day = day;
         g.input_tokens = 0;
         g.tokens.clear();
+        g.diagnostics.clear();
     }
 }
 

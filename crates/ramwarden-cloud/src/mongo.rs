@@ -143,7 +143,11 @@ impl MongoStore {
             self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
         }
         self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
+        self.ensure_named_index(DEVICES, index(doc!{"account_id":1,"slot":1}, IndexOptions::builder()
+            .name("account_slot_unique".to_string()).unique(true)
+            .partial_filter_expression(doc!{"slot":{"$type":"number"}}).build())).await?;
         self.ensure_support_indexes().await?;
+        self.ensure_usage_indexes().await?;
         Ok(())
     }
 }
@@ -404,9 +408,10 @@ impl Store for MongoStore {
     }
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
-        use futures::FutureExt;
+        use futures::{FutureExt, TryStreamExt};
         let raw = random_token("rwdt_");
         let d = Device {
+            slot: None,
             id: new_id(),
             account_id: account_id.to_string(),
             name: name.to_string(),
@@ -427,16 +432,27 @@ impl Store for MongoStore {
                 let Some(account) = accounts.find_one_and_update(
                     doc! {"_id": &device.account_id},
                     doc! {"$inc": {"device_registration_version": 1_i64}},
-                ).return_document(ReturnDocument::After).session(&mut *session).await? else { return Ok(false) };
-                let count = devices.count_documents(doc! {"account_id": &device.account_id})
-                    .session(&mut *session).await?;
-                if count >= u64::from(account.device_capacity(*now)) { return Ok(false); }
+                ).return_document(ReturnDocument::After).session(&mut *session).await? else { return Ok(None) };
+                let mut cursor = devices.find(doc! {"account_id": &device.account_id}).session(&mut *session).await?;
+                let current: Vec<Device> = cursor.stream(&mut *session).try_collect().await?;
+                let limit = account.device_capacity(*now);
+                if current.len() >= limit as usize { return Ok(None); }
+                // Reserve the same numbered seat as older API instances, so
+                // their unique index also arbitrates a rolling deployment.
+                let mut occupied: std::collections::HashSet<u32> = current.iter().filter_map(|d| d.slot).collect();
+                for _ in current.iter().filter(|d| d.slot.is_none()) {
+                    let mut slot = 0;
+                    while occupied.contains(&slot) { slot += 1; }
+                    occupied.insert(slot);
+                }
+                let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
+                device.slot = Some(slot);
                 devices.insert_one(&*device).session(&mut *session).await?;
-                Ok(true)
+                Ok(Some(device.clone()))
             }.boxed()).await?;
         // The driver retries transient transaction/commit errors. The same
         // device identity and token are reused across those internal retries.
-        Ok(added.then_some((d, raw)))
+        Ok(added.map(|device| (device, raw)))
     }
 
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>> {

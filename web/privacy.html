@@ -9,6 +9,7 @@
   <title>Privacy · RamWarden</title>
   <link rel="icon" href="assets/ramwarden-mark.png">
   <link rel="stylesheet" href="assets/style.css">
+  <script type="module" src="assets/account-header.js"></script>
 </head>
 <body>
   <header class="site-header">
@@ -24,17 +25,17 @@
   <main class="app prose">
     <div class="wrap narrow">
       <h1>Privacy</h1>
-      <p class="muted">Draft. Last updated 1 November 2026.</p>
+      <p class="muted">Draft. Last updated 2 November 2026.</p>
 
       <h2>The short version</h2>
-      <p>RamWarden runs on your computer. When it needs a decision about something it might close, it sends a short description of that one thing, gets an answer, and the description is forgotten. The open-source build sends nothing unless you add your own AI or API keys, and then only to the services those keys belong to.</p>
+      <p>RamWarden runs on your computer. When it needs a decision about something it might close, it sends a short description of that one thing, gets an answer, and the description is forgotten. Hosted features, account sign-in, support chat and optional usage diagnostics have the separate data flows described below.</p>
 
       <h2>What stays on your computer</h2>
       <ul>
         <li>Your process list, memory figures, window focus and activity history.</li>
         <li>Your browser tabs. The browser helper talks only to RamWarden on your own computer.</li>
         <li>Your settings, watchlist and allowlist.</li>
-        <li>ThreatWarden's findings and quarantined files.</li>
+        <li>Quarantined files. If you enable hosted ThreatWarden monitoring, its agent sends security logs, inventory and findings to the hosted manager.</li>
       </ul>
 
       <h2>What a decision sends</h2>
@@ -42,7 +43,7 @@
 
       <h2>Your account</h2>
       <ul>
-        <li><strong>Your sign-in</strong>: the wallet address or email you use. Signing in with a wallet costs nothing and gives no access to your funds.</li>
+        <li><strong>Your sign-in</strong>: the wallet addresses and verified emails you choose to link to your account. Signing in with a wallet costs nothing and gives no access to your funds.</li>
         <li><strong>Your plan</strong>: tier, billing interval, trial and renewal dates.</li>
         <li><strong>Devices</strong> you have added: a name, the platform and when each was last seen. You can remove any of them from your account page.</li>
         <li><strong>Payments</strong>: the plan, amount, method and the transaction or card-payment reference, kept for accounting. Card details go to the payment provider and are never stored by RamWarden.</li>
@@ -53,8 +54,12 @@
       <h2>Chatting with a warden</h2>
       <p>The pet in the corner of the site answers questions and can open a support ticket. What you type, the warden's answers, and the email you give for a reply (if any) are kept for 30 days so the team can help, or for a year after the last message if the chat became a ticket. If you're signed in, the chat is linked to your account so you can see your tickets, and the warden can read your own plan, trial date and device count to answer questions about them. It can't change anything. Your browser keeps a key to the chat in local storage so the thread is there when you come back.</p>
 
+      <h2>Optional usage diagnostics</h2>
+      <p>Usage sharing is off by default. You can enable it on your account page for connected devices. It sends daily numeric summaries of close and reopen events, app pause, resume and quit outcomes, refusals and dry runs, and measured RAM recovery. These summaries contain no tab titles, URLs, page contents, app names or file paths. They are linked to your account and registered device so we can investigate reliability and improve the warden.</p>
+      <p>Collection starts when you opt in. Summaries are kept for 90 days. Turning sharing off stops new uploads; existing summaries expire under that retention period. This setting is separate from hosted AI and security monitoring, and does not buy a plan or authorize actions on your computer.</p>
+
       <h2>This website</h2>
-      <p>No analytics, no trackers and no third-party scripts. Signing in keeps a session in your browser. Your warden's color and mute setting are kept in your browser's local storage.</p>
+      <p>This website does not load advertising trackers or third-party tracking scripts. Signing in keeps a session in your browser. Your warden's color and mute setting are kept in your browser's local storage.</p>
 
       <h2>Contact and deletion</h2>
       <p>To have your account deleted, or for any privacy question, open an issue on <a href="https://github.com/ethanrxla/ramwarden/issues">GitHub</a>.</p>

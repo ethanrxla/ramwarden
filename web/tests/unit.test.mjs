@@ -96,13 +96,17 @@ test("challenge sends a null user code for a plain web sign-in", async () => {
 
 
 test("an unresponsive API times out and reports offline", async () => {
+  let timeoutReason;
   const api = new Api("https://api.example", { timeoutMs: 10, fetchImpl: (_url, {signal}) =>
     new Promise((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), {once: true});
-      // Keep the test alive while the native timeout signal is unreferenced.
-      setTimeout(() => reject(new Error("deadline exceeded")), 100);
+      // Keep the event loop alive, and fail if the request never aborts.
+      const watchdog = setTimeout(() => reject(new Error("missing abort")), 4000);
+      signal.addEventListener("abort", () => {
+        timeoutReason = signal.reason;
+        clearTimeout(watchdog);
+        reject(signal.reason);
+      }, {once: true});
     }) });
-  const start = Date.now();
   await assert.rejects(api.account(), (e) => e instanceof ApiError && e.offline);
-  assert.ok(Date.now() - start < 90);
+  assert.equal(timeoutReason?.name, "TimeoutError");
 });

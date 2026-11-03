@@ -24,6 +24,7 @@ struct FocusChoice: Decodable, Identifiable {
 }
 struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
 final class CompanionModel: ObservableObject {
+    var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
     @Published var selectedReviewTabs: Set<String> = []
     @Published var reviewBusy = false
@@ -291,12 +292,18 @@ struct PixelRam: View {
                 let originX=floor((size.width-cell*48)/2)
                 let bob = model.thinking ? (frame%2==0 ? 0.0 : 2.0) : (frame%8<4 ? 0.0 : 1.0)
                 let cells=sprite(frame)
+                // Batch disjoint pixel rectangles by color: parse each palette entry and
+                // submit one fill per color, rather than one per occupied pixel.
+                var paths: [Character: Path] = [:]
                 for y in 0..<48 { for x in 0..<48 {
                     let key=cells[y*48+x]
                     if key != "." {
-                        context.fill(Path(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell)),with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                        paths[key, default: Path()].addRect(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell))
                     }
                 } }
+                for (key,path) in paths {
+                    context.fill(path,with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                }
                 if !model.connected || model.thinking {
                     let label = !model.connected ? "Reconnecting…" : "Thinking…"
                     context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
@@ -376,7 +383,7 @@ struct AssistantView: View {
                     Button("Close selected") { model.answerReview("close") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Keep selected") { model.answerReview("keep") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Later") { model.answerReview("later") }
-                }.font(.caption).disabled(model.reviewBusy)
+                }.font(.caption).controlSize(.small).disabled(model.reviewBusy)
             }
             if let proposal = model.focusProposal {
                 Text("Relevant to this task").font(.caption.weight(.semibold))
@@ -403,7 +410,18 @@ struct AssistantView: View {
                     Button("Cancel") { model.focusMode = false }
                 }.font(.caption)
             }
-            if model.thinking { ProgressView("Thinking…").controlSize(.small) }
+            if model.thinking {
+                TimelineView(.periodic(from: .now, by: 3)) { tick in
+                    let lines = ["Discombobulating…", "Babooning…", "Larping…", "Mogging…", "67ing…", "Deez nutzing…"]
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(lines[Int(tick.date.timeIntervalSince1970 / 3) % lines.count])
+                            Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }.accessibilityLabel("Waiting for a response.")
+                }
+            }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
             if model.proposedToken != nil {
                 Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
@@ -413,7 +431,7 @@ struct AssistantView: View {
                 TextField(model.focusMode ? "What are you working on?" : "Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
                 Button(action:send) { Image(systemName:"arrow.up.circle.fill").font(.system(size:19)) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(model.thinking || message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             }
-        }.padding(12).frame(width:288,height:model.tabReview != nil ? 424 : model.focusProposal != nil ? 344 : model.turns.isEmpty ? 64 : 224)
+        }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
             .onAppear { inputFocused = true }
@@ -434,6 +452,7 @@ struct ColorsView: View {
         })
     }
     var body: some View {
+        ScrollView {
         VStack(spacing:12) {
             Text("Customize your ram").font(.title2.bold())
             Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
@@ -441,6 +460,8 @@ struct ColorsView: View {
                 let name = String(value.prefix(40)); model.name = name
                 UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Warden" : name,forKey:"ram.name")
             })).textFieldStyle(.roundedBorder).accessibilityLabel("Companion name")
+            PetSizeControl(warden:"ram",label:"RAM companion size")
+            PetSizeControl(warden:"threat",label:"Threat companion size")
             PixelRam(model:model,animated:false).frame(width:180,height:180)
             ColorPicker("Wool",selection:binding(\.wool),supportsOpacity:false)
             ColorPicker("Horns",selection:binding(\.horns),supportsOpacity:false)
@@ -453,6 +474,7 @@ struct ColorsView: View {
             }
             Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
         }.padding(24).frame(width:260)
+        }.frame(width:310,height:660)
     }
 }
 
@@ -482,15 +504,25 @@ final class PetHost: NSHostingView<PixelRam> {
     @objc func hideAction() { onHide?() }
 
     var dragged = false
-    override func mouseDown(with event: NSEvent) { dragged = false }
+    var dragStart: NSPoint = .zero
+    var windowStart: NSPoint = .zero
+    override func mouseDown(with event: NSEvent) {
+        dragged = false; dragStart = NSEvent.mouseLocation
+        windowStart = window?.frame.origin ?? .zero
+    }
     override func mouseDragged(with event: NSEvent) {
+        guard let window = window else { return }
+        let mouse = NSEvent.mouseLocation
+        guard dragged || hypot(mouse.x-dragStart.x,mouse.y-dragStart.y) > 3 else { return }
         dragged = true
-        window?.performDrag(with:event)
+        let desired = NSPoint(x:windowStart.x+mouse.x-dragStart.x,y:windowStart.y+mouse.y-dragStart.y)
+        let bounds = NSScreen.screens.first(where: { $0.frame.contains(mouse) })?.visibleFrame ?? window.screen?.visibleFrame
+        if let bounds = bounds {
+            window.setFrame(PetSizing.resizedFrame(NSRect(origin:desired,size:window.frame.size),size:window.frame.size,bounds:bounds),display:true)
+        } else { window.setFrameOrigin(desired) }
         onMoved?()
-        if let origin = window?.frame.origin {
-            UserDefaults.standard.set(origin.x,forKey:"ram.x")
-            UserDefaults.standard.set(origin.y,forKey:"ram.y")
-        }
+        UserDefaults.standard.set(window.frame.minX,forKey:"ram.x")
+        UserDefaults.standard.set(window.frame.minY,forKey:"ram.y")
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick?() } }
 }
@@ -509,13 +541,17 @@ final class Companion: NSObject, NSWindowDelegate {
             Task { @MainActor in await self?.model.pollReview() }
         }
         model.$tabReview.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
         model.$focusProposal.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
-        model.$turns.sink { [weak self] turns in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:!turns.isEmpty) }
+        model.$turns.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.resizeChat() }
+        }.store(in:&subscriptions)
+        NotificationCenter.default.publisher(for:.wardenPetSizeChanged).sink { [weak self] notification in
+            guard notification.userInfo?["warden"] as? String == "ram" else { return }
+            self?.resizePet()
         }.store(in:&subscriptions)
         voice.onChange = { [weak self] in self?.updateBubble() }
         voice.allowSpeech = { [weak self] in self?.chat?.isVisible != true }
@@ -546,15 +582,15 @@ final class Companion: NSObject, NSWindowDelegate {
             bubble = p
         }
         guard let b = bubble else { return }
+        // Rebuild the hosting root before measuring: SwiftUI may otherwise
+        // return the previous message's height and clip a longer reply.
+        b.contentView = NSHostingView(rootView:BubbleView(voice:voice))
+        b.contentView?.layoutSubtreeIfNeeded()
         let size = b.contentView?.fittingSize ?? NSSize(width:272,height:96)
         b.setContentSize(size)
         let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
         let bounds = screen?.visibleFrame ?? pet.frame
-        let x = max(bounds.minX,min(pet.frame.midX-size.width/2,bounds.maxX-size.width))
-        // Above the ram, or below it when the ram sits at the top of the screen.
-        let above = pet.frame.maxY - 20
-        let y = above + size.height <= bounds.maxY ? above : max(bounds.minY,pet.frame.minY-size.height)
-        b.setFrameOrigin(NSPoint(x:x,y:y))
+        b.setFrame(PetSizing.attachedFrame(pet:pet.frame,size:size,bounds:bounds,preferAbove:true),display:true)
         b.orderFrontRegardless()
     }
     func hideBubble() { bubble?.orderOut(nil) }
@@ -568,7 +604,8 @@ final class Companion: NSObject, NSWindowDelegate {
     }
     func showPet() {
         guard pet == nil, voice.pet else { return }
-        let p = PetPanel(contentRect:NSRect(x:100,y:100,width:180,height:180),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+        let size = PetSizing.size("ram",scale:PetSizing.scale("ram"))
+        let p = PetPanel(contentRect:NSRect(origin:NSPoint(x:100,y:100),size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
         p.level = .floating; p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]; p.hidesOnDeactivate = false
         let host = PetHost(rootView:PixelRam(model:model))
@@ -583,9 +620,22 @@ final class Companion: NSObject, NSWindowDelegate {
         let desired = NSPoint(x:d.object(forKey:"ram.x") as? Double ?? 100,y:d.object(forKey:"ram.y") as? Double ?? 100)
         let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(desired) }) ?? NSScreen.main
         if let frame = screen?.visibleFrame {
-            p.setFrameOrigin(NSPoint(x:max(frame.minX,min(desired.x,frame.maxX-180)),y:max(frame.minY,min(desired.y,frame.maxY-180))))
+            p.setFrame(PetSizing.resizedFrame(NSRect(origin:desired,size:size),size:size,bounds:frame),display:false)
         }
         pet = p; p.orderFrontRegardless()
+    }
+    func resizePet() {
+        guard let pet = pet else { return }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? pet.frame
+        let size = PetSizing.size("ram",scale:PetSizing.scale("ram"))
+        positioning = true
+        pet.setFrame(PetSizing.resizedFrame(pet.frame,size:size,bounds:bounds),display:true)
+        positioning = false
+        UserDefaults.standard.set(pet.frame.minX,forKey:"ram.x")
+        UserDefaults.standard.set(pet.frame.minY,forKey:"ram.y")
+        positionChat(movePet:false)
+        updateBubble()
     }
     func toggleChat() {
         if chat?.isVisible == true { closeChat() } else { openChat() }
@@ -595,7 +645,7 @@ final class Companion: NSObject, NSWindowDelegate {
         hideBubble()
         if pet == nil { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet(); model.companionVisible = true }
         if chat == nil {
-            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless],backing:.buffered,defer:false)
+            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.chatHeight),styleMask:[.borderless],backing:.buffered,defer:false)
             w.title = "Ram chat"; w.isReleasedWhenClosed = false
             w.isFloatingPanel = true; w.becomesKeyOnlyIfNeeded = false
             w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
@@ -604,7 +654,7 @@ final class Companion: NSObject, NSWindowDelegate {
             w.contentView = NSHostingView(rootView:AssistantView(model:model,dismiss:{ [weak self] in self?.closeChat() },settings:{ [weak self] in self?.openColors() }))
             chat = w
         }
-        resizeChat(hasTurns:!model.turns.isEmpty)
+        resizeChat()
         positionChat(movePet:true)
         NSApp.activate(ignoringOtherApps:true)
         chat?.makeKeyAndOrderFront(nil)
@@ -620,17 +670,11 @@ final class Companion: NSObject, NSWindowDelegate {
         positioning = true; defer { positioning = false }
         let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
         guard let bounds = screen?.visibleFrame else { return }
-        if movePet && pet.frame.minY < bounds.minY + chat.frame.height + 8 {
-            pet.setFrameOrigin(NSPoint(x:pet.frame.minX,y:bounds.minY + chat.frame.height + 8))
-            UserDefaults.standard.set(pet.frame.minY,forKey:"ram.y")
-        }
-        let x = max(bounds.minX,min(pet.frame.midX-chat.frame.width/2,bounds.maxX-chat.frame.width))
-        let y = max(bounds.minY,pet.frame.minY-chat.frame.height-4)
-        chat.setFrameOrigin(NSPoint(x:x,y:y))
+        chat.setFrame(PetSizing.attachedFrame(pet:pet.frame,size:chat.frame.size,bounds:bounds,preferAbove:false),display:true)
     }
-    func resizeChat(hasTurns: Bool) {
+    func resizeChat() {
         guard let chat = chat else { return }
-        var frame = chat.frame; frame.size.height = model.tabReview != nil ? 440 : model.focusProposal != nil ? 360 : hasTurns ? 240 : 80
+        var frame = chat.frame; frame.size.height = model.chatHeight
         chat.setFrame(frame,display:true)
         positionChat(movePet:true)
     }

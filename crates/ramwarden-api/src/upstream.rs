@@ -66,7 +66,7 @@ impl Upstream {
 
     async fn ask_openai(&self, state: &str, questions: &Map<String, Value>) -> Result<(Value, u64), UpstreamError> {
         let (key, model, base) = self.openai.as_ref().ok_or_else(|| UpstreamError::Reply("production model is not configured".into()))?;
-        let body = json!({
+        let mut body = json!({
             "model": model, "reasoning_effort": "none", "max_completion_tokens": 1800,
             "response_format": {"type":"json_object"},
             "messages": [
@@ -74,6 +74,8 @@ impl Upstream {
                 {"role":"user", "content":json!({"state":state,"questions":questions}).to_string()}
             ]
         });
+        let messages = body["messages"].as_array().ok_or_else(|| UpstreamError::Reply("missing model input".into()))?;
+        body["messages"] = json!(ramwarden_ai::nyquest::compress(messages).await.map_err(|_| UpstreamError::Unreachable("prompt compression is temporarily unavailable".into()))?);
         let response = self.http.post(format!("{base}/v1/chat/completions")).bearer_auth(key.expose()).json(&body)
             .send().await.map_err(|_| UpstreamError::Unreachable("production model transport failed".into()))?;
         if !response.status().is_success() {

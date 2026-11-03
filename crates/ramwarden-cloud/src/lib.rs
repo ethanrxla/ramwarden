@@ -23,3 +23,5 @@ pub use store::{MemoryStore, Store, StoreError};
 
 /// Compatibility name for the shared MongoDB connection used by decision sync.
 pub use mongo::MongoStore as Db;
+
+pub mod usage;

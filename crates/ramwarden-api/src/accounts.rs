@@ -130,9 +130,11 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .route("/v1/entitlement", get(entitlement))
         .route("/v1/downloads/{warden}/{file}", get(download))
         .merge(crate::signin::routes())
+        .merge(crate::github::routes())
         .merge(crate::billing::routes())
         .merge(crate::install::routes())
         .merge(crate::support::routes())
+        .merge(crate::usage::routes())
 }
 
 pub type Reply = Result<Response, Response>;
@@ -204,6 +206,7 @@ pub async fn device(c: &Cloud, headers: &HeaderMap, now: u64) -> Result<(Device,
 
 fn identity_json(i: &Identity) -> Value {
     match i {
+        Identity::Github { id } => json!({"kind":"github","id":id}),
         Identity::Wallet { chain, address } => {
             json!({"kind": "wallet", "chain": chain, "address": wallet::display(*chain, address)})
         }
@@ -226,7 +229,8 @@ pub async fn account_json(c: &Cloud, a: &Account, now: u64) -> Result<Value, Res
         "status": a.status(now).map(|s| s.as_str()),
         "trial_ends_at": a.trial_ends_at.filter(|&t| t > 0).map(iso8601),
         "paid_until": a.paid_until.map(iso8601),
-        "trial_available": !a.trial_used,
+        "trial_available": !a.trial_used && !a.developer_access,
+        "developer_access": a.developer_access,
         "billing": a.billing.as_ref().map(|b| json!({"method": b.method})),
         "entitlement_until": (until > now).then(|| iso8601(until)),
         "entitlements": wardens.iter().map(|(w, &t)| (w.clone(), json!(iso8601(t)))).collect::<Map<_, _>>(),
@@ -259,11 +263,24 @@ async fn set_prefs(State(state): State<Arc<AppState>>, method: Method, headers: 
     let c = cloud(&state)?;
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
-    let Value::Object(prefs) = b else {
+    let Value::Object(mut prefs) = b else {
         return Err(error(StatusCode::UNPROCESSABLE_ENTITY, "prefs must be a JSON object"));
     };
     if Value::Object(prefs.clone()).to_string().len() > MAX_PREFS_BYTES {
         return Err(error(StatusCode::PAYLOAD_TOO_LARGE, "prefs are limited to 4 KB"));
+    }
+    // Consent timestamps are server-owned. Unrelated preference edits must
+    // neither enable sharing nor erase a previous opt-in silently.
+    let old_enabled=a.prefs.get("share_usage").and_then(|v|v.as_bool()).unwrap_or(false);
+    let enabled=match prefs.get("share_usage") {
+        Some(value)=>value.as_bool().ok_or_else(||error(StatusCode::UNPROCESSABLE_ENTITY,"share_usage must be true or false"))?,
+        None=>old_enabled,
+    };
+    prefs.remove("usage_since");
+    if prefs.contains_key("share_usage") || old_enabled {prefs.insert("share_usage".into(),json!(enabled));}
+    if enabled {
+        let since=if old_enabled {a.prefs.get("usage_since").and_then(|v|v.as_u64()).unwrap_or(now)} else {now};
+        prefs.insert("usage_since".into(),json!(since));
     }
     let a = c.store.set_prefs(&a.id, prefs).await.map_err(storage)?.ok_or_else(|| storage("account vanished"))?;
     Ok(Json(json!({"prefs": a.prefs})).into_response())
@@ -341,4 +358,25 @@ async fn download(
     }
     tracing::info!(account = %a.id, %warden, %file, "download");
     Ok(r)
+}
+
+#[cfg(test)]
+mod developer_tests {
+    use super::*;
+    use ramwarden_cloud::model::{Identity, Tier};
+    #[test]
+    fn complimentary_access_keeps_plan_limits_and_expiry() {
+        let now = 1_000_000;
+        let mut a = Account::new("owner".into(), Identity::email("owner@example.com"), now);
+        a.developer_access = true;
+        assert_eq!(device_limit(&a, now), 1);
+        for (tier, limit, threat) in [(Tier::Ram,3,false),(Tier::Pro,5,true)] {
+            a.tier = Some(tier); a.paid_until = Some(now+100);
+            assert_eq!(device_limit(&a,now),limit);
+            assert!(a.active("ram",now)); assert_eq!(a.active("threat",now),threat);
+        }
+        a.cancelled = true;
+        assert_eq!(device_limit(&a,now+101),1);
+        assert!(!a.active("threat",now+101));
+    }
 }

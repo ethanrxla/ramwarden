@@ -49,6 +49,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .route("/v1/device/start", post(device_start))
         .route("/v1/device/token", post(device_token))
         .route("/v1/device/lookup", get(device_lookup))
+        .route("/v1/device/approve", post(device_approve))
         .route("/v1/auth/challenge", post(challenge))
         .route("/v1/auth/verify", post(verify))
         .route("/v1/auth/email/start", post(email_start))
@@ -70,7 +71,7 @@ fn code_gone() -> Response {
 }
 
 /// A typed device code that is still waiting, normalised.
-async fn pending_code(c: &Cloud, raw: Option<&str>, now: u64) -> Result<Option<String>, Response> {
+pub(crate) async fn pending_code(c: &Cloud, raw: Option<&str>, now: u64) -> Result<Option<String>, Response> {
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else { return Ok(None) };
     let code = normalise_user_code(raw).ok_or_else(code_gone)?;
     c.store.pending_device_code(&code, now).await.map_err(storage)?.ok_or_else(code_gone)?;
@@ -79,7 +80,7 @@ async fn pending_code(c: &Cloud, raw: Option<&str>, now: u64) -> Result<Option<S
 
 /// What a sign-in returns: the account, the device it linked, and the session
 /// as a cookie (or in the body for a tool that asked for a bearer).
-async fn signed_in(c: &Cloud, account: Account, user_code: Option<&str>, bearer: bool, now: u64) -> Reply {
+pub(crate) async fn signed_in(c: &Cloud, account: Account, user_code: Option<&str>, bearer: bool, now: u64) -> Reply {
     let mut linked = Value::Null;
     if let Some(code) = user_code {
         let dc = c.store.pending_device_code(code, now).await.map_err(storage)?;
@@ -282,6 +283,17 @@ async fn verify(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(b):
         tracing::info!(account = %account.id, "account created (wallet)");
     }
     signed_in(c, account, ch.user_code.as_deref(), wants_bearer(&b.session), now).await
+}
+
+#[derive(Deserialize)]
+struct DeviceApproval { user_code:String }
+async fn device_approve(State(state):State<Arc<AppState>>,headers:HeaderMap,Json(body):Json<DeviceApproval>)->Reply {
+    let c=cloud(&state)?;let now=(state.now)();
+    let account=session(c,&Method::POST,&headers,now).await?;
+    let code=pending_code(c,Some(&body.user_code),now).await?.ok_or_else(code_gone)?;
+    if at_device_limit(c,&account,now).await? {return Err(device_limit_reached(device_limit(&account,now)));}
+    if !c.store.approve_device_code(&code,&account.id,now).await.map_err(storage)? {return Err(code_gone());}
+    Ok(Json(json!({"approved":true})).into_response())
 }
 
 // ------------------------------------------------------------- email

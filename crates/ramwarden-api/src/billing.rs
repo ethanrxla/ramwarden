@@ -99,6 +99,9 @@ async fn start<'a>(
     now: u64,
 ) -> Result<(Account, &'a PlanDef, Start), Response> {
     let a = session(c, method, headers, now).await?;
+    if a.developer_access {
+        return Err(error(StatusCode::CONFLICT, "This developer account has complimentary access. Plan changes are managed by the operator; no payment is needed."));
+    }
     let plan = c.plans.plan(plan).ok_or_else(|| error(StatusCode::NOT_FOUND, "No such plan."))?;
     if !matches!(a.status(now), Some(Status::Trial | Status::Active | Status::Grace)) {
         return Ok((a, plan, Start::New));
@@ -200,7 +203,7 @@ async fn checkout_stripe(
     }
     let email = match &a.identity {
         Identity::Email { email } => Some(email.as_str()),
-        Identity::Wallet { .. } => None,
+        Identity::Wallet { .. } | Identity::Github { .. } => None,
     };
     let done = format!("{}/account.html?checkout=done&payment={id}", c.site.origin);
     let back = format!("{}/account.html?checkout=cancelled", c.site.origin);

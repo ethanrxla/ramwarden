@@ -15,6 +15,8 @@
   <script type="module" src="assets/home.js"></script>
   <script type="module" src="assets/lab.js"></script>
   <script type="module" src="assets/world.js"></script>
+  <script type="module" src="assets/city.js"></script>
+  <script type="module" src="assets/account-header.js"></script>
 </head>
 <body class="landing" data-warden="ram">
   <header class="site-header">
@@ -36,7 +38,12 @@
 
   <main>
     <!-- 1. Hero -->
-    <section class="hero" id="top" data-section="hero">
+    <section class="hero city-hero" data-city-scene id="top" data-section="hero">
+      <div class="city-backdrop" aria-hidden="true">
+        <video class="city-film" muted loop playsinline preload="none" poster="assets/city/blue-calm.jpg" data-city-video="assets/city/city.mp4"></video>
+        <div class="city-haze"></div>
+      </div>
+      <button class="city-motion" type="button" aria-pressed="false">Pause background</button>
       <div class="wrap hero-layout">
         <div class="hero-copy">
           <span class="eyebrow">Memory manager · Windows · macOS · Linux</span>
@@ -67,6 +74,18 @@
       </div>
     </section>
 
+    <section class="city-interlude city-red" data-city-scene aria-label="RamWarden pixel city">
+      <div class="city-backdrop" aria-hidden="true">
+        <img class="city-still" src="assets/city/red-walkers.jpg" alt="" loading="lazy" width="2752" height="1536">
+        <img class="city-storm" src="assets/city/red-storm.jpg" alt="" loading="lazy" width="2752" height="1536">
+        <div class="city-haze"></div>
+      </div>
+      <div class="wrap city-caption"><span class="eyebrow">A little breathing room.</span>
+        <h2>Your world stays open.<br>Your computer gets a break.</h2>
+        <a class="button secondary" href="#meet">Meet your guardian <span aria-hidden="true">↓</span></a>
+      </div>
+    </section>
+
     <!-- 3. Scroll world -->
     <section class="world" id="world" data-scrub data-section="world" aria-label="RamWarden at work, driven by scrolling">
       <div class="world-sticky">
@@ -91,7 +110,7 @@
     </section>
 
     <!-- 4. Pet -->
-    <section class="block stage" id="meet" data-stage data-section="pet">
+    <section class="block stage city-content" id="meet" data-stage data-section="pet">
       <div class="wrap stage-layout">
         <div class="stage-pet">
           <p class="stage-say" data-stage-say aria-live="polite"></p>
@@ -106,7 +125,7 @@
     </section>
 
     <!-- 5. How it works -->
-    <section class="block" id="how" data-section="how">
+    <section class="block city-content" id="how" data-section="how">
       <div class="wrap">
         <h2>What RamWarden does with your memory.</h2>
         <p class="sub">It measures memory, checks what you are using, and chooses an action allowed by your settings.</p>
@@ -123,7 +142,7 @@
           </div>
           <div class="memory-lab" data-memory-lab data-optimized="false">
             <div class="lab-heading"><span class="lab-lamp"></span><span>INSIDE THE WARDEN</span><span class="demo-label">ILLUSTRATIVE DEMO</span></div>
-            <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">TIME WAITING ON MEMORY</span><strong data-pressure-value>3%</strong><span>Pressure, not just fullness</span></div></div>
+            <div class="lab-stats"><div><span class="metric-label">RAM IN USE</span><strong>78<small>%</small></strong><span>12.5 / 16 GB · example</span></div><div><span class="metric-label">SIMULATED MEMORY STALLS</span><strong data-pressure-value>3%</strong><span>Explore pressure separately below</span></div></div>
             <div class="memory-bar" role="img" aria-label="Illustrative RAM breakdown: active work, reclaimable memory, and available memory"><i class="memory-active"></i><i class="memory-cold"></i><i class="memory-free"></i></div>
             <div class="chart-legend"><span><i class="dot active"></i>Active work</span><span><i class="dot cold"></i>Cold / reclaimable</span><span><i class="dot free"></i>Available</span></div>
             <div class="pressure-chart"><div class="chart-title"><span>MEMORY STALLS · %</span><span>SIMULATED RECOVERY</span></div>
@@ -145,16 +164,16 @@
     </section>
 
     <!-- 6. Pricing -->
-    <section class="block" id="pricing" data-section="pricing">
+    <section class="block city-content" id="pricing" data-section="pricing">
       <div class="wrap">
         <h2>Two intelligent desktop companions.</h2>
-        <p class="sub">Performance and security, starting at $5 per month or $24 a year.</p>
+        <p class="sub">Performance and security, starting at $4 per month or $20 a year.</p>
         <div class="pricing" data-pricing></div>
       </div>
     </section>
 
     <!-- 7. FAQ -->
-    <section class="block faq" id="faq" data-section="faq">
+    <section class="block faq city-content" id="faq" data-section="faq">
       <div class="wrap narrow">
         <h2>Questions</h2>
         <details><summary>Is there a free version?</summary>
@@ -182,7 +201,7 @@
 
   <footer>
     <div class="wrap">
-      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $5 per month or $24 a year.</span>
+      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $4 per month or $20 a year.</span>
       <span><a href="privacy.html">Privacy</a> · <a href="notices.html">Open-source notices</a> · <a href="account.html">Sign in · Wallet or email</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
     </div>
   </footer>

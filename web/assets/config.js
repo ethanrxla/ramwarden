@@ -28,8 +28,8 @@ export const config = {
   //   plan with a trial.
   // - Pro: adds ThreatWarden, 5 computers. Paid from day one.
   // Upgrades are enforced by the server and the signed entitlement, not by
-  // the page. Every bullet is something the code does, with its number where
-  // it has one (README, docs/specs/browser-memory.md, threatwarden.md).
+  // the page. Bullets describe the shipped behavior in everyday language
+  // (README, docs/specs/browser-memory.md, threatwarden.md).
   // `soon` marks a part that is specified but not shipped yet.
   trialDays: 14,
   lite: {
@@ -37,13 +37,11 @@ export const config = {
     tagline: "Keep it tidy.",
     cta: "Get it free",
     features: [
-      "Memory measured the way your OS charges it: shared browser memory counted once, not per tab",
-      "Acts on memory stalls (time lost waiting on RAM), not on a full meter",
-      "A 4-step reclaim algorithm: compress cold memory, page it out, unload idle tabs, pause idle apps you list",
-      "Every app ranked least recently used first",
+      "Tracks memory pressure and recent app use",
+      "Unloads idle tabs to release their memory while keeping them available to reload",
       "Automatic tab closing requires 24 hours without activity and a return score below 0.3; active work and reopened tabs stay protected",
-      "Every pause undone the moment memory recovers",
-      "Games, anti-cheat, calls, terminals and VMs are never touched",
+      "Protects active work, games, calls, terminals and virtual machines",
+      "Resumes paused apps when memory pressure eases",
       "1 computer, free account, no card",
     ],
   },
@@ -56,10 +54,9 @@ export const config = {
       devices: 3,
       features: [
         "Everything in Lite, plus:",
-        "A customizable AI warden pet that picks what you won't miss",
-        "Scores each idle app: your chance of coming back within the hour",
-        "Pauses an app only when 70% sure you won't return, closes one only at 85%",
-        "Closes tabs you won't return to, each saved to a reopen list",
+        "A customizable AI companion for chat and memory advice",
+        "Ranks idle apps by how likely you are to return, then pauses or closes those you're unlikely to need when your settings allow it",
+        "AI-guided tab cleanup, with a reopen list for tabs it closes",
         "3 computers: Windows, macOS and Linux",
       ],
     },
@@ -70,11 +67,11 @@ export const config = {
       devices: 5,
       features: [
         "Everything in Plus, plus ThreatWarden:",
-        "Sentinel: file integrity, log analysis, rootkit and vulnerable software checks",
-        { text: "Antivirus: malware sweeps when memory is free, plus scan on demand", soon: true },
-        { text: "Network monitor: catches attacks and malware calling home, shows who each app talks to", soon: true },
-        "Security findings with explanations; quarantine and blocking controls are planned",
-        "The cyborg warden pet",
+        "Security checks for changed files, suspicious activity and vulnerable software",
+        { text: "Malware scans when your computer has room to spare, plus scan on demand", soon: true },
+        { text: "Network alerts and a view of which apps connect to the internet", soon: true },
+        "Explains security findings; quarantine and blocking are planned",
+        "Your cyborg ThreatWarden companion",
         "5 computers",
       ],
     },

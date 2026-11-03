@@ -9,7 +9,7 @@ claim that installation or a green test proves coverage.
 
 | Requirement | Evidence needed before completion | Current evidence / remaining work |
 | --- | --- | --- |
-| Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Live email sign-in verified on 2026-11-03. Account page reports Lite, zero devices, and existing email/wallet/GitHub identities. Neither device is linked yet; Pro entitlement remains pending. Keep personal identifiers out of repository files. |
+| Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Live email sign-in verified on 2026-11-03. Newer hosted-account work now grants audited complimentary Pro access; the live page shows the Mac linked (1 of 5). Its saved signed Pro entitlement unlocks both panes. Windows linking and end-to-end coverage remain unverified. |
 | Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Manager agents 001 (Windows) and 002 (Mac) confirmed active on 2026-11-02; records from both arrive. Neither is yet proven bound to the developer account. |
 | ClamAV | Current signatures, scan-only execution and safe test detection delivered through Wazuh on both devices | Windows scan records reach the manager; Mac installation not found in Homebrew. Keep Defender enabled. No automatic deletion/quarantine. |
 | Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
@@ -166,6 +166,23 @@ clippy pass on the Mac. The next implementation step is a server-controlled
 enrollment/status handler using these bindings and live device authorization.
 
 ### Live email sign-in checkpoint (2026-11-03)
+
+Update after reconnecting: the current Mac preview already fixes the GitHub
+label and shows complimentary Pro with the Mac registered. All 27 website
+unit/site/installer tests pass on that Mac checkout. Its installed daemon
+accepts the signed Pro entitlement, but ThreatWarden reports that the hosted
+service cannot be reached. Hosted enrollment/status handlers are still absent.
+Account access must not be described as working threat coverage.
+
+PR34 now integrates the newer hosted-account branch, retaining GitHub sign-in,
+audited developer access, diagnostics and setup changes. Registration keeps the
+account transaction and also reserves the numbered seat used by older API
+instances. The unique seat index therefore prevents an older instance racing
+the new transaction from taking the same remaining slot. Both limit helpers
+use one policy. Integration validation is pending; do not install this merge
+until its tests and CI pass.
+
+Earlier checkpoint:
 
 The user received the real sign-in email and supplied its code. The account
 page authenticated successfully and reported Lite with zero registered devices.

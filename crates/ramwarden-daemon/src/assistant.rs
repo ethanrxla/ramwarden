@@ -72,6 +72,10 @@ pub async fn ask_model(st: &AppState, messages: &[Value], cloud_allowed: bool) -
     };
     let cloud = async {
         if !cloud_allowed { return None; }
+        if ramwarden_ai::routed::enabled() {
+            let message=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).unwrap_or("");
+            return ramwarden_ai::routed::explain(ramwarden_ai::routing::classify(message), messages).await;
+        }
         let p = st.ai.nim.as_ref()?;
         tokio::time::timeout(Duration::from_secs(20), p.explain(messages, st.cfg.assistant.cloud_model.as_deref())).await.ok()?.ok()
     };

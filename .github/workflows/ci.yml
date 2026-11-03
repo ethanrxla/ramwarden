@@ -61,6 +61,15 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Mac checklist and app build
+        if: runner.os == 'macOS'
+        run: |
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/PetSizing.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
+          "$RUNNER_TEMP/review-test"
+          RAMWARDEN_APP_DEST="$RUNNER_TEMP/RamWarden.app" bash macos/menubar/build.sh
+          swiftc -O macos/menubar/PetSizing.swift macos/menubar/tests/PetSizingTests.swift -o "$RUNNER_TEMP/pet-sizing-test"
+          "$RUNNER_TEMP/pet-sizing-test"
+          RAMWARDEN_SETUP_DEST="$RUNNER_TEMP/RamWarden Setup.app" bash macos/setup/build.sh
 
   # The website in web/: plain HTML, CSS and ES modules with no build step.
   # Unit tests need only Node; the browser tests drive Chromium against the
@@ -83,6 +92,10 @@ jobs:
           npx playwright install --with-deps chromium
           node web/tests/e2e.cjs
           node extension/tests/account-live.cjs
+      - name: Extension activity and closure guards
+        run: |
+          node --test extension/tests/discard.cjs
+          node extension/tests/live.cjs
 
   # The checkout contract in contracts/. Hardhat compiles with the solc-js build
   # pinned in contracts/package.json and runs the tests on its in-process chain.
