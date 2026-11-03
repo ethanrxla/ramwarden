@@ -9,14 +9,34 @@ const assert = require('node:assert/strict');
 
 (async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-live-'));
-  const context = await chromium.launchPersistentContext(profile, {
+  // Copy only this test extension and disable its real-daemon connection before startup.
+  const extension = path.join(profile, 'extension');
+  fs.cpSync(path.resolve(__dirname, '..'), extension, {recursive:true});
+  const background = path.join(extension, 'background.js');
+  fs.writeFileSync(background, fs.readFileSync(background, 'utf8').replace('const DEFAULT_HOST = "localhost:7823";', 'const DEFAULT_HOST = "127.0.0.1:1";'));
+  const options = {
     executablePath: process.env.CHROME_PATH || undefined,
+    channel: process.env.CHROME_PATH ? undefined : 'chromium',
     headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging'],
-  });
-  try {
+  };
+  let context = await chromium.launchPersistentContext(profile, options);
+  async function attach() {
     const cdp = await context.browser().newBrowserCDPSession();
-    await cdp.send('Extensions.loadUnpacked', { path: path.resolve(__dirname, '..') });
+    await cdp.send('Extensions.loadUnpacked', { path: extension });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const evaluate = worker.evaluate.bind(worker);
+    context.on('console', msg => { if (process.env.RW_DEBUG) console.log('browser:', msg.text()); });
+    worker.evaluate = async (...args) => {
+      let timer;
+      if (process.env.RW_DEBUG) console.log(new Date().toISOString(), String(args[0]).slice(0,160));
+      try { return await Promise.race([evaluate(...args), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Extension worker timed out: ' + String(args[0]).slice(0,160))), 15000);
+      })]); } finally { clearTimeout(timer); }
+    };
+    return worker;
+  }
+  try {
+    const worker = await attach();
     await worker.evaluate(async () => { await safetyReady; _httpUrl = 'http://127.0.0.1:1'; if (typeof ws !== 'undefined' && ws) ws.close(); });
     await context.route('https://fixture.example.org/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Disposable fixture</title><input aria-label="Work"><p>Test only</p>' }));
     const make = async (suffix) => { const p = await context.newPage(); await p.goto('https://fixture.example.org/' + suffix); return p; };
@@ -56,7 +76,16 @@ const assert = require('node:assert/strict');
     await worker.evaluate(() => new Promise(resolve => setTimeout(resolve,100)));
     assert.equal(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined, 'manual close clears protection');
     assert.equal(edited.isClosed(), false);
-    console.log('PASS: real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, manual close');
+    await context.close();
+    context = await chromium.launchPersistentContext(profile, options);
+    const restarted = await attach();
+    assert.ok(await restarted.evaluate(async () => {
+      await safetyReady;
+      return safety.pages['https://fixture.example.org/login']?.until > Date.now();
+    }), 'Keep survives browser and extension restart');
+    assert.equal(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined,
+      'manual-close feedback remains cleared after restart');
+    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, manual close');
   } finally {
     await context.close();
     // Preserve the disposable profile for diagnostics; never access user profiles.

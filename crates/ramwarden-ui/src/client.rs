@@ -240,7 +240,7 @@ impl Client {
         &self.base
     }
 
-    async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, timeout: Duration) -> Result<T> {
+    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, timeout: Duration) -> Result<T> {
         let r = self
             .http
             .get(format!("{}{path}", self.base))
@@ -251,7 +251,7 @@ impl Client {
         Self::decode(r).await
     }
 
-    async fn post<T: for<'de> Deserialize<'de>>(
+    pub(crate) async fn post<T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
         body: serde_json::Value,

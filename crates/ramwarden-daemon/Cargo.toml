@@ -15,6 +15,7 @@ name = "ramwarden-daemon"
 path = "src/main.rs"
 
 [dependencies]
+reqwest = { workspace = true }
 ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }

@@ -185,6 +185,20 @@ impl Entitlement {
         self.wardens.get("ram").is_some_and(|&until| until > now)
     }
 
+    /// Whether the warden pet (and its speech bubble) comes with this account.
+    ///
+    /// Pets are part of Plus (`ram`) and Pro, not Lite. Signed out is the
+    /// self-built open-source app, which has no account to check and keeps
+    /// its pet: the code is the user's to change anyway, so a gate there would
+    /// only annoy. A plan that has run out loses it with the rest of the plan.
+    pub fn has_pet(&self, now: u64) -> bool {
+        if self.account.is_none() {
+            return true;
+        }
+        matches!(self.tier.as_deref(), Some("ram" | "plus" | "pro"))
+            && self.wardens.get("ram").is_some_and(|&until| until > now)
+    }
+
     /// The ids of every paid warden unlocked at `now`.
     pub fn paid_at(&self, now: u64) -> Vec<&str> {
         self.wardens
@@ -595,5 +609,20 @@ mod tests {
     fn no_agent_is_off_not_clear() {
         let s = assess_threats(AgentHealth::Missing, &[], ThreatThresholds::default(), NOW);
         assert_eq!(s.level, Level::Off);
+    }
+
+    #[test]
+    fn the_pet_comes_with_plus_and_pro_but_not_lite_or_a_lapsed_plan() {
+        let signed_in = |tier: &str, until: u64| Entitlement {
+            account: Some("acct".into()),
+            tier: Some(tier.into()),
+            wardens: [("ram".to_string(), until)].into_iter().collect(),
+            ..Default::default()
+        };
+        assert!(Entitlement::default().has_pet(100), "signed out: the open-source app keeps its pet");
+        assert!(signed_in("ram", 200).has_pet(100));
+        assert!(signed_in("pro", 200).has_pet(100));
+        assert!(!signed_in("lite", 200).has_pet(100));
+        assert!(!signed_in("pro", 50).has_pet(100), "lapsed");
     }
 }
