@@ -511,3 +511,5 @@ footer a { color: var(--muted); }
 
 .site-header nav a { white-space:nowrap; }
 .site-header .account-identity { max-width:128px; }
+
+.site-header .brand img { width:56px; height:56px; object-fit:contain; image-rendering:pixelated; }
