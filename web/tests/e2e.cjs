@@ -387,6 +387,39 @@ async function run() {
     await p.waitForSelector("text=could not be reached");
   });
 
+  t("header shows the authenticated identity and updates after email sign-in", async () => {
+    const p = await page();
+    await p.goto(`${base}/account.html?mock=1`);
+    await p.waitForSelector('[data-account-state="signed-out"]');
+    await p.fill('input[name="email"]', 'header@example.com');
+    await p.click('button:has-text("Email me a code")');
+    await p.fill('input[name="code"]', '123456');
+    await p.click('button:has-text("Sign in")');
+    await p.waitForSelector('[data-account-state="signed-in"]');
+    assert.match(await p.textContent('[data-account-link]'), /header@example.com/);
+    assert.equal(await p.getAttribute('[data-account-link]', 'href'), 'account.html?mock=1#sign-in-methods');
+    const before=p.url();
+    await p.click('[data-account-link]');
+    assert.equal(p.url(),before);
+    assert.match(await p.textContent('.account-details'),/header@example.com/);
+    await p.keyboard.press('Escape');
+    assert.equal(await p.locator('.account-details').count(),0);
+    assert.deepEqual(p.errors, []);
+  });
+
+  t("landing header distinguishes an authenticated wallet from an unavailable API", async () => {
+    const p = await page();
+    await p.goto(`${base}/index.html?mock=1&as=active`);
+    await p.waitForSelector('[data-account-state="signed-in"]');
+    assert.match(await p.textContent('[data-account-link]'), /0x8ba1/);
+    const q = await page();
+    await q.goto(`${base}/threat.html`);
+    await q.waitForSelector('[data-account-state="unknown"]');
+    assert.equal(await q.locator('[data-account-link] .account-online').count(), 0);
+    assert.deepEqual(p.errors, []);
+    assert.deepEqual(q.errors, []);
+  });
+
   for (const { name, fn } of tests) {
     try {
       await fn();

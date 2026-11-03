@@ -7,7 +7,7 @@
 // step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
 import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
-import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { publishAccount, chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -89,6 +89,7 @@ class AccountPage {
 
   render() {
     const a = this.account;
+    publishAccount(a);
     const state = installState(a);
     const live = state === "ready" || state === "lite";
     // What the Upgrade button offers: Lite and lapsed go to Plus, Plus to Pro.

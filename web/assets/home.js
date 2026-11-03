@@ -2,7 +2,7 @@
 // and pricing (shared components), and the pets, whose corner one is also
 // the support chat.
 
-import { makeApi, mockBanner } from "./common.js";
+import { makeApi, publishAccount, mockBanner } from "./common.js";
 import { InstallBox, detectOs } from "./install.js";
 import { PetLook, PetStage, WardenPet, loadLines } from "./pets.js";
 import { Pricing } from "./pricing.js";
@@ -57,6 +57,7 @@ async function main() {
 
   const api = await makeApi();
   const account = await whoIsHere(api);
+  if (account) publishAccount(account);
   const install = document.querySelector("[data-install]");
   if (install) await new InstallBox(install, { api, account }).render();
 
