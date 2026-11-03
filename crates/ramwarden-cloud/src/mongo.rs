@@ -19,7 +19,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use mongodb::bson::{self, Bson, DateTime, Document, doc};
 use mongodb::error::{ErrorKind, WriteFailure};
-use mongodb::options::{ClientOptions, IndexOptions, ReturnDocument};
+use mongodb::options::{ClientOptions, IndexOptions, ReturnDocument, ReadConcern, WriteConcern};
 use mongodb::{Client, Collection, Database, IndexModel};
 
 use crate::config::CloudConfig;
@@ -402,13 +402,7 @@ impl Store for MongoStore {
     }
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
-        let limit = self.account(account_id).await?.map_or(DEVICE_LIMIT, |a| a.device_limit);
-        // Two devices linking in the same instant could both pass; the cost is
-        // one device over the limit until the user removes one.
-        let n = self.devices().count_documents(doc! { "account_id": account_id }).await?;
-        if n >= u64::from(limit) {
-            return Ok(None);
-        }
+        use futures::FutureExt;
         let raw = random_token("rwdt_");
         let d = Device {
             id: new_id(),
@@ -419,8 +413,28 @@ impl Store for MongoStore {
             last_seen_at: now,
             token_hash: hash(&raw),
         };
-        self.devices().insert_one(&d).await?;
-        Ok(Some((d, raw)))
+        let mut session = self.db.client().start_session().await?;
+        // A transaction alone can still write-skew when two snapshots count
+        // the same devices. Writing the same account document first forces a
+        // conflict and retry. It also serializes with billing changes. No
+        // cached counter or migration is needed: count the existing records.
+        let added = session.start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run((self.accounts(), self.devices(), d.clone(), now), |session, (accounts, devices, device, now)| async move {
+                let Some(account) = accounts.find_one_and_update(
+                    doc! {"_id": &device.account_id},
+                    doc! {"$inc": {"device_registration_version": 1_i64}},
+                ).return_document(ReturnDocument::After).session(&mut *session).await? else { return Ok(false) };
+                let count = devices.count_documents(doc! {"account_id": &device.account_id})
+                    .session(&mut *session).await?;
+                if count >= u64::from(account.device_capacity(*now)) { return Ok(false); }
+                devices.insert_one(&*device).session(&mut *session).await?;
+                Ok(true)
+            }.boxed()).await?;
+        // The driver retries transient transaction/commit errors. The same
+        // device identity and token are reused across those internal retries.
+        Ok(added.then_some((d, raw)))
     }
 
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>> {

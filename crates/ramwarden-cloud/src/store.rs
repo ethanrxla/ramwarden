@@ -368,7 +368,8 @@ impl Store for MemoryStore {
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
         let mut g = self.lock();
-        let limit = g.accounts.get(account_id).map_or(DEVICE_LIMIT, |a| a.device_limit) as usize;
+        let Some(account) = g.accounts.get(account_id) else { return Ok(None) };
+        let limit = account.device_capacity(now) as usize;
         if g.devices.values().filter(|d| d.account_id == account_id).count() >= limit {
             return Ok(None);
         }
@@ -462,6 +463,7 @@ pub mod contract {
         accounts_and_billing(s).await;
         identity_claims_are_atomic(s).await;
         devices_and_sessions(s).await;
+        concurrent_device_limits(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
     }
@@ -562,6 +564,7 @@ pub mod contract {
 
     async fn devices_and_sessions(s: &dyn Store) {
         let (a, _) = s.account_for_identity(&wallet(2), NOW).await.unwrap();
+        s.update_billing(&a.id, &BillingUpdate { tier:Some(Tier::Pro), paid_until:Some(NOW+100), ..Default::default() }).await.unwrap();
         let mut tokens = vec![];
         for i in 0..DEVICE_LIMIT {
             let (d, tok) = s.register_device(&a.id, &format!("pc{i}"), Platform::Windows, NOW).await.unwrap().unwrap();
@@ -583,6 +586,29 @@ pub mod contract {
         let raw = s.create_session(&a.id, NOW, 60).await.unwrap();
         s.end_session(&raw).await.unwrap();
         assert_eq!(s.session_account(&raw, NOW).await.unwrap(), None);
+    }
+
+    async fn concurrent_device_limits(s: &dyn Store) {
+        assert!(s.register_device("missing-account", "orphan", Platform::Linux, NOW).await.unwrap().is_none());
+        for (email, tier, limit) in [("lite-race@example.com", None, 1), ("plus-race@example.com", Some(Tier::Ram), 3), ("pro-race@example.com", Some(Tier::Pro), 5)] {
+            let account = s.account_for_identity(&Identity::email(email), NOW).await.unwrap().0;
+            if let Some(tier) = tier {
+                s.update_billing(&account.id, &BillingUpdate { tier:Some(tier), paid_until:Some(NOW+100), ..Default::default() }).await.unwrap();
+            }
+            let results = futures::future::join_all((0..10).map(|_| s.register_device(&account.id, "parallel", Platform::Linux, NOW))).await;
+            let enrolled: Vec<_> = results.into_iter().filter_map(|r| r.unwrap()).collect();
+            assert_eq!(enrolled.len(), limit, "concurrent enrollments must respect {email}");
+            assert_eq!(s.devices(&account.id).await.unwrap().len(), limit);
+            assert!(!s.revoke_device("foreign-account", &enrolled[0].0.id).await.unwrap());
+            assert!(s.revoke_device(&account.id, &enrolled[0].0.id).await.unwrap());
+            assert!(s.device_for_token(&enrolled[0].1, NOW).await.unwrap().is_none());
+            let (one,two) = tokio::join!(s.register_device(&account.id,"replacement-1",Platform::Macos,NOW), s.register_device(&account.id,"replacement-2",Platform::Windows,NOW));
+            assert_eq!(usize::from(one.unwrap().is_some()) + usize::from(two.unwrap().is_some()), 1, "one removal frees exactly one slot");
+            if tier.is_some() {
+                assert!(s.register_device(&account.id,"after-expiry",Platform::Linux,NOW+100+GRACE_SECONDS).await.unwrap().is_none());
+                assert_eq!(s.devices(&account.id).await.unwrap().len(),limit,"expiry keeps registered devices");
+            }
+        }
     }
 
     async fn challenges_and_payments(s: &dyn Store) {

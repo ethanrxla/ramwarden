@@ -45,23 +45,17 @@ use crate::wallet::{self, iso8601};
 
 /// Devices on RamWarden Lite, the free tier (an account with no plan, or a
 /// lapsed one).
-pub const FREE_DEVICE_LIMIT: u32 = 1;
+pub use ramwarden_cloud::model::FREE_DEVICE_LIMIT;
 /// Devices on RamWarden Plus (user decision, 2026-11-02).
-pub const PLUS_DEVICE_LIMIT: u32 = 3;
+pub use ramwarden_cloud::model::PLUS_DEVICE_LIMIT;
 /// Devices on RamWarden Pro.
-pub const PRO_DEVICE_LIMIT: u32 = 5;
+pub use ramwarden_cloud::model::PRO_DEVICE_LIMIT;
 
 /// How many devices this account may have now: its plan's limit while the
 /// plan is in good standing, else the free tier's. Devices already linked
 /// stay linked when a plan lapses; only adding one is refused.
 pub fn device_limit(a: &Account, now: u64) -> u32 {
-    let plan = match plan_name(a, now) {
-        "pro" => PRO_DEVICE_LIMIT,
-        "plus" => PLUS_DEVICE_LIMIT,
-        _ => FREE_DEVICE_LIMIT,
-    };
-    // The stored limit is a per-account cap the operator can lower.
-    plan.min(a.device_limit)
+    a.device_capacity(now)
 }
 
 /// The card the account is on: `lite`, `plus` or `pro`.
