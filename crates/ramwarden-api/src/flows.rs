@@ -203,6 +203,11 @@ async fn a_daemon_signs_in_through_the_link_page_with_metamask() {
     let (s, tok) = a.call("POST", "/v1/device/token", Auth::None, Some(json!({"device_code": dc}))).await;
     assert_eq!(s, StatusCode::OK);
     assert!(tok["device_token"].as_str().unwrap().starts_with("rwdt_"));
+    let (status, summary) = a.call("GET", "/v1/device/account", Auth::Bearer(tok["device_token"].as_str().unwrap()), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(summary, json!({"plan":"lite","device_limit":1,"devices_used":1}));
+    assert_ne!(a.call("GET", "/v1/device/account", Auth::Cookie(&cookie), None).await.0, StatusCode::OK);
+
     let (s, again) = a.call("POST", "/v1/device/token", Auth::None, Some(json!({"device_code": dc}))).await;
     assert_eq!((s, again["error"].as_str()), (StatusCode::BAD_REQUEST, Some("expired_token")), "claimed once");
 

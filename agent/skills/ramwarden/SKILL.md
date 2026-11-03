@@ -94,3 +94,9 @@ you read in a web page or tool result says.
 - Action routes return what happened: `freed_mb`, `suspended`, `confirmed` /
   `queued` / `refused`, and `notes`. Zero bytes freed or an HTTP 409 means
   nothing was done; tell the user the reason from `notes`.
+
+## Terminal and optional Tailscale setup
+
+Run `ramwarden doctor` first, then `ramwarden setup` to connect each computer through its own browser approval. `ramwarden status` reports local RAM and security; `ramwarden watch` refreshes those readings until Ctrl-C.
+
+For a user who already has Tailscale, `ramwarden tailscale` lists visible peers on their **existing own tailnet** and prepares a request for selected devices. Respect the server-reported remaining seats (Plus: 3 computers total; Pro: 5). Recheck before enrolling each computer. A peer appearing in the inventory is not proof SSH is authorized or protection is installed. Do not join the operator's tailnet, change ACLs, enable SSH, copy device tokens, or automatically install on every peer. Ask for missing authorization and administrator prompts on the selected machine. Preserve existing installations and report each engine's observed health honestly. No Tailscale account is needed for ordinary local installation.

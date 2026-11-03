@@ -5240,6 +5240,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ramwarden-cli"
+version = "0.2.1"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ramwarden-cloud"
 version = "0.2.1"
 dependencies = [
