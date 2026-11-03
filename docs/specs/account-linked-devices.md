@@ -15,7 +15,7 @@ claim that installation or a green test proves coverage.
 | Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
 | App/extension sign-in | Extension opens wallet/email device approval; daemon alone stores its device token; both show the same account | Bridge and popup implemented in PR34; real Chrome popup flow passes with a mocked backend. Live email approval and installation remain. |
 | Tailscale integration | Account-bound discovery and selection, authenticated pairing, cross-account denial, revocation | Both existing host clients are online. No RamWarden integration yet. |
-| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Registration now writes the account and counts/inserts devices in one transaction, using the shared active-plan cap. Live Atlas concurrency validation required before rollout. |
+| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Registration writes the account and counts/inserts devices in one transaction, using the shared active-plan cap. Memory and isolated Atlas concurrency contracts pass at c1eaf03. |
 | Request limits based on real use | Representative measured request totals, costs, restart handling and documented Plus/Pro sizing | Mac reports 4 calls in preceding hour, 1724 input / 272 output tokens since daemon startup; not a daily baseline. Do not set quotas from this sample. |
 | Personalized behavior | Account-scoped learning data, device/OS identity, bounded feedback, isolation and offline behavior tests | Local activity protections exist. Cross-device account learning is not verified. |
 | Repeatable setup | Versioned installation/enrollment/rollback steps, a fresh-device reproduction, optional setup skill | Read-only readiness probe added; full setup runbook/skill remains. |
@@ -60,7 +60,8 @@ ThreatWarden pane locked. Both token files were absent. A daemon upgrade and
 account sign-in are separate gates from agent installation.
 
 Keep the full objective above open until every acceptance row is proven. Respect
-the user's latest 20% usage reserve and save a handoff before reaching it.
+the user's latest 20% five-hour usage reserve and save a handoff before reaching
+it. The weekly allowance is a separate limit, not the requested reserve.
 
 ## Local account bridge (PR34)
 
@@ -93,7 +94,6 @@ Still required for live coverage:
 - Implement the hosted `/v1/wardens/threat/enroll` and `/status` handlers and
   account-scoped agent mapping. Currently those paths exist only in the client
   and fixtures, so a signed plan alone cannot provide hosted threat status.
-- Verify atomic plan-specific registration against Atlas before relying on device limits.
 - Validate a live sign-in and signed plan on both devices, then deploy verified
   builds with rollback artifacts and preserved user settings.
 
@@ -123,3 +123,12 @@ The store contract races ten registrations for each tier, races two replacements
 after one revocation, checks revoked tokens and cross-account refusal, and
 checks expiry. Run it against the isolated Atlas test database as well as memory.
 Reference: [MongoDB Rust driver transactions](https://www.mongodb.com/docs/drivers/rust/current/crud/transactions/).
+
+Validated on the Mac at c1eaf03: all 76 API and 21 cloud library tests pass;
+API/cloud all-target clippy passes with warnings denied. The isolated Atlas
+contract passes (26.77 seconds), including concurrent 1/3/5 device caps,
+revocation, expiry, support retention, legacy index compatibility, repeated
+index initialization, and decision-sync idempotence. The test uses a fresh
+`ramwarden-test-*` database and removes its test collections afterward.
+No application database migration or billing change was needed. Full CI is
+green at 6c31773 (run 41576589262); this is source validation, not deployment.
