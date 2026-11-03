@@ -13,7 +13,7 @@ APP="$STAGE/RamWarden Setup.app"
 RAMWARDEN_SETUP_DEST="$APP" bash "$ROOT/macos/setup/build.sh"
 RES="$APP/Contents/Resources"
 mkdir -p "$RES/payload"
-for ITEM in ramwarden-daemon ramwarden-usage-sync; do
+for ITEM in ramwarden-daemon ramwarden-usage-sync ramwarden; do
   test -x "$ROOT/target/release/$ITEM"
   install -m 755 "$ROOT/target/release/$ITEM" "$RES/payload/$ITEM"
   codesign "${SIGN[@]}" "$RES/payload/$ITEM"

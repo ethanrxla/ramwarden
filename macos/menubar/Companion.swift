@@ -309,13 +309,6 @@ struct PixelRam: View {
                     context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
                 }
             }
-        }.overlay(alignment:.top) {
-            if model.tabReview != nil {
-                Text("Keep these tabs or close some? Click to review.")
-                    .font(.system(size:11)).multilineTextAlignment(.center).padding(6)
-                    .background(.regularMaterial,in:RoundedRectangle(cornerRadius:10))
-                    .offset(y:-12).allowsHitTesting(false)
-            }
         }.accessibilityLabel(model.connected ? "RamWarden ram companion. Click to open assistant." : "RamWarden companion. Reconnecting to daemon.")
     }
 }

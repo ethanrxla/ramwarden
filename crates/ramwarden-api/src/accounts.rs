@@ -128,6 +128,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .route("/v1/account/prefs", put(set_prefs))
         .route("/v1/account/devices/{id}", delete(revoke_device))
         .route("/v1/entitlement", get(entitlement))
+        .route("/v1/device/account", get(device_account))
         .route("/v1/downloads/{warden}/{file}", get(download))
         .merge(crate::signin::routes())
         .merge(crate::github::routes())
@@ -302,6 +303,16 @@ async fn revoke_device(
 }
 
 // ------------------------------------------------------------- daemon
+
+/// Minimal device-authenticated account summary for the CLI. No identities,
+/// install credentials or other devices' tokens are disclosed.
+async fn device_account(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply {
+    let c = cloud(&state)?;
+    let now = (state.now)();
+    let (_, a) = device(c, &headers, now).await?;
+    let count = c.store.devices(&a.id).await.map_err(storage)?.len();
+    Ok(Json(json!({"plan":plan_name(&a,now),"device_limit":device_limit(&a,now),"devices_used":count})).into_response())
+}
 
 /// The signed record the daemon saves as `entitlement.json`.
 async fn entitlement(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply {

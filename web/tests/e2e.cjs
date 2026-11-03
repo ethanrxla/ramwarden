@@ -412,6 +412,10 @@ async function run() {
     await p.goto(`${base}/index.html?mock=1&as=active`);
     await p.waitForSelector('[data-account-state="signed-in"]');
     assert.match(await p.textContent('[data-account-link]'), /0x8ba1/);
+    const plus = await page();
+    await plus.goto(`${base}/index.html?mock=1&as=trial`);
+    await plus.waitForSelector('.account-plan-badge');
+    assert.equal(await plus.textContent('.account-plan-badge'), '⚡');
     const q = await page();
     await q.goto(`${base}/threat.html`);
     await q.waitForSelector('[data-account-state="unknown"]');

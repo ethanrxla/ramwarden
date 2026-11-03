@@ -11,6 +11,8 @@ printf 'previous binary\n' > "$STAGE/.local/bin/ramwarden-daemon"
 bash "$RES/install-payload.sh" --test-root "$STAGE"
 test -x "$STAGE/.local/bin/ramwarden-daemon"
 test -x "$STAGE/.local/bin/ramwarden-usage-sync"
+test -x "$STAGE/.local/bin/ramwarden"
+test -L "$STAGE/.local/bin/ramwarden-doctor"
 test -d "$STAGE/Applications/RamWarden.app"
 test -f "$STAGE/Library/Application Support/RamWarden/extension/manifest.json"
 test "$(cat "$STAGE/.config/ramwarden/config.toml")" = '# preserve my config'

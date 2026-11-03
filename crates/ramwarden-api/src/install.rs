@@ -130,7 +130,10 @@ mkdir "$TMP/x"
 tar -xzf "$TMP/$ASSET" -C "$TMP/x"
 INSTALL="$(find "$TMP/x" -name install.sh -type f | head -n 1)"
 (cd "$(dirname "$INSTALL")" && sh ./install.sh)
-echo "RamWarden is installed. It signs in to your account when it starts."
+echo "RamWarden is installed. Run ramwarden setup to connect and check this computer."
+if [ -t 1 ] && [ -r /dev/tty ] && [ -x "$HOME/.local/bin/ramwarden" ]; then
+  "$HOME/.local/bin/ramwarden" setup </dev/tty
+fi
 "#
     )
 }
