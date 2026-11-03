@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 
 class WardenProfile {
+    func thinkingLine(at date:Date)->String { let index=Int(date.timeIntervalSince1970 / 3);return thinkingLines[index % thinkingLines.count] }
     let id:String; let name:String; let placeholder:String; let thinkingLines:[String]
     init(id:String,name:String,placeholder:String,thinkingLines:[String] = ["Discombobulating…","Babooning…","Larping…","Mogging…","67ing…","Deez nutzing…"]) {self.id=id;self.name=name;self.placeholder=placeholder;self.thinkingLines=thinkingLines}
 }

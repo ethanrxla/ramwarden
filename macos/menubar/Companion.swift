@@ -413,11 +413,10 @@ struct AssistantView: View {
             }
             if model.thinking {
                 TimelineView(.periodic(from: .now, by: 3)) { tick in
-                    let lines = model.profile.thinkingLines
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(lines[Int(tick.date.timeIntervalSince1970 / 3) % lines.count])
+                            Text(model.profile.thinkingLine(at:tick.date))
                             Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)
                         }
                     }.accessibilityLabel("Waiting for a response.")
