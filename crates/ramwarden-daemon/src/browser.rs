@@ -392,8 +392,17 @@ mod selection_tests {
 /// auto-closed, browser settings pages go first, and every pick must clear the
 /// same idle floor and return-chance ceiling.
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
+    // A budget is a keep floor, never permission to close. Preserve the newest
+    // N tabs in each browser even when an old tab passes the normal safety floor.
+    let mut by_browser: std::collections::HashMap<&str, Vec<&Row>> = std::collections::HashMap::new();
+    for row in rows { by_browser.entry(&row.target.browser).or_default().push(row); }
+    let mut kept = std::collections::HashSet::new();
+    for tabs in by_browser.values_mut() {
+        tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
+        kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
+    }
     let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
-    let mut picked: Vec<_> = rows.iter().filter(|r| r.auto_closeable
+    let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
         && r.inactive_minutes >= min_idle
         && (r.status == "browser page"
@@ -441,7 +450,7 @@ mod manual_close_tests {
 
     #[test]
     fn the_sweep_closes_long_idle_tabs_and_keeps_recent_or_pinned_ones() {
-        let cfg = ramwarden_core::config::Tabs::default();
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
         let mut pinned = idle(4, "https://example.org/pinned", 10_000, false);
         pinned.pinned = Some(true);
         let tabs = vec![
@@ -513,7 +522,7 @@ mod manual_close_tests {
 
     #[test]
     fn the_sweep_respects_its_per_sweep_cap() {
-        let cfg = ramwarden_core::config::Tabs { max_close_per_sweep: 2, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, max_close_per_sweep: 2, ..Default::default() };
         let tabs: Vec<Tab> = (1..=6).map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false)).collect();
         assert_eq!(close_candidates(&rank("b", &tabs, 30), &cfg).len(), 2);
     }
@@ -619,7 +628,7 @@ mod safety_regressions {
     /// browser page and the forgotten article first and never the work tabs.
     #[test]
     fn work_tabs_are_never_auto_closed_and_browser_pages_go_first() {
-        let cfg = ramwarden_core::config::Tabs::default();
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
         let tabs = vec![
             idle(1, "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase?region=us-ashburn-1", 2880),
             idle(2, "https://agensi.io/creators/submit-a-skill", 2880),

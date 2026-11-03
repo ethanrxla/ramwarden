@@ -40,6 +40,7 @@ pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(8);
 /// Browsers, their sockets, and the replies the daemon is waiting on.
 #[derive(Default)]
 pub struct Hub {
+    pub tab_budget: Arc<crate::settings::TabBudget>,
     pub tab_review: crate::tabreview::ReviewState,
     pub reg: Registry,
     senders: HashMap<String, mpsc::UnboundedSender<String>>,
@@ -152,6 +153,12 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Snapshot the user’s live tab policy; all automatic budget paths use this.
+    pub fn tabs_config(&self) -> ramwarden_core::config::Tabs {
+        let settings = self.hub.lock().unwrap().tab_budget.clone();
+        settings.effective(&self.cfg.tabs)
+    }
+
     /// Whether freezing is on hold right now.
     pub fn on_hold(&self) -> bool {
         self.hold_until.lock().unwrap().is_some_and(|t| Instant::now() < t)
@@ -295,7 +302,7 @@ impl AppState {
     pub async fn close_safe(&self, requested: &[crate::browser::Target], approved: bool) -> DiscardResult {
         self.request_all_tabs().await;
         let rows = crate::tabreview::snapshot(self);
-        let auto = crate::browser::close_candidates(&rows, &self.cfg.tabs);
+        let auto = crate::browser::close_candidates(&rows, &self.tabs_config());
         let mut result = DiscardResult::default();
         for target in requested {
             if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {

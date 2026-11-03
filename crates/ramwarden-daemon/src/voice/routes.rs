@@ -36,10 +36,11 @@ pub async fn bubble(State(st): State<AppState>) -> Json<Value> {
         return Json(json!({ "bubble": null, "pet": false, "muted": false, "muted_until": null }));
     }
     let threshold = st.cfg.thresholds.inactivity_minutes as i64;
+    let tabs_config = st.tabs_config();
     let (rows, closing) = {
         let hub = st.hub.lock().unwrap();
         let rows = crate::browser::snapshot(&hub.reg, threshold);
-        let closing = crate::browser::close_candidates(&rows, &st.cfg.tabs);
+        let closing = crate::browser::close_candidates(&rows, &tabs_config);
         (rows, closing)
     };
     let percent = st.memory().percent();

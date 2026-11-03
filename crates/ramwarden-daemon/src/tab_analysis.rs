@@ -154,15 +154,16 @@ fn targets_json(v: &[(Target, String)]) -> Value {
 pub async fn explain(State(st): State<AppState>) -> Json<Value> {
     st.request_all_tabs().await;
     let threshold = st.cfg.thresholds.inactivity_minutes as i64;
+    let tabs_config = st.tabs_config();
     let (rows, close, browsers) = {
         let hub = st.hub.lock().unwrap();
         let rows = crate::browser::snapshot(&hub.reg, threshold);
-        let close = crate::browser::close_candidates(&rows, &st.cfg.tabs);
+        let close = crate::browser::close_candidates(&rows, &tabs_config);
         (rows, close, hub.reg.browsers_connected())
     };
     let m = st.memory();
     let tabs = pick(&rows);
-    let facts = describe(&tabs, m.percent(), m.used() / 1_048_576, m.total / 1_048_576, st.cfg.tabs.keep_tabs);
+    let facts = describe(&tabs, m.percent(), m.used() / 1_048_576, m.total / 1_048_576, tabs_config.keep_tabs);
     let messages = [
         json!({"role": "system", "content": SYSTEM}),
         json!({"role": "user", "content": format!("Analyze now. Snapshot: {facts}")}),
