@@ -15,7 +15,7 @@ claim that installation or a green test proves coverage.
 | Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
 | App/extension sign-in | Extension opens wallet/email device approval; daemon alone stores its device token; both show the same account | Bridge and popup implemented in PR34; real Chrome popup flow passes with a mocked backend. Live email approval and installation remain. |
 | Tailscale integration | Account-bound discovery and selection, authenticated pairing, cross-account denial, revocation | Both existing host clients are online. No RamWarden integration yet. |
-| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Confirmed gap: MongoStore::register_device counts then inserts without a transaction, using the stored cap rather than the active plan cap. Fix before enrollment rollout. |
+| Licensing and database | Atomic 3-device Plus / 5-device Pro reservation, concurrent enrollment/replay/revocation tests | Registration now writes the account and counts/inserts devices in one transaction, using the shared active-plan cap. Live Atlas concurrency validation required before rollout. |
 | Request limits based on real use | Representative measured request totals, costs, restart handling and documented Plus/Pro sizing | Mac reports 4 calls in preceding hour, 1724 input / 272 output tokens since daemon startup; not a daily baseline. Do not set quotas from this sample. |
 | Personalized behavior | Account-scoped learning data, device/OS identity, bounded feedback, isolation and offline behavior tests | Local activity protections exist. Cross-device account learning is not verified. |
 | Repeatable setup | Versioned installation/enrollment/rollback steps, a fresh-device reproduction, optional setup skill | Read-only readiness probe added; full setup runbook/skill remains. |
@@ -93,7 +93,7 @@ Still required for live coverage:
 - Implement the hosted `/v1/wardens/threat/enroll` and `/status` handlers and
   account-scoped agent mapping. Currently those paths exist only in the client
   and fixtures, so a signed plan alone cannot provide hosted threat status.
-- Fix atomic plan-specific registration before relying on device limits.
+- Verify atomic plan-specific registration against Atlas before relying on device limits.
 - Validate a live sign-in and signed plan on both devices, then deploy verified
   builds with rollback artifacts and preserved user settings.
 
@@ -102,3 +102,24 @@ daemon all-target clippy pass on Mac; 22 extension unit tests and the real
 Chrome popup flow pass. The popup uses mocked backend responses and a disposable
 browser profile. No production account, payment record or installed app was
 changed by these tests.
+
+### Atomic enrollment
+
+Registration writes an account version inside a MongoDB transaction before
+counting and inserting devices. Concurrent registrations for that account
+therefore conflict and retry, instead of both counting the same free slot.
+The plan is read in that transaction; billing writes to the same account also
+participate in conflict detection. `Account::device_capacity` supplies the
+Lite/Plus/Pro limits of 1/3/5 and honors a lower stored operator cap.
+
+The driver retries transient transaction failures and ambiguous commits; the
+device identity and token stay constant across internal retries. An unsupported
+or unavailable transaction fails without falling back to the previous unsafe
+count/insert sequence. Existing devices are counted directly, so no counter
+backfill or production migration is needed. Revoking a device frees its slot;
+an expired plan prevents additions without deleting existing devices.
+
+The store contract races ten registrations for each tier, races two replacements
+after one revocation, checks revoked tokens and cross-account refusal, and
+checks expiry. Run it against the isolated Atlas test database as well as memory.
+Reference: [MongoDB Rust driver transactions](https://www.mongodb.com/docs/drivers/rust/current/crud/transactions/).
