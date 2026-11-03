@@ -51,6 +51,8 @@ pub enum Chain {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Identity {
+    /// Stable numeric GitHub user ID; never an email-based automatic merge.
+    Github { id: String },
     /// The address is normalised: lowercase hex for EVM, base58 as given for
     /// Solana.
     Wallet { chain: Chain, address: String },

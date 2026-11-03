@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function fixture(overrides = {}, fail = false) {
+function fixture(overrides = {}, fail = false, userAgent = "Firefox") {
   const noop = () => {};
   const event = {addListener: noop};
   let discards = [];
@@ -16,7 +16,7 @@ function fixture(overrides = {}, fail = false) {
     tabs:{onActivated:event,onUpdated:event,onRemoved:event,query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
-  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
+  const context = vm.createContext({chrome,navigator:{userAgent},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
   return {context,chrome,tab,discards};
 }
@@ -159,4 +159,20 @@ test('reopening the same site at a different URL protects it, and every reopen c
   f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:9,url:'https://www.example.org/deals'}]);
   const report=await f.context.buildTabReport({});
   assert.ok(report[0].protectedUntilMs>Date.now(),'a different page on the reopened site is protected');
+});
+
+test('reports the running worker safe-close capability only for socket browsers', async()=>{
+  for (const [agent,supported] of [['Chrome',true],['Firefox',false]]) {
+    const f=fixture({},false,agent); f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+    assert.equal((await f.context.buildTabReport({}))[0].safeCloseSupported,supported);
+  }
+});
+test('safe close sends request-correlated confirmation including explicit refusal',async()=>{
+  for (const active of [false,true]) {
+    const f=fixture({active}); const sent=[];
+    f.chrome.tabs.remove=(id,cb)=>cb(); f.context.sent=sent;
+    vm.runInContext('ws = {readyState:1, send: data => sent.push(JSON.parse(data))}',f.context);
+    await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000});
+    assert.deepEqual(JSON.parse(JSON.stringify(sent)),[{action:'tabs_closed_safe',requestId:'r',tabIds:active?[]:[7]}]);
+  }
 });

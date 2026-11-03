@@ -38,6 +38,7 @@ fn state() -> AppState {
         )),
         started: std::time::Instant::now(),
         hold_until: Default::default(),
+        voice: Default::default(),
         desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
     }
 }
@@ -46,7 +47,7 @@ fn tab(id: i64) -> Tab {
     serde_json::from_value(json!({"id":id,"url":format!("https://example.org/{id}"),"title":"review test",
         "inactiveMinutes":180,"lastActiveMs":ramwarden_core::history::unix_now() as f64*1000.0-180.0*60000.0,
         "activityVersion":1,"active":false,"pinned":false,"audible":false,"discarded":false,
-        "autoDiscardable":true,"status":"complete","discardSupported":true})).unwrap()
+        "autoDiscardable":true,"status":"complete","discardSupported":true,"safeCloseSupported":true})).unwrap()
 }
 async fn request(st: AppState, path: &str, body: Option<Value>) -> (u16, Value) {
     let builder = Request::builder()

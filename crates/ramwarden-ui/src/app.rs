@@ -123,6 +123,8 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
     outer.append(&ui.ram_bar);
     ui.detail.add_css_class("dim-label");
     outer.append(&ui.detail);
+    // ── the warden's speech bubble ──────────────────────────────────────────
+    outer.append(&crate::bubble::bar((*client).clone()));
 
     // ── an armed kill, which must be impossible to miss ─────────────────────
     ui.kill_banner.add_css_class("error");

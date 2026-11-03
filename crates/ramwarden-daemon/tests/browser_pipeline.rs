@@ -38,6 +38,7 @@ fn state() -> AppState {
         started: std::time::Instant::now(),
         hold_until: Default::default(),
         desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
+        voice: Default::default(),
     }
 }
 fn tab(id: i64) -> Tab {
@@ -318,4 +319,31 @@ fn a_tab_close_under_the_ladder_lock_survives_every_worker_blocking_on_it() {
 
     drop(held);
     rt.shutdown_timeout(Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn tab_budget_settings_apply_live_persist_and_keep_existing_origin_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "# preserved\n[tabs]\nkeep_tabs = 6 # my budget\n").unwrap();
+    let mut st = state();
+    Arc::make_mut(&mut st.cfg).source = Some(path.clone());
+    let app = ramwarden_daemon::routes::router(st.clone());
+    let response = app.clone().oneshot(Request::builder().method("POST").uri("/settings/tabs")
+        .header("content-type", "application/json").body(Body::from(r#"{"keep_tabs":3}"#)).unwrap()).await.unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(st.tabs_config().keep_tabs, 3);
+    assert_eq!(call(st.clone(), "/settings/tabs", "GET", Value::Null).await["keep_tabs"], 3);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("keep_tabs = 3 # my budget"));
+    for body in [r#"{"keep_tabs":0}"#, r#"{"keep_tabs":101}"#, r#"{"keep_tabs":3,"other":true}"#] {
+        let response = app.clone().oneshot(Request::builder().method("POST").uri("/settings/tabs")
+            .header("content-type", "application/json").body(Body::from(body)).unwrap()).await.unwrap();
+        assert!(response.status().is_client_error());
+        assert_eq!(st.tabs_config().keep_tabs, 3);
+    }
+    let response = app.oneshot(Request::builder().method("POST").uri("/settings/tabs")
+        .header("content-type", "application/json").header("origin", "https://untrusted.example")
+        .body(Body::from(r#"{"keep_tabs":1}"#)).unwrap()).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    assert_eq!(st.tabs_config().keep_tabs, 3);
 }

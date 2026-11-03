@@ -83,7 +83,7 @@ pub const TOPICS: &[Topic] = &[
         id: "plans",
         meaning: "comparing the plans or tiers (Lite, Plus, Pro), or which one to choose",
         keywords: &["plan", "plans", "tier", "tiers", "which one", "difference", "compare", "plus", "pro", "lite", "upgrade"],
-        answer: "There are three plans. RamWarden Lite is free: the memory algorithm with no AI, on 1 computer. \
+        answer: "There are three plans. RamWarden Lite is free: our enhanced memory algorithm with no AI, on 1 computer. \
                  RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $4 per month or $20 a year, with a 14-day free trial. \
                  RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $5 per month or $24 a year. \
                  If you mostly want memory back, start with the Plus trial. If you also want security, Pro.",
@@ -111,7 +111,7 @@ pub const TOPICS: &[Topic] = &[
         id: "lite",
         meaning: "the free plan, RamWarden Lite, what you get without paying",
         keywords: &["free", "free plan", "lite", "without paying", "no card", "free version", "free tier"],
-        answer: "RamWarden Lite is free with an account (email or wallet, no card). It monitors memory and activity, applies fixed cleanup rules, and keeps a reopen list for closed tabs. \
+        answer: "RamWarden Lite is free with an account (email or wallet, no card). It monitors memory and activity, uses our enhanced memory algorithm to reclaim memory from idle apps and tabs, and keeps a reopen list for closed tabs. \
                  Safety checks protect games, calls and system processes. Available actions depend on your platform and settings. \
                  It covers 1 computer. It has no AI and no warden pet; those come with Plus.",
         next: &["plans", "trial", "install"],

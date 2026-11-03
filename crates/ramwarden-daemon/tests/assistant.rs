@@ -31,6 +31,7 @@ fn state() -> AppState {
         started: std::time::Instant::now(),
         hold_until: Default::default(),
         desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
+        voice: Default::default(),
     }
 }
 async fn request(st: AppState, body: Value, origin: Option<&str>) -> axum::response::Response {

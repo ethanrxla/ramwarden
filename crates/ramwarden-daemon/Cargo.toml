@@ -15,6 +15,7 @@ name = "ramwarden-daemon"
 path = "src/main.rs"
 
 [dependencies]
+reqwest = { workspace = true }
 ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
@@ -34,6 +35,8 @@ tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid       = { workspace = true }
 url = "2"
+toml_edit = "0.20.2"
+tempfile = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 ramwarden-debloat = { path = "../ramwarden-debloat" }
@@ -45,6 +48,5 @@ ramwarden-kernel = { path = "../ramwarden-kernel" }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-tempfile = { workspace = true }
 ed25519-dalek = "2.1"
 base64 = "0.22"

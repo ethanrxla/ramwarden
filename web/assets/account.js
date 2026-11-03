@@ -105,8 +105,8 @@ class AccountPage {
             "section",
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
-            h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
-            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
+            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "github" ? `GitHub account ${a.identity.id}` : a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
@@ -120,6 +120,7 @@ class AccountPage {
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
       live ? this.extensionPanel() : null,
       this.signInMethods(),
+      this.usagePanel(),
       live ? this.devicesPanel() : null,
       state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
@@ -141,23 +142,44 @@ class AccountPage {
     );
   }
 
+  usagePanel() {
+    const status=h("div");
+    const input=h("input",{type:"checkbox","aria-label":"Share usage diagnostics"});
+    input.checked=this.account.prefs?.share_usage === true;
+    input.addEventListener("change",async () => {
+      input.disabled=true;
+      try {
+        const result=await api.savePrefs({...this.account.prefs,share_usage:input.checked});
+        this.account.prefs=result.prefs;
+        show(status,notice("ok",input.checked ? "Sharing starts now on connected devices." : "Usage sharing is off."));
+      } catch(error) {input.checked=!input.checked;show(status,notice("error",errorText(error)));}
+      finally {input.disabled=false;}
+    });
+    return h("section",{class:"panel",id:"usage-sharing"},h("h2",{},"Help improve your warden"),
+      h("label",{},input," Share usage diagnostics"),
+      h("p",{class:"muted"},"Share daily action counts and measured RAM recovery, including close, reopen, pause and resume events. No tab titles, URLs, page contents, app names or file paths. Summaries are kept for 90 days."),
+      h("p",{class:"muted"},"Off by default. Only connected devices can send data, starting when you enable it."),status);
+  }
+
   signInMethods() {
     const identities = this.account.identities || [this.account.identity].filter(Boolean);
+    const github = h("span");
+    if (api.githubConfig) api.githubConfig().then(c => {if(c.enabled) github.append(h("button",{class:"button secondary small",onclick:()=>this.linkMethod("github")},"Add GitHub"));}).catch(()=>{});
     return h("section", {class:"panel",id:"sign-in-methods"},
       h("h2", {}, "Sign-in methods"),
-      h("p", {}, "Use a wallet, email, or both for this same account and subscription."),
-      h("ul", {}, identities.map(i => h("li", {}, i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("p", {}, "Connect sign-in methods to this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, i.kind === "github" ? `GitHub account ${i.id}` : i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
       h("div", {class:"row-actions"},
         h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
-        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email")));
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email"),github));
   }
 
   async linkMethod(kind) {
     const area = h("div");
-    show(root, h("h1", {}, kind === "email" ? "Add an email" : "Add a wallet"),
+    show(root, h("h1", {}, kind === "github" ? "Add GitHub" : kind === "email" ? "Add an email" : "Add a wallet"),
       h("p", {}, "Verify the new sign-in method to add it to this account. Your plan and devices stay here; this does not start a payment."),
       area, h("button", {class:"linkish",onclick:() => this.render()}, "Back to account"));
-    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",purpose:"Verify this wallet to add it to your account. No payment."})).account;
+    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",githubOnly:kind === "github",purpose:"Verify this wallet to add it to your account. No payment."})).account;
     this.render();
   }
 

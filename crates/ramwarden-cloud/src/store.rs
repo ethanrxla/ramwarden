@@ -96,7 +96,7 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 /// Everything the hosted API stores. The site wardens' conversations are a
 /// trait of their own ([`crate::support::SupportStore`]) so this one stays about
 /// accounts and money.
-pub trait Store: crate::support::SupportStore + Send + Sync {
+pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send + Sync {
     // --- device sign-in (RFC 8628)
     /// A new attempt. Returns the raw device code, for the daemon only.
     async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)>;
@@ -178,6 +178,7 @@ struct Inner {
 pub struct MemoryStore {
     inner: Mutex<Inner>,
     support: crate::support::MemorySupport,
+    pub(crate) usage: crate::usage::MemoryUsage,
 }
 
 impl MemoryStore {
@@ -461,9 +462,25 @@ pub mod contract {
         email_codes(s).await;
         accounts_and_billing(s).await;
         identity_claims_are_atomic(s).await;
+        diagnostics_retry_without_double_counting(s).await;
         devices_and_sessions(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
+    }
+
+    async fn diagnostics_retry_without_double_counting(s:&dyn Store) {
+        use crate::usage::{UsageRecord,UsageDay};
+        use ramwarden_core::usage::Metric;
+        let(account,_)=s.account_for_identity(&wallet(89),NOW).await.unwrap();
+        for count in [2,1] {
+            s.save_usage(UsageRecord {account_id:account.id.clone(),device_id:"contract-device".into(),platform:Platform::Macos,
+                data:UsageDay {day:NOW/86400*86400,since:NOW,counters:[(Metric::AppsPaused,count)].into(),bytes_recovered:2048},received_at:NOW}).await.unwrap();
+        }
+        let rows=s.account_usage(&account.id).await.unwrap();assert_eq!(rows.len(),1);
+        assert_eq!(rows[0].data.counters[&Metric::AppsPaused],2);
+        s.save_usage(UsageRecord {account_id:account.id.clone(),device_id:"empty-counters".into(),platform:Platform::Windows,
+            data:UsageDay {day:NOW/86400*86400,since:NOW,..Default::default()},received_at:NOW}).await.unwrap();
+        assert_eq!(s.account_usage(&account.id).await.unwrap().len(),2,"empty summaries round trip");
     }
 
     async fn identity_claims_are_atomic(s: &dyn Store) {

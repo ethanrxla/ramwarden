@@ -142,6 +142,7 @@ impl MongoStore {
         }
         self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
         self.ensure_support_indexes().await?;
+        self.ensure_usage_indexes().await?;
         Ok(())
     }
 }

@@ -17,7 +17,14 @@ struct ReviewTab: Decodable, Identifiable {
 struct TabReview: Decodable { let token: String; let expires_at: Double; let tabs: [ReviewTab] }
 struct TabReviewEnvelope: Decodable { let proposal: TabReview? }
 
+struct FocusChoice: Decodable, Identifiable {
+    let browser: String; let id: Int64; let url: String; let title: String; let selected: Bool
+    var key: String { "\(browser):\(id):\(url)" }
+    var target: ReviewTarget { ReviewTarget(browser:browser,id:id,url:url) }
+}
+struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
 final class CompanionModel: ObservableObject {
+    var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
     @Published var selectedReviewTabs: Set<String> = []
     @Published var reviewBusy = false
@@ -61,11 +68,16 @@ final class CompanionModel: ObservableObject {
     }
     @Published var companionVisible = UserDefaults.standard.bool(forKey:"ram.visible")
     @Published var connected = false
+    @Published var focusMode = false
+    @Published var focusProposal: FocusProposal?
+    @Published var focusSelected: Set<String> = []
+    @Published var focusFeedback = ""
     @Published var thinking = false
     @Published var speaking = false
     @Published var turns: [ChatTurn] = []
     @Published var error: String?
     @Published var tier = ""
+    @Published var name = UserDefaults.standard.string(forKey:"ram.name") ?? "Warden"
     @Published var proposedToken: String?
     @Published var proposedLabel = ""
     @Published var wool = UserDefaults.standard.string(forKey: "ram.wool") ?? "D84545"
@@ -79,9 +91,54 @@ final class CompanionModel: ObservableObject {
             UserDefaults.standard.set(value, forKey: "ram.\(key)")
         }
     }
+    func saveFocus(_ goal: String) {
+        guard goal.count <= 500 else { error = "Keep your focus under 500 characters."; return }
+        thinking = true
+        turns.append(ChatTurn(role:"user",content:goal))
+        Task { @MainActor in
+            defer { thinking = false }
+            do {
+                var req = URLRequest(url:base.appendingPathComponent("warden/focus"))
+                req.httpMethod = "POST"; req.timeoutInterval = 48
+                req.setValue("application/json",forHTTPHeaderField:"Content-Type")
+                req.httpBody = try JSONSerialization.data(withJSONObject:["goal":goal,"name":name])
+                let (data,response) = try await URLSession.shared.data(for:req)
+                guard (response as? HTTPURLResponse)?.statusCode == 200,
+                      let obj = try JSONSerialization.jsonObject(with:data) as? [String:Any],
+                      let reply = obj["reply"] as? String else { error = "Focus wasn't saved. Please try again."; return }
+                focusMode = false; error = nil; focusFeedback = ""
+                if let proposal = obj["proposal"], !(proposal is NSNull) {
+                    focusProposal = try JSONDecoder().decode(FocusProposal.self,from:JSONSerialization.data(withJSONObject:proposal))
+                    focusSelected = Set(focusProposal?.tabs.filter { $0.selected }.map { $0.key } ?? [])
+                } else { focusProposal = nil }
+                turns.append(ChatTurn(role:"assistant",content:reply))
+                CompanionSpeech.shared.say(reply,warden:"ram")
+            } catch { self.error = "Couldn't reach Warden to save your focus." }
+        }
+    }
+    func applyFocusFeedback() {
+        guard let proposal = focusProposal, !thinking else { return }
+        guard Date().timeIntervalSince1970 < proposal.expires_at else { focusProposal = nil; error = "That tab list expired. Tell me your focus again."; return }
+        thinking = true
+        Task { @MainActor in
+            defer { thinking = false }
+            do {
+                struct Feedback: Encodable { let token:String; let selected:[ReviewTarget] }
+                let tabs = proposal.tabs.filter { focusSelected.contains($0.key) }.map { $0.target }
+                var req = URLRequest(url:base.appendingPathComponent("warden/focus/feedback"))
+                req.httpMethod = "POST"; req.timeoutInterval = 8
+                req.setValue("application/json",forHTTPHeaderField:"Content-Type")
+                req.httpBody = try JSONEncoder().encode(Feedback(token:proposal.token,selected:tabs))
+                let (_,response) = try await URLSession.shared.data(for:req)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "Couldn't update that tab list. Try your focus again."; return }
+                focusProposal = nil; focusFeedback = "Preferences updated · \(tabs.count) tabs marked relevant"
+            } catch { self.error = "Couldn't update your tab preferences." }
+        }
+    }
     func send(_ message: String) {
         let message = boundedChatText(message.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !message.isEmpty, !thinking else { return }
+        if focusMode { saveFocus(message); return }
         let history = turns.suffix(4).map { ["role": $0.role, "content": boundedChatText($0.content)] }
         turns.append(ChatTurn(role: "user", content: message))
         error = nil; thinking = true; speaking = false; proposedToken = nil
@@ -105,6 +162,7 @@ final class CompanionModel: ObservableObject {
                     proposedToken = token; proposedLabel = label
                 }
                 turns.append(ChatTurn(role:"assistant",content:reply))
+                CompanionSpeech.shared.say(reply,warden:"ram")
                 if turns.count > 20 { turns.removeFirst(turns.count - 20) }
                 speaking = true
                 Task { @MainActor in
@@ -234,14 +292,22 @@ struct PixelRam: View {
                 let originX=floor((size.width-cell*48)/2)
                 let bob = model.thinking ? (frame%2==0 ? 0.0 : 2.0) : (frame%8<4 ? 0.0 : 1.0)
                 let cells=sprite(frame)
+                // Batch disjoint pixel rectangles by color: parse each palette entry and
+                // submit one fill per color, rather than one per occupied pixel.
+                var paths: [Character: Path] = [:]
                 for y in 0..<48 { for x in 0..<48 {
                     let key=cells[y*48+x]
                     if key != "." {
-                        context.fill(Path(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell)),with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                        paths[key, default: Path()].addRect(CGRect(x:originX+Double(x)*cell,y:Double(y)*cell+bob,width:cell,height:cell))
                     }
                 } }
-                let label = !model.connected ? "Reconnecting…" : model.thinking ? "Thinking…" : "Warden"
-                context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
+                for (key,path) in paths {
+                    context.fill(path,with:.color(palette(key).opacity(model.connected ? 1 : 0.60)))
+                }
+                if !model.connected || model.thinking {
+                    let label = !model.connected ? "Reconnecting…" : "Thinking…"
+                    context.draw(Text(label).font(.system(size:10,weight:.medium)).foregroundColor(.primary),at:CGPoint(x:size.width/2,y:size.height-6))
+                }
             }
         }.overlay(alignment:.top) {
             if model.tabReview != nil {
@@ -275,7 +341,7 @@ struct AssistantView: View {
         VStack(alignment:.leading,spacing:8) {
             HStack(spacing:8) {
                 Circle().fill(model.connected ? Color.green : Color.orange).frame(width:6,height:6)
-                Text("Warden").font(.system(size:12,weight:.semibold))
+                Text(model.name).font(.system(size:12,weight:.semibold))
                 Spacer()
                 Button(action:settings) { Image(systemName:"gearshape").font(.system(size:11)) }.buttonStyle(.plain).accessibilityLabel("Settings")
                 Button(action:dismiss) { Image(systemName:"xmark").font(.system(size:10,weight:.semibold)) }
@@ -288,7 +354,7 @@ struct AssistantView: View {
                         if model.turns.isEmpty { Text("Ask me what’s using RAM or what I’ve been doing.").foregroundStyle(.secondary) }
                         ForEach(model.turns) { turn in
                             VStack(alignment:.leading,spacing:4) {
-                                Text(turn.role == "user" ? "You" : "Warden").font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary)
+                                Text(turn.role == "user" ? "You" : model.name).font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary)
                                 Text(turn.content).font(.system(size:12)).textSelection(.enabled)
                             }.frame(maxWidth:.infinity,alignment:.leading).id(turn.id)
                         }
@@ -317,19 +383,55 @@ struct AssistantView: View {
                     Button("Close selected") { model.answerReview("close") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Keep selected") { model.answerReview("keep") }.disabled(model.selectedReviewTabs.isEmpty)
                     Button("Later") { model.answerReview("later") }
-                }.font(.caption).disabled(model.reviewBusy)
+                }.font(.caption).controlSize(.small).disabled(model.reviewBusy)
             }
-            if model.thinking { ProgressView("Thinking…").controlSize(.small) }
+            if let proposal = model.focusProposal {
+                Text("Relevant to this task").font(.caption.weight(.semibold))
+                ScrollView {
+                    VStack(alignment:.leading,spacing:5) {
+                        ForEach(proposal.tabs,id:\.key) { tab in
+                            Toggle(isOn:Binding(get:{model.focusSelected.contains(tab.key)},set:{ on in
+                                if on { model.focusSelected.insert(tab.key) } else { model.focusSelected.remove(tab.key) }
+                            })) {
+                                VStack(alignment:.leading) {
+                                    Text(tab.title.isEmpty ? "Web page" : tab.title).lineLimit(2)
+                                    Text(URL(string:tab.url)?.host ?? "Web page").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.toggleStyle(.checkbox)
+                        }
+                    }
+                }.frame(maxHeight:130)
+                Button("Use these preferences") { model.applyFocusFeedback() }.controlSize(.small).disabled(model.thinking)
+            }
+            if !model.focusFeedback.isEmpty { Text(model.focusFeedback).font(.caption2).foregroundStyle(.secondary) }
+            if model.focusMode {
+                HStack {
+                    Button("Clear focus") { model.saveFocus("") }
+                    Button("Cancel") { model.focusMode = false }
+                }.font(.caption)
+            }
+            if model.thinking {
+                TimelineView(.periodic(from: .now, by: 3)) { tick in
+                    let lines = ["Discombobulating…", "Babooning…", "Larping…", "Mogging…", "67ing…", "Deez nutzing…"]
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(lines[Int(tick.date.timeIntervalSince1970 / 3) % lines.count])
+                            Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }.accessibilityLabel("Waiting for a response.")
+                }
+            }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
             if model.proposedToken != nil {
                 Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
                     .help(model.proposedLabel)
             }
             HStack {
-                TextField("Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
+                TextField(model.focusMode ? "What are you working on?" : "Ask your ram…",text:$message).focused($inputFocused).textFieldStyle(.plain).font(.system(size:12)).onSubmit { send() }
                 Button(action:send) { Image(systemName:"arrow.up.circle.fill").font(.system(size:19)) }.buttonStyle(.plain).accessibilityLabel("Send message").disabled(model.thinking || message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             }
-        }.padding(12).frame(width:288,height:model.turns.isEmpty ? 64 : 224)
+        }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
             .onAppear { inputFocused = true }
@@ -340,6 +442,7 @@ struct AssistantView: View {
 }
 
 struct ColorsView: View {
+    @AppStorage("ram.speech") private var spoken = false
     @ObservedObject var model: CompanionModel
     func binding(_ key: ReferenceWritableKeyPath<CompanionModel,String>) -> Binding<Color> {
         Binding(get: { ramColor(model[keyPath:key]) }, set: { color in
@@ -349,8 +452,16 @@ struct ColorsView: View {
         })
     }
     var body: some View {
-        VStack(spacing:18) {
+        ScrollView {
+        VStack(spacing:12) {
             Text("Customize your ram").font(.title2.bold())
+            Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
+            TextField("Name",text:Binding(get:{model.name},set:{ value in
+                let name = String(value.prefix(40)); model.name = name
+                UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Warden" : name,forKey:"ram.name")
+            })).textFieldStyle(.roundedBorder).accessibilityLabel("Companion name")
+            PetSizeControl(warden:"ram",label:"RAM companion size")
+            PetSizeControl(warden:"threat",label:"Threat companion size")
             PixelRam(model:model,animated:false).frame(width:180,height:180)
             ColorPicker("Wool",selection:binding(\.wool),supportsOpacity:false)
             ColorPicker("Horns",selection:binding(\.horns),supportsOpacity:false)
@@ -363,6 +474,7 @@ struct ColorsView: View {
             }
             Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
         }.padding(24).frame(width:260)
+        }.frame(width:310,height:660)
     }
 }
 
@@ -375,37 +487,51 @@ final class PetHost: NSHostingView<PixelRam> {
     var onClick: (() -> Void)?
     var onMoved: (() -> Void)?
     var onSettings: (() -> Void)?
+    var onFocus: (() -> Void)?
     var onHide: (() -> Void)?
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for (title, action) in [("Chat",#selector(chatAction)),("Settings…",#selector(settingsAction)),("Hide ram",#selector(hideAction))] {
+        for (title, action) in [("Chat",#selector(chatAction)),("Set current focus…",#selector(focusAction)),("Settings…",#selector(settingsAction)),("Hide ram",#selector(hideAction))] {
             let item = NSMenuItem(title:title,action:action,keyEquivalent:"")
             item.target = self; item.isEnabled = true; menu.addItem(item)
         }
         NSMenu.popUpContextMenu(menu,with:event,for:self)
     }
     @objc func chatAction() { onClick?() }
+    @objc func focusAction() { onFocus?() }
     @objc func settingsAction() { onSettings?() }
     @objc func hideAction() { onHide?() }
 
     var dragged = false
-    override func mouseDown(with event: NSEvent) { dragged = false }
+    var dragStart: NSPoint = .zero
+    var windowStart: NSPoint = .zero
+    override func mouseDown(with event: NSEvent) {
+        dragged = false; dragStart = NSEvent.mouseLocation
+        windowStart = window?.frame.origin ?? .zero
+    }
     override func mouseDragged(with event: NSEvent) {
+        guard let window = window else { return }
+        let mouse = NSEvent.mouseLocation
+        guard dragged || hypot(mouse.x-dragStart.x,mouse.y-dragStart.y) > 3 else { return }
         dragged = true
-        window?.performDrag(with:event)
+        let desired = NSPoint(x:windowStart.x+mouse.x-dragStart.x,y:windowStart.y+mouse.y-dragStart.y)
+        let bounds = NSScreen.screens.first(where: { $0.frame.contains(mouse) })?.visibleFrame ?? window.screen?.visibleFrame
+        if let bounds = bounds {
+            window.setFrame(PetSizing.resizedFrame(NSRect(origin:desired,size:window.frame.size),size:window.frame.size,bounds:bounds),display:true)
+        } else { window.setFrameOrigin(desired) }
         onMoved?()
-        if let origin = window?.frame.origin {
-            UserDefaults.standard.set(origin.x,forKey:"ram.x")
-            UserDefaults.standard.set(origin.y,forKey:"ram.y")
-        }
+        UserDefaults.standard.set(window.frame.minX,forKey:"ram.x")
+        UserDefaults.standard.set(window.frame.minY,forKey:"ram.y")
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick?() } }
 }
 final class Companion: NSObject, NSWindowDelegate {
     let model = CompanionModel()
+    let voice = VoiceModel()
     var pet: PetPanel?
     var chat: ChatPanel?
+    var bubble: BubblePanel?
     var reviewTimer: Timer?
     var positioning = false
     var subscriptions = Set<AnyCancellable>()
@@ -415,29 +541,74 @@ final class Companion: NSObject, NSWindowDelegate {
             Task { @MainActor in await self?.model.pollReview() }
         }
         model.$tabReview.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:true) }
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
-        model.$turns.sink { [weak self] turns in
-            DispatchQueue.main.async { self?.resizeChat(hasTurns:!turns.isEmpty) }
+        model.$focusProposal.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.resizeChat() }
         }.store(in:&subscriptions)
+        model.$turns.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.resizeChat() }
+        }.store(in:&subscriptions)
+        NotificationCenter.default.publisher(for:.wardenPetSizeChanged).sink { [weak self] notification in
+            guard notification.userInfo?["warden"] as? String == "ram" else { return }
+            self?.resizePet()
+        }.store(in:&subscriptions)
+        voice.onChange = { [weak self] in self?.updateBubble() }
+        voice.allowSpeech = { [weak self] in self?.chat?.isVisible != true }
+        voice.onFocusRequested = { [weak self] in self?.requestFocus() }
     }
+    /// Show, move or hide the speech bubble to match what the warden is saying.
+    /// Pets come with Plus and Pro: without one, the ram is put away (the
+    /// user's own show/hide choice is kept for when it comes back).
+    func requestFocus() {
+        model.focusMode = true
+        model.turns.append(ChatTurn(role:"assistant",content:"What are you working on? Let’s see which tabs belong in your little kingdom."))
+        openChat()
+    }
+    func updateBubble() {
+        if !voice.pet {
+            hideBubble()
+            if pet != nil { closeChat(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; model.companionVisible = false }
+            return
+        }
+        if pet == nil && visible { showPet() }
+        guard voice.bubble != nil, let pet = pet, chat?.isVisible != true else { hideBubble(); return }
+        if bubble == nil {
+            let p = BubblePanel(contentRect:NSRect(x:0,y:0,width:272,height:96),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+            p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true
+            p.level = .floating; p.hidesOnDeactivate = false
+            p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
+            p.contentView = NSHostingView(rootView:BubbleView(voice:voice))
+            bubble = p
+        }
+        guard let b = bubble else { return }
+        let size = b.contentView?.fittingSize ?? NSSize(width:272,height:96)
+        b.setContentSize(size)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? pet.frame
+        b.setFrame(PetSizing.attachedFrame(pet:pet.frame,size:size,bounds:bounds,preferAbove:true),display:true)
+        b.orderFrontRegardless()
+    }
+    func hideBubble() { bubble?.orderOut(nil) }
     var colors: NSWindow?
     var visible: Bool { UserDefaults.standard.bool(forKey:"ram.visible") }
-    func restore() { if visible { showPet() } }
+    func restore() { if visible && voice.pet { showPet() } }
     func toggle() {
-        if pet != nil { closeChat(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; UserDefaults.standard.set(false,forKey:"ram.visible") }
+        if pet != nil { CompanionSpeech.shared.stop("ram"); closeChat(); hideBubble(); pet?.orderOut(nil); pet?.contentView = nil; pet = nil; UserDefaults.standard.set(false,forKey:"ram.visible") }
         else { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet() }
         model.companionVisible = pet != nil
     }
     func showPet() {
-        guard pet == nil else { return }
-        let p = PetPanel(contentRect:NSRect(x:100,y:100,width:180,height:180),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+        guard pet == nil, voice.pet else { return }
+        let size = PetSizing.size("ram",scale:PetSizing.scale("ram"))
+        let p = PetPanel(contentRect:NSRect(origin:NSPoint(x:100,y:100),size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false
         p.level = .floating; p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]; p.hidesOnDeactivate = false
         let host = PetHost(rootView:PixelRam(model:model))
         host.onClick = { [weak self] in self?.toggleChat() }
         host.onMoved = { [weak self] in self?.positionChat(movePet:true) }
         host.onSettings = { [weak self] in self?.openColors() }
+        host.onFocus = { [weak self] in self?.requestFocus() }
         host.onHide = { [weak self] in self?.toggle() }
         p.delegate = self
         p.contentView = host
@@ -445,18 +616,32 @@ final class Companion: NSObject, NSWindowDelegate {
         let desired = NSPoint(x:d.object(forKey:"ram.x") as? Double ?? 100,y:d.object(forKey:"ram.y") as? Double ?? 100)
         let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(desired) }) ?? NSScreen.main
         if let frame = screen?.visibleFrame {
-            p.setFrameOrigin(NSPoint(x:max(frame.minX,min(desired.x,frame.maxX-180)),y:max(frame.minY,min(desired.y,frame.maxY-180))))
+            p.setFrame(PetSizing.resizedFrame(NSRect(origin:desired,size:size),size:size,bounds:frame),display:false)
         }
         pet = p; p.orderFrontRegardless()
+    }
+    func resizePet() {
+        guard let pet = pet else { return }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
+        let bounds = screen?.visibleFrame ?? pet.frame
+        let size = PetSizing.size("ram",scale:PetSizing.scale("ram"))
+        positioning = true
+        pet.setFrame(PetSizing.resizedFrame(pet.frame,size:size,bounds:bounds),display:true)
+        positioning = false
+        UserDefaults.standard.set(pet.frame.minX,forKey:"ram.x")
+        UserDefaults.standard.set(pet.frame.minY,forKey:"ram.y")
+        positionChat(movePet:false)
+        updateBubble()
     }
     func toggleChat() {
         if chat?.isVisible == true { closeChat() } else { openChat() }
     }
     func openChat() {
         model.speaking = false
+        hideBubble()
         if pet == nil { UserDefaults.standard.set(true,forKey:"ram.visible"); showPet(); model.companionVisible = true }
         if chat == nil {
-            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.turns.isEmpty ? 80 : 240),styleMask:[.borderless],backing:.buffered,defer:false)
+            let w = ChatPanel(contentRect:NSRect(x:0,y:0,width:304,height:model.chatHeight),styleMask:[.borderless],backing:.buffered,defer:false)
             w.title = "Ram chat"; w.isReleasedWhenClosed = false
             w.isFloatingPanel = true; w.becomesKeyOnlyIfNeeded = false
             w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = true
@@ -465,7 +650,7 @@ final class Companion: NSObject, NSWindowDelegate {
             w.contentView = NSHostingView(rootView:AssistantView(model:model,dismiss:{ [weak self] in self?.closeChat() },settings:{ [weak self] in self?.openColors() }))
             chat = w
         }
-        resizeChat(hasTurns:!model.turns.isEmpty)
+        resizeChat()
         positionChat(movePet:true)
         NSApp.activate(ignoringOtherApps:true)
         chat?.makeKeyAndOrderFront(nil)
@@ -474,28 +659,24 @@ final class Companion: NSObject, NSWindowDelegate {
     func windowDidMove(_ notification: Notification) {
         guard notification.object as? NSWindow === pet else { return }
         positionChat(movePet:false)
+        updateBubble()
     }
     func positionChat(movePet: Bool) {
         guard !positioning, let pet = pet, let chat = chat else { return }
         positioning = true; defer { positioning = false }
         let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x:pet.frame.midX,y:pet.frame.midY)) }) ?? NSScreen.main
         guard let bounds = screen?.visibleFrame else { return }
-        if movePet && pet.frame.minY < bounds.minY + chat.frame.height + 8 {
-            pet.setFrameOrigin(NSPoint(x:pet.frame.minX,y:bounds.minY + chat.frame.height + 8))
-            UserDefaults.standard.set(pet.frame.minY,forKey:"ram.y")
-        }
-        let x = max(bounds.minX,min(pet.frame.midX-chat.frame.width/2,bounds.maxX-chat.frame.width))
-        let y = max(bounds.minY,pet.frame.minY-chat.frame.height-4)
-        chat.setFrameOrigin(NSPoint(x:x,y:y))
+        chat.setFrame(PetSizing.attachedFrame(pet:pet.frame,size:chat.frame.size,bounds:bounds,preferAbove:false),display:true)
     }
-    func resizeChat(hasTurns: Bool) {
+    func resizeChat() {
         guard let chat = chat else { return }
-        var frame = chat.frame; frame.size.height = model.tabReview != nil ? 440 : hasTurns ? 240 : 80
+        var frame = chat.frame; frame.size.height = model.chatHeight
         chat.setFrame(frame,display:true)
         positionChat(movePet:true)
     }
     func closeChat() {
         chat?.orderOut(nil); colors?.close(); NSColorPanel.shared.orderOut(nil)
+        DispatchQueue.main.async { [weak self] in self?.updateBubble() }
     }
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === colors {
@@ -506,7 +687,7 @@ final class Companion: NSObject, NSWindowDelegate {
     }
     func openColors() {
         if colors == nil {
-            let w = NSWindow(contentRect:NSRect(x:0,y:0,width:310,height:420),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            let w = NSWindow(contentRect:NSRect(x:0,y:0,width:310,height:660),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             w.title = "Ram settings"; w.isReleasedWhenClosed = false
             w.level = .floating; w.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
             w.delegate = self

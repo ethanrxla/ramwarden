@@ -312,6 +312,31 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
+  t("usage sharing is optional and can be turned off", async () => {
+    const p = await page(fakeMetaMask);
+    await p.goto(`${base}/account.html?mock=1`);
+    await p.getByRole("button",{name:/MetaMask/}).click();
+    const toggle=p.getByRole("checkbox",{name:"Share usage diagnostics"});
+    assert.equal(await toggle.isChecked(),false);
+    await toggle.check();
+    await p.waitForSelector("#usage-sharing >> text=Sharing starts now");
+    await toggle.uncheck();
+    await p.waitForSelector("#usage-sharing >> text=Usage sharing is off");
+    assert.deepEqual(p.errors, []);
+  });
+
+  t("a signed-in account still explicitly confirms the named device", async () => {
+    const p=await page(fakeMetaMask);
+    await p.goto(`${base}/link.html?mock=1&as=active&code=BCDF-GHJK`);
+    const button=p.getByRole("button",{name:/Connect ethan-desktop/});
+    await button.waitFor();
+    assert.equal(await p.locator('text=Device linked').count(),0);
+    await button.click();
+    await p.waitForSelector("text=Device linked");
+    assert.equal((await p.evaluate(()=>window.__calls)).filter(x=>x.method==="personal_sign").length,0);
+    assert.deepEqual(p.errors, []);
+  });
+
   t("account page: removing a device frees its slot", async () => {
     const p = await page();
     p.on("dialog", (d) => d.accept());

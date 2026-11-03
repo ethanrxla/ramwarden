@@ -315,11 +315,12 @@ pub struct Tabs {
     /// this long idle, whatever its return chance: the newer tab already covers
     /// the site. 0 turns this off.
     pub close_duplicates_after_hours: f64,
-    /// The tab budget: the most recently used tabs kept open per browser. Any
-    /// other tab untouched for `budget_idle_minutes` is closed, whatever its
-    /// return chance. 0 turns the budget off.
+    /// The most recently used tabs kept open per browser. Outside this floor,
+    /// tabs still need every automatic-close safety check; a budget never
+    /// authorizes a closure on its own. 0 disables this keep floor.
     pub keep_tabs: usize,
-    /// How long a tab outside the budget may sit before it is closed.
+    /// Legacy field retained for config compatibility; never overrides the
+    /// automatic-close idle floor and return-chance checks.
     pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
@@ -336,6 +337,60 @@ impl Default for Tabs {
             keep_tabs: 6,
             budget_idle_minutes: 60.0,
             max_close_per_sweep: 10,
+        }
+    }
+}
+
+/// The warden's voice: speech-bubble check-ins about tabs, light comments
+/// and reports of what it did. See `docs/specs/warden-voice.md`.
+///
+/// Every limit here is a ceiling on how often the warden speaks; none of them
+/// widens what may be closed. With the voice off, closing behaves exactly as
+/// it did without it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Voice {
+    /// Off silences the warden entirely.
+    pub enabled: bool,
+    /// Ask "coming back to this tab?" before the sweep closes it.
+    pub ask_about_tabs: bool,
+    pub ask_about_focus: bool,
+    /// Light comments about memory and tabs.
+    pub quips: bool,
+    /// Only tabs idle at least this long are asked about.
+    pub ask_after_minutes: f64,
+    /// At least this long between any two bubbles.
+    pub min_gap_minutes: f64,
+    /// At least this long between two check-ins.
+    pub ask_every_minutes: f64,
+    /// At least this long between two quips.
+    pub quip_every_minutes: f64,
+    /// At most this many bubbles a day (replies to a choice not counted).
+    pub max_per_day: usize,
+    /// At most this many jokes a day, within `max_per_day`. The user asked
+    /// for a warden that is never annoying; the website allows 3 a visit.
+    pub max_quips_per_day: usize,
+    /// "Yes, keep it" holds a tab out of automatic closing this long.
+    pub keep_hours: f64,
+    /// "Ask me later" (or ignoring the question) waits this long to ask again.
+    pub later_hours: f64,
+}
+
+impl Default for Voice {
+    fn default() -> Self {
+        Voice {
+            enabled: true,
+            ask_about_tabs: true,
+            ask_about_focus: true,
+            quips: true,
+            ask_after_minutes: 60.0,
+            min_gap_minutes: 30.0,
+            ask_every_minutes: 45.0,
+            quip_every_minutes: 120.0,
+            max_per_day: 6,
+            max_quips_per_day: 3,
+            keep_hours: 24.0,
+            later_hours: 6.0,
         }
     }
 }
@@ -605,6 +660,7 @@ pub struct Config {
     pub gpu: Gpu,
     pub wardens: Wardens,
     pub tabs: Tabs,
+    pub voice: Voice,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -633,6 +689,7 @@ struct Raw {
     gpu: Gpu,
     wardens: Wardens,
     tabs: Tabs,
+    voice: Voice,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -712,6 +769,7 @@ impl Default for Config {
             gpu: Gpu::default(),
             wardens: Wardens::default(),
             tabs: Tabs::default(),
+            voice: Voice::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -772,6 +830,13 @@ fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
 
 /// `var` from the environment, else from the first `.env` that sets it. The
 /// environment wins, as it does for every other key.
+/// Read an integration secret without adding it to debug-printable configuration.
+pub fn integration_secret(cfg: &Config, var: &str) -> Option<String> {
+    let mut paths = vec![config_dir().join("ramwarden").join(".env")];
+    if let Some(parent) = cfg.source.as_ref().and_then(|p|p.parent()) { paths.insert(0,parent.join(".env")); }
+    secret_from_env(var,&paths)
+}
+
 fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
     if let Ok(v) = std::env::var(var)
         && !v.trim().is_empty()
@@ -925,6 +990,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         gpu: raw.gpu,
         wardens: raw.wardens,
         tabs: raw.tabs,
+        voice: raw.voice,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
