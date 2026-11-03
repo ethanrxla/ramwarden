@@ -21,7 +21,10 @@ struct SetupView: View {
     @State private var connectURL: URL?
     @State private var loginProcess: Process?
     private let titles = ["Welcome", "Your account", "Install or update", "Check your warden", "Bring your other PCs"]
-    private var site: String { ProcessInfo.processInfo.environment["RAMWARDEN_SETUP_SITE"] == "http://localhost:8000" ? "http://localhost:8000" : "https://ramwarden.com" }
+    private var site: String {
+        let configured = ProcessInfo.processInfo.environment["RAMWARDEN_SETUP_SITE"] ?? (Bundle.main.object(forInfoDictionaryKey: "WardenSiteURL") as? String) ?? "https://ramwarden.com"
+        return configured == "http://localhost:8000" ? configured : "https://ramwarden.com"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("A little setup. A lot more breathing room.").font(.largeTitle.bold())
@@ -56,14 +59,18 @@ struct SetupView: View {
                     Text("Give your own agent this request. It contains no keys, pass files, or personal install links. Your account’s remaining allowance is always checked by the server.")
                     Picker("Plan guidance", selection: $allowance) { Text("Lite · 1 PC").tag(1); Text("Plus · 3 PCs").tag(3); Text("Pro · 5 PCs").tag(5) }.pickerStyle(.segmented)
                     Text("Choosing a plan here only changes the request. It does not purchase or unlock anything.").font(.caption).foregroundStyle(.secondary)
-                    Button(copied ? "Copied" : "Copy agent setup request") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(prompt, forType: .string); copied = true }
+                    Button(copied ? "Copied" : "Copy setup request + agent skill") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(prompt + "\n\n" + bundledSkill, forType: .string); copied = true }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Spacer()
-            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text("Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { NSApp.terminate(nil) } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red) }
+            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { NSApp.terminate(nil) } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red) }
         }.padding(32).onDisappear { loginProcess?.terminate() }
     }
     private func open(_ path: String) { if let url = URL(string: site + path) { NSWorkspace.shared.open(url) } }
+    private var bundledSkill: String {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("agent-skill/SKILL.md") else { return "" }
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    }
     private var prompt: String {
         "Help me set up RamWarden on up to \(allowance) of my chosen computers within my account’s remaining device allowance. Follow https://github.com/ethanrxla/ramwarden/blob/main/agent/skills/ramwarden/SKILL.md. Check each OS and existing installation first; update in place and preserve settings, credentials, and history. Use only remote access I already authorized. Sign each computer in separately using its own approval code; never copy tokens, fingerprints, signed passes, or reuse an install link. Ask me before granting remote access or changing network/security settings. Verify daemon health, companion, and browser extension per computer. Do not buy anything. Report actual results."
     }
@@ -114,7 +121,7 @@ struct SetupView: View {
             for (label, args) in definitions {
                 let file = agents.appendingPathComponent(label + ".plist")
                 // Stage definitions before payload install; installation only starts on this button.
-                let plist: [String: Any] = ["EnvironmentVariables": ["RAMWARDEN_CONFIG":home.appendingPathComponent(".config/ramwarden/config.toml").path,"PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"], "Label": label, "ProgramArguments": args, "RunAtLoad": true, "KeepAlive": true, "ThrottleInterval": 60, "ProcessType": "Background", "StandardOutPath": home.appendingPathComponent("Library/Logs/" + label + ".log").path, "StandardErrorPath": home.appendingPathComponent("Library/Logs/" + label + ".err.log").path]
+                let plist: [String: Any] = ["EnvironmentVariables": ["RAMWARDEN_CONFIG":home.appendingPathComponent(".config/ramwarden/config.toml").path,"PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"], "Label": label, "ProgramArguments": args, "RunAtLoad": true, "KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 60, "ProcessType": label == "com.ramwarden.menubar" ? "Interactive" : "Background", "StandardOutPath": home.appendingPathComponent("Library/Logs/" + label + ".log").path, "StandardErrorPath": home.appendingPathComponent("Library/Logs/" + label + ".err.log").path]
                 let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 try data.write(to: file, options: .atomic)
             }

@@ -21,38 +21,41 @@ impl Work {
 /// Cheap first pass. Unknown requests that need tools use Terra rather than
 /// paying for a separate model call just to reword every message.
 pub fn classify(message: &str) -> Work {
-    let m = message.to_lowercase();
-    if [
-        "migrate",
-        "multi-machine",
-        "across my computers",
-        "deploy",
-        "refactor",
-        "root cause",
-    ]
-    .iter()
-    .any(|w| m.contains(w))
+    let normalized = message.trim().to_lowercase();
+    let mut m = normalized.as_str();
+    for prefix in ["please ", "can you ", "could you ", "please "] {
+        m = m.strip_prefix(prefix).unwrap_or(m);
+    }
+    let words: Vec<_> = m
+        .split(|c: char| !c.is_alphanumeric() && c != '-')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let Some(first) = words.first() else {
+        return Work::Conversation;
+    };
+    if ["explain", "what", "why", "hello", "hi", "tell"].contains(first) {
+        return Work::Conversation;
+    }
+    if ["migrate", "deploy", "refactor"].contains(first)
+        || m.contains("root cause")
+        || m.contains("across my computers")
+        || words.contains(&"multi-machine")
     {
         return Work::Complex;
     }
-    if [
-        "terminal", "command", "script", "folder", "file", "install", "download", "network", "ssh",
-        "browser", "tab", "ram", "memory", "app",
-    ]
-    .iter()
-    .any(|w| m.contains(w))
-    {
-        if [
-            "create ", "move ", "rename ", "free ", "unload ", "resume ", "pause ",
-        ]
-        .iter()
-        .any(|w| m.starts_with(w))
-            && !m.contains(" and ")
-        {
-            Work::Routine
-        } else {
-            Work::MultiStep
-        }
+    let routine = [
+        "create", "move", "rename", "free", "unload", "resume", "pause",
+    ];
+    if routine.contains(first) && !words.contains(&"and") && words.len() <= 24 {
+        return Work::Routine;
+    }
+    let tools = [
+        "create", "move", "rename", "free", "unload", "resume", "pause", "open", "close", "list",
+        "read", "find", "search", "check", "scan", "start", "stop", "install", "download",
+        "connect", "run", "execute", "edit", "delete", "inspect", "diagnose", "fix",
+    ];
+    if tools.contains(first) {
+        Work::MultiStep
     } else {
         Work::Conversation
     }
@@ -63,6 +66,9 @@ mod tests {
     #[test]
     fn routes_by_work_not_personality() {
         assert_eq!(classify("tell me a joke"), Work::Conversation);
+        assert_eq!(classify("happy birthday"), Work::Conversation);
+        assert_eq!(classify("explain what a deployment is"), Work::Conversation);
+        assert_eq!(classify("please free RAM"), Work::Routine);
         assert_eq!(classify("free ram"), Work::Routine);
         assert_eq!(
             classify("inspect network connections and explain the slowdown"),
