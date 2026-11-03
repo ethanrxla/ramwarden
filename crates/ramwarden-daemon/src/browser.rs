@@ -20,6 +20,8 @@ pub struct Row {
     pub eligible: bool,
     /// The user may close it by hand (manual close, the review checklist).
     pub closeable: bool,
+    /// The live extension can acknowledge identity-scoped closes.
+    pub safe_close_supported: bool,
     /// The sweep may close it unattended: [`can_auto_close_at`]. Stricter than
     /// `closeable`; a legacy extension's tabs are closeable but never this.
     pub auto_closeable: bool,
@@ -181,6 +183,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 inactive_minutes: t.inactive_minutes.max(0),
                 eligible,
                 closeable: can_close(t),
+                safe_close_supported: t.safe_close_supported,
                 auto_closeable: can_auto_close_at(t, now_ms),
                 work,
                 status,

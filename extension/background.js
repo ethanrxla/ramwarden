@@ -284,6 +284,7 @@ async function buildTabReport(activity) {
           autoDiscardable: tab.autoDiscardable !== false,
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
+          safeCloseSupported: !IS_FIREFOX, // correlated close acknowledgements use the live socket
           activations: known?.activations ?? [],
           activityVersion: 1,
           workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,

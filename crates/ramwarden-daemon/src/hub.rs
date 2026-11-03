@@ -308,6 +308,13 @@ impl AppState {
                 && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
                 && (approved || auto.contains(target)));
             if !valid { result.refused.push(target.clone()); continue; }
+            // Never infer command support from discard support or files on disk:
+            // Chrome may still run the pre-update cached service worker.
+            if !rows.iter().any(|r| &r.target == target && r.safe_close_supported) {
+                tracing::warn!(browser = %target.browser, "safe close unavailable: reload the RamWarden browser extension");
+                result.extension_update_required.push(target.clone());
+                result.refused.push(target.clone()); continue;
+            }
             let request=uuid::Uuid::new_v4().to_string();
             let rx = {
                 let mut hub=self.hub.lock().unwrap();
@@ -479,6 +486,20 @@ mod tests {
     }
 
     #[test]
+    fn safe_close_ack_is_correlated_and_only_accepted_from_its_owner() {
+        let (mut hub, _) = hub_with_socket();
+        let (tx, mut rx) = oneshot::channel();
+        hub.discard_waiters.insert("request-7".into(), ("brave01".into(), tx));
+        hub.deliver_discard("different-browser", "request-7", vec![7]);
+        assert!(matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        hub.deliver_discard("brave01", "different-request", vec![7]);
+        assert!(matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        hub.deliver_discard("brave01", "request-7", vec![7]);
+        assert_eq!(rx.try_recv().unwrap(), vec![7]);
+        assert!(!hub.discard_waiters.contains_key("request-7"));
+    }
+
+    #[test]
     fn attaching_registers_the_browser_as_a_socket() {
         let (hub, _rx) = hub_with_socket();
         assert_eq!(hub.reg.socket_count(), 1);
@@ -582,6 +603,9 @@ mod tests {
 
 #[derive(Default, serde::Serialize)]
 pub struct DiscardResult {
+    /// The connected worker predates correlated safe closes. Reload, never fall back
+    /// to an unguarded legacy close command.
+    pub extension_update_required: Vec<crate::browser::Target>,
     pub confirmed: Vec<crate::browser::Target>,
     pub queued: Vec<crate::browser::Target>,
     pub refused: Vec<crate::browser::Target>,

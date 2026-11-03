@@ -372,6 +372,7 @@ impl Voice {
     fn ask_about<'a>(s: &Inner, cfg: &config::Voice, scene: &Scene<'a>) -> Option<&'a Row> {
         let askable = |r: &&Row| {
             r.closeable
+                && r.safe_close_supported
                 && r.inactive_minutes as f64 >= cfg.ask_after_minutes
                 && !s.answered(&r.target, cfg, scene.now)
         };

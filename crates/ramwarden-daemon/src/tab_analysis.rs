@@ -196,6 +196,7 @@ mod tests {
             inactive_minutes: 300,
             eligible,
             closeable,
+            safe_close_supported: true,
             auto_closeable: closeable,
             work: false,
             status,
