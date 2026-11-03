@@ -625,7 +625,6 @@ pub mod contract {
 
     async fn devices_and_sessions(s: &dyn Store) {
         let (a, _) = s.account_for_identity(&wallet(2), NOW).await.unwrap();
-        s.update_billing(&a.id, &BillingUpdate { tier:Some(Tier::Pro), paid_until:Some(NOW+100), ..Default::default() }).await.unwrap();
         let mut tokens = vec![];
         for i in 0..DEVICE_LIMIT {
             if i == 1 {
