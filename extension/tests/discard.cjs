@@ -176,3 +176,26 @@ test('safe close sends request-correlated confirmation including explicit refusa
     assert.deepEqual(JSON.parse(JSON.stringify(sent)),[{action:'tabs_closed_safe',requestId:'r',tabIds:active?[]:[7]}]);
   }
 });
+
+test('standalone Lite is opt-in, keeps the recent budget and only unloads eligible tabs',async()=>{
+ const f=fixture();
+ const active={...f.tab,id:1,active:true,lastAccessed:Date.now()};
+ f.chrome.tabs.query=(_,cb)=>cb([active,f.tab]);
+ f.chrome.tabs.get=(id,cb)=>cb(id===1?active:f.tab);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:false,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:true,liteBudget:1});
+ assert.deepEqual(Array.from(await f.context.runStandaloneLite()),[7]);
+ assert.equal(active.discarded,false);
+});
+test('standalone Lite yields to a connected desktop daemon',async()=>{
+ const f=fixture();f.context._badge(true);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:true,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);assert.equal(f.discards.length,0);
+});
+
+test('standalone Lite rechecks opt-in immediately before unloading',async()=>{
+ const f=fixture();const active={...f.tab,id:1,active:true,lastAccessed:Date.now()};f.chrome.tabs.query=(_,cb)=>cb([active,f.tab]);let reads=0;
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:++reads===1,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);assert.equal(f.discards.length,0);
+});

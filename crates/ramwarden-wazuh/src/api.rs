@@ -61,6 +61,9 @@ pub struct Alert {
     pub rule_id: String,
     pub level: u8,
     pub description: String,
+    /// Bounded event metadata only. Never raw logs, diffs or file contents.
+    #[serde(default, skip_serializing_if="std::collections::BTreeMap::is_empty")]
+    pub evidence: std::collections::BTreeMap<String,String>,
     #[serde(default)]
     pub groups: Vec<String>,
     /// MITRE ATT&CK tactics, when the rule maps to any.
@@ -234,7 +237,7 @@ pub fn alert_query(agent: &str, min_level: u8, hours: u32) -> Value {
     json!({
         "size": MAX_ALERTS,
         "sort": [{"timestamp": {"order": "desc"}}],
-        "_source": ["timestamp", "rule.id", "rule.level", "rule.description", "rule.groups", "rule.mitre.tactic"],
+        "_source": ["timestamp", "rule.id", "rule.level", "rule.description", "rule.groups", "rule.mitre.tactic", "syscheck.path", "syscheck.event", "data.srcip", "data.dstip", "data.win.eventdata.image"],
         "query": {"bool": {"filter": [
             {"term": {"agent.name": agent}},
             {"range": {"rule.level": {"gte": min_level}}},
@@ -279,6 +282,8 @@ pub fn parse_alerts(body: &Value) -> Result<Vec<Alert>> {
             let s = &h["_source"];
             let rule = &s["rule"];
             Some(Alert {
+                evidence: [("file", &s["syscheck"]["path"]),("event", &s["syscheck"]["event"]),("source_ip", &s["data"]["srcip"]),("destination_ip", &s["data"]["dstip"]),("process", &s["data"]["win"]["eventdata"]["image"])]
+                    .into_iter().filter_map(|(k,v)|v.as_str().map(|v|(k.to_string(),v.chars().take(512).collect()))).collect(),
                 timestamp: s["timestamp"].as_str().unwrap_or_default().to_string(),
                 rule_id: match &rule["id"] {
                     Value::String(id) => id.clone(),
@@ -301,6 +306,14 @@ pub fn parse_alerts(body: &Value) -> Result<Vec<Alert>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_evidence_excludes_raw_logs_and_file_contents() {
+        let alerts=parse_alerts(&json!({"hits":{"hits":[{"_source":{"timestamp":"now","rule":{"id":"550","level":7,"description":"File changed"},"syscheck":{"path":"/tmp/example","event":"modified","diff":"SECRET CONTENT"},"full_log":"SECRET RAW LOG"}}]}})).unwrap();
+        assert_eq!(alerts[0].evidence["file"],"/tmp/example");
+        let serialized=serde_json::to_string(&alerts).unwrap();assert!(!serialized.contains("SECRET"));
+        let query=alert_query("agent",7,24);assert!(!query["_source"].as_array().unwrap().iter().any(|s|s=="full_log" || s=="syscheck.diff"));
+    }
 
     #[test]
     fn plain_http_is_refused_off_this_machine() {

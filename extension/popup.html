@@ -93,6 +93,10 @@
       padding: 7px 16px; color: #475569; font-size: 11px;
       border-top: 1px solid #1e293b; text-align: center;
     }
+    .pane-tabs {display:flex;padding:8px;gap:6px}.pane-tabs button{flex:1;background:#241e32;color:#dbcbe6;border:1px solid #5d436c;border-radius:8px;padding:8px;cursor:pointer}.pane-tabs button[aria-selected="true"]{background:#6a2345;color:white} [hidden]{display:none!important}
+    #threat-pane{background:#161122} #threat-detail{font-size:12px;color:#c5b7d7;line-height:1.5;margin:8px 0} #threat-engines{font-size:12px;line-height:1.7}
+    #threat-alerts{max-height:260px;overflow-y:auto;margin-top:10px}.security-alert{padding:9px;background:#21192e;border:1px solid #543c67;border-radius:8px;margin-bottom:8px;line-height:1.5;overflow-wrap:anywhere}.security-alert strong{color:#e9b99b}.security-alert time{display:block;font-size:10px;color:#a89bb7}
+    #account-plan a{color:#dfb1f5;font-size:12px}#threat-refresh{width:100%;margin:10px 0;background:#654199}
   </style>
 </head>
 <body>
@@ -103,8 +107,14 @@
     <span id="ram-pct" style="font-size:12px;color:#94a3b8">—</span>
   </header>
 
+  <nav class="pane-tabs" role="tablist" aria-label="Wardens">
+    <button id="ram-tab" role="tab" aria-selected="true" aria-controls="ram-pane">RamWarden</button>
+    <button id="threat-tab" role="tab" aria-selected="false" aria-controls="threat-pane">ThreatWarden</button>
+  </nav>
+  <section id="ram-pane" role="tabpanel" aria-labelledby="ram-tab">
   <div id="warden" class="warden" hidden aria-live="polite"></div>
 
+  <div class="section"><label><input type="checkbox" id="lite-enabled"> Free Lite browser cleanup</label><p style="font-size:11px;color:#94a3b8">When the desktop app is offline, unload eligible tabs idle for an hour. Tabs stay open and reload when selected. Active work is protected.</p><label>Keep recent tabs <input id="lite-budget" type="number" min="1" max="50" value="6" style="width:48px"></label></div>
   <div class="ram-bar-wrap">
     <div class="ram-label">
       <span>RAM Usage</span>
@@ -131,10 +141,15 @@
     <div id="history-list"><span style="color:#475569">Loading…</span></div>
   </div>
 
+  </section>
+  <section id="threat-pane" role="tabpanel" aria-labelledby="threat-tab" hidden>
+    <div class="section"><h2 style="font-size:15px">ThreatWarden</h2><p id="threat-headline">Checking protection…</p><p id="threat-detail"></p><div id="threat-engines"></div><div id="threat-alerts" aria-label="Reported security alerts"></div><button id="threat-refresh" class="action">Refresh security report</button></div>
+  </section>
+  <div class="section" id="account-plan"><a id="account-link" href="https://ramwarden.com/account.html" target="_blank" rel="noopener">Connect account · Upgrade with wallet or card</a><p style="font-size:11px;color:#94a3b8">Wallet sign-in does not make a payment. Checkout names the network and asks for your approval.</p></div>
   <div class="daemon-row">
     <span>Daemon</span>
     <input type="text" id="daemon-host-input" placeholder="localhost:7823" />
-    <button onclick="saveDaemonHost()">Save</button>
+    <button id="save-daemon-host">Save</button>
   </div>
   <div id="daemon-host-status" style="color:#f59e0b;font-size:11px;padding:0 10px 6px"></div>
 

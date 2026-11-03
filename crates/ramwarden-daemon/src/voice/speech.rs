@@ -6,8 +6,8 @@ use serde_json::json;
 use crate::hub::AppState;
 use ramwarden_core::config::integration_secret;
 
-pub const RAM_VOICE: &str = "JBFqnCBsd6RMkjVDRZzb";
-pub const THREAT_VOICE: &str = "onwK4e9ZLuTAKqWW03F9";
+pub const RAM_VOICE: &str = "ib8aaABAPZQpTo6hx8Jr";
+pub const THREAT_VOICE: &str = "DMyrgzQFny3JI1Y1paM5";
 #[derive(Default)]
 struct Usage { day: u64, minute: u64, calls: u32, chars: usize, cache: HashMap<(String,String),Vec<u8>> }
 static USAGE: OnceLock<Mutex<Usage>> = OnceLock::new();
@@ -19,7 +19,7 @@ pub async fn speak(State(st): State<AppState>, Json(request): Json<Request>) -> 
     if !matches!(request.warden.as_str(),"ram"|"threat") || request.text.trim().is_empty() || request.text.chars().count()>800 {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    if !st.cfg.voice.enabled || st.voice.mute_state(super::unix_now()).0 { return Err(StatusCode::FORBIDDEN); }
+    if !st.cfg.voice.enabled || (request.warden=="ram" && st.voice.mute_state(super::unix_now()).0) { return Err(StatusCode::FORBIDDEN); }
     let key = integration_secret(&st.cfg,"ELEVENLABS_API_KEY").ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let voice = integration_secret(&st.cfg,if request.warden=="ram" {"ELEVENLABS_RAM_VOICE_ID"} else {"ELEVENLABS_THREAT_VOICE_ID"})
         .unwrap_or_else(||if request.warden=="ram" {RAM_VOICE.into()} else {THREAT_VOICE.into()});
@@ -41,6 +41,7 @@ pub async fn speak(State(st): State<AppState>, Json(request): Json<Request>) -> 
         .header("xi-api-key",key).json(&json!({"text":request.text,"model_id":model,
             "voice_settings":{"stability":if request.warden=="ram" {0.45} else {0.65},"similarity_boost":0.75}}))
         .send().await.map_err(|_|StatusCode::BAD_GATEWAY)?;
+    if response.status()==StatusCode::PAYMENT_REQUIRED { return Err(StatusCode::PAYMENT_REQUIRED); }
     if !response.status().is_success() || response.content_length().is_some_and(|n|n>2_000_000) { return Err(StatusCode::BAD_GATEWAY); }
     let bytes = response.bytes().await.map_err(|_|StatusCode::BAD_GATEWAY)?.to_vec();
     if bytes.len()>2_000_000 { return Err(StatusCode::BAD_GATEWAY); }

@@ -105,3 +105,11 @@ helper, menu app, browser extension and default configuration. A staged installa
 test preserves existing config, secrets and history. It does not run live launchd
 jobs in the test. Public distribution still requires completed Developer ID signing
 and notarization; the local preview is not a public release.
+
+## Companion and agent boundary (November 3)
+
+RAM and security now share a native companion base and conversation transport, with separate profiles and server personas. The security companion can explain its measured Wazuh report and recent rule alerts; it does not inherit RAM action proposals. The browser extension has separate RAM and ThreatWarden panes and opted-in standalone Lite unloading. This is not a general terminal agent yet.
+
+The next Warp-style implementation must add a typed tool registry and streamed plan/tool/result events before granting file or terminal powers. Preserve original requests and exact arguments through routing and Nyquest. Use Grok for conversation and the configured Luna/Terra/Sol planner for tool workflows, without changing the operator's personal Nemotron test setup.
+
+Start with read-only diagnostics and a workspace the user explicitly chooses. File changes preview exact paths and contents; terminal tools use program/argument arrays and a bounded allowlist, never free-form shell text. Every mutation consumes an expiring, single-use confirmation bound to the exact tool, arguments and observed target. New tool output, file contents, browser text and security logs are untrusted observations, not authorization. No elevation, file deletion, network exposure, quarantine or arbitrary command execution is enabled by persona or model selection. Keep cancellation, time/output limits and an audit trail in the executor. Shared UI code is not a shared permission grant.

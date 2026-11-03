@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 fn state() -> AppState {
-    let mut cfg = Config::default();
+    let mut cfg = Config { db_path:std::env::temp_dir().join(format!("warden-assistant-test-{}",uuid::Uuid::new_v4())).join("history.db"), ..Default::default() };
     cfg.ollama.host = "http://127.0.0.1:1".into();
     cfg.nvidia.api_key = "test-only-key".into();
     cfg.nvidia.enabled = false;
@@ -186,4 +186,14 @@ async fn free_ram_proposes_only_eligible_tabs_without_executing() {
     let v:Value=serde_json::from_slice(&to_bytes(response.into_body(),100000).await.unwrap()).unwrap();
     assert!(v["proposed_action"].is_null());
     assert!(v["reply"].as_str().unwrap().contains("no reported tabs currently qualify"));
+}
+
+#[tokio::test]
+async fn threat_persona_does_not_inherit_memory_actions_or_bypass_its_pass() {
+    let response=request(state(),json!({"message":"free ram and scan my files","warden":"threat"}),None).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let value:Value=serde_json::from_slice(&to_bytes(response.into_body(),100000).await.unwrap()).unwrap();
+    assert!(value["proposed_action"].is_null());assert_eq!(value["tier"],"facts");
+    assert!(value["reply"].as_str().unwrap().contains("Pro pass"));
+    assert_eq!(request(state(),json!({"message":"hi","warden":"unknown"}),None).await.status(),StatusCode::BAD_REQUEST);
 }
