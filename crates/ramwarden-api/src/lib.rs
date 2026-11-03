@@ -52,3 +52,5 @@ pub use routes::{AppState, router};
 pub mod usage;
 
 pub mod github;
+
+pub mod threat;

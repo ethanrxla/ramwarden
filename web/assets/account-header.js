@@ -41,6 +41,7 @@ export class HeaderAccount {
     this.link.title=`Signed in as ${identity.full || identity.label}. Open account and devices.`;
     this.link.append(avatar(identity.kind),h('span',{class:'account-identity'},identity.label));
     if(account.plan==='plus' || account.tier==='ram' && ['trial','active','grace'].includes(account.status)) this.link.append(h('span',{class:'account-plan-badge',title:'RamWarden Plus','aria-label':'Plus'},'⚡'));
+    if(account.plan==='pro' || account.tier==='pro' && ['trial','active','grace'].includes(account.status)) this.link.append(h('span',{class:'account-plan-badge',title:'RamWarden Pro','aria-label':'Pro'},'🐐'));
     this.link.append(h('span',{class:'account-online','aria-hidden':'true'}));
   }
   closeDetails() { this.details?.remove();this.details=null;this.link.setAttribute('aria-expanded','false'); }

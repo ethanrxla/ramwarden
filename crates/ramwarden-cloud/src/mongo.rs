@@ -144,6 +144,7 @@ impl MongoStore {
         self.ensure_named_index(DEVICES, index(doc!{"account_id":1,"slot":1}, IndexOptions::builder()
             .name("account_slot_unique".to_string()).unique(true)
             .partial_filter_expression(doc!{"slot":{"$type":"number"}}).build())).await?;
+        self.ensure_named_index(DEVICES,index(doc!{"security.agent_id":1},IndexOptions::builder().name("security_agent_unique".to_string()).unique(true).partial_filter_expression(doc!{"security.agent_id":{"$type":"string"}}).build())).await?;
         self.ensure_support_indexes().await?;
         self.ensure_usage_indexes().await?;
         Ok(())
@@ -420,7 +421,7 @@ impl Store for MongoStore {
             }
             let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
             let raw = random_token("rwdt_");
-            let d = Device { slot:Some(slot), id:new_id(), account_id:account_id.to_string(),
+            let d = Device { security:None, slot:Some(slot), id:new_id(), account_id:account_id.to_string(),
                 name:name.to_string(), platform, created_at:now, last_seen_at:now, token_hash:hash(&raw) };
             match self.devices().insert_one(&d).await {
                 Ok(_) => return Ok(Some((d,raw))),
@@ -439,6 +440,14 @@ impl Store for MongoStore {
             .await?)
     }
 
+    async fn bind_security(&self, account_id:&str, device_id:&str, binding:&SecurityBinding)->Result<bool> {
+        match self.devices().update_one(doc!{"_id":device_id,"account_id":account_id,"security":{"$exists":false}},doc!{"$set":{"security":to_bson(binding)}}).await {
+            Ok(result) if result.matched_count==1=>Ok(true),
+            Ok(_)=>Ok(self.devices().find_one(doc!{"_id":device_id,"account_id":account_id,"security":to_bson(binding)}).await?.is_some()),
+            Err(error) if is_duplicate_key(&error)=>Ok(false),
+            Err(error)=>Err(error.into()),
+        }
+    }
     async fn devices(&self, account_id: &str) -> Result<Vec<Device>> {
         use futures::TryStreamExt;
         Ok(self

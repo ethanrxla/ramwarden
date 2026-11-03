@@ -103,6 +103,7 @@ pub struct Site {
 /// Everything accounts need. Absent, these routes answer 503 and the server
 /// is phase 1 only.
 pub struct Cloud {
+    pub threat: crate::threat::ThreatDesk,
     pub store: Arc<dyn Store>,
     pub plans: Arc<Plans>,
     pub site: Site,
@@ -136,6 +137,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .merge(crate::install::routes())
         .merge(crate::support::routes())
         .merge(crate::usage::routes())
+        .merge(crate::threat::routes())
 }
 
 pub type Reply = Result<Response, Response>;

@@ -105,6 +105,7 @@ async fn run() -> Result<(), String> {
                 }
             };
             Some(Cloud {
+                threat: ramwarden_api::threat::ThreatDesk::from_env().map_err(|_| "Invalid private Wazuh service configuration".to_string())?,
                 store,
                 plans,
                 site: Site { domain: cc.site_domain.clone(), origin: cc.site_origin.clone() },
