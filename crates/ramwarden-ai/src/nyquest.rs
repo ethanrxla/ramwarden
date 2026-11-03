@@ -1,4 +1,4 @@
-//! Optional local/hosted-sidecar compression. Never changes user/system/tools.
+//! Required sidecar compression for long hosted calls. Never changes user/system/tools.
 use serde_json::{Value, json};
 use std::time::Duration;
 fn prose(v: &Value) -> bool {

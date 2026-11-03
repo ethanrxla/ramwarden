@@ -1,4 +1,4 @@
-//! Opt-in hosted model routing; executor permissions stay with the caller.
+//! Hosted model routing; executor permissions stay with the caller.
 use crate::routing::Work;
 use serde_json::{Value, json};
 use std::{sync::OnceLock, time::Duration};
