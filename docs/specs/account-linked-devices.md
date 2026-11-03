@@ -10,7 +10,7 @@ claim that installation or a green test proves coverage.
 | Requirement | Evidence needed before completion | Current evidence / remaining work |
 | --- | --- | --- |
 | Developer account and both devices | Verified email/wallet sign-in, two distinct device tokens, same server account, valid Pro entitlement | Live email sign-in verified on 2026-11-03. Newer hosted-account work now grants audited complimentary Pro access; the live page shows the Mac linked (1 of 5). Its saved signed Pro entitlement unlocks both panes. Windows linking and end-to-end coverage remain unverified. |
-| Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Manager agents 001 (Windows) and 002 (Mac) confirmed active on 2026-11-02; records from both arrive. Neither is yet proven bound to the developer account. |
+| Wazuh on both devices | Manager lists both agents as connected; harmless synthetic events arrive under the correct account | Both agents remain active on 2026-11-03. Mac agent 002's hardware identity matches the Mac reached over SSH and is now bound to its verified Pro device in Atlas. Windows agent 001 still needs an account device and verified binding. Hosted status deployment remains. |
 | ClamAV | Current signatures, scan-only execution and safe test detection delivered through Wazuh on both devices | Windows scan records reach the manager; Mac installation not found in Homebrew. Keep Defender enabled. No automatic deletion/quarantine. |
 | Suricata | Capture works on intended interface; safe fixture produces an IDS alert through Wazuh | Windows alerts reach the manager; Mac installation not found in Homebrew. Check Npcap availability/licensing on Windows. |
 | App/extension sign-in | Extension opens wallet/email device approval; daemon alone stores its device token; both show the same account | Bridge and popup implemented in PR34; real Chrome popup flow passes with a mocked backend. Live email approval and installation remain. |
@@ -239,6 +239,32 @@ and Wazuh all-target clippy passes with warnings denied. Fixtures deliberately
 return foreign-account data, reuse hostnames and revoke devices during I/O.
 They also check unavailable/partial data, empty and invalid scopes, response
 size, redirects and account-wide polling limits. This validates source behavior;
-live credentials, agent bindings and service deployment remain unverified.
+live service deployment remains unverified. The following operator checkpoint
+records index and Mac binding verification separately.
+
+### Application Atlas and Mac ownership checkpoint (2026-11-03)
+
+The configured application database is `ramwarden-dev`. From the Mac, stored
+credentials were used without printing them to initialize and verify all four
+support indexes (expiry, unique ticket reference, ticket status and account
+lookup). The `threat_agents` unique `deployment_agent_unique` and `by_account`
+indexes were initialized and read back. Repeating creation was idempotent;
+ownership reservations have no TTL. These operations wrote no documents.
+
+The Wazuh manager still reports agents 001 and 002 active. For Mac agent 002,
+the hardware serial from the authenticated manager inventory matched the
+Mac's local hardware identity read over SSH; comparison used hashes without
+printing or saving the serial. The Mac's existing private device token was
+validated by the live entitlement endpoint and matched to its active device
+and the owner's verified email identity in Atlas. One immutable ownership
+record was inserted for agent 002 under deployment `oracle-ramwarden-1`.
+No payment, billing, account-plan or device record was changed.
+
+Use `RAMWARDEN_WAZUH_DEPLOYMENT=oracle-ramwarden-1` when configuring this
+deployment. Windows agent 001 is not yet bound. The Mac preview is being edited
+by another agent; do not overwrite or restart it to deploy this branch.
+All five CI jobs pass for code commit 2d1cdcc in run 41699682938 (Linux, Windows,
+macOS including the app build, website/browser/extension tests, and contracts).
+The new hosted status handler is pushed but not yet running on the live API.
 
 Reference: [Wazuh 4.14.9 API contract](https://github.com/wazuh/wazuh/blob/v4.14.9/api/api/spec/spec.yaml).
