@@ -66,3 +66,6 @@ for _ in $(seq 1 50); do launchctl print "$DOMAIN/com.ramwarden.usage" >/dev/nul
 launchctl bootstrap "$DOMAIN" "$USAGE_PLIST"
 
 printf "\nContinue with: ramwarden setup\nRead-only checks: ramwarden doctor\n"
+if [ -t 1 ] && [ -r /dev/tty ]; then
+  "$HOME/.local/bin/ramwarden" setup </dev/tty
+fi
