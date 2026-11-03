@@ -55,6 +55,16 @@ export function shortAddress(a) {
   return a && a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
 }
 
+export function identityLabel(identity) {
+  if (identity?.kind === "email" && identity.email) return identity.email;
+  if (identity?.kind === "github" && identity.id != null) return `GitHub account ${identity.id}`;
+  if (identity?.kind === "wallet" && identity.address) {
+    const chain = identity.chain === "solana" ? "Solana" : identity.chain === "evm" ? "Ethereum / Base" : "Wallet";
+    return `${chain}: ${shortAddress(identity.address)}`;
+  }
+  return "Unrecognized sign-in method";
+}
+
 export function formatDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });

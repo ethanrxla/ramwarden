@@ -96,7 +96,8 @@ pub fn router(state: AppState) -> Router {
         ;
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {
-        router.route("/companion/state", get(crate::companion::status))
+        router.merge(crate::account::routes(&state.cfg))
+            .route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
             .route("/assistant/action", post(crate::assistant::act))
             // "Analyze now" in the extension: the warden's read of the tabs.

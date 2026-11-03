@@ -36,6 +36,9 @@ pub const USAGE_DAILY: &str = "usage_daily";
 pub const GRACE_SECONDS: u64 = 3 * 86_400;
 /// Devices one subscription covers (spec 7.1).
 pub const DEVICE_LIMIT: u32 = 5;
+pub const FREE_DEVICE_LIMIT: u32 = 1;
+pub const PLUS_DEVICE_LIMIT: u32 = 3;
+pub const PRO_DEVICE_LIMIT: u32 = 5;
 
 pub type Id = String;
 
@@ -238,15 +241,23 @@ impl Account {
 
     /// Plan ceiling and any lower operator cap, also enforced in storage.
     pub fn effective_device_limit(&self, now: u64) -> u32 {
-        let plan = if self.active("ram", now) {
-            match self.tier { Some(Tier::Pro) => 5, Some(Tier::Ram) => 3, None => 1 }
-        } else { 1 };
-        plan.min(self.device_limit)
+        self.device_capacity(now)
     }
 
     /// Whether `warden` is served at `now`.
     pub fn active(&self, warden: &str, now: u64) -> bool {
         self.wardens().get(warden).is_some_and(|&t| t > now)
+    }
+
+    /// Adding devices uses the current plan and any lower operator cap.
+    /// Existing devices stay registered when a plan expires or is downgraded.
+    pub fn device_capacity(&self, now: u64) -> u32 {
+        let plan = match self.tier {
+            Some(Tier::Ram) if self.active("ram", now) => PLUS_DEVICE_LIMIT,
+            Some(Tier::Pro) if self.active("ram", now) => PRO_DEVICE_LIMIT,
+            _ => FREE_DEVICE_LIMIT,
+        };
+        plan.min(self.device_limit)
     }
 
     /// The account as the checkout contract knows it.
@@ -322,6 +333,20 @@ pub struct Device {
     pub last_seen_at: u64,
     /// SHA-256 of the device token, hex.
     pub token_hash: String,
+}
+
+/// Server-verified Wazuh ownership. No agent key or alert contents are stored.
+/// Retained after device revocation to prevent silently assigning its agent
+/// (and historical alerts) to a different device or account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreatAgentBinding {
+    #[serde(rename = "_id")]
+    pub device_id: Id,
+    pub account_id: Id,
+    /// Stable operator-selected deployment identity, never a client URL.
+    pub deployment: String,
+    pub agent_id: String,
+    pub created_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

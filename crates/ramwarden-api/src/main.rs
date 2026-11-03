@@ -105,6 +105,7 @@ async fn run() -> Result<(), String> {
                 }
             };
             Some(Cloud {
+                threat: cc.threat.clone().map(ramwarden_api::threat::ThreatService::new).transpose()?,
                 store,
                 plans,
                 site: Site { domain: cc.site_domain.clone(), origin: cc.site_origin.clone() },

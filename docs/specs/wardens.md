@@ -97,9 +97,12 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   ```
 
   The API only ever returns the caller's own account's agents and alerts:
-  tenant isolation is enforced by the API filtering on the account's agent
-  group, never by trusting a name the client sends.
-- **AI triage happens on the server.** Each alert is explained in plain
+  tenant isolation uses server-verified device-to-agent bindings, filters queries
+  and responses by numeric agent ID, and never trusts a name the client sends.
+  The first hosted status implementation returns raw rule findings and explicitly
+  reports that AI review is unavailable; optional triage fields are omitted.
+  See [rollout and configuration](account-linked-devices.md#hosted-security-status).
+- **Planned AI triage happens on the server.** Each alert is explained in plain
   language and given a verdict by the hosted model tier (Jev for the typed
   verdict and its confidence; a text model for the explanation). The daemon
   shows the explanation; the level still comes from Wazuh's rule level, and a

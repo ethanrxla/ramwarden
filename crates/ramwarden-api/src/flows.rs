@@ -54,16 +54,22 @@ pub(crate) enum Auth<'a> {
 struct Opts {
     downloads: Option<PathBuf>,
     stripe: Option<String>,
+    threat: Option<crate::threat::ThreatService>,
 }
 
 pub(crate) fn app() -> App {
-    app_with(Opts { downloads: None, stripe: None })
+    app_with_threat(None)
+}
+
+pub(crate) fn app_with_threat(threat: Option<crate::threat::ThreatService>) -> App {
+    app_with(Opts { downloads: None, stripe: None, threat })
 }
 
 fn app_with(o: Opts) -> App {
     let store = Arc::new(MemoryStore::new());
     let mailer = Arc::new(MemoryMailer::default());
     let cloud = Cloud {
+        threat: o.threat,
         store: store.clone(),
         plans: Arc::new(Plans::built_in()),
         site: Site { domain: "ramwarden.app".into(), origin: ORIGIN.into() },
@@ -561,7 +567,7 @@ async fn fake_stripe() -> (String, Seen, PaymentStoreProbe) {
 #[tokio::test]
 async fn a_card_trial_starts_from_a_signed_webhook() {
     let (url, seen, probe) = fake_stripe().await;
-    let a = app_with(Opts { downloads: None, stripe: Some(url) });
+    let a = app_with(Opts { downloads: None, stripe: Some(url), threat: None });
     *probe.lock().unwrap() = Some(a.store.clone());
     let (s, _) = a.call("POST", "/v1/auth/email/start", Auth::None, Some(json!({"email": "card@example.com"}))).await;
     assert_eq!(s, StatusCode::OK);
@@ -644,7 +650,7 @@ async fn threatwarden_downloads_need_pro_in_good_standing() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("threat")).unwrap();
     std::fs::write(dir.path().join("threat/threatwarden-linux-x86_64.tar.gz"), b"installer").unwrap();
-    let a = app_with(Opts { downloads: Some(dir.path().to_path_buf()), stripe: None });
+    let a = app_with(Opts { downloads: Some(dir.path().to_path_buf()), stripe: None, threat: None });
     let (tok, cookie, id) = a.sign_in_device(&EvmWallet::new(9)).await;
     let uri = "/v1/downloads/threat/threatwarden-linux-x86_64.tar.gz";
 

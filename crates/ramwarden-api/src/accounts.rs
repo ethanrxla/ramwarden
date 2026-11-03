@@ -45,17 +45,17 @@ use crate::wallet::{self, iso8601};
 
 /// Devices on RamWarden Lite, the free tier (an account with no plan, or a
 /// lapsed one).
-pub const FREE_DEVICE_LIMIT: u32 = 1;
+pub use ramwarden_cloud::model::FREE_DEVICE_LIMIT;
 /// Devices on RamWarden Plus (user decision, 2026-11-02).
-pub const PLUS_DEVICE_LIMIT: u32 = 3;
+pub use ramwarden_cloud::model::PLUS_DEVICE_LIMIT;
 /// Devices on RamWarden Pro.
-pub const PRO_DEVICE_LIMIT: u32 = 5;
+pub use ramwarden_cloud::model::PRO_DEVICE_LIMIT;
 
 /// How many devices this account may have now: its plan's limit while the
 /// plan is in good standing, else the free tier's. Devices already linked
 /// stay linked when a plan lapses; only adding one is refused.
 pub fn device_limit(a: &Account, now: u64) -> u32 {
-    a.effective_device_limit(now)
+    a.device_capacity(now)
 }
 
 /// The card the account is on: `lite`, `plus` or `pro`.
@@ -120,6 +120,8 @@ pub struct Cloud {
     pub releases_url: String,
     /// The site wardens' chat and tickets: limits and the staff token.
     pub support: crate::support::SupportDesk,
+    /// Server-only Wazuh credentials and account-scoped read limits.
+    pub threat: Option<crate::threat::ThreatService>,
 }
 
 pub fn routes() -> axum::Router<Arc<AppState>> {
@@ -136,6 +138,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .merge(crate::install::routes())
         .merge(crate::support::routes())
         .merge(crate::usage::routes())
+        .merge(crate::threat::routes())
 }
 
 pub type Reply = Result<Response, Response>;

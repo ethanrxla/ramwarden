@@ -38,6 +38,7 @@ pub mod routes;
 pub mod signin;
 pub mod stripe;
 pub mod support;
+pub mod threat;
 pub mod upstream;
 pub mod wallet;
 
@@ -45,6 +46,8 @@ pub mod wallet;
 mod flows;
 #[cfg(test)]
 mod support_flows;
+#[cfg(test)]
+mod threat_flows;
 
 pub use config::Config;
 pub use routes::{AppState, router};

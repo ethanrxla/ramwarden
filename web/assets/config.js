@@ -37,9 +37,9 @@ export const config = {
     tagline: "Keep it tidy.",
     cta: "Get it free",
     features: [
-      "An enhanced memory algorithm that tracks which apps are active",
-      "Frees memory in stages, starting with changes that are easy to undo",
-      "A configurable tab budget, with a reopen list for tabs Warden closes",
+      "Tracks memory pressure and recent app use",
+      "Unloads idle tabs to release their memory while keeping them available to reload",
+      "Automatic tab closing requires 24 hours without activity and a return score below 0.3; active work and reopened tabs stay protected",
       "Protects active work, games, calls, terminals and virtual machines",
       "Resumes paused apps when memory pressure eases",
       "1 computer, free account, no card",

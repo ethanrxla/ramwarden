@@ -5223,6 +5223,8 @@ dependencies = [
  "ramwarden-cloud",
  "ramwarden-core",
  "ramwarden-daemon",
+ "ramwarden-platform",
+ "ramwarden-wazuh",
  "rand 0.9.5",
  "reqwest",
  "serde",

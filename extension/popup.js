@@ -1,14 +1,15 @@
 const DAEMON_HTTP = "http://localhost:7823";
 
 // Load persisted daemon host setting
-chrome.storage.sync.get("daemonHost", (r) => {
+const daemonHostReady = new Promise(resolve => chrome.storage.sync.get("daemonHost", (r) => {
   if (r.daemonHost) {
     window.DAEMON_HTTP = "http://" + r.daemonHost;
   }
-});
+  resolve(window.DAEMON_HTTP || DAEMON_HTTP);
+}));
 
 async function daemonJSON(path, opts = {}) {
-  const base = window.DAEMON_HTTP || DAEMON_HTTP;
+  const base = await daemonHostReady;
   const r = await fetch(base + path, opts);
   if (!r.ok) throw new Error(r.status);
   return r.json();
@@ -273,3 +274,5 @@ function esc(s) {
 
 init();
 refreshWarden();
+document.getElementById("daemon-host-save").addEventListener("click", saveDaemonHost);
+mountAccount({request: daemonJSON, base: () => daemonHostReady, open: url => chrome.tabs.create({url})});

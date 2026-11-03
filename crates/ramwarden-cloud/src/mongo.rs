@@ -19,7 +19,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use mongodb::bson::{self, Bson, DateTime, Document, doc};
 use mongodb::error::{ErrorKind, WriteFailure};
-use mongodb::options::{ClientOptions, IndexOptions, ReturnDocument};
+use mongodb::options::{ClientOptions, IndexOptions, ReturnDocument, ReadConcern, WriteConcern};
 use mongodb::{Client, Collection, Database, IndexModel};
 
 use crate::config::CloudConfig;
@@ -130,6 +130,8 @@ impl MongoStore {
                 index(doc! { "tier": 1 }, named("by_tier"))]),
             (DEVICES, vec![index(doc! { "token_hash": 1 }, unique("token_unique")),
                 index(doc! { "account_id": 1, "created_at": 1 }, named("account_created"))]),
+            ("threat_agents", vec![index(doc! { "deployment": 1, "agent_id": 1 }, unique("deployment_agent_unique")),
+                index(doc! { "account_id": 1 }, named("by_account"))]),
             (DEVICE_CODES, vec![index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
                 index(doc! { "expire_at": 1 }, ttl())]),
             (SESSIONS, vec![index(doc! { "account_id": 1 }, named("by_account"))]),
@@ -406,29 +408,51 @@ impl Store for MongoStore {
     }
 
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
-        let Some(account) = self.account(account_id).await? else { return Ok(None) };
-        let limit = account.effective_device_limit(now);
-        // A unique account/seat index arbitrates simultaneous registrations.
-        for _ in 0..=DEVICE_LIMIT {
-            let current = Store::devices(self, account_id).await?;
-            if current.len() >= limit as usize { return Ok(None); }
-            let mut occupied: std::collections::HashSet<u32> = current.iter().filter_map(|d|d.slot).collect();
-            for _ in current.iter().filter(|d|d.slot.is_none()) {
-                let mut slot = 0;
-                while occupied.contains(&slot) { slot += 1; }
-                occupied.insert(slot);
-            }
-            let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
-            let raw = random_token("rwdt_");
-            let d = Device { slot:Some(slot), id:new_id(), account_id:account_id.to_string(),
-                name:name.to_string(), platform, created_at:now, last_seen_at:now, token_hash:hash(&raw) };
-            match self.devices().insert_one(&d).await {
-                Ok(_) => return Ok(Some((d,raw))),
-                Err(error) if is_duplicate_key(&error) => continue,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(None)
+        use futures::{FutureExt, TryStreamExt};
+        let raw = random_token("rwdt_");
+        let d = Device {
+            slot: None,
+            id: new_id(),
+            account_id: account_id.to_string(),
+            name: name.to_string(),
+            platform,
+            created_at: now,
+            last_seen_at: now,
+            token_hash: hash(&raw),
+        };
+        let mut session = self.db.client().start_session().await?;
+        // A transaction alone can still write-skew when two snapshots count
+        // the same devices. Writing the same account document first forces a
+        // conflict and retry. It also serializes with billing changes. No
+        // cached counter or migration is needed: count the existing records.
+        let added = session.start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run((self.accounts(), self.devices(), d.clone(), now), |session, (accounts, devices, device, now)| async move {
+                let Some(account) = accounts.find_one_and_update(
+                    doc! {"_id": &device.account_id},
+                    doc! {"$inc": {"device_registration_version": 1_i64}},
+                ).return_document(ReturnDocument::After).session(&mut *session).await? else { return Ok(None) };
+                let mut cursor = devices.find(doc! {"account_id": &device.account_id}).session(&mut *session).await?;
+                let current: Vec<Device> = cursor.stream(&mut *session).try_collect().await?;
+                let limit = account.device_capacity(*now);
+                if current.len() >= limit as usize { return Ok(None); }
+                // Reserve the same numbered seat as older API instances, so
+                // their unique index also arbitrates a rolling deployment.
+                let mut occupied: std::collections::HashSet<u32> = current.iter().filter_map(|d| d.slot).collect();
+                for _ in current.iter().filter(|d| d.slot.is_none()) {
+                    let mut slot = 0;
+                    while occupied.contains(&slot) { slot += 1; }
+                    occupied.insert(slot);
+                }
+                let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
+                device.slot = Some(slot);
+                devices.insert_one(&*device).session(&mut *session).await?;
+                Ok(Some(device.clone()))
+            }.boxed()).await?;
+        // The driver retries transient transaction/commit errors. The same
+        // device identity and token are reused across those internal retries.
+        Ok(added.map(|device| (device, raw)))
     }
 
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>> {
@@ -453,6 +477,36 @@ impl Store for MongoStore {
     async fn revoke_device(&self, account_id: &str, device_id: &str) -> Result<bool> {
         let r = self.devices().delete_one(doc! { "_id": device_id, "account_id": account_id }).await?;
         Ok(r.deleted_count == 1)
+    }
+
+    async fn bind_threat_agent(&self, binding: &ThreatAgentBinding) -> Result<bool> {
+        if self.devices().find_one(doc! {"_id": &binding.device_id, "account_id": &binding.account_id}).await?.is_none() {
+            return Ok(false);
+        }
+        let collection = self.db.collection::<ThreatAgentBinding>("threat_agents");
+        match collection.insert_one(binding).await {
+            Ok(_) => Ok(true),
+            Err(e) if is_duplicate_key(&e) => {
+                // _id protects the device; the unique deployment/agent index
+                // protects ownership when separate API instances race.
+                Ok(collection.find_one(doc! {"_id": &binding.device_id}).await?.is_some_and(|b|
+                    b.account_id == binding.account_id && b.deployment == binding.deployment && b.agent_id == binding.agent_id))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn threat_agents(&self, account_id: &str) -> Result<Vec<ThreatAgentBinding>> {
+        use futures::TryStreamExt;
+        // Join live devices on every read. A concurrent revoke can leave a
+        // binding reserved, but cannot make it an active ownership record.
+        let documents: Vec<Document> = self.raw("threat_agents").aggregate([
+            doc! {"$match": {"account_id": account_id}},
+            doc! {"$lookup": {"from": DEVICES, "localField": "_id", "foreignField": "_id", "as": "device"}},
+            doc! {"$match": {"device.account_id": account_id}},
+            doc! {"$unset": "device"},
+        ]).await?.try_collect().await?;
+        documents.into_iter().map(|d| bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))).collect()
     }
 
     async fn create_payment(&self, p: Payment) -> Result<()> {

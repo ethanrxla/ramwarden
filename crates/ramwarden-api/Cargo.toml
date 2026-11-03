@@ -17,6 +17,8 @@ path = "src/main.rs"
 [dependencies]
 ramwarden-ai = { path = "../ramwarden-ai" }
 ramwarden-cloud = { path = "../ramwarden-cloud" }
+ramwarden-wazuh = { path = "../ramwarden-wazuh" }
+ramwarden-platform = { path = "../ramwarden-platform" }
 axum       = { workspace = true }
 tokio      = { workspace = true, features = ["fs"] }
 tokio-util = { version = "0.7", features = ["io"] }

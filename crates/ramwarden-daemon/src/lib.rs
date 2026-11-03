@@ -6,6 +6,7 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod account;
 pub mod desktop;
 pub mod embedder;
 pub mod extras;

@@ -4,7 +4,7 @@
 //! The daemon authenticates with the device token from device sign-in. The API
 //! enrols the computer into the account's own agent group, picks the agent
 //! package, and returns alerts already triaged by its AI tier. Tenant
-//! isolation is the API's job: it filters by the account's group, never by a
+//! isolation is the API's job: it filters by verified agent bindings, never by a
 //! name this client sends. See `docs/specs/wardens.md` ("Hosted Wazuh").
 
 use std::time::Duration;
@@ -63,13 +63,13 @@ pub struct Enrollment {
 }
 
 /// What the hosted API says about this account's agents and alerts.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CloudStatus {
     #[serde(default)]
     pub agents: Vec<ManagerAgent>,
     #[serde(default)]
     pub alerts: Vec<Alert>,
-    /// The AI tier's one-line summary, e.g. "One thing to look at today."
+    /// A coverage summary, including whether hosted AI review is available.
     #[serde(default)]
     pub summary: Option<String>,
 }
@@ -87,6 +87,7 @@ impl Cloud {
     pub fn new(base: &str, token: Secret, timeout: Duration) -> Result<Cloud> {
         let base = crate::api::parse_url(base)?.ok_or_else(|| Error::BadUrl(base.into(), "empty".into()))?;
         let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(if timeout.is_zero() { Duration::from_secs(15) } else { timeout })
             .build()
             .map_err(|e| Error::Unreachable("cloud", e.to_string()))?;

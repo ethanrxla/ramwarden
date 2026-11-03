@@ -7,7 +7,7 @@
 // step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
 import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
-import { publishAccount, chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { publishAccount, chooseSignIn, errorText, formatDate, h, identityLabel, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -107,7 +107,7 @@ class AccountPage {
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
             h("p", {}, a.developer_access ? "Developer access · complimentary. No card or wallet will be charged." : a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
-            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "github" ? `GitHub account ${a.identity.id}` : a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", { class: "muted" }, "Account: ", identityLabel(a.identity), "."),
             h(
               "div",
               { class: "row-actions" },
@@ -168,8 +168,8 @@ class AccountPage {
     if (api.githubConfig) api.githubConfig().then(c => {if(c.enabled) github.append(h("button",{class:"button secondary small",onclick:()=>this.linkMethod("github")},"Add GitHub"));}).catch(()=>{});
     return h("section", {class:"panel",id:"sign-in-methods"},
       h("h2", {}, "Sign-in methods"),
-      h("p", {}, "Connect sign-in methods to this same account and subscription."),
-      h("ul", {}, identities.map(i => h("li", {}, i.kind === "github" ? `GitHub account ${i.id}` : i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("p", {}, "Your verified sign-in methods open this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, identityLabel(i)))),
       h("div", {class:"row-actions"},
         h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
         h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email"),github));

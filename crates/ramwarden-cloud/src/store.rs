@@ -148,6 +148,13 @@ pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send 
     /// Deletes the device and so its token. False if not this account's.
     async fn revoke_device(&self, account_id: &str, device_id: &str) -> Result<bool>;
 
+    // --- server-verified threat agent ownership (not an end-user claim API)
+    /// Immutable, idempotent binding. The caller must verify manager ownership
+    /// first. Refuses foreign/missing devices and agent reuse across accounts.
+    async fn bind_threat_agent(&self, binding: &ThreatAgentBinding) -> Result<bool>;
+    /// Only bindings whose devices still belong to this account.
+    async fn threat_agents(&self, account_id: &str) -> Result<Vec<ThreatAgentBinding>>;
+
     // --- payments
     async fn create_payment(&self, p: Payment) -> Result<()>;
     async fn payment(&self, id: &str) -> Result<Option<Payment>>;
@@ -169,6 +176,7 @@ struct Inner {
     email_codes: HashMap<String, EmailCode>,
     sessions: HashMap<String, (Id, u64)>,
     devices: HashMap<Id, Device>,
+    threat_agents: HashMap<Id, ThreatAgentBinding>,
     payments: HashMap<Id, Payment>,
     usage: HashMap<(Id, u64), u32>,
 }
@@ -370,7 +378,7 @@ impl Store for MemoryStore {
     async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
         let mut g = self.lock();
         let Some(account) = g.accounts.get(account_id) else { return Ok(None) };
-        let limit = account.effective_device_limit(now) as usize;
+        let limit = account.device_capacity(now) as usize;
         if g.devices.values().filter(|d| d.account_id == account_id).count() >= limit {
             return Ok(None);
         }
@@ -411,6 +419,27 @@ impl Store for MemoryStore {
         }
         g.devices.remove(device_id);
         Ok(true)
+    }
+
+    async fn bind_threat_agent(&self, b: &ThreatAgentBinding) -> Result<bool> {
+        let mut g = self.lock();
+        if g.devices.get(&b.device_id).is_none_or(|d| d.account_id != b.account_id) {
+            return Ok(false);
+        }
+        if let Some(existing) = g.threat_agents.get(&b.device_id) {
+            return Ok(existing.account_id == b.account_id && existing.deployment == b.deployment && existing.agent_id == b.agent_id);
+        }
+        if g.threat_agents.values().any(|x| x.deployment == b.deployment && x.agent_id == b.agent_id) {
+            return Ok(false);
+        }
+        g.threat_agents.insert(b.device_id.clone(), b.clone());
+        Ok(true)
+    }
+
+    async fn threat_agents(&self, account_id: &str) -> Result<Vec<ThreatAgentBinding>> {
+        let g = self.lock();
+        Ok(g.threat_agents.values().filter(|b| b.account_id == account_id
+            && g.devices.get(&b.device_id).is_some_and(|d| d.account_id == account_id)).cloned().collect())
     }
 
     async fn create_payment(&self, p: Payment) -> Result<()> {
@@ -466,6 +495,8 @@ pub mod contract {
         identity_claims_are_atomic(s).await;
         diagnostics_retry_without_double_counting(s).await;
         devices_and_sessions(s).await;
+        concurrent_device_limits(s).await;
+        threat_agent_ownership(s).await;
         concurrent_seat_limits(s).await;
         challenges_and_payments(s).await;
         crate::support::contract::run(s).await;
@@ -623,6 +654,55 @@ pub mod contract {
         let raw = s.create_session(&a.id, NOW, 60).await.unwrap();
         s.end_session(&raw).await.unwrap();
         assert_eq!(s.session_account(&raw, NOW).await.unwrap(), None);
+    }
+
+    async fn concurrent_device_limits(s: &dyn Store) {
+        assert!(s.register_device("missing-account", "orphan", Platform::Linux, NOW).await.unwrap().is_none());
+        for (email, tier, limit) in [("lite-race@example.com", None, 1), ("plus-race@example.com", Some(Tier::Ram), 3), ("pro-race@example.com", Some(Tier::Pro), 5)] {
+            let account = s.account_for_identity(&Identity::email(email), NOW).await.unwrap().0;
+            if let Some(tier) = tier {
+                s.update_billing(&account.id, &BillingUpdate { tier:Some(tier), paid_until:Some(NOW+100), ..Default::default() }).await.unwrap();
+            }
+            let results = futures::future::join_all((0..10).map(|_| s.register_device(&account.id, "parallel", Platform::Linux, NOW))).await;
+            let enrolled: Vec<_> = results.into_iter().filter_map(|r| r.unwrap()).collect();
+            assert_eq!(enrolled.len(), limit, "concurrent enrollments must respect {email}");
+            assert_eq!(s.devices(&account.id).await.unwrap().len(), limit);
+            assert!(!s.revoke_device("foreign-account", &enrolled[0].0.id).await.unwrap());
+            assert!(s.revoke_device(&account.id, &enrolled[0].0.id).await.unwrap());
+            assert!(s.device_for_token(&enrolled[0].1, NOW).await.unwrap().is_none());
+            let (one,two) = tokio::join!(s.register_device(&account.id,"replacement-1",Platform::Macos,NOW), s.register_device(&account.id,"replacement-2",Platform::Windows,NOW));
+            assert_eq!(usize::from(one.unwrap().is_some()) + usize::from(two.unwrap().is_some()), 1, "one removal frees exactly one slot");
+            if tier.is_some() {
+                assert!(s.register_device(&account.id,"after-expiry",Platform::Linux,NOW+100+GRACE_SECONDS).await.unwrap().is_none());
+                assert_eq!(s.devices(&account.id).await.unwrap().len(),limit,"expiry keeps registered devices");
+            }
+        }
+    }
+
+    async fn threat_agent_ownership(s: &dyn Store) {
+        let a = s.account_for_identity(&Identity::email("agent-owner-a@example.com"), NOW).await.unwrap().0;
+        let b = s.account_for_identity(&Identity::email("agent-owner-b@example.com"), NOW).await.unwrap().0;
+        let da = s.register_device(&a.id, "same hostname", Platform::Macos, NOW).await.unwrap().unwrap().0;
+        let db = s.register_device(&b.id, "same hostname", Platform::Windows, NOW).await.unwrap().unwrap().0;
+        let binding = ThreatAgentBinding { device_id: da.id.clone(), account_id: a.id.clone(), deployment: "test-manager".into(), agent_id: "001".into(), created_at: NOW };
+        let foreign = ThreatAgentBinding { account_id: b.id.clone(), ..binding.clone() };
+        assert!(!s.bind_threat_agent(&foreign).await.unwrap(), "a hostname is not ownership");
+        let competitor = ThreatAgentBinding { device_id: db.id.clone(), account_id: b.id.clone(), ..binding.clone() };
+        let (one,two) = tokio::join!(s.bind_threat_agent(&binding), s.bind_threat_agent(&competitor));
+        assert_eq!(usize::from(one.unwrap()) + usize::from(two.unwrap()), 1, "one agent has exactly one owner");
+        let av = s.threat_agents(&a.id).await.unwrap();
+        let bv = s.threat_agents(&b.id).await.unwrap();
+        assert_eq!(av.len() + bv.len(), 1);
+        let (winner, loser) = if av.is_empty() { (&competitor, &binding) } else { (&binding, &competitor) };
+        assert!(s.bind_threat_agent(&ThreatAgentBinding { created_at: NOW+1, ..winner.clone() }).await.unwrap(), "retry preserves the original binding");
+        assert_eq!(s.threat_agents(&winner.account_id).await.unwrap(), vec![winner.clone()]);
+        assert!(!s.bind_threat_agent(&ThreatAgentBinding { agent_id: "002".into(), ..winner.clone() }).await.unwrap(), "cannot replace a bound agent");
+        assert!(s.revoke_device(&winner.account_id, &winner.device_id).await.unwrap());
+        assert!(s.threat_agents(&winner.account_id).await.unwrap().is_empty(), "revoked devices disappear from status");
+        assert!(!s.bind_threat_agent(winner).await.unwrap(), "revoked devices cannot enroll");
+        assert!(!s.bind_threat_agent(loser).await.unwrap(), "revocation does not transfer historical alerts");
+        assert!(s.bind_threat_agent(&ThreatAgentBinding { deployment: "separate-manager".into(), ..loser.clone() }).await.unwrap(), "agent IDs are scoped to a deployment");
+        assert!(s.threat_agents("missing-account").await.unwrap().is_empty());
     }
 
     async fn challenges_and_payments(s: &dyn Store) {

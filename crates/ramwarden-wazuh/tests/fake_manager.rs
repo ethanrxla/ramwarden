@@ -124,3 +124,47 @@ async fn a_manager_that_is_down_is_unreachable_not_a_panic() {
     let c = Client::new(endpoints("http://127.0.0.1:1", "pw")).unwrap();
     assert!(matches!(c.agent("desk").await, Err(Error::Unreachable("manager", _))));
 }
+
+#[tokio::test]
+async fn empty_or_invalid_id_scopes_do_not_make_a_request() {
+    let c = Client::new(endpoints("http://127.0.0.1:1", "pw")).unwrap();
+    assert!(c.agents_by_ids(&[]).await.unwrap().is_empty());
+    assert!(c.alerts_by_ids(&[], 7, 24).await.unwrap().is_empty());
+    for id in ["all", "000", "001,002", "1", "001&name=other", "99999999999"] {
+        let ids = vec![id.to_string()];
+        assert!(matches!(c.agents_by_ids(&ids).await, Err(Error::Parse(..))));
+        assert!(matches!(c.alerts_by_ids(&ids, 7, 24).await, Err(Error::Parse(..))));
+    }
+    let too_many = vec!["001".to_string(); ramwarden_wazuh::api::MAX_ACCOUNT_AGENTS + 1];
+    assert!(matches!(c.agents_by_ids(&too_many).await, Err(Error::Parse(..))));
+}
+
+#[tokio::test]
+async fn manager_credentials_are_not_followed_through_a_redirect() {
+    let followed = Arc::new(AtomicUsize::new(0));
+    let counter = followed.clone();
+    let app = Router::new()
+        .route("/security/user/authenticate", post(|| async { axum::response::Redirect::temporary("/redirected") }))
+        .route("/redirected", post(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({"data": {"token": "should-not-be-used"}})) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let c = Client::new(endpoints(&url, "pw")).unwrap();
+    assert!(matches!(c.agents_by_ids(&["001".into()]).await, Err(Error::Status("manager", 307))));
+    assert_eq!(followed.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn oversized_upstream_data_is_refused() {
+    let app = Router::new().route("/security/user/authenticate", post(|| async {
+        Json(json!({"data": {"token": "x".repeat((1 << 20) + 1)}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let c = Client::new(endpoints(&url, "pw")).unwrap();
+    assert!(matches!(c.agents_by_ids(&["001".into()]).await, Err(Error::Parse("manager", _))));
+}
