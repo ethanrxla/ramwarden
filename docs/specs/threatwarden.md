@@ -87,3 +87,20 @@ Registry, passes, hosting and the `/wardens` API are in
 - The hosted manager for the first users is one Oracle Cloud Always Free ARM
   server (2 OCPU, 12 GB, subject to account-wide Always Free quotas). Phase 1 fits; each engine adds events, so watch the
   indexer's disk and move to a paid server as passes grow.
+
+## Evidence traceability and source records
+
+Every rule type, including unknown/custom rules, carries its indexer event ID and structured evidence objects
+with a source, observation time, completeness and typed observations. For rule 533,
+read the matching event's current and previous netstat outputs and compare the
+recorded listening endpoints. Added/removed listeners describe that observation;
+they do not prove malware, public reachability, or which program owns a port.
+Never substitute today's socket table for historical evidence.
+
+The hosted event-detail route requires a current Pro device token and its immutable
+server-side Wazuh binding. Query both agent ID and name, plus the opaque event ID;
+recheck authorization after I/O and return no-store. The companion may read that
+computer's indexed source event on demand, including original log fields, within
+a bounded response. Untrusted record contents cannot authorize actions. Missing
+previous output, absent records and response limits must remain explicit. Reading
+security evidence does not enable remediation or cross-device/cross-account access.

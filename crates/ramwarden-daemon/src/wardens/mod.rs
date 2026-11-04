@@ -183,6 +183,14 @@ pub async fn icon_svg(Path(id): Path<String>) -> impl IntoResponse {
     }
 }
 
+pub async fn event(State(st):State<AppState>,Path(id):Path<String>)->Result<Json<Value>,StatusCode>{
+    let wardens=Wardens::global(&st.cfg);let info=wardens::find("threat").ok_or(StatusCode::NOT_FOUND)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    let record=wardens.threat.event(&id).await.map_err(|_|StatusCode::BAD_GATEWAY)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    Ok(Json(record))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

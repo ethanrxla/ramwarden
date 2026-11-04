@@ -913,3 +913,33 @@ async fn hosted_enrollment_uses_server_identity_and_returns_only_its_own_key() {
     assert_eq!(a.call("POST","/v1/wardens/threat/enroll",Auth::Bearer(token),Some(body)).await.0,StatusCode::TOO_MANY_REQUESTS);
     server.abort();
 }
+
+#[tokio::test]
+async fn source_events_require_pro_bound_device_and_reject_foreign_records(){
+    use axum::routing::post;
+    let indexer=axum::Router::new().route("/wazuh-alerts-*/_search",post(|Json(body):Json<Value>|async move{
+        let filters=body["query"]["bool"]["filter"].as_array().unwrap();
+        assert!(filters.iter().any(|v|v["term"]["agent.name"]=="evidence-mac"));
+        assert!(filters.iter().any(|v|v["term"]["agent.id"]=="042"));
+        let id=filters.iter().find_map(|v|v["ids"]["values"][0].as_str()).unwrap_or("owned-event");
+        if id=="owned-event" {Json(json!({"hits":{"hits":[{"_id":id,"_index":"test-index","_source":{"agent":{"name":"evidence-mac","id":"042"},"rule":{"id":"199999","level":7,"description":"Custom security event"},"full_log":"fixture source log","previous_output":"fixture previous"}}]}}))}
+        else {Json(json!({"hits":{"hits":[{"_id":id,"_source":{"agent":{"name":"foreign-mac","id":"099"},"full_log":"FOREIGN SECRET"}}]}}))}
+    }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
+    let server=tokio::spawn(async move{axum::serve(listener,indexer).await.unwrap()});
+    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let (token,_,account)=a.sign_in_device(&EvmWallet::new(90)).await;
+    let path="/v1/wardens/threat/events/owned-event";
+    assert_eq!(a.call("GET",path,Auth::None,None).await.0,StatusCode::UNAUTHORIZED);
+    assert_eq!(a.call("GET",path,Auth::Bearer(&token),None).await.0,StatusCode::FORBIDDEN);
+    a.store.update_billing(&account,&BillingUpdate{tier:Some(Tier::Pro),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
+    assert_eq!(a.call("GET",path,Auth::Bearer(&token),None).await.0,StatusCode::NOT_FOUND);
+    let device=a.store.devices(&account).await.unwrap().remove(0);
+    let binding=ramwarden_cloud::model::SecurityBinding{agent_id:"042".into(),agent_name:"evidence-mac".into(),group:"evidence".into()};a.store.bind_security(&account,&device.id,&binding).await.unwrap();
+    let (status,record)=a.call("GET",path,Auth::Bearer(&token),None).await;assert_eq!(status,StatusCode::OK,"{record}");assert_eq!(record["record"]["full_log"],"fixture source log");assert_eq!(record["read_only"],true);
+    let (status,record)=a.call("GET","/v1/wardens/threat/events/foreign-event",Auth::Bearer(&token),None).await;assert_eq!(status,StatusCode::NOT_FOUND);assert!(!record.to_string().contains("FOREIGN SECRET"));
+    let (status,catalog)=a.call("GET","/v1/wardens/threat/events?rule=199999",Auth::Bearer(&token),None).await;assert_eq!(status,StatusCode::OK,"{catalog}");assert_eq!(catalog["events"][0]["id"],"owned-event");assert!(!catalog.to_string().contains("fixture source log"));
+    assert_eq!(a.call("GET","/v1/wardens/threat/events?agent=other",Auth::Bearer(&token),None).await.0,StatusCode::BAD_REQUEST);
+    a.store.revoke_device(&account,&device.id).await.unwrap();assert_eq!(a.call("GET",path,Auth::Bearer(&token),None).await.0,StatusCode::UNAUTHORIZED);
+    server.abort();
+}

@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{State,Path,Query},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -95,6 +95,8 @@ impl ThreatDesk {
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/wardens/threat/status", get(status))
+        .route("/v1/wardens/threat/events/{id}",get(event))
+        .route("/v1/wardens/threat/events",get(events))
         .route("/v1/wardens/threat/enroll", post(enroll))
 }
 async fn authorized(
@@ -151,7 +153,8 @@ async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply
         let agent=client.agent(&binding.agent_name).await.map_err(|_|error(StatusCode::BAD_GATEWAY,"The security manager is unavailable."))?;
         if agent.as_ref().is_some_and(|a|a.id!=binding.agent_id){return Err(error(StatusCode::BAD_GATEWAY,"Security agent binding could not be verified."));}
         if !client.has_indexer(){return Err(error(StatusCode::SERVICE_UNAVAILABLE,"Security alert reporting is not configured."));}
-        let alerts=client.alerts(&binding.agent_name,7,24).await.map_err(|_|error(StatusCode::BAD_GATEWAY,"The security alert index is unavailable."))?;
+        let alerts=client.alerts_for_agent(&binding.agent_name,&binding.agent_id,7,24).await.map_err(|_|error(StatusCode::BAD_GATEWAY,"The security alert index is unavailable."))?;
+        let (current,_)=authorized(&state,&headers).await?;if current.id!=d.id || current.security!=d.security{return Err(error(StatusCode::FORBIDDEN,"Device access changed during reporting."));}
         Ok(json!({"agents":agent.into_iter().collect::<Vec<_>>(),"alerts":alerts,"summary":format!("Showing {} recent alerts at level 7 or above from the last 24 hours (maximum 50).",alerts.len())}))
     }.await;
     let mut cache = desk.cache.lock().unwrap();
@@ -166,6 +169,35 @@ async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply
         }
     }
 }
+#[derive(Deserialize,Default)]
+#[serde(deny_unknown_fields)]
+struct EventSearch {rule:Option<String>,group:Option<String>,hours:Option<u32>,before:Option<String>}
+async fn events(State(state):State<Arc<AppState>>,headers:HeaderMap,Query(query):Query<EventSearch>)->Reply {
+    if query.rule.as_ref().is_some_and(|v|v.is_empty() || v.len()>20 || !v.bytes().all(|b|b.is_ascii_digit()))
+        || query.group.as_ref().is_some_and(|v|v.is_empty() || v.len()>64 || !v.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_' || b==b'-'))
+        || query.before.as_ref().is_some_and(|v|v.len()>40 || v.is_empty() || !v.chars().all(|c|c.is_ascii_digit() || "TZtz:.-+".contains(c))){return Err(error(StatusCode::BAD_REQUEST,"Invalid evidence search filter."));}
+    let (device,_)=authorized(&state,&headers).await?;
+    let binding=device.security.as_ref().ok_or_else(||error(StatusCode::NOT_FOUND,"This computer has no security binding."))?;
+    let client=cloud(&state)?.threat.client.as_ref().ok_or_else(||error(StatusCode::SERVICE_UNAVAILABLE,"Evidence reporting is not configured."))?;
+    let hours=query.hours.unwrap_or(24).clamp(1,720);
+    let records=client.events(&binding.agent_name,&binding.agent_id,query.rule.as_deref(),query.group.as_deref(),hours,query.before.as_deref()).await.map_err(|_|error(StatusCode::BAD_GATEWAY,"Evidence search is unavailable."))?;
+    let (current,_)=authorized(&state,&headers).await?;if current.id!=device.id || current.security!=device.security{return Err(error(StatusCode::FORBIDDEN,"Device access changed during search."));}
+    Ok(([("Cache-Control","no-store")],Json(json!({"events":records,"limit":50,"hours":hours,"read_only":true,"pagination":"Use the oldest returned timestamp as before for the next page"}))).into_response())
+}
+
+async fn event(State(state):State<Arc<AppState>>,headers:HeaderMap,Path(id):Path<String>)->Reply {
+    static GATE:std::sync::OnceLock<tokio::sync::Semaphore>=std::sync::OnceLock::new();
+    let _permit=GATE.get_or_init(||tokio::sync::Semaphore::new(4)).try_acquire().map_err(|_|error(StatusCode::TOO_MANY_REQUESTS,"Evidence retrieval is busy."))?;
+    let (device,_)=authorized(&state,&headers).await?;
+    let binding=device.security.as_ref().ok_or_else(||error(StatusCode::NOT_FOUND,"This computer has no security binding."))?;
+    if !ramwarden_wazuh::evidence::valid_event_id(&id){return Err(error(StatusCode::BAD_REQUEST,"Invalid event reference."));}
+    let client=cloud(&state)?.threat.client.as_ref().ok_or_else(||error(StatusCode::SERVICE_UNAVAILABLE,"Evidence reporting is not configured."))?;
+    let record=client.event(&binding.agent_name,&binding.agent_id,&id).await.map_err(|_|error(StatusCode::BAD_GATEWAY,"The source event could not be retrieved within its response limit."))?.ok_or_else(||error(StatusCode::NOT_FOUND,"No matching event belongs to this computer."))?;
+    let (current,_)=authorized(&state,&headers).await?;
+    if current.id!=device.id || current.security!=device.security {return Err(error(StatusCode::FORBIDDEN,"Device access changed during evidence retrieval."));}
+    Ok(([("Cache-Control","no-store")],Json(record)).into_response())
+}
+
 #[derive(Deserialize)]
 struct EnrollRequest {
     os: String,

@@ -38,6 +38,7 @@ pub struct WazuhReport {
     pub problems: Vec<String>,
     /// One line per engine, filled in from the rest of the report.
     pub engines: Vec<Engine>,
+    pub engine_observations:ramwarden_wazuh::engines::LocalEngines,
 }
 
 /// One ThreatWarden engine's line in the pane.
@@ -69,9 +70,9 @@ impl WazuhReport {
         };
         vec![
             wazuh,
-            Engine::new("clamav", "ClamAV", "planned", "Malware scans, when memory is comfortable"),
-            Engine::new("suricata", "Suricata", "planned", "Network intrusion detection, opt-in"),
-            Engine::new("network", "Network view", "planned", "Who this computer talks to"),
+            self.engine_observations.clamav.as_ref().map(|o|Engine::new("clamav","ClamAV",o.state,o.detail.clone())).unwrap_or_else(||Engine::new("clamav","ClamAV","unverified","No local scanner health observation available")),
+            self.engine_observations.suricata.as_ref().map(|o|Engine::new("suricata","Suricata",o.state,o.detail.clone())).unwrap_or_else(||Engine::new("suricata","Suricata","unverified","No local sensor health observation available")),
+            Engine::new("network","Network view","off","Network view is not connected to the sensor data yet"),
         ]
     }
 
@@ -155,6 +156,7 @@ impl ThreatWarden {
 
     fn set(&self, status: Status, mut report: Option<WazuhReport>) {
         if let Some(r) = report.as_mut() {
+            r.engine_observations=ramwarden_wazuh::engines::LocalEngines::read();
             r.engines = r.engine_lines();
         }
         *self.view.write().unwrap() = (status, report);
@@ -176,6 +178,14 @@ impl ThreatWarden {
             .map_err(|e| Status::off("RamWarden's address is misconfigured", e.to_string(), wardens::now()))
     }
 
+    pub async fn events(&self,rule:Option<&str>,group:Option<&str>)->std::result::Result<Vec<Alert>,String>{
+        if !self.hosted(){return Err("Indexed-event search is not configured for this self-hosted connection".into());}
+        self.cloud().map_err(|_|"Sign in to read this computer’s evidence".to_string())?.events(rule,group).await.map_err(|_|"Source-event search is unavailable".into())
+    }
+    pub async fn event(&self,id:&str)->std::result::Result<serde_json::Value,String>{
+        if !self.hosted(){return Err("Source-event retrieval is not configured for this self-hosted connection".into());}
+        self.cloud().map_err(|_|"Sign in on this computer to read its security evidence".to_string())?.event(id).await.map_err(|_|"The source event is unavailable or access changed".into())
+    }
     /// One poll. The caller has checked the warden is unlocked.
     pub async fn poll(&self, self_hosted: Option<&Client>) {
         if !self.cfg.enabled {
@@ -447,11 +457,11 @@ mod tests {
     }
 
     #[test]
-    fn engines_follow_the_agent_and_list_the_roadmap() {
+    fn engines_follow_actual_observations_instead_of_a_roadmap() {
         let state = |r: WazuhReport| r.engine_lines().iter().map(|e| (e.id, e.state)).collect::<Vec<_>>();
         assert_eq!(
             state(report(true, Some("connected"), None)),
-            [("wazuh", "on"), ("clamav", "planned"), ("suricata", "planned"), ("network", "planned")]
+            [("wazuh", "on"), ("clamav", "unverified"), ("suricata", "unverified"), ("network", "off")]
         );
         assert_eq!(state(report(false, None, None))[0], ("wazuh", "off"));
         assert_eq!(state(report(true, None, Some("disconnected")))[0], ("wazuh", "error"));

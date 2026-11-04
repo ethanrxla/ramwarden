@@ -29,6 +29,8 @@
 
 pub mod agent;
 pub mod api;
+pub mod evidence;
+pub mod engines;
 pub mod cloud;
 pub mod install;
 /// Server-only enrollment mechanism; separate from read-only detection.

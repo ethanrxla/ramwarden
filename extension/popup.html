@@ -145,7 +145,7 @@
   <section id="threat-pane" role="tabpanel" aria-labelledby="threat-tab" hidden>
     <div class="section"><h2 style="font-size:15px">ThreatWarden</h2><p id="threat-headline">Checking protection…</p><p id="threat-detail"></p><div id="threat-engines"></div><div id="threat-alerts" aria-label="Reported security alerts"></div><button id="threat-refresh" class="action">Refresh security report</button></div>
   </section>
-  <div class="section" id="account-plan"><a id="account-link" href="https://ramwarden.com/account.html" target="_blank" rel="noopener">Connect account · Upgrade with wallet or card</a><p style="font-size:11px;color:#94a3b8">Wallet sign-in does not make a payment. Checkout names the network and asks for your approval.</p></div>
+  <div class="section" id="account-plan"><p id="account-state" role="status">Checking this computer’s plan…</p><a id="account-link" href="https://ramwarden.com/account.html" target="_blank" rel="noopener">Sign in with email, wallet or GitHub</a><p id="account-help" style="font-size:11px;color:#94a3b8"></p><button id="account-refresh" type="button">Check connection</button><p style="font-size:11px;color:#94a3b8">Wallet sign-in does not make a payment. Checkout names the network and asks for your approval.</p></div>
   <div class="daemon-row">
     <span>Daemon</span>
     <input type="text" id="daemon-host-input" placeholder="localhost:7823" />

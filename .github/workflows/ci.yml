@@ -64,7 +64,7 @@ jobs:
       - name: Mac checklist and app build
         if: runner.os == 'macOS'
         run: |
-          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/WardenCompanion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/PetSizing.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/Settings.swift macos/menubar/ThreatCompanion.swift macos/menubar/WardenCompanion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/PetSizing.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
           "$RUNNER_TEMP/review-test"
           RAMWARDEN_APP_DEST="$RUNNER_TEMP/RamWarden.app" bash macos/menubar/build.sh
           swiftc -O macos/menubar/PetSizing.swift macos/menubar/tests/PetSizingTests.swift -o "$RUNNER_TEMP/pet-sizing-test"

@@ -58,6 +58,8 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         threatCompanion.statusButton = item.button
+        companion.threatCustomizationModel=threatCompanion.model
+        threatCompanion.openCustomization = { [weak self] in self?.companion.openColors(warden:"threat") }
         item.autosaveName = "RamWarden"
         menu.delegate = self
         item.menu = menu
@@ -150,7 +152,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
         }
         add("ThreatWarden status…", #selector(showThreatStatus))
         add(threatCompanion.visible ? "Hide threat companion" : "Show threat companion", #selector(toggleThreatCompanion))
-        add("Customize ram colors…", #selector(customizeRam))
+        add("Customize companions…", #selector(customizeRam))
         menu.addItem(.separator())
         guard let s = snap else {
             add("RamWarden daemon not reachable", nil)
