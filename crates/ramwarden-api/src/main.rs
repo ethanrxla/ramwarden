@@ -24,7 +24,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RAMWARDEN_API_LOG")
-                .unwrap_or_else(|_| "ramwarden_api=info".into()),
+                .unwrap_or_else(|_| "ramwarden_api=info,ramwarden_ai::routed=info".into()),
         )
         .init();
 
@@ -139,6 +139,7 @@ async fn run() -> Result<(), String> {
 
     let listener = tokio::net::TcpListener::bind(cfg.bind).await.map_err(|e| format!("bind {}: {e}", cfg.bind))?;
     tracing::info!("listening on {}", cfg.bind);
+    ramwarden_api::trivia::spawn();
     axum::serve(listener, router(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

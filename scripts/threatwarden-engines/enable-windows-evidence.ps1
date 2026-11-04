@@ -6,12 +6,8 @@ $config=Join-Path $root 'suricata.yaml'
 $backup=$config+'.backup-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $candidate=$config+'.candidate'
 $text=[IO.File]::ReadAllText($config)
-if ($text -notmatch '(?m)^    - stats\s*$') {
-    if ($text -notmatch '(?m)^    - flow\s*$') { throw 'Unexpected EVE configuration; retained unchanged' }
-    $text=$text -replace '(?m)^    - flow\s*$', "    - flow`n    - stats"
-}
-# Omit packet payloads and HTTP/TLS metadata from alert records.
-$text=$text -replace '(?m)^    - alert\s*$', "    - alert:`n        payload: false`n        packet: false`n        http: false`n        tls: false"
+. (Join-Path $PSScriptRoot 'eve-policy.ps1')
+$text=Set-ThreatWardenEve $text
 [IO.File]::WriteAllText($candidate,$text,(New-Object Text.UTF8Encoding($false)))
 & (Join-Path $root 'suricata.exe') -T -c $candidate -l (Join-Path $root 'log') *> (Join-Path $root 'log\evidence-validation.log')
 if ($LASTEXITCODE -ne 0) { throw 'Candidate failed validation; running configuration retained' }

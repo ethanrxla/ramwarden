@@ -56,6 +56,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             .max_age(std::time::Duration::from_secs(600))
     });
     let app = Router::new()
+        .route("/v1/public/fun-facts", get(crate::trivia::feed))
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/models", get(models))
         .route("/v1/systemone", post(systemone))

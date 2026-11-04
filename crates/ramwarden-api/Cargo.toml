@@ -15,6 +15,7 @@ name = "ramwarden-api"
 path = "src/main.rs"
 
 [dependencies]
+tempfile = { workspace = true }
 ramwarden-ai = { path = "../ramwarden-ai" }
 ramwarden-cloud = { path = "../ramwarden-cloud" }
 ramwarden-wazuh = { path = "../ramwarden-wazuh" }
@@ -45,5 +46,4 @@ tower-http = { workspace = true }
 ramwarden-daemon = { path = "../ramwarden-daemon" }
 ramwarden-core   = { path = "../ramwarden-core" }
 tower = { version = "0.5", features = ["util"] }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net"] }

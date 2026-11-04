@@ -1,147 +1,188 @@
-// The warden's speech bubble on macOS: a small panel above the floating ram.
-//
-// The daemon decides what the warden says and when (docs/specs/warden-voice.md);
-// this only shows the bubble from GET /warden/bubble and posts the user's choice
-// to /warden/answer, so the Mac, Windows, Linux and the extension all say the
-// same thing and an answer anywhere counts everywhere. With the ram hidden, a
-// question appears at the top of the menu-bar menu instead.
-import AppKit
-import SwiftUI
+# Warden voice: speech bubbles, tab check-ins and comments
 
-struct WardenChoice: Identifiable, Equatable { let id: String; let label: String }
+The RAM warden talks. Now and then it asks whether you are coming back to a
+tab it is about to close, makes a light comment about your memory, or says
+what it just did. Everything it says appears in a speech bubble next to the
+warden: the floating ram on macOS, the window and tray menu on Windows, the
+window on Linux, and the browser extension's popup.
 
-struct WardenBubble: Equatable {
-    let id: String
-    let kind: String
-    let text: String
-    let choices: [WardenChoice]
-    let url: String?
-    let source:URL?
-    var isQuestion: Bool { !choices.isEmpty }
+This is the in-app half of product spec section 2.5 (pets) and the
+"asks before applying a fix from chat" promise. The website's pets are a
+separate implementation in `web/` and never comment on anything real.
 
-    init?(_ obj: Any?) {
-        guard let b = obj as? [String: Any], let id = b["id"] as? String, let text = b["text"] as? String else { return nil }
-        self.id = id
-        kind = b["kind"] as? String ?? "quip"
-        self.text = text
-        choices = (b["choices"] as? [[String: Any]] ?? []).compactMap {
-            guard let id = $0["id"] as? String, let label = $0["label"] as? String else { return nil }
-            return WardenChoice(id: id, label: label)
-        }
-        source=(b["source_url"] as? String).flatMap(URL.init(string:))
-        url = (b["tab"] as? [String: Any])?["url"] as? String
-    }
-}
+## Contract
 
-/// The same mute choices as the other faces: (label, hours), nil = until unmuted.
-let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet for today", 12), ("Quiet until I unmute", nil)]
+- **One voice, many faces.** The daemon decides what the warden says and when
+  (`ramwarden-daemon::voice`). Every client only renders the bubble the daemon
+  hands it and posts the user's answer back, so macOS, Windows, Linux and the
+  extension say the same thing at the same time and answer once for all.
+- **Kinds of bubble**, in priority order:
+  1. `activity`: what the warden just did, from a real release pass. "Put 4
+     idle tabs to sleep. That is roughly 1.1 GB back." Figures from
+     `est_mb` are estimates and the text says so ("roughly").
+  2. `check_in`: "Coming back to "Rust book: lifetimes"? It has been idle
+     for 3 hours." Choices: **Yes, keep it**, **No, close it**, **Ask me
+     later**.
+  3. `quip`: a light joke, sometimes about the real numbers: tab count,
+     memory in use. "41 tabs. I'm not judging. I'm counting."
+  4. `reply`: the warden's short answer to a choice ("Closed. It's in the
+     reopen list."). Shown for 10 seconds, never counted against the limits.
+- **Answers change decisions** (the reason the check-in exists):
+  - *Keep*: the tab is held out of every automatic close (sweep, budget,
+    duplicates) for `keep_hours` (24). Unloading is still allowed, because it
+    is reversible and the tab stays in the strip.
+  - *Close*: the tab is closed now, through the same checked path as a manual
+    close (`close_selected_tabs`: fresh report, owner and URL match,
+    `can_close`). It goes in the reopen list. If the browser does not confirm,
+    the reply says so: an unconfirmed close is not reported as done.
+  - *Later* (or dismissing the bubble, or letting it expire): nothing closes
+    because of the question, and that tab is not asked about again for
+    `later_hours` (6).
+  - While a check-in is on screen its tab is held, so a sweep cannot close the
+    tab out from under the question.
+- **Who gets asked about.** Only tabs the warden may close (`can_close`:
+  never active, pinned, audible, private, loading or protected), idle at least
+  `ask_after_minutes` (60), and not answered recently. First the tabs the next
+  sweep would close, then borderline ones (return chance between 15% and 60%,
+  the same band where the daemon asks Jev), biggest estimated memory first.
+  A check-in is a question, never a widening of what may be closed.
+- **Rate limits: never annoying.** At most one bubble every `min_gap_minutes`
+  (30), a check-in at most every `ask_every_minutes` (45), a quip at most
+  every `quip_every_minutes` (120), at most `max_quips_per_day` (3) jokes and
+  `max_per_day` (6) bubbles of any kind a day. The site's pets are held to a
+  similar 3 jokes a visit. A bubble
+  stays up for 60 seconds (`quip`, `activity`) or 10 minutes (`check_in`).
+- **Mute.** One click mutes the warden for an hour, until tomorrow, or until
+  unmuted. The mute is saved in `<data dir>/ramwarden/voice.json`, so it
+  survives restarts, and all clients see it. `[voice] enabled = false` turns
+  the voice off entirely; `ask_about_tabs = false` keeps the comments and
+  drops the questions; `quips = false` keeps the questions and drops the jokes.
+  With the voice off or muted, closing behaves exactly as before.
+- **Who has a pet.** The pet and its bubble come with Plus and Pro, not Lite
+  (`Entitlement::has_pet`). A lapsed plan loses it. Signed out is the
+  self-built open-source app, which keeps its pet. Without a pet,
+  `/warden/bubble` answers `"pet": false` and the clients hide the pet, and
+  closing behaves exactly as it does with the voice off.
+- **Lines live in data**, one JSON file per warden
+  (`assets/warden/lines/ram.json`), so they can be edited without code. They
+  follow the site's style: short, kind, no em dashes. Placeholders: `{title}`,
+  `{idle}`, `{tabs}`, `{percent}`, `{count}`, `{mb}`.
 
-@MainActor final class VoiceModel: ObservableObject {
-    @Published var bubble: WardenBubble?
-    @Published var muted = false
-    /// Pets come with Plus and Pro, not Lite.
-    @Published var pet = true
-    @Published var busy = false
-    /// Called on the main thread when the bubble or the pet changes.
-    var onChange: (() -> Void)?
-    var onFocusRequested: (() -> Void)?
-    var allowSpeech: (() -> Bool)?
-    private var answerVisibleUntil = Date.distantPast
+## API
 
-    func poll() async {
-        guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
-        await MainActor.run {
-            guard Date() >= answerVisibleUntil else { return }
-            let next = WardenBubble(obj["bubble"])
-            let changed = next != bubble || (obj["pet"] as? Bool ?? true) != pet
-            bubble = next
-            muted = obj["muted"] as? Bool ?? false
-            pet = obj["pet"] as? Bool ?? true
-            if changed {
-                onChange?()
-                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram") }
-            }
-        }
-    }
+### Current focus on macOS
 
-    private func post(_ path: String, _ body: [String: Any]) async -> [String: Any]? {
-        var req = URLRequest(url: base.appendingPathComponent(path))
-        req.httpMethod = "POST"; req.timeoutInterval = 40
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    }
+The pet asks **What are you working on?** with a **Tell Warden** button.
+Its right-click menu also has **Set current focus**. The conversational reply
+is generated by the user's configured model in Warden's normal persona, not
+a fixed acknowledgment. A compact checklist underneath names actual tabs and
+sites, with model-suggested relevant tabs checked. The user can edit it and
+choose **Use these preferences** without a second confirmation conversation.
 
-    func answer(_ choice: String) {
-        if choice == "focus" { onFocusRequested?(); return }
-        guard let b = bubble, !busy else { return }
-        busy = true
-        Task {
-            let response = await post("warden/answer", ["id": b.id, "choice": choice])
-            await MainActor.run {
-                self.busy = false
-                // Keep the result visible even if the question expired or the
-                // browser refused the close. Polling alone loses HTTP errors.
-                let reply = response?["reply"] as? String
-                    ?? "I couldn't confirm that choice reached the browser. The tab may still be open."
-                if !reply.isEmpty {
-                    self.answerVisibleUntil = Date().addingTimeInterval(15)
-                    self.bubble = WardenBubble(["id": "answer-" + b.id, "kind": "reply", "text": reply, "choices": []] as [String: Any])
-                    self.onChange?()
-                }
-            }
-        }
-    }
+`POST /warden/focus` accepts `{goal}` (500 characters maximum, empty to clear)
+and returns a ten-minute, single-use checklist token and tab identities. It
+does not update protection merely because a model suggested a tab.
+`POST /warden/focus/feedback` accepts `{token,selected:[{browser,id,url}]}`.
+Only identities in that checklist are accepted. Checked pages receive durable
+positive `keep` feedback in the existing history/ranking path and an eight-hour
+focus session. Unchecked pages get no negative feedback or forced close; the
+normal algorithm and safety rules continue. `GET /warden/focus` reads the
+current task, which is also included in assistant context. Local `focus.json`
+stores the current goal, selected URLs, expiry, and prompt throttle.
 
-    func mute(_ hours: Double?) {
-        CompanionSpeech.shared.stop("ram")
-        Task {
-            var body: [String: Any] = ["muted": true]
-            if let h = hours { body["hours"] = h }
-            _ = await post("warden/mute", body)
-            await poll()
-        }
-    }
+The initial prompt observes the normal bubble limits and mute, and is asked at
+most once per eight hours, including across restarts. If the conversational
+model is unavailable, the UI says so and still allows manual relevance feedback.
 
-    func unmute() { Task { _ = await post("warden/mute", ["muted": false]); await poll() } }
-}
+### Spoken companions
 
-struct BubbleView: View {
-    @ObservedObject var voice: VoiceModel
-    var body: some View {
-        if let b = voice.bubble {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 6) {
-                    Text(b.text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                        .help(b.url ?? "")
-                    Spacer(minLength: 4)
-                    Menu {
-                        ForEach(wardenMuteChoices.indices, id: \.self) { i in
-                            Button(wardenMuteChoices[i].0) { voice.mute(wardenMuteChoices[i].1) }
-                        }
-                    } label: { Image(systemName: "speaker.slash").font(.system(size: 10)) }
-                        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Quiet, please")
-                    Button { voice.answer("dismiss") } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
-                        .buttonStyle(.plain).accessibilityLabel("Dismiss")
-                }
-                if let source=b.source,source.scheme == "https" {Link("Fact source",destination:source).font(.caption2)}
-                if b.isQuestion {
-                    HStack(spacing: 6) {
-                        ForEach(b.choices) { c in
-                            Button(c.label) { voice.answer(c.id) }
-                                .controlSize(.small).disabled(voice.busy)
-                        }
-                    }
-                }
-            }
-            .padding(10).frame(width: 260, alignment: .leading)
-            .modifier(ChatGlass())
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color(red: 0.75, green: 0.22, blue: 0.17), lineWidth: 1.5))
-            .padding(6)
-        }
-    }
-}
+The daemon's loopback `POST /warden/speech` returns MP3 audio from ElevenLabs;
+credentials remain in the daemon's private environment file. The UI never holds
+them. `ELEVENLABS_RAM_VOICE_ID` defaults to George and
+`ELEVENLABS_THREAT_VOICE_ID` to Daniel, with `ELEVENLABS_MODEL_ID` defaulting to
+`eleven_flash_v2_5`. Speech has separate Mac toggles for each companion. Mute
+and hiding stop playback, identical lines are cached, and provider requests are
+bounded to 800 characters, six requests per minute and 20,000 characters per day.
+Text remains usable if speech is unavailable.
 
-/// A nonactivating panel: clicking a choice never steals focus from your work.
-final class BubblePanel: NSPanel { override var canBecomeKey: Bool { false } }
+Production website sales chat remains separate from this local focus session.
+
+| Route | Does |
+|---|---|
+| `GET /warden/bubble` | `{"bubble": Bubble or null, "pet": bool, "muted": bool, "muted_until": unix or null}` |
+| `POST /warden/answer` | `{"id", "choice"}`, choice is `keep`, `close`, `later` or `dismiss`. Returns `{"ok", "reply", "closed"}`. A stale id is `409`. |
+| `POST /warden/mute` | `{"muted": bool, "hours": optional}` |
+
+`Bubble` is `{"id", "warden": "ram", "kind", "text", "choices": [{"id", "label"}], "tab": {"browser", "id", "url", "title"} or null, "expires_in_s"}`.
+
+## Clients
+
+| Client | Where the bubble shows |
+|---|---|
+| macOS menu bar (`macos/menubar/Companion.swift`) | A bubble panel above the floating pixel ram, with the choices as buttons and a mute menu. If the ram is hidden, the menu bar menu shows the question instead. |
+| Windows (`ramwarden-ui` `tray`) | The tray tooltip and tray menu carry the question and its choices, so it works with the window closed. The window shows the bubble across its top. |
+| Linux (`ramwarden-ui` `gui`) | A bubble bar at the top of the GTK window. |
+| Extension (`extension/`) | The popup shows the bubble at its top. While a check-in waits, the badge shows `?`. |
+
+The shared Rust client and bubble model are in `ramwarden-ui/src/voice.rs`,
+used by both the GTK and egui faces.
+
+## Analyze now (extension)
+
+The popup's **Analyze Now** asks the warden for its read of the tabs, the way
+chat does, instead of a rule count (`POST /browser/explain`,
+`ramwarden-daemon::tab_analysis`).
+
+- The model gets measured memory and a numbered, feature-only tab list (site
+  type, idle time, status, estimated MB, return chance), never a URL, title or
+  host. It refers to tabs as `#N`; titles are put back on this machine.
+- It may suggest tabs to unload and to close. Suggestions for tabs that are
+  not eligible (unload) or closeable (close) are dropped. Nothing happens
+  until the user presses **Unload N** or **Close N**, which go through
+  `/browser/discard` and `/browser/close` and are re-checked there.
+- The model is the chat's (local first, or cloud when preferred and opted
+  in). With none answering, the rules' view is written in the warden's voice
+  and marked "Rules only".
+
+## Verification
+
+- `voice.rs` unit tests: priority order, every rate limit, the daily cap and
+  its reset, mute and its expiry, keep/later windows, the hold while a
+  question is up, that check-ins only pick closeable tabs, and that every line
+  in `ram.json` fills its placeholders and has no em dash.
+- `tests/voice_api.rs`: the routes end to end on a fake platform, including a
+  `close` answer that the browser confirms and one it does not.
+- `tab_analysis.rs` tests: no title or address reaches the model, `#N` becomes
+  a title, suggestions are limited to what may be touched, and the rules
+  fallback.
+- `extension/tests/warden.cjs` (run in CI): the popup's bubble, mute and
+  analysis rendering.
+
+## Basis and limitations
+
+- The daemon cannot see typing, so "never while typing" (website rule) is
+  approximated by the gaps and the daily cap, and by the mute.
+- Answers are kept in memory, keyed by browser, tab id and URL. A browser
+  restart renumbers tabs, so answers do not survive it; that is the right
+  failure, since the same id may then be a different page.
+- Account-synced mute (product spec 4.3) and ThreatWarden lines come later;
+  the bubble carries a `warden` field so they slot in without a new route.
+
+## Generated trivia and ram jokes
+The ram uses a small local cache of source-linked animal trivia and absurd
+ram/computer jokes. Existing mute, gaps, daily caps and question/activity
+priority still apply. Render and animation paths never wait for an AI call.
+Factual entries require a source URL present in publisher provider citations;
+jokes have a separate type and do not invent live readings or actions.
+Mac factual bubbles offer a source link. Static quips are the offline fallback.
+
+### Shared public feed
+Clients download /v1/public/fun-facts from their hosted API and never generate
+trivia themselves. One publisher per shared cache file generates a daily batch,
+protected by a cross-process lock; feed reads never invoke an LLM. Responses may
+be CDN cached for an hour. Configure RAMWARDEN_PUBLIC_TRIVIA_FILE on the API
+host. Replicas must mount the same cache and lock path; otherwise use one
+publisher and distribute its JSON to read-only replicas. An abandoned .lock
+after a crashed publisher requires operator inspection and removal. Unavailable
+or expired feeds fall back to static quips, never per-customer paid generation.
+Existing prepared local remarks may finish playing during migration.

@@ -61,8 +61,9 @@ the current default-route interface, adds Wazuh log inputs, and schedules daily
 signature/rule updates and a RAM-gated Downloads scan. Switching adapters needs
 a setup rerun to select the new interface. Encrypted payloads remain encrypted;
 this is endpoint/interface coverage, not a claim to inspect every VPN tunnel.
-Packet payload logging is disabled. Suricata 8 warns that the current HTTP/TLS
-metadata flags are deprecated; metadata suppression still needs validation. Scan and service
+Packet payloads, tagged packet dumps and application-layer metadata are disabled
+using Suricata 8 supported settings. An offline synthetic DNS alert verifies that
+the query and payload fields are omitted on both Windows and macOS. Scan and service
 configuration backups live under `/Library/Application Support/ThreatWarden/backups`.
 The user receives read-only access to evidence; launchd scripts remain root-owned.
 `scan.py /absolute/path` is the explicit on-demand scan command (run with sudo).
@@ -92,3 +93,20 @@ Read-only operator diagnostic, with remote addresses omitted by default:
 Add `-- --connections` to inspect private endpoint addresses locally. This
 example does not install or replace the running daemon. A successful build does
 not imply that the new UI/daemon has been deployed.
+
+For an existing Mac setup, `repair-macos-evidence.py` applies the supported EVE
+privacy settings without refreshing definitions or touching accounts. It backs up
+configuration, validates the candidate and retries a launchd reload briefly while
+the old job exits. If reloading still fails, it restores the prior configuration.
+Suricata uses Standard launchd I/O scheduling with nice=10; scheduled scans and
+updates remain Background jobs. This addresses a startup path where initial rule
+loading was observed taking 36 minutes; startup timing must still be measured on
+the target machine rather than assumed.
+
+Offline regression commands (these never transmit the fixture packet):
+
+    powershell -NoProfile -File scripts/threatwarden-engines/test-eve-policy.ps1
+    python scripts/threatwarden-engines/test-eve-privacy.py --suricata PATH --config CANDIDATE --eve-dir OUTPUT
+
+The privacy test loads only its synthetic rule. Use a candidate config whose EVE
+output points into a disposable test directory; do not point this test at live logs.

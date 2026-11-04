@@ -32,3 +32,5 @@ pub mod routing;
 pub mod routed;
 
 pub mod nyquest;
+
+pub mod trivia;

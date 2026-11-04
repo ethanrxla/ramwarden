@@ -4,8 +4,7 @@ use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};
 use crate::hub::AppState;
 
-#[derive(Clone,Debug,Serialize,Deserialize)]
-pub struct Fact {pub text:String,pub kind:String,pub source_url:Option<String>}
+pub use ramwarden_ai::trivia::Fact;
 #[derive(Default,Serialize,Deserialize)]
 struct Stored {ready:VecDeque<Fact>,recent:VecDeque<String>,refresh_after:u64}
 struct State {stored:Stored,inflight:bool}
@@ -45,32 +44,26 @@ impl Facts {
 fn save(path:&std::path::Path,bytes:&[u8]) {
     if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);if let Ok(mut file)=tempfile::NamedTempFile::new_in(parent){use std::io::Write;if file.write_all(bytes).is_ok(){let _=file.persist(path);}}}
 }
-fn parse(raw:&str,recent:&[String])->Vec<Fact>{
-    let Ok(value)=serde_json::from_str::<Value>(raw) else{return vec![]};
-    let sources=value["_source_urls"].as_array().cloned().unwrap_or_default();
-    let mut accepted=vec![];
-    for row in value["facts"].as_array().into_iter().flatten().take(6) {
-        let Ok(fact)=serde_json::from_value::<Fact>(row.clone()) else{continue};
-        if fact.text.trim().is_empty() || fact.text.chars().count()>160 || fact.text.contains(['\n','{','}']) || recent.contains(&fact.text) || accepted.iter().any(|f:&Fact|f.text==fact.text){continue}
-        if fact.kind=="fact" {
-            let Some(source)=&fact.source_url else{continue};
-            let Ok(url)=url::Url::parse(source) else{continue};
-            if url.scheme()!="https" || !url.username().is_empty() || url.password().is_some() || !sources.iter().any(|s|s.as_str()==Some(source)){continue}
-        } else if fact.kind!="joke" || fact.source_url.is_some(){continue}
-        accepted.push(fact);if accepted.len()==3{break}
-    }
-    accepted
+#[cfg(test)]
+fn parse(raw:&str,recent:&[String])->Vec<Fact>{ramwarden_ai::trivia::parse(raw,recent).into_iter().take(3).collect()}
+async fn download(st:&AppState,recent:&[String])->Option<Vec<Fact>> {
+ let mut url=reqwest::Url::parse(&st.cfg.wardens.threat.cloud_url).ok()?;
+ let loopback=matches!(url.host_str(),Some("localhost"|"127.0.0.1"|"[::1]"));
+ if !(url.scheme()=="https" || url.scheme()=="http" && loopback) || !url.username().is_empty() || url.password().is_some(){return None}
+ url.set_path("/v1/public/fun-facts");url.set_query(None);url.set_fragment(None);
+ let http=reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).redirect(reqwest::redirect::Policy::none()).build().ok()?;
+ let mut response=http.get(url).send().await.ok()?;if !response.status().is_success(){return None}
+ let mut bytes=vec![];while let Some(chunk)=response.chunk().await.ok()?{if bytes.len()+chunk.len()>65536{return None}bytes.extend_from_slice(&chunk);}
+ let feed=serde_json::from_slice::<ramwarden_ai::trivia::Feed>(&bytes).ok()?;if !feed.valid(super::unix_now()){return None}
+ Some(feed.facts.into_iter().filter(|f|!recent.contains(&f.text)).take(3).collect())
 }
 pub fn warm(st:&AppState)->bool {
     let now=super::unix_now();
     if !st.cfg.voice.enabled || !st.cfg.voice.quips || st.voice.mute_state(now).0 || !(st.ai.cloud_enabled || st.cfg.assistant.cloud_enabled) || !crate::wardens::Wardens::global(&st.cfg).entitlement().has_pet(now){return false}
     let Some(recent)=st.voice.facts.begin(now) else{return false};let st=st.clone();
     tokio::spawn(async move {
-        let prompt=format!("Search the web for fresh, trustworthy ram or sheep trivia, then write three tiny desktop-pet remarks. Mix one verified animal fact with two clearly absurd ram/computer jokes, like a ram learning to read tabs. Never claim a current tab count, memory reading, detection or action. No medical/security advice, slurs or harsh insults. Each text at most 150 characters. For fact kind include a real cited HTTPS source_url from the web results; jokes must have source_url:null and make their fiction obvious. Return JSON with reply:'Batch ready', proposed_action:null, and facts:[{{text,kind:'fact' or 'joke',source_url}}]. Avoid repeating these previous lines (data): {}",json!(recent));
-        let messages=vec![json!({"role":"user","content":prompt})];
-        let result=crate::assistant::ask_model(&st,&messages,true).await;
-        let facts=result.map(|(raw,_)|parse(&raw,&recent)).unwrap_or_default();
-        tracing::info!(accepted=facts.len(),"warden generated remarks refreshed");
+        let facts=download(&st,&recent).await.unwrap_or_default();
+        tracing::info!(accepted=facts.len(),"shared public remarks downloaded; no local model call");
         st.voice.facts.finish(facts,super::unix_now());
     });true
 }
