@@ -14,6 +14,9 @@ outputs:
 pcap:
 - interface: default
 '@
+# Git checks out PowerShell files as CRLF on Windows. Normalize first so this
+# fixture covers LF and CRLF without accidentally generating CRCRLF in CI.
+$original = $original.Replace("`r`n", "`n")
 foreach ($inputText in @($original, $original.Replace("`n","`r`n"))) {
     $updated = Set-ThreatWardenEve $inputText
     if ($updated -notmatch '(?m)^pcap:' -or $updated -notmatch '(?m)^- other-output:') { throw 'Changed an unrelated section' }
