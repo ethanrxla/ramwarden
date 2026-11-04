@@ -61,7 +61,8 @@ the current default-route interface, adds Wazuh log inputs, and schedules daily
 signature/rule updates and a RAM-gated Downloads scan. Switching adapters needs
 a setup rerun to select the new interface. Encrypted payloads remain encrypted;
 this is endpoint/interface coverage, not a claim to inspect every VPN tunnel.
-No packet payloads or HTTP/TLS metadata are written to EVE. Scan and service
+Packet payload logging is disabled. Suricata 8 warns that the current HTTP/TLS
+metadata flags are deprecated; metadata suppression still needs validation. Scan and service
 configuration backups live under `/Library/Application Support/ThreatWarden/backups`.
 The user receives read-only access to evidence; launchd scripts remain root-owned.
 `scan.py /absolute/path` is the explicit on-demand scan command (run with sudo).
