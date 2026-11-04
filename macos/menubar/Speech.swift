@@ -19,13 +19,13 @@ final class CompanionSpeech: ObservableObject {
                 request.httpBody = try JSONSerialization.data(withJSONObject:["warden":warden,"text":String(text.prefix(800))])
                 let (data,response) = try await URLSession.shared.data(for:request)
                 guard !Task.isCancelled else { return }
-                if (response as? HTTPURLResponse)?.statusCode == 402 { self.errors[warden]="Spoken voice is unavailable on this service right now. Text chat still works.";return }
+                if (response as? HTTPURLResponse)?.statusCode != 200 { self.errors[warden]="Spoken voice is unavailable on this service right now. Text chat still works.";return }
                 guard UserDefaults.standard.bool(forKey:"\(warden).speech"),
                       (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 2_000_000 else { return }
                 self.errors[warden]=nil
                 let player = try AVAudioPlayer(data:data)
                 self.players[warden] = player; player.prepareToPlay(); player.play()
-            } catch { /* Text remains usable when speech is unavailable. */ }
+            } catch { if !Task.isCancelled {self.errors[warden]="Spoken voice is temporarily unavailable. Text chat still works."} }
         }
     }
     func stop(_ warden: String) { tasks[warden]?.cancel(); players[warden]?.stop(); players[warden] = nil }
