@@ -17,11 +17,19 @@ fn http() -> Option<&'static reqwest::Client> {
 pub fn enabled() -> bool {
     std::env::var("RAMWARDEN_ROUTED_ASSISTANT").ok().as_deref() == Some("1")
 }
+// Short conversation must not acquire a sidecar dependency from system telemetry.
+fn needs_compression(work: Work, messages: &[Value]) -> bool {
+    let request_bytes=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).map(str::len).unwrap_or(0);
+    request_bytes >= 8000 || (work != Work::Conversation && messages.iter().map(|m|m.to_string().len()).sum::<usize>() >= 8000)
+}
 pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     if !enabled() {
         return None;
     }
-    let messages = match crate::nyquest::compress(messages).await {
+    let compress = needs_compression(work, messages);
+    tracing::info!(work=?work, compression_required=compress, "warden model route");
+    let prepared = if compress { crate::nyquest::compress(messages).await } else { Ok(messages.to_vec()) };
+    let messages = match prepared {
         Ok(messages) => messages,
         Err(_) => {
             tracing::warn!("warden model request stopped: required compression unavailable");
@@ -168,5 +176,21 @@ mod tests {
             Some("{\"reply\":\"Hello\"}".into())
         );
         assert!(output_text(&json!({"output":[{"type":"message","content":[{"type":"output_text","text":"plain text"}]}]})).is_none());
+    }
+}
+
+#[cfg(test)]
+mod compression_routing_tests {
+    use super::*;
+    #[test]
+    fn short_chat_ignores_large_telemetry_for_compression() {
+        let messages=vec![json!({"role":"system","content":"Security report ".repeat(2000)}),json!({"role":"user","content":"can you shut the fuck up dumbass goat"})];
+        assert!(!needs_compression(Work::Conversation,&messages));
+        assert!(needs_compression(Work::Complex,&messages));
+    }
+    #[test]
+    fn long_user_requests_still_require_compression() {
+        assert!(needs_compression(Work::Conversation,&[json!({"role":"user","content":"x".repeat(8000)})]));
+        assert!(!needs_compression(Work::Routine,&[json!({"role":"user","content":"create notes.txt"})]));
     }
 }

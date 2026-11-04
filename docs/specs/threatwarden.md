@@ -123,3 +123,10 @@ User-facing engine labels: Sentinel (Wazuh), Antivirus (ClamAV), and Threat
 detection (Suricata). Stable engine IDs and original evidence source names are
 preserved. Mac Dock branding uses the large canonical red pixel mascot over a
 static radar tile; plain mascot assets remain unchanged for other placements.
+
+Short conversational requests go directly to Grok even when system telemetry or
+prior history is large; telemetry does not make a brief conversation a long task.
+Long user inputs and long agentic workflows retain required Nyquest compression.
+Unrelated conversation omits the detailed alert catalog. Status polling does not
+insert messages or show a status bubble while chat is open or a reply is pending.
+Provider failures are stated as conversation failures, not unrelated alert replies.

@@ -243,7 +243,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
     private var sizeObserver: NSObjectProtocol?
     override init() {
         super.init(profile:ThreatWardenProfile())
-        state.onStatus = { [weak self] text in guard let self=self,self.visible else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
+        state.onStatus = { [weak self] text in guard let self=self,self.visible,!self.model.thinking,self.assistantPanel?.isVisible != true else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
             guard notification.userInfo?["warden"] as? String == "threat" else { return }
             Task { @MainActor in self?.resizePet() }
