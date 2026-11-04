@@ -20,7 +20,9 @@ jobs:
             platform_crate: crates/ramwarden-kernel
           - os: windows-latest
             platform_crate: crates/ramwarden-nt
-          - os: macos-latest
+          # ARM hosted jobs repeatedly expired without acquiring a runner.
+          # Keep the full macOS suite on the supported Intel image.
+          - os: macos-15-intel
             platform_crate: crates/ramwarden-mac
     steps:
       - uses: actions/checkout@v4
