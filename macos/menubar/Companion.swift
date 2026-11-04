@@ -25,10 +25,12 @@ struct FocusChoice: Decodable, Identifiable {
 struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
 final class CompanionModel: ObservableObject {
     let profile: WardenProfile
-    init(profile:WardenProfile = RamWardenProfile()) {
+    init(profile:WardenProfile = RamWardenProfile(),persistMemory:Bool = true) {
         self.profile = profile
         self.companionVisible = UserDefaults.standard.bool(forKey:"\(profile.id).visible")
         self.name = UserDefaults.standard.string(forKey:"\(profile.id).name") ?? profile.name
+        self.turns = persistMemory ? CompanionRecall.load(profile.id) : []
+        self.memoryReady = persistMemory
     }
     var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
@@ -45,6 +47,9 @@ final class CompanionModel: ObservableObject {
             let next=try JSONDecoder().decode(TabReviewEnvelope.self,from:data).proposal
             if next?.token != tabReview?.token { selectedReviewTabs=[] }
             tabReview=next
+            if let review=next,review.tabs.count >= 8 {
+                GoatAlerts.shared.notify(warden:"ram",event:review.token,critical:false)
+            }
         } catch { /* Leave uncertain tabs open when the daemon is unreachable. */ }
     }
     func answerReview(_ action: String) {
@@ -80,7 +85,8 @@ final class CompanionModel: ObservableObject {
     @Published var focusFeedback = ""
     @Published var thinking = false
     @Published var speaking = false
-    @Published var turns: [ChatTurn] = []
+    private var memoryReady=false
+    @Published var turns: [ChatTurn] = [] {didSet {if memoryReady {CompanionRecall.save(turns,warden:profile.id)}}}
     @Published var error: String?
     @Published var tier = ""
     @Published var name = UserDefaults.standard.string(forKey:"ram.name") ?? "Warden"
@@ -146,7 +152,7 @@ final class CompanionModel: ObservableObject {
         let message = boundedChatText(message.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !message.isEmpty, !thinking else { return }
         if focusMode { saveFocus(message); return }
-        let history = turns.suffix(4).map { ["role": $0.role, "content": boundedChatText($0.content)] }
+        let history = CompanionRecall.context(turns,query:message)
         turns.append(ChatTurn(role: "user", content: message))
         error = nil; thinking = true; speaking = false; proposedToken = nil
         task = Task { @MainActor in
@@ -171,7 +177,7 @@ final class CompanionModel: ObservableObject {
                 }
                 turns.append(ChatTurn(role:"assistant",content:reply))
                 if companionVisible { CompanionSpeech.shared.say(reply,warden:profile.id) }
-                if turns.count > 20 { turns.removeFirst(turns.count - 20) }
+                if turns.count > 200 { turns.removeFirst(turns.count - 200) }
                 speaking = true
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -205,7 +211,7 @@ final class CompanionModel: ObservableObject {
     }
 
 }
-struct ChatTurn: Identifiable { let id = UUID(); let role: String; let content: String }
+struct ChatTurn: Identifiable { let id = UUID(); let role: String; let content: String; var at:Double=Date().timeIntervalSince1970 }
 func ramColor(_ hex: String) -> Color {
     let n = UInt32(hex, radix:16) ?? 0
     return Color(red:Double((n >> 16) & 255)/255,green:Double((n >> 8) & 255)/255,blue:Double(n & 255)/255)
@@ -456,6 +462,8 @@ struct ColorsView: View {
         ScrollView {
         VStack(spacing:12) {
             Text("Customize your ram").font(.title2.bold())
+            GoatAlertControl(warden:"ram")
+            Button("Forget local chat history"){model.turns=[]}
             Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
             if let error=speech.errors["ram"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
             TextField("Name",text:Binding(get:{model.name},set:{ value in

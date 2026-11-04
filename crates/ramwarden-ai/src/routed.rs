@@ -21,6 +21,7 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     if !enabled() {
         return None;
     }
+    let messages = crate::nyquest::compress(messages).await.ok()?;
     let (origin, key_name, model_name) = if work == Work::Conversation {
         ("https://api.x.ai", "XAI_API_KEY", "XAI_MODEL_ID")
     } else {
@@ -61,6 +62,13 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
         bytes.extend_from_slice(&chunk);
     }
     let body: Value = serde_json::from_slice(&bytes).ok()?;
+    if let Some(usage) = body.get("usage") {
+        tracing::info!(provider = origin, model = model.as_str(),
+            input_tokens = usage["input_tokens"].as_u64().unwrap_or(0),
+            output_tokens = usage["output_tokens"].as_u64().unwrap_or(0),
+            cost_in_usd_ticks = usage["cost_in_usd_ticks"].as_u64(),
+            "warden model usage");
+    }
     output_text(&body)
 }
 fn output_text(body: &Value) -> Option<String> {
