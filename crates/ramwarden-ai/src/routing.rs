@@ -44,6 +44,9 @@ pub fn classify(message: &str) -> Work {
     if ["research","implement","debug","code","refactor","investigate"].contains(first)
         || (["write","build","review"].contains(first) && words.iter().any(|w|["function","script","code","program","patch"].contains(w)))
         || message.contains("```") {return Work::Complex;}
+    let technical_help=["how ","why ","help ","explain "].iter().any(|prefix|m.starts_with(prefix))
+        && words.iter().any(|word|["implement","debug","crash","crashes","panic","panics","deadlock","stacktrace","refactor"].contains(word));
+    if technical_help || m.contains("root cause") || words.len()>100 {return Work::Complex;}
     if ["explain", "what", "why", "hello", "hi", "tell"].contains(first) {
         return Work::Conversation;
     }
@@ -94,5 +97,9 @@ mod tests {
         assert_eq!(classify("ask GPT to review this fix"),Work::Specialist);
         assert_eq!(classify("write a function to sort a list"),Work::Complex);
         assert_eq!(classify("research this architecture"),Work::Complex);
+        assert_eq!(classify("How do I implement binary search in Rust?"),Work::Complex);
+        assert_eq!(classify("Why does this function panic?"),Work::Complex);
+        assert_eq!(classify("Explain the root cause of the crash"),Work::Complex);
+        assert_eq!(classify("What is RAM?"),Work::Conversation);
     }
 }
