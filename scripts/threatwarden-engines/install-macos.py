@@ -13,7 +13,6 @@ import pwd
 import shutil
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 import yaml
 
 BASE = pathlib.Path('/Library/Application Support/ThreatWarden')
@@ -102,35 +101,7 @@ def main():
     job('com.ramwarden.rules', ['/bin/sh', str(BASE / 'refresh-macos.sh'), str(prefix)], 2)
     job('com.ramwarden.scan', ['/usr/bin/python3', str(BASE / 'scan.py'), '--scheduled', str(pathlib.Path(user.pw_dir) / 'Downloads')], 4)
 
-    # Wazuh allows sibling ossec_config elements; preserve them and comments.
-    wazuh = pathlib.Path('/Library/Ossec/etc/ossec.conf')
-    original = wazuh.read_text()
-    shutil.copy2(wazuh, backup / 'ossec.conf')
-    xml = ET.fromstring('<root>' + original + '</root>', parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
-    root = xml.find('ossec_config')
-    if root is None:
-        raise RuntimeError('Missing ossec_config')
-    for location in [str(LOG / 'clamav.json'), str(LOG / 'suricata/eve-*.json')]:
-        if not any(n.text == location for n in xml.findall('.//localfile/location')):
-            local = ET.SubElement(root, 'localfile')
-            ET.SubElement(local, 'log_format').text = 'json'
-            ET.SubElement(local, 'location').text = location
-    responses = xml.findall('.//active-response')
-    if not responses:
-        responses = [ET.SubElement(root, 'active-response')]
-    for response in responses:
-        disabled = response.find('disabled')
-        if disabled is None:
-            disabled = ET.SubElement(response, 'disabled')
-        disabled.text = 'yes'
-    (LOG / 'clamav.json').touch(exist_ok=True)
-    wazuh.write_text('\n'.join(ET.tostring(n, encoding='unicode') for n in xml))
-    try:
-        run('/Library/Ossec/bin/wazuh-logcollector', '-t')
-    except Exception:
-        shutil.copy2(backup / 'ossec.conf', wazuh)
-        raise
-    run('/Library/Ossec/bin/wazuh-control', 'restart')
+    run(sys.executable, str(source / 'configure-macos-agent.py'))
     print(f'Setup complete. Capture interface: {interface}. Daily scan: Downloads, RAM-gated. Backup: {backup}')
 
 
