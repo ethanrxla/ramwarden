@@ -40,6 +40,11 @@ def main():
         raise SystemExit('Choose the signed-in user')
     os.umask(0o027)
     prefix = pathlib.Path('/opt/homebrew' if pathlib.Path('/opt/homebrew/bin/suricata').exists() else '/usr/local')
+    # Homebrew 1.5.4_1 has a known OpenSSL 4 signature verification regression.
+    # Never skip database verification to work around a broken package.
+    scanner = (prefix / 'bin/clamscan').resolve()
+    if '1.5.4_1' in scanner.parts:
+        raise SystemExit('Upgrade Homebrew ClamAV to revision 1.5.4_2 or newer before setup (homebrew-core#322048).')
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     backup = BASE / 'backups' / stamp
     backup.mkdir(parents=True, mode=0o700)
@@ -110,7 +115,10 @@ def main():
             local = ET.SubElement(root, 'localfile')
             ET.SubElement(local, 'log_format').text = 'json'
             ET.SubElement(local, 'location').text = location
-    for response in xml.findall('.//active-response'):
+    responses = xml.findall('.//active-response')
+    if not responses:
+        responses = [ET.SubElement(root, 'active-response')]
+    for response in responses:
         disabled = response.find('disabled')
         if disabled is None:
             disabled = ET.SubElement(response, 'disabled')

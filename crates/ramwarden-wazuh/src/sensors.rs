@@ -164,13 +164,13 @@ fn clamav(log: &Path, db: &Path, now: u64) -> Sensor {
             "Scheduled scan deferred: memory not clear".to_string(),
         ),
         Some("scan_started") if timestamp.is_some_and(|t| fresh(t, now, 4 * 3600)) => {
-            ("on", "Scan running; no files are removed".to_string())
+            ("watch", "Scan started; completion not yet confirmed".to_string())
         }
         Some("scan_finished") if event["exit_code"] == 1 => (
             "watch",
             "Last scan found a detection; review alerts".to_string(),
         ),
-        Some("scan_finished") if event["exit_code"] == 0 && age.is_some_and(|h| h < 48) => (
+        Some("scan_finished") if event["exit_code"] == 0 && timestamp.is_some_and(|t| fresh(t, now, 48 * 3600)) => (
             "on",
             format!(
                 "Last scan finished {}h ago; selected folders only",
@@ -294,6 +294,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(clamav(&log, d.path(), now()).state, "watch");
+        fs::write(&log, format!("{{\"engine\":\"threatwarden_clamav\",\"event\":\"scan_finished\",\"exit_code\":0,\"time\":{}}}\n", now() + 3600)).unwrap();
+        assert_eq!(clamav(&log, d.path(), now()).state, "watch");
         assert_eq!(clamav(&log, d.path(), now() + 4 * 86400).state, "error");
+    }
+    #[test]
+    fn fresh_file_does_not_make_old_stats_current() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("eve.json"), "{\"timestamp\":\"2020-01-01T00:00:00Z\",\"event_type\":\"stats\",\"stats\":{\"decoder\":{\"pkts\":42}}}\n{\"event_type\":\"flow\"}\n").unwrap();
+        assert_eq!(suricata(d.path(), now()).state, "unknown");
     }
 }
