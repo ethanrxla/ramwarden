@@ -6,6 +6,7 @@ APP="${RAMWARDEN_APP_DEST:-$HOME/Applications/RamWarden.app}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/RamWarden.app/Contents/MacOS" "$STAGE/RamWarden.app/Contents/Resources"
+cp ../../assets/audio/*.wav "$STAGE/RamWarden.app/Contents/Resources/"
 cp ../../assets/brand/RamWarden.icns "$STAGE/RamWarden.app/Contents/Resources/"
 cp ../../web/assets/pets/threat.svg "$STAGE/RamWarden.app/Contents/Resources/ThreatWarden.svg"
 cp ../../assets/brand/icon128.png "$STAGE/RamWarden.app/Contents/Resources/RamWarden.png"

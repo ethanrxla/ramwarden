@@ -42,7 +42,7 @@ final class ReviewProtocol: URLProtocol {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         URLProtocol.registerClass(ReviewProtocol.self)
-        let model = CompanionModel()
+        let model = CompanionModel(persistMemory:false)
         model.companionVisible = true
         let tabs = [
             ReviewTab(browser: "fixture", id: 1, url: "https://example.org/one", title: "Research notes", reason: "You might return to this tab"),
@@ -102,6 +102,17 @@ final class ReviewProtocol: URLProtocol {
         offer(expiry: Date().timeIntervalSince1970 - 1)
         model.answerReview("close")
         precondition(ReviewProtocol.requests.count == count && model.tabReview == nil)
+        let recallTurns=[ChatTurn(role:"user",content:"My project is a tutoring scheduler")]+(0..<8).map{ChatTurn(role:"assistant",content:"Unrelated \($0)")}
+        let recalled=CompanionRecall.context(recallTurns,query:"What about my tutoring project?")
+        precondition(recalled.count == 5 && recalled.first?["content"] == "My project is a tutoring scheduler")
+        var baa=BaaPolicy()
+        precondition(baa.accept(warden:"ram",event:"critical",muted:false,now:1000))
+        precondition(!baa.accept(warden:"ram",event:"critical",muted:false,now:3000))
+        precondition(!baa.accept(warden:"threat",event:"new-alert",muted:false,now:1100))
+        precondition(!baa.accept(warden:"threat",event:"muted-alert",muted:true,now:3000))
+        precondition(baa.accept(warden:"threat",event:"serious-alert",muted:false,now:3001))
+        baa.clear("ram")
+        precondition(baa.accept(warden:"ram",event:"critical",muted:false,now:4001))
         model.turns = [ChatTurn(role: "assistant", content: "Fixture reply")]
         precondition(model.chatHeight == 240)
         print("PASS: native checklist render, unchecked defaults, selected-only close, Keep, Later, expiry and chat sizing")

@@ -113,3 +113,25 @@ RAM and security now share a native companion base and conversation transport, w
 The next Warp-style implementation must add a typed tool registry and streamed plan/tool/result events before granting file or terminal powers. Preserve original requests and exact arguments through routing and Nyquest. Use Grok for conversation and the configured Luna/Terra/Sol planner for tool workflows, without changing the operator's personal Nemotron test setup.
 
 Start with read-only diagnostics and a workspace the user explicitly chooses. File changes preview exact paths and contents; terminal tools use program/argument arrays and a bounded allowlist, never free-form shell text. Every mutation consumes an expiring, single-use confirmation bound to the exact tool, arguments and observed target. New tool output, file contents, browser text and security logs are untrusted observations, not authorization. No elevation, file deletion, network exposure, quarantine or arbitrary command execution is enabled by persona or model selection. Keep cancellation, time/output limits and an audit trail in the executor. Shared UI code is not a shared permission grant.
+
+## Companion notifications and recall
+
+The Mac companions now use a clipped, bundled goat call for rare notifications,
+with a shared fifteen-minute cooldown and independent mute controls. Memory must
+stay at 90% for ten polling samples; a review needs at least eight tabs; security
+notifications require a recent level-12-or-higher rule alert after initial polling.
+A higher pitch marks 95% memory or level-15 alerts. These thresholds are notification
+policy, not a claim that an alert proves malware. Hiding a companion stops audio.
+
+Each pet keeps up to 200 local conversation turns. Records older than thirty days
+are excluded and pruned when loaded or saved. Files are private to the OS user;
+settings can clear each pet's history. Before inference, a bounded keyword search
+adds at most three relevant older turns alongside four recent turns. This is local
+retrieval, not a vector index or automatic access to other applications. Remote
+memory hub integration remains separate; do not silently join a vendor/personal
+hub or upload customer transcripts.
+
+For local development, the operator selected Grok 4.6 for conversation. Routed
+long requests now invoke the required Nyquest compression adapter before provider
+inference. Usage logs include model, token counts and provider-reported cost ticks,
+never request text, credentials or retrieved memories. Sales models are unchanged.

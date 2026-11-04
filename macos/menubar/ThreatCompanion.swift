@@ -36,9 +36,13 @@ final class ThreatState: ObservableObject {
             detail = "The local security report is unavailable. A companion on screen does not mean this Mac is protected."
             engines = []; return
         }
+        let previouslyChecked = checkedAt > 0
         checkedAt = status["checked_at"] as? Double ?? 0
         alerts = (((report["report"] as? [String:Any])?["alerts"] as? [[String:Any]]) ?? []).prefix(50).enumerated().map { ThreatAlert(index:$0.offset,row:$0.element) }
         alertCount = ((report["report"] as? [String:Any])?["alerts"] as? [[String:Any]])?.count ?? 0
+        if previouslyChecked,isVisible?() == true,let serious=alerts.first(where:{$0.level >= 12 && $0.isRecent}) {
+            GoatAlerts.shared.notify(warden:"threat",event:serious.timestamp+":"+serious.rule,critical:serious.level >= 15)
+        }
         let previousHeadline = headline
         level = status["level"] as? String ?? "off"
         headline = status["headline"] as? String ?? "Setup needed"
@@ -52,6 +56,11 @@ final class ThreatState: ObservableObject {
 
 struct ThreatAlert: Identifiable {
     let id:String;let timestamp:String;let rule:String;let level:Int;let description:String;let advice:String?;let evidence:[String:String]
+    var isRecent:Bool {
+        let parser=ISO8601DateFormatter();parser.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        let date=parser.date(from:timestamp) ?? ISO8601DateFormatter().date(from:timestamp)
+        guard let date=date else{return false};let age=Date().timeIntervalSince(date);return age >= -60 && age < 300
+    }
     init(index:Int,row:[String:Any]){timestamp=row["timestamp"] as? String ?? "Time unavailable";rule=row["rule_id"] as? String ?? "Unknown";level=row["level"] as? Int ?? 0;description=String((row["description"] as? String ?? "No alert description supplied").prefix(1200));advice=row["advice"] as? String;evidence=row["evidence"] as? [String:String] ?? [:];id="\(timestamp):\(rule):\(index)"}
 }
 private struct ThreatSprite: View {
@@ -63,7 +72,7 @@ private struct ThreatSprite: View {
                 for pixel in ThreatPixels.sprite {
                     context.fill(Path(CGRect(x:pixel.x*scale,y:pixel.y*scale,width:pixel.width*scale,height:pixel.height*scale)),with:.color(pixel.color))
                 }
-            }.frame(width:CGFloat(48*state.pixelScale),height:CGFloat(48*state.pixelScale)).accessibilityLabel("ThreatWarden companion. Click for protection status.")
+            }.frame(width:CGFloat(48*state.pixelScale),height:CGFloat(48*state.pixelScale)).accessibilityLabel("ThreatWarden companion. Click to toggle chat.")
 
         }.frame(width:PetSizing.size("threat",scale:state.pixelScale).width,height:PetSizing.size("threat",scale:state.pixelScale).height)
     }
@@ -74,10 +83,11 @@ private struct ThreatReport: View {
     @ObservedObject var state: ThreatState
     var hide: () -> Void
     var chat: () -> Void
+    var forget: () -> Void
     var body: some View {
         VStack(alignment:.leading,spacing:8) {
             Text("ThreatWarden").font(.headline)
-            DisclosureGroup("Companion settings") { Toggle("Spoken status",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("threat") } }; PetSizeControl(warden:"threat",label:"Companion size"); if let error=speech.errors["threat"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)} }
+            DisclosureGroup("Companion settings") { GoatAlertControl(warden:"threat"); Button("Forget local chat history",action:forget); Toggle("Spoken status",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("threat") } }; PetSizeControl(warden:"threat",label:"Companion size"); if let error=speech.errors["threat"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)} }
 
             Text(state.headline).fontWeight(.semibold)
             Text(state.detail).font(.system(size:12)).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
@@ -165,7 +175,7 @@ final class ThreatCompanion: WardenCompanion {
     private var sizeObserver: NSObjectProtocol?
     override init() {
         super.init(profile:ThreatWardenProfile())
-        state.onStatus = { [weak self] text in guard let self=self,self.visible else{return};self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
+        state.onStatus = { [weak self] text in guard let self=self,self.visible else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
             guard notification.userInfo?["warden"] as? String == "threat" else { return }
             self?.resizePet()
@@ -192,7 +202,7 @@ final class ThreatCompanion: WardenCompanion {
         let p = PetPanel(contentRect:NSRect(origin:NSPoint(x:300,y:100),size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.level = .floating; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
-        let host = ThreatHost(rootView:ThreatSprite(state:state)); host.report = { [weak self] in self?.showReport() }; host.chat = { [weak self] in self?.openChat() }; host.moved = { [weak self] in self?.didMove(anchor:self?.panel) }; host.hide = { [weak self] in self?.hide() }
+        let host = ThreatHost(rootView:ThreatSprite(state:state)); host.report = { [weak self] in self?.showReport() }; host.chat = { [weak self] in self?.toggleChat() }; host.moved = { [weak self] in self?.didMove(anchor:self?.panel) }; host.hide = { [weak self] in self?.hide() }
         p.contentView = host
         let d = UserDefaults.standard
         let bounds = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1000,height:800)
@@ -210,13 +220,19 @@ final class ThreatCompanion: WardenCompanion {
         UserDefaults.standard.set(panel.frame.minX,forKey:"threat.x")
         UserDefaults.standard.set(panel.frame.minY,forKey:"threat.y")
     }
-    func openChat() { model.connected = state.level != "off";showAssistant(anchor:panel,settings:{[weak self] in self?.showReport()}) }
+    private func recordStatus(_ text:String) {
+        guard model.turns.last?.content != text else{return}
+        model.turns.append(ChatTurn(role:"assistant",content:text))
+        if model.turns.count>200 {model.turns.removeFirst(model.turns.count-200)}
+    }
+    func toggleChat(){if assistantPanel?.isVisible == true {closeAssistant()} else {openChat()}}
+    func openChat() { if model.turns.isEmpty {recordStatus(state.headline)}; model.connected = state.level != "off";showAssistant(anchor:panel,settings:{[weak self] in self?.showReport()}) }
     func showReport() {
         guard let button = statusButton else { return }
         if report?.isShown == true { report?.performClose(nil); return }
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide(); self?.report?.performClose(nil) },chat:{[weak self] in self?.report?.performClose(nil);self?.openChat()}))
+        popover.contentViewController = NSHostingController(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide(); self?.report?.performClose(nil) },chat:{[weak self] in self?.report?.performClose(nil);self?.openChat()},forget:{[weak self] in self?.model.turns=[]}))
         popover.contentSize = NSSize(width:340,height:min(state.alerts.isEmpty ? 430 : 680,(button.window?.screen?.visibleFrame.height ?? 800)-70))
         report = popover
         popover.show(relativeTo:button.bounds,of:button,preferredEdge:.minY)
