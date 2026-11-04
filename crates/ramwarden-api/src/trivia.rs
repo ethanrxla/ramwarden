@@ -9,6 +9,13 @@ impl Trivia {
   let feed=path.as_ref().and_then(|p|std::fs::read(p).ok()).filter(|bytes|bytes.len()<=65536).and_then(|bytes|serde_json::from_slice::<Feed>(&bytes).ok()).filter(|f|f.valid(crate::routes::unix_now()));
   Self{path,feed:RwLock::new(feed)}
  }
+ async fn snapshot(&self)->Option<Feed>{
+  let now=crate::routes::unix_now();let cached=self.feed.read().unwrap().clone();
+  if let Some(feed)=cached.filter(|feed|feed.valid(now)){return Some(feed)}
+  let bytes=tokio::fs::read(self.path.as_ref()?).await.ok()?;if bytes.len()>65536{return None}
+  let feed=serde_json::from_slice::<Feed>(&bytes).ok()?;if !feed.valid(now){return None}
+  *self.feed.write().unwrap()=Some(feed.clone());Some(feed)
+ }
  async fn publish(&self){
   let now=crate::routes::unix_now();
   if self.feed.read().unwrap().as_ref().is_some_and(|f|f.valid(now)){return}
@@ -37,7 +44,7 @@ impl Drop for PublishLock {fn drop(&mut self){let _=std::fs::remove_file(&self.0
 fn service()->Arc<Trivia>{SERVICE.get_or_init(||Arc::new(Trivia::load(std::env::var_os("RAMWARDEN_PUBLIC_TRIVIA_FILE").map(PathBuf::from)))).clone()}
 pub fn spawn(){let shared=service();if shared.path.is_none(){return}tokio::spawn(async move{loop{shared.publish().await;tokio::time::sleep(Duration::from_secs(3600)).await;}});}
 pub async fn feed()->Response {
- let shared=service();let feed=shared.feed.read().unwrap().clone();
+ let shared=service();let feed=shared.snapshot().await;
  match feed.filter(|f|f.valid(crate::routes::unix_now())){
   Some(feed)=>([(header::CACHE_CONTROL,"public, max-age=3600")],Json(feed)).into_response(),
   None=>(StatusCode::SERVICE_UNAVAILABLE,[(header::RETRY_AFTER,"3600")],"Public trivia is not ready").into_response(),
@@ -50,6 +57,11 @@ pub async fn feed()->Response {
   let data=serde_json::to_vec(&Feed{generated_at:now,expires_at:now+86400,facts:vec![ramwarden_ai::trivia::Fact{text:"My horns are a cache miss.".into(),kind:"joke".into(),source_url:None}]}).unwrap();std::fs::write(&path,&data).unwrap();
   let a=Trivia::load(Some(path.clone()));let b=Trivia::load(Some(path.clone()));a.publish().await;b.publish().await;
   assert_eq!(std::fs::read(&path).unwrap(),data);assert_eq!(a.feed.read().unwrap().as_ref().unwrap().generated_at,b.feed.read().unwrap().as_ref().unwrap().generated_at);
+ }
+ #[tokio::test] async fn reader_observes_another_publishers_atomic_update(){
+  let d=tempfile::tempdir().unwrap();let path=d.path().join("feed.json");let reader=Trivia::load(Some(path.clone()));assert!(reader.snapshot().await.is_none());
+  let now=crate::routes::unix_now();let feed=Feed{generated_at:now,expires_at:now+86400,facts:vec![ramwarden_ai::trivia::Fact{text:"I guard the byte pasture.".into(),kind:"joke".into(),source_url:None}]};
+  std::fs::write(&path,serde_json::to_vec(&feed).unwrap()).unwrap();assert_eq!(reader.snapshot().await.unwrap().facts.len(),1);
  }
  #[test] fn incomplete_cache_is_not_loaded(){let d=tempfile::tempdir().unwrap();let p=d.path().join("facts.json");std::fs::write(&p,"{partial").unwrap();assert!(Trivia::load(Some(p)).feed.read().unwrap().is_none());}
  #[test] fn public_reads_do_not_start_a_publisher(){let service=Trivia::load(None);assert!(service.path.is_none());assert!(service.feed.read().unwrap().is_none());}
