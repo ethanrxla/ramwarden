@@ -38,6 +38,8 @@ pub struct WazuhReport {
     pub problems: Vec<String>,
     /// One line per engine, filled in from the rest of the report.
     pub engines: Vec<Engine>,
+    /// Local-only sensor evidence and connection inventory.
+    pub sensors: ramwarden_wazuh::sensors::Sensors,
 }
 
 /// One ThreatWarden engine's line in the pane.
@@ -46,7 +48,7 @@ pub struct Engine {
     /// `wazuh`, `clamav`, `suricata` or `network`.
     pub id: &'static str,
     pub name: &'static str,
-    /// `on`, `off`, `planned` or `error`.
+    /// `on`, `off`, `watch`, `unknown` or `error`.
     pub state: &'static str,
     pub detail: String,
 }
@@ -58,8 +60,7 @@ impl Engine {
 }
 
 impl WazuhReport {
-    /// The engine lines, from the agent's health. Only Wazuh ships so far;
-    /// the rest follow `docs/specs/threatwarden.md` and show as `planned`.
+    /// Independent endpoint evidence: a connected agent does not prove sensor health.
     pub fn engine_lines(&self) -> Vec<Engine> {
         let wazuh = match self.health() {
             AgentHealth::Connected => Engine::new("wazuh", "Wazuh agent", "on", "Connected"),
@@ -69,9 +70,10 @@ impl WazuhReport {
         };
         vec![
             wazuh,
-            Engine::new("clamav", "ClamAV", "planned", "Malware scans, when memory is comfortable"),
-            Engine::new("suricata", "Suricata", "planned", "Network intrusion detection, opt-in"),
-            Engine::new("network", "Network view", "planned", "Who this computer talks to"),
+            Engine::new("clamav", "ClamAV", self.sensors.clamav.state, &self.sensors.clamav.detail),
+            Engine::new("suricata", "Suricata", self.sensors.suricata.state, &self.sensors.suricata.detail),
+            Engine::new("network", "Network view", if self.sensors.network.checked_at == 0 || self.sensors.network.problem.is_some() { "unknown" } else { "on" },
+                self.sensors.network.problem.clone().unwrap_or_else(|| format!("{} established TCP connections visible to this user", self.sensors.network.connections.len()))),
         ]
     }
 
@@ -108,6 +110,7 @@ pub struct ThreatWarden {
     name_file: PathBuf,
     view: RwLock<(Status, Option<WazuhReport>)>,
     setup: Mutex<Setup>,
+    sensors: RwLock<ramwarden_wazuh::sensors::Sensors>,
 }
 
 impl ThreatWarden {
@@ -117,6 +120,7 @@ impl ThreatWarden {
             name_file: cfg.db_path.with_file_name("threat-agent-name"),
             view: RwLock::new((Status::off("Not checked yet", "", 0), None)),
             setup: Mutex::new(Setup::Idle),
+            sensors: RwLock::new(Default::default()),
         }
     }
 
@@ -155,6 +159,7 @@ impl ThreatWarden {
 
     fn set(&self, status: Status, mut report: Option<WazuhReport>) {
         if let Some(r) = report.as_mut() {
+            r.sensors = self.sensors.read().unwrap().clone();
             r.engines = r.engine_lines();
         }
         *self.view.write().unwrap() = (status, report);
@@ -181,6 +186,8 @@ impl ThreatWarden {
         if !self.cfg.enabled {
             return;
         }
+        let sensors = ramwarden_wazuh::sensors::collect().await;
+        *self.sensors.write().unwrap() = sensors;
         if self.hosted() {
             self.poll_hosted().await
         } else {
@@ -447,11 +454,11 @@ mod tests {
     }
 
     #[test]
-    fn engines_follow_the_agent_and_list_the_roadmap() {
+    fn engines_do_not_assume_sensor_coverage_from_agent_health() {
         let state = |r: WazuhReport| r.engine_lines().iter().map(|e| (e.id, e.state)).collect::<Vec<_>>();
         assert_eq!(
             state(report(true, Some("connected"), None)),
-            [("wazuh", "on"), ("clamav", "planned"), ("suricata", "planned"), ("network", "planned")]
+            [("wazuh", "on"), ("clamav", "unknown"), ("suricata", "unknown"), ("network", "unknown")]
         );
         assert_eq!(state(report(false, None, None))[0], ("wazuh", "off"));
         assert_eq!(state(report(true, None, Some("disconnected")))[0], ("wazuh", "error"));
