@@ -242,7 +242,7 @@ if UserDefaults.standard.object(forKey: positionKey) == nil {
 
 MainActor.assumeIsolated {
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)   // no Dock icon
+app.setActivationPolicy(.regular)   // Dock app and menu-bar companion share one process
 let delegate = App()
 app.delegate = delegate
 app.run()

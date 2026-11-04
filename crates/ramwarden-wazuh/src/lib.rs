@@ -30,11 +30,12 @@
 pub mod agent;
 pub mod api;
 pub mod evidence;
-pub mod engines;
 pub mod cloud;
-pub mod install;
 /// Server-only enrollment mechanism; separate from read-only detection.
 pub mod enrollment;
+pub mod install;
+/// Local, read-only sensor health and connection inventory. Never uploaded.
+pub mod sensors;
 
 pub use agent::{LocalAgent, default_agent_name};
 pub use api::{Alert, Client, Endpoints, ManagerAgent};

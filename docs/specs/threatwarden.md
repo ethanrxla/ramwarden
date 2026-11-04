@@ -104,3 +104,17 @@ computer's indexed source event on demand, including original log fields, within
 a bounded response. Untrusted record contents cannot authorize actions. Missing
 previous output, absent records and response limits must remain explicit. Reading
 security evidence does not enable remediation or cross-device/cross-account access.
+
+### Unified live engine reporting
+Use the endpoint sensor collector for ClamAV scan outcomes, fresh Suricata packet
+counters, and bounded local TCP inventory. Do not maintain a second metadata-only
+health collector. The companion and extension show engine details and up to 100
+connections. The assistant receives engine health and connection counts/scope;
+raw local addresses are not automatically sent to a cloud model. Missing, stale
+or unreadable evidence is explicit rather than a roadmap placeholder.
+
+Suricata accepts both RFC3339 offsets and its native numeric timezone offsets.
+Fresh packet counters with cumulative capture drops over 1% show watch; display
+raw counters and startup scope so this is not confused with current loss rate.
+The Mac app has a regular Dock presence alongside its menu bar; opening the app
+opens companion chat and quitting the UI continues to leave the daemon running.
