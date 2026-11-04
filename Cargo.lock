@@ -968,6 +968,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5544,6 +5553,7 @@ version = "0.2.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
  "ramwarden-platform",
  "reqwest",
  "serde",

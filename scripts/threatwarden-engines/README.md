@@ -1,4 +1,4 @@
-# Linux detection sensors
+# Endpoint detection sensors
 
 Explicit opt-in Ubuntu sensor setup, after the Wazuh manager is healthy:
 
@@ -20,8 +20,8 @@ capture. EVE records alerts, flow counters. It never adds
 IPS/NFQUEUE rules. Wazuh ingests EVE JSON and ClamAV's structured scan events;
 local rule IDs 100510/100511 label the antivirus events with `clamav`.
 
-The application UI and hosted enrollment still need integration. Do not report
-these engines as enabled on customer devices merely because the server has them.
+Endpoint status is measured locally. Do not report sensors as enabled on a
+customer device merely because the hosted server has them.
 
 Windows: `scan.ps1 -Paths C:\path` uses the official ClamAV installation and
 writes JSON to `%ProgramData%\ThreatWarden\logs\clamav.json`. Use `-Scheduled`
@@ -44,3 +44,51 @@ the Windows memory daemon was restarted through its existing login task and the
 endpoint now responds. A reclaim-pressure response correctly defers scans. The
 daemon task has no runtime cutoff and retries after failures. Deferral is not a
 successful scheduled sweep.
+
+## macOS and measured endpoint status
+
+Install current Homebrew `clamav` and `suricata`, then run from this directory:
+
+    sudo /opt/homebrew/opt/suricata/libexec/bin/python install-macos.py --user YOUR_LOGIN
+
+Use `/usr/local` on Intel Homebrew installations. ClamAV 1.5.4_1 has a known
+signature-verification failure with OpenSSL 4; upgrade to 1.5.4_2 or newer
+before setup. Verification must remain enabled. See
+https://github.com/Homebrew/homebrew-core/issues/322048.
+
+The installer validates Suricata configuration/rules, captures passively on
+the current default-route interface, adds Wazuh log inputs, and schedules daily
+signature/rule updates and a RAM-gated Downloads scan. Switching adapters needs
+a setup rerun to select the new interface. Encrypted payloads remain encrypted;
+this is endpoint/interface coverage, not a claim to inspect every VPN tunnel.
+Packet payload logging is disabled. Suricata 8 warns that the current HTTP/TLS
+metadata flags are deprecated; metadata suppression still needs validation. Scan and service
+configuration backups live under `/Library/Application Support/ThreatWarden/backups`.
+The user receives read-only access to evidence; launchd scripts remain root-owned.
+`scan.py /absolute/path` is the explicit on-demand scan command (run with sudo).
+
+For the already-installed Windows sensors, run `enable-windows-evidence.ps1`
+elevated. It validates a candidate configuration before replacement, adds periodic
+capture counters, refreshes the existing scheduled scan/update tasks, and grants
+read-only evidence access. This operator script targets the established
+`D:\ThreatWarden` installation; it is not a general-purpose Windows installer.
+
+The daemon's paid `/wardens/threat` report now includes local sensor evidence and
+`sensors.network.connections`. Connection inventory is established TCP only,
+limited to what the OS exposes to the current user (UDP and other users may be
+absent). It performs no DNS resolution and sends none of this inventory to the
+hosted service. It does not infer per-app bandwidth from connection counts.
+The Mac companion shows this inventory and engine details. Other clients can
+consume the same report; their connection table UI is not added here.
+
+Missing logs, malformed output, missing timestamps, stale scan results, deferred
+scans and stale capture counters never become a healthy green state. EVE reads
+are capped at 512 KiB; snapshots at 512 connections and a 12-second deadline.
+A quiet interface with zero captured packets is reported as unverified/watch.
+Read-only operator diagnostic, with remote addresses omitted by default:
+
+    cargo run -p ramwarden-wazuh --example sensors
+
+Add `-- --connections` to inspect private endpoint addresses locally. This
+example does not install or replace the running daemon. A successful build does
+not imply that the new UI/daemon has been deployed.

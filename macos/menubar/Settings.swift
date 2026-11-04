@@ -38,13 +38,11 @@ struct ColorsView: View {
                 let name = String(value.prefix(40)); model.name = name
                 UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? model.profile.name : name,forKey:"\(model.profile.id).name")
             })).textFieldStyle(.roundedBorder).accessibilityLabel("Companion name")
-            if model.profile.id == "ram" {
             Button("Choose folder for file tools…"){model.chooseWorkspace()}
             Text(model.workspaceStatus).font(.caption).foregroundStyle(.secondary)
             Button("Disconnect folder"){model.setWorkspace(nil)}
             Toggle("Auto file and terminal tools",isOn:Binding(get:{model.automaticTools},set:{model.setAutomaticTools($0)}))
             Text(model.automaticTools ? "Auto · supported tools in this folder" : "Manual · review each operation").font(.caption).foregroundStyle(.secondary)
-            }
             PetSizeControl(warden:model.profile.id,label:"Companion size")
             if model.profile.id == "ram" {PixelRam(model:model,animated:false).frame(width:180,height:180)}
             else {ThreatAvatar(model:model).frame(width:180,height:180)}
@@ -61,7 +59,7 @@ struct ColorsView: View {
             Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
             }
         }.padding(24).frame(width:260)
-        }.frame(width:310,height:660).onAppear{if model.profile.id == "ram" {model.refreshWorkspace()}}
+        }.frame(width:310,height:660).onAppear{model.refreshWorkspace()}
     }
 }
 

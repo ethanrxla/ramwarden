@@ -147,6 +147,7 @@ pub struct Assistant {
     /// Explicit per-user private hub connection; disabled by default.
     pub memory_hub_enabled: bool,
     pub workspace: Option<PathBuf>,
+    pub threat_workspace: Option<PathBuf>,
 }
 
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.

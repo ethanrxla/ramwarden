@@ -39,3 +39,7 @@ for i,c in enumerate('WARDEN'):
    if on=='1':d.point((14+i*6+x,52+y),fill='#f4e8ef')
 word.resize((256,256),Image.Resampling.NEAREST).save(root/'web/assets/warden-wordmark.png')
 print('Built red pixel mascot icons and separate site-only WARDEN wordmark.')
+
+# The Mac app has a larger mascot on a radar tile; browser/site marks stay plain.
+if shutil.which('swift') and shutil.which('iconutil'):
+ subprocess.run(['swift',str(root/'scripts/build-mac-icon.swift'),str(root)],check=True)

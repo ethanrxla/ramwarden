@@ -286,7 +286,7 @@ async function refreshThreat() {
  try {
   const data=await daemonJSON('/wardens/threat');
   headline.textContent=data.status?.headline || 'Protection unverified';detail.textContent=data.status?.detail || '';
-  for(const engine of data.report?.engines || []){const row=document.createElement('p');row.textContent=`${engine.name}: ${engine.state}`;engines.append(row);}
+  for(const engine of data.report?.engines || []){const row=document.createElement('p');row.textContent=`${engine.name}: ${engine.state} · ${engine.detail || "No detail supplied"}`;engines.append(row);}
   for(const alert of (data.report?.alerts || []).slice(0,50)){
    const card=document.createElement('article');card.className='security-alert';
    const title=document.createElement('strong');title.textContent=`Level ${alert.level} · Rule ${alert.rule_id}`;
@@ -297,6 +297,16 @@ async function refreshThreat() {
     const row=document.createElement('p');row.textContent=`${evidence.summary || evidence.kind || 'Evidence'} · ${evidence.source || 'Source unavailable'}${evidence.complete===false?' · Partial evidence':''}`;card.append(row);
    }
    for(const [name,value] of Object.entries(alert.evidence||{}).slice(0,8)){const row=document.createElement('p');row.textContent=`${name}: ${String(value).slice(0,512)}`;card.append(row);}if(alert.advice){const advice=document.createElement('p');advice.textContent=alert.advice;card.append(advice);}alerts.append(card);
+  }
+  const network=data.report?.sensors?.network;
+  if(network){
+   const section=document.createElement('details');
+   const title=document.createElement('summary');title.textContent=`Network connections · ${network.connections?.length || 0} reported`;
+   const scope=document.createElement('p');scope.textContent=network.problem || network.scope || 'Coverage unverified';section.append(title,scope);
+   for(const connection of (network.connections || []).slice(0,100)){
+    const row=document.createElement('p');row.textContent=`${connection.process} (PID ${connection.pid}) → ${connection.remote}`;section.append(row);
+   }
+   engines.append(section);
   }
   if(data.report?.alerts?.length){const note=document.createElement('p');note.textContent='Reported rule alerts are not confirmed malware. Showing at most 50 recent alerts.';alerts.prepend(note);}
   else if(data.unlocked && data.report){alerts.textContent='No alerts returned in this report. This does not prove the computer is free of threats.';}
@@ -321,7 +331,8 @@ async function refreshAccount() {
  link.textContent='Sign in with email, wallet or GitHub';
  try {
   const data=await daemonJSON('/wardens');
-  if(data.paid && ['ram','pro'].includes(data.tier)) {
+  const paid=Array.isArray(data.paid)?data.paid.length>0:data.paid===true;
+  if(paid && ['ram','pro'].includes(data.tier)) {
    state.textContent=data.tier==='pro'?'Pro 🐐 · Active on this computer':'Plus ⚡ · Active on this computer';
    link.textContent='Manage account and connected identities';
    help.textContent='This extension uses the desktop app’s verified plan. Website sign-in is separate; no extra extension password is needed.';

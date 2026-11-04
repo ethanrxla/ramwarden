@@ -20,6 +20,8 @@ private final class ThreatPixels: NSObject, XMLParserDelegate {
     @Published var detail = "Waiting for the local security report."
     @Published var level = "setup"
     @Published var engines: [String] = []
+    @Published var connections: [String] = []
+    @Published var networkScope = ""
     @Published var checkedAt: Double = 0
     @Published var alertCount = 0
     @Published var alerts:[ThreatAlert] = []
@@ -34,7 +36,7 @@ private final class ThreatPixels: NSObject, XMLParserDelegate {
         guard let report = await fetchJSON("wardens/threat") as? [String:Any], let status = report["status"] as? [String:Any] else {
             level = "off"; headline = "Protection unverified"
             detail = "The local security report is unavailable. A companion on screen does not mean this Mac is protected."
-            engines = []; return
+            engines = []; connections = []; networkScope = ""; return
         }
         let previouslyChecked = checkedAt > 0
         checkedAt = status["checked_at"] as? Double ?? 0
@@ -50,7 +52,12 @@ private final class ThreatPixels: NSObject, XMLParserDelegate {
         if isVisible?() == true && !headline.localizedCaseInsensitiveContains("Pro warden") && headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat") }
         if headline != previousHeadline { onStatus?(headline) }
         let engineRows = (report["report"] as? [String:Any])?["engines"] as? [[String:Any]] ?? []
-        engines = engineRows.map { "\($0["name"] as? String ?? "Engine"): \($0["state"] as? String ?? "unknown")" }
+        engines = engineRows.map { "\($0["name"] as? String ?? "Engine"): \($0["state"] as? String ?? "unknown")\n\($0["detail"] as? String ?? "")" }
+        let network = ((report["report"] as? [String:Any])?["sensors"] as? [String:Any])?["network"] as? [String:Any] ?? [:]
+        networkScope = network["problem"] as? String ?? network["scope"] as? String ?? "Network inventory unavailable"
+        connections = (network["connections"] as? [[String:Any]] ?? []).prefix(100).enumerated().map { index, row in
+            "\(index + 1). \(row["process"] as? String ?? "Unknown") (PID \(row["pid"] as? Int ?? 0)) -> \(row["remote"] as? String ?? "")"
+        }
     }
 }
 
@@ -146,6 +153,10 @@ private struct ThreatReport: View {
                 Text(state.checkedAt > 0 ? Date(timeIntervalSince1970:state.checkedAt).formatted(date:.omitted,time:.shortened) : "Not checked")
             }.font(.caption).foregroundStyle(.secondary)
             LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],alignment:.leading,spacing:4) { ForEach(state.engines,id:\.self) { Text($0).font(.caption) } }
+            DisclosureGroup("Connections on this Mac (first 100)") {
+                Text(state.networkScope).font(.caption2).foregroundStyle(.secondary)
+                ScrollView { LazyVStack(alignment:.leading) { ForEach(state.connections,id:\.self) { Text($0).font(.caption2).textSelection(.enabled) } } }.frame(maxHeight:150)
+            }
             if !state.alerts.isEmpty {
                 Text("Recent rule alerts · not confirmed malware").font(.caption).foregroundStyle(.secondary)
                 ScrollView {
@@ -232,7 +243,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
     private var sizeObserver: NSObjectProtocol?
     override init() {
         super.init(profile:ThreatWardenProfile())
-        state.onStatus = { [weak self] text in guard let self=self,self.visible else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
+        state.onStatus = { [weak self] text in guard let self=self,self.visible,!self.model.thinking,self.assistantPanel?.isVisible != true else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
             guard notification.userInfo?["warden"] as? String == "threat" else { return }
             Task { @MainActor in self?.resizePet() }

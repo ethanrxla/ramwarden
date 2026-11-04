@@ -57,6 +57,8 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
     let threatCompanion = ThreatCompanion()
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        if let url=Bundle.main.url(forResource:"RamWarden",withExtension:"icns"),let icon=NSImage(contentsOf:url) { NSApp.applicationIconImage=icon }
+
         threatCompanion.statusButton = item.button
         companion.threatCustomizationModel=threatCompanion.model
         threatCompanion.openCustomization = { [weak self] in self?.companion.openColors(warden:"threat") }
@@ -242,7 +244,7 @@ if UserDefaults.standard.object(forKey: positionKey) == nil {
 
 MainActor.assumeIsolated {
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)   // no Dock icon
+app.setActivationPolicy(.regular)   // Dock app and menu-bar companion share one process
 let delegate = App()
 app.delegate = delegate
 app.run()
