@@ -115,6 +115,20 @@ final class ReviewProtocol: URLProtocol {
         precondition(baa.accept(warden:"ram",event:"critical",muted:false,now:4001))
         model.turns = [ChatTurn(role: "assistant", content: "Fixture reply")]
         precondition(model.chatHeight == 240)
+        let threat=CompanionModel(profile:ThreatWardenProfile(),persistMemory:false)
+        let ramEyes=model.eyes;threat.eyes="55FF88";precondition(model.eyes==ramEyes && threat.profile.id == "threat")
+        let selected=WardenSettingsSelection();selected.selected="threat"
+        let settings=NSHostingView(rootView:WardenSettingsView(ram:model,threat:threat,selection:selected))
+        settings.frame=NSRect(x:0,y:0,width:334,height:714)
+        let settingsWindow=NSWindow(contentRect:settings.frame,styleMask:[.titled],backing:.buffered,defer:false)
+        settingsWindow.contentView=settings;settingsWindow.orderFront(nil);settings.layoutSubtreeIfNeeded()
+        try await Task.sleep(nanoseconds:200_000_000)
+        if let output=ProcessInfo.processInfo.environment["RW_SETTINGS_IMAGE"],let bitmap=settings.bitmapImageRepForCachingDisplay(in:settings.bounds){
+            settings.cacheDisplay(in:settings.bounds,to:bitmap)
+            if let png=bitmap.representation(using:.png,properties:[:]){try png.write(to:URL(fileURLWithPath:output))}
+        }
+        selected.selected="ram";settings.layoutSubtreeIfNeeded();precondition(model.profile.id == "ram")
+        settingsWindow.orderOut(nil)
         print("PASS: native checklist render, unchecked defaults, selected-only close, Keep, Later, expiry and chat sizing")
     }
 }

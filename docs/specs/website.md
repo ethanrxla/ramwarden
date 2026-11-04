@@ -241,3 +241,11 @@ Existing identities owned by another account return a conflict rather than
 merging subscriptions. Both linked methods subsequently resolve to the same
 account id, plan and devices. Email sign-in also offers an existing-code entry
 path, including when switching from a wallet session.
+
+### Extension account state
+The browser popup reads the desktop daemon’s verified entitlement; it never
+claims a website session proves this device is linked. Plus/Pro show the active
+computer plan. Lite and disconnected states offer website email/wallet/GitHub
+sign-in and explain the existing `ramwarden login` device-link step. No identity
+tokens or payment approvals are copied into extension storage. A refresh control
+rechecks after device linking. Security alerts include source evidence summaries.

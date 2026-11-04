@@ -29,6 +29,10 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
         self.profile = profile
         self.companionVisible = UserDefaults.standard.bool(forKey:"\(profile.id).visible")
         self.name = UserDefaults.standard.string(forKey:"\(profile.id).name") ?? profile.name
+        for (key,fallback) in [("wool",profile.id == "threat" ? "9AA3AD" : "D84545"),("horns",profile.id == "threat" ? "7C3AED" : "F5DEAA"),("hooves",profile.id == "threat" ? "1A0F2E" : "29242B"),("eyes",profile.id == "threat" ? "39FF88" : "FFFFFF"),("pupilStyle",profile.id == "threat" ? "none" : "slit")] {
+            let value=UserDefaults.standard.string(forKey:"\(profile.id).\(key)") ?? fallback
+            switch key {case "wool":self.wool=value;case "horns":self.horns=value;case "hooves":self.hooves=value;case "eyes":self.eyes=value;default:self.pupilStyle=value}
+        }
         self.memoryReady = persistMemory
         if persistMemory {
             let memoryProfile=profile.id
@@ -114,7 +118,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
     private var task: Task<Void, Never>?
     func saveColors() {
         for (key, value) in [("wool", wool), ("horns", horns), ("hooves", hooves), ("eyes", eyes), ("pupilStyle", pupilStyle)] {
-            UserDefaults.standard.set(value, forKey: "ram.\(key)")
+            UserDefaults.standard.set(value, forKey: "\(profile.id).\(key)")
         }
     }
     func saveFocus(_ goal: String) {
@@ -125,7 +129,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             defer { thinking = false }
             do {
                 var req = URLRequest(url:base.appendingPathComponent("warden/focus"))
-                req.httpMethod = "POST"; req.timeoutInterval = 48
+                req.httpMethod = "POST"; req.timeoutInterval = 60
                 req.setValue("application/json",forHTTPHeaderField:"Content-Type")
                 req.httpBody = try JSONSerialization.data(withJSONObject:["goal":goal,"name":name])
                 let (data,response) = try await URLSession.shared.data(for:req)
@@ -173,7 +177,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             defer { thinking = false; task = nil }
             do {
                 var req = URLRequest(url: base.appendingPathComponent("assistant/chat"))
-                req.httpMethod = "POST"; req.timeoutInterval = 48
+                req.httpMethod = "POST"; req.timeoutInterval = 60
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONSerialization.data(withJSONObject: ["message":message,"history":history,"warden":profile.id])
                 let (data, response) = try await URLSession.shared.data(for: req)
@@ -507,51 +511,6 @@ struct AssistantView: View {
     func send() { model.send(message); message = "" }
 }
 
-struct ColorsView: View {
-    @ObservedObject private var speech=CompanionSpeech.shared
-    @AppStorage("ram.speech") private var spoken = false
-    @ObservedObject var model: CompanionModel
-    func binding(_ key: ReferenceWritableKeyPath<CompanionModel,String>) -> Binding<Color> {
-        Binding(get: { ramColor(model[keyPath:key]) }, set: { color in
-            guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return }
-            model[keyPath:key] = String(format:"%02X%02X%02X",Int(rgb.redComponent*255),Int(rgb.greenComponent*255),Int(rgb.blueComponent*255))
-            model.saveColors()
-        })
-    }
-    var body: some View {
-        ScrollView {
-        VStack(spacing:12) {
-            Text("Customize your ram").font(.title2.bold())
-            GoatAlertControl(warden:"ram")
-            Button("Forget local chat history"){model.forgetHistory()}
-            Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
-            if let error=speech.errors["ram"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
-            TextField("Name",text:Binding(get:{model.name},set:{ value in
-                let name = String(value.prefix(40)); model.name = name
-                UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Warden" : name,forKey:"ram.name")
-            })).textFieldStyle(.roundedBorder).accessibilityLabel("Companion name")
-            Button("Choose folder for file tools…"){model.chooseWorkspace()}
-            Text(model.workspaceStatus).font(.caption).foregroundStyle(.secondary)
-            Button("Disconnect folder"){model.setWorkspace(nil)}
-            Toggle("Auto file and terminal tools",isOn:Binding(get:{model.automaticTools},set:{model.setAutomaticTools($0)}))
-            Text(model.automaticTools ? "Auto · supported tools in this folder" : "Manual · review each operation").font(.caption).foregroundStyle(.secondary)
-            PetSizeControl(warden:"ram",label:"RAM companion size")
-            PetSizeControl(warden:"threat",label:"Threat companion size")
-            PixelRam(model:model,animated:false).frame(width:180,height:180)
-            ColorPicker("Wool",selection:binding(\.wool),supportsOpacity:false)
-            ColorPicker("Horns",selection:binding(\.horns),supportsOpacity:false)
-            ColorPicker("Hooves",selection:binding(\.hooves),supportsOpacity:false)
-            ColorPicker("Eyes",selection:binding(\.eyes),supportsOpacity:false)
-            Picker("Pupils",selection:Binding(get:{model.pupilStyle},set:{model.pupilStyle = $0; model.saveColors()})) {
-                Text("Ram slits").tag("slit")
-                Text("Round").tag("round")
-                Text("Glowing / none").tag("none")
-            }
-            Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
-        }.padding(24).frame(width:260)
-        }.frame(width:310,height:660).onAppear{model.refreshWorkspace()}
-    }
-}
 
 final class PetPanel: NSPanel { override var canBecomeKey: Bool { false } }
 final class ChatPanel: NSPanel {
@@ -669,6 +628,8 @@ final class PetHost: NSHostingView<PixelRam> {
     }
     func hideBubble() { bubble?.orderOut(nil) }
     var colors: NSWindow?
+    weak var threatCustomizationModel:CompanionModel?
+    let settingsSelection=WardenSettingsSelection()
     var visible: Bool { UserDefaults.standard.bool(forKey:"ram.visible") }
     func restore() { if visible && voice.pet { showPet() } }
     func toggle() {
@@ -765,13 +726,17 @@ final class PetHost: NSHostingView<PixelRam> {
             colors = nil
         }
     }
-    func openColors() {
+    func openColors(warden:String="ram") {
+        settingsSelection.selected=warden
+        NSColorPanel.shared.close()
         if colors == nil {
-            let w = NSWindow(contentRect:NSRect(x:0,y:0,width:310,height:660),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-            w.title = "Ram settings"; w.isReleasedWhenClosed = false
+            let w = NSWindow(contentRect:NSRect(x:0,y:0,width:334,height:714),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            w.title = "Warden settings"; w.isReleasedWhenClosed = false
             w.level = .floating; w.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
             w.delegate = self
-            w.contentView = NSHostingView(rootView:ColorsView(model:model)); w.center(); colors = w
+            if let threat=threatCustomizationModel {w.contentView=NSHostingView(rootView:WardenSettingsView(ram:model,threat:threat,selection:settingsSelection))}
+            else {w.contentView=NSHostingView(rootView:ColorsView(model:model))}
+            w.center(); colors = w
         }
         NSApp.activate(ignoringOtherApps:true); colors?.makeKeyAndOrderFront(nil)
     }
