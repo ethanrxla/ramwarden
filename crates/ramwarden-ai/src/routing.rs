@@ -18,9 +18,16 @@ impl Work {
         }
     }
 }
+/// An explicit public-web lookup, never inferred from files or quoted history.
+pub fn public_web_request(message:&str)->bool {
+    let normalized=message.trim().to_lowercase();let mut text=normalized.as_str();
+    for prefix in ["please ","can you ","could you ","please "] {text=text.strip_prefix(prefix).unwrap_or(text);}
+    ["search the web ","search web ","search online ","search the internet ","look up online ","find online "].iter().any(|prefix|text.starts_with(prefix))
+}
 /// Cheap first pass. Unknown requests that need tools use Terra rather than
 /// paying for a separate model call just to reword every message.
 pub fn classify(message: &str) -> Work {
+    if public_web_request(message) {return Work::Conversation;}
     let normalized = message.trim().to_lowercase();
     let mut m = normalized.as_str();
     for prefix in ["please ", "can you ", "could you ", "please "] {

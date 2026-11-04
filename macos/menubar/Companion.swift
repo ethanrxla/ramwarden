@@ -196,7 +196,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
                 turns.append(ChatTurn(role:"assistant",content:reply))
                 if companionVisible { CompanionSpeech.shared.say(reply,warden:profile.id) }
                 if turns.count > 200 { turns.removeFirst(turns.count - 200) }
-                if automaticTools,proposedAutoEligible,!proposedScope.isEmpty,proposedScope == UserDefaults.standard.string(forKey:"ram.autoToolScope") {
+                if automaticTools,proposedAutoEligible,!proposedScope.isEmpty,proposedScope == UserDefaults.standard.string(forKey:"\(profile.id).autoToolScope") {
                     DispatchQueue.main.async {self.confirmAction(automated:true)}
                 }
                 speaking = true
@@ -209,11 +209,12 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
     }
     func refreshWorkspace(){
         Task { @MainActor in
-            guard let status=await fetchJSON("assistant/workspace") as? [String:Any] else{return}
+            var request=URLRequest(url:base.appendingPathComponent("assistant/workspace").appending(queryItems:[URLQueryItem(name:"warden",value:profile.id)]));request.timeoutInterval=5
+            guard let (data,response)=try? await URLSession.shared.data(for:request),(response as? HTTPURLResponse)?.statusCode==200,let status=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else{return}
             let workspace=status["workspace"] as? [String:Any]
             workspaceStatus=workspace?["path"] as? String ?? "No folder connected"
             workspaceScope=workspace?["scope_id"] as? String ?? ""
-            automaticTools = !workspaceScope.isEmpty && workspaceScope == UserDefaults.standard.string(forKey:"ram.autoToolScope")
+            automaticTools = !workspaceScope.isEmpty && workspaceScope == UserDefaults.standard.string(forKey:"\(profile.id).autoToolScope")
         }
     }
     func chooseWorkspace(){
@@ -222,12 +223,12 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
         if panel.runModal() == .OK,let url=panel.url {setWorkspace(url.path)}
     }
     func setAutomaticTools(_ enabled:Bool){
-        if !enabled {automaticTools=false;UserDefaults.standard.removeObject(forKey:"ram.autoToolScope");return}
+        if !enabled {automaticTools=false;UserDefaults.standard.removeObject(forKey:"\(profile.id).autoToolScope");return}
         guard !workspaceScope.isEmpty else{workspaceStatus="Choose a folder before enabling Auto.";return}
         let alert=NSAlert();alert.messageText="Enable Auto for this folder?"
         alert.informativeText="Warden may read and list files, create new files and folders, and run the supported Git diagnostics without asking again inside \(workspaceStatus). It cannot overwrite or delete files, run arbitrary commands, or change security settings. You can return to Manual at any time."
         alert.addButton(withTitle:"Enable Auto");alert.addButton(withTitle:"Stay Manual")
-        if alert.runModal() == .alertFirstButtonReturn {automaticTools=true;UserDefaults.standard.set(workspaceScope,forKey:"ram.autoToolScope")}
+        if alert.runModal() == .alertFirstButtonReturn {automaticTools=true;UserDefaults.standard.set(workspaceScope,forKey:"\(profile.id).autoToolScope")}
     }
     func setWorkspace(_ path:String?){
         setAutomaticTools(false)
@@ -235,7 +236,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             do {
                 var request=URLRequest(url:base.appendingPathComponent("assistant/workspace"));request.httpMethod="POST";request.timeoutInterval=8
                 request.setValue("application/json",forHTTPHeaderField:"Content-Type")
-                request.httpBody=try JSONSerialization.data(withJSONObject:["path":path as Any? ?? NSNull()])
+                request.httpBody=try JSONSerialization.data(withJSONObject:["path":path as Any? ?? NSNull(),"warden":profile.id])
                 let (_,response)=try await URLSession.shared.data(for:request)
                 guard (response as? HTTPURLResponse)?.statusCode==200 else{workspaceStatus="Could not connect that folder. Try again.";return}
                 workspaceStatus=path ?? "No folder connected";proposedToken=nil;refreshWorkspace()
@@ -244,7 +245,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
     }
     func confirmAction(automated:Bool = false) {
         guard let token = proposedToken, !thinking else { return }
-        if automated && (!automaticTools || !proposedAutoEligible || proposedScope.isEmpty || proposedScope != UserDefaults.standard.string(forKey:"ram.autoToolScope")){return}
+        if automated && (!automaticTools || !proposedAutoEligible || proposedScope.isEmpty || proposedScope != UserDefaults.standard.string(forKey:"\(profile.id).autoToolScope")){return}
         if !automated {
         let alert = NSAlert()
         alert.messageText = proposedPreview.isEmpty ? proposedLabel : "Review Warden’s action"
