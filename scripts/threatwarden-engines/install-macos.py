@@ -70,8 +70,12 @@ def main():
     config['stats'] = {'enabled': True, 'interval': 30}
     config['detect'] = dict(config.get('detect') or {}, profile='low')
     config['outputs'] = [{'eve-log': {'enabled': True, 'filetype': 'regular',
-        'filename': 'eve-%Y-%m-%d.json', 'rotate-interval': 'day',
-        'types': [{'alert': {'payload': False, 'packet': False, 'http': False, 'tls': False}}, 'flow', 'stats']}}]
+        'filename': 'eve-%Y-%m-%d.json', 'rotate-interval': 'day', 'buffer-size': 0, 'metadata': False,
+        'types': [{'alert': {'payload': False, 'payload-printable': False, 'packet': False,
+                            'metadata': False, 'http-body': False, 'http-body-printable': False,
+                            'websocket-payload': False, 'websocket-payload-printable': False,
+                            'tagged-packets': False}}, 'flow',
+                  {'stats': {'totals': True, 'threads': False, 'deltas': False}}]}}]
     target = BASE / 'suricata.yaml'
     if target.exists():
         shutil.copy2(target, backup / target.name)
@@ -85,7 +89,7 @@ def main():
         path = PLISTS / (label + '.plist')
         if path.exists():
             shutil.copy2(path, backup / path.name)
-        data = dict(Label=label, ProgramArguments=command, ProcessType='Background', Nice=10,
+        data = dict(Label=label, ProgramArguments=command, ProcessType='Standard' if hour is None else 'Background', Nice=10,
                     StandardOutPath=str(LOG / (label + '.log')), StandardErrorPath=str(LOG / (label + '.log')),
                     Umask=0o027)
         if hour is None:
