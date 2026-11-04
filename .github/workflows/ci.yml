@@ -61,6 +61,9 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Windows sensor configuration regression
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-eve-policy.ps1
       - name: Mac checklist and app build
         if: runner.os == 'macOS'
         run: |
