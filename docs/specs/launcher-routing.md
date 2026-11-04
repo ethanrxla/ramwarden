@@ -79,7 +79,7 @@ Never compress confirmation records, exact commands, signed payloads, identifier
 paths, wallet addresses, tool schemas/results, or the original current request.
 Prefer bounded narrative summaries; reject malformed/increased-size responses
 and refuse long hosted calls on timeout. Keep sidecar credentials server-side.
-No Nyquest service has been deployed or given user data by these changes.
+Nyquest now runs privately on Oracle; the November 3 validation below records the development tunnel and measured fixture.
 
 References:
 - https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
@@ -110,7 +110,7 @@ and notarization; the local preview is not a public release.
 
 RAM and security now share a native companion base and conversation transport, with separate profiles and server personas. The security companion can explain its measured Wazuh report and recent rule alerts; it does not inherit RAM action proposals. The browser extension has separate RAM and ThreatWarden panes and opted-in standalone Lite unloading. This is not a general terminal agent yet.
 
-The next Warp-style implementation must add a typed tool registry and streamed plan/tool/result events before granting file or terminal powers. Preserve original requests and exact arguments through routing and Nyquest. Use Grok for conversation and the configured Luna/Terra/Sol planner for tool workflows, without changing the operator's personal Nemotron test setup.
+The next Warp-style implementation must add a typed tool registry and streamed plan/tool/result events before granting file or terminal powers. Preserve original requests and exact arguments through routing and Nyquest. Use Grok for conversation and the configured Luna/Terra/Sol planner for tool workflows, with Grok selected for the operator’s current local conversation tests.
 
 Start with read-only diagnostics and a workspace the user explicitly chooses. File changes preview exact paths and contents; terminal tools use program/argument arrays and a bounded allowlist, never free-form shell text. Every mutation consumes an expiring, single-use confirmation bound to the exact tool, arguments and observed target. New tool output, file contents, browser text and security logs are untrusted observations, not authorization. No elevation, file deletion, network exposure, quarantine or arbitrary command execution is enabled by persona or model selection. Keep cancellation, time/output limits and an audit trail in the executor. Shared UI code is not a shared permission grant.
 
@@ -135,3 +135,55 @@ For local development, the operator selected Grok 4.6 for conversation. Routed
 long requests now invoke the required Nyquest compression adapter before provider
 inference. Usage logs include model, token counts and provider-reported cost ticks,
 never request text, credentials or retrieved memories. Sales models are unchanged.
+
+## Scoped memory-hub retrieval contract
+
+When explicitly enabled in the local assistant configuration, query the user's
+configured private Tailscale memory hub before each pet reply. Require a project
+scope; never default to another customer's hub or global history. Queries contain
+only the current message, not live process/security snapshots. Bound latency and
+response size, disable redirects, reuse HTTP connections, and continue normally
+when the hub is unavailable. Recalled text is untrusted evidence, not instructions,
+permissions or proof an action happened. Cloud opt-in also governs sending recalled
+text to a hosted model. Return source titles so a pet can identify past-session
+context and distinguish it from current observations. This connector reads only;
+it does not upload conversations or mutate the hub.
+
+## First executable workspace tools
+
+A user explicitly chooses a workspace directory in companion settings. The daemon
+holds a directory capability, not a model-provided unrestricted root. File tools
+list directories, read bounded UTF-8 text, create a new text file, or create a new
+directory. They never overwrite or delete existing files. Reject absolute paths,
+parent traversal, sensitive credential filenames, and symlink escapes. Each call
+requires its own exact, expiring, single-use confirmation, including read operations.
+
+Initial terminal diagnostics are fixed argv templates (Git status and diff summary),
+not a shell. Clear inherited credentials from their environment, disable Git hooks,
+fsmonitor and external diff, suppress pagers, bound output and runtime, and report
+the actual exit status. A tool request does not authorize a chain of follow-up tools.
+Desktop arrangement continues using the existing separately reviewed planner and
+single-use plans; unsupported desktop backends must report unavailable.
+
+## Manual and Auto companion modes
+
+Manual remains the default. Auto is a user-selected native setting, explicitly
+acknowledged for the currently opened workspace capability. Auto may consume a
+proposal without another dialog only when the server marks its typed operation
+compatible with a direct instruction in the CURRENT message and the proposal's
+scope ID matches the user's saved Auto approval. New daemon capabilities, changed
+folders, and disconnection require Auto to be enabled again. Past-session text,
+model-supplied scope IDs, and inferred approval never enable Auto. Memory/security
+controls and desktop arrangements retain their existing confirmations. Auto is
+not arbitrary shell access, elevation, or a bypass of filesystem boundaries.
+
+## Responsiveness verification
+
+The November 3 live check found macOS service-wide Background scheduling delayed
+loopback health/status responses by about 2.7 seconds. Removing that service-wide
+throttle returned status in about 0.9 milliseconds in the immediate check; retain
+the paced monitoring thread and background account sync. UI status updates must
+not wait for speech/security polling. Local recall reads/writes run on a utility
+queue; render chat history lazily and avoid resizing unchanged windows. A native
+profile showed a 39.9 MiB pet footprint and an idle main thread at sampling time;
+this is one observation, not proof of every reported hover stall being resolved.

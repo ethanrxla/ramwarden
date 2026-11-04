@@ -121,7 +121,8 @@ struct SetupView: View {
             for (label, args) in definitions {
                 let file = agents.appendingPathComponent(label + ".plist")
                 // Stage definitions before payload install; installation only starts on this button.
-                let plist: [String: Any] = ["EnvironmentVariables": ["RAMWARDEN_CONFIG":home.appendingPathComponent(".config/ramwarden/config.toml").path,"PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"], "Label": label, "ProgramArguments": args, "RunAtLoad": true, "KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 60, "ProcessType": label == "com.ramwarden.menubar" ? "Interactive" : "Background", "StandardOutPath": home.appendingPathComponent("Library/Logs/" + label + ".log").path, "StandardErrorPath": home.appendingPathComponent("Library/Logs/" + label + ".err.log").path]
+                var plist: [String: Any] = ["EnvironmentVariables": ["RAMWARDEN_CONFIG":home.appendingPathComponent(".config/ramwarden/config.toml").path,"PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"], "Label": label, "ProgramArguments": args, "RunAtLoad": true, "KeepAlive": ["SuccessfulExit": false], "ThrottleInterval": 60, "ProcessType": label == "com.ramwarden.menubar" ? "Interactive" : "Background", "StandardOutPath": home.appendingPathComponent("Library/Logs/" + label + ".log").path, "StandardErrorPath": home.appendingPathComponent("Library/Logs/" + label + ".err.log").path]
+                if label == "com.ramwarden.daemon" {plist.removeValue(forKey:"ProcessType")}
                 let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
                 try data.write(to: file, options: .atomic)
             }

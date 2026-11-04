@@ -3,7 +3,7 @@ import AVFoundation
 import Combine
 
 // Speech credentials stay in the daemon. The UI receives only bounded MP3 audio.
-final class CompanionSpeech: ObservableObject {
+@MainActor final class CompanionSpeech: ObservableObject {
     @Published var errors:[String:String] = [:]
     static let shared = CompanionSpeech()
     private var players: [String:AVAudioPlayer] = [:]

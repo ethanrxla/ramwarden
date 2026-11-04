@@ -23,14 +23,20 @@ struct FocusChoice: Decodable, Identifiable {
     var target: ReviewTarget { ReviewTarget(browser:browser,id:id,url:url) }
 }
 struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; let expires_at: Double }
-final class CompanionModel: ObservableObject {
+@MainActor final class CompanionModel: ObservableObject {
     let profile: WardenProfile
     init(profile:WardenProfile = RamWardenProfile(),persistMemory:Bool = true) {
         self.profile = profile
         self.companionVisible = UserDefaults.standard.bool(forKey:"\(profile.id).visible")
         self.name = UserDefaults.standard.string(forKey:"\(profile.id).name") ?? profile.name
-        self.turns = persistMemory ? CompanionRecall.load(profile.id) : []
         self.memoryReady = persistMemory
+        if persistMemory {
+            let memoryProfile=profile.id
+            CompanionRecall.storage.async { [weak self] in
+                let loaded=CompanionRecall.load(memoryProfile)
+                DispatchQueue.main.async {guard let self=self,!self.discardLoadedMemory else{return};self.turns=Array((loaded+self.turns).sorted{$0.at<$1.at}.suffix(200))}
+            }
+        }
     }
     var chatHeight: CGFloat { tabReview != nil ? 440 : focusProposal != nil ? 360 : turns.isEmpty ? 80 : 240 }
     @Published var tabReview: TabReview?
@@ -86,12 +92,20 @@ final class CompanionModel: ObservableObject {
     @Published var thinking = false
     @Published var speaking = false
     private var memoryReady=false
-    @Published var turns: [ChatTurn] = [] {didSet {if memoryReady {CompanionRecall.save(turns,warden:profile.id)}}}
+    private var discardLoadedMemory=false
+    func forgetHistory(){discardLoadedMemory=true;turns=[]}
+    @Published var turns: [ChatTurn] = [] {didSet {if memoryReady {CompanionRecall.saveLater(turns,warden:profile.id)}}}
     @Published var error: String?
     @Published var tier = ""
     @Published var name = UserDefaults.standard.string(forKey:"ram.name") ?? "Warden"
     @Published var proposedToken: String?
     @Published var proposedLabel = ""
+    @Published var proposedPreview = ""
+    @Published var workspaceStatus = "No folder connected"
+    @Published var workspaceScope = ""
+    @Published var automaticTools = false
+    private var proposedScope = ""
+    private var proposedAutoEligible = false
     @Published var wool = UserDefaults.standard.string(forKey: "ram.wool") ?? "D84545"
     @Published var horns = UserDefaults.standard.string(forKey: "ram.horns") ?? "F5DEAA"
     @Published var hooves = UserDefaults.standard.string(forKey: "ram.hooves") ?? "29242B"
@@ -147,7 +161,7 @@ final class CompanionModel: ObservableObject {
             } catch { self.error = "Couldn't update your tab preferences." }
         }
     }
-    func cancelConversation() { task?.cancel(); thinking=false }
+    func cancelConversation() { task?.cancel(); thinking=false;proposedToken=nil;proposedAutoEligible=false }
     func send(_ message: String) {
         let message = boundedChatText(message.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !message.isEmpty, !thinking else { return }
@@ -173,11 +187,14 @@ final class CompanionModel: ObservableObject {
                 guard let reply = obj?["reply"] as? String else { error = "The assistant returned an unreadable response."; return }
                 tier = obj?["tier"] as? String ?? "facts"
                 if let proposal = obj?["proposed_action"] as? [String:Any], let token = proposal["token"] as? String, let label = proposal["label"] as? String {
-                    proposedToken = token; proposedLabel = label
+                    proposedToken = token; proposedLabel = label; proposedPreview = proposal["preview"] as? String ?? ""; proposedScope = proposal["scope_id"] as? String ?? "";proposedAutoEligible = proposal["auto_eligible"] as? Bool ?? false
                 }
                 turns.append(ChatTurn(role:"assistant",content:reply))
                 if companionVisible { CompanionSpeech.shared.say(reply,warden:profile.id) }
                 if turns.count > 200 { turns.removeFirst(turns.count - 200) }
+                if automaticTools,proposedAutoEligible,!proposedScope.isEmpty,proposedScope == UserDefaults.standard.string(forKey:"ram.autoToolScope") {
+                    DispatchQueue.main.async {self.confirmAction(automated:true)}
+                }
                 speaking = true
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -186,14 +203,57 @@ final class CompanionModel: ObservableObject {
             } catch { if !Task.isCancelled { self.error = "Cannot reach the assistant. RamWarden will reconnect automatically." } }
         }
     }
-    func confirmAction() {
+    func refreshWorkspace(){
+        Task { @MainActor in
+            guard let status=await fetchJSON("assistant/workspace") as? [String:Any] else{return}
+            let workspace=status["workspace"] as? [String:Any]
+            workspaceStatus=workspace?["path"] as? String ?? "No folder connected"
+            workspaceScope=workspace?["scope_id"] as? String ?? ""
+            automaticTools = !workspaceScope.isEmpty && workspaceScope == UserDefaults.standard.string(forKey:"ram.autoToolScope")
+        }
+    }
+    func chooseWorkspace(){
+        let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.allowsMultipleSelection=false
+        panel.message="Choose the project folder Warden may use. Every file or terminal operation still needs your approval."
+        if panel.runModal() == .OK,let url=panel.url {setWorkspace(url.path)}
+    }
+    func setAutomaticTools(_ enabled:Bool){
+        if !enabled {automaticTools=false;UserDefaults.standard.removeObject(forKey:"ram.autoToolScope");return}
+        guard !workspaceScope.isEmpty else{workspaceStatus="Choose a folder before enabling Auto.";return}
+        let alert=NSAlert();alert.messageText="Enable Auto for this folder?"
+        alert.informativeText="Warden may read and list files, create new files and folders, and run the supported Git diagnostics without asking again inside \(workspaceStatus). It cannot overwrite or delete files, run arbitrary commands, or change security settings. You can return to Manual at any time."
+        alert.addButton(withTitle:"Enable Auto");alert.addButton(withTitle:"Stay Manual")
+        if alert.runModal() == .alertFirstButtonReturn {automaticTools=true;UserDefaults.standard.set(workspaceScope,forKey:"ram.autoToolScope")}
+    }
+    func setWorkspace(_ path:String?){
+        setAutomaticTools(false)
+        Task { @MainActor in
+            do {
+                var request=URLRequest(url:base.appendingPathComponent("assistant/workspace"));request.httpMethod="POST";request.timeoutInterval=8
+                request.setValue("application/json",forHTTPHeaderField:"Content-Type")
+                request.httpBody=try JSONSerialization.data(withJSONObject:["path":path as Any? ?? NSNull()])
+                let (_,response)=try await URLSession.shared.data(for:request)
+                guard (response as? HTTPURLResponse)?.statusCode==200 else{workspaceStatus="Could not connect that folder. Try again.";return}
+                workspaceStatus=path ?? "No folder connected";proposedToken=nil;refreshWorkspace()
+            }catch{workspaceStatus="Cannot reach the daemon"}
+        }
+    }
+    func confirmAction(automated:Bool = false) {
         guard let token = proposedToken, !thinking else { return }
+        if automated && (!automaticTools || !proposedAutoEligible || proposedScope.isEmpty || proposedScope != UserDefaults.standard.string(forKey:"ram.autoToolScope")){return}
+        if !automated {
         let alert = NSAlert()
-        alert.messageText = proposedLabel
+        alert.messageText = proposedPreview.isEmpty ? proposedLabel : "Review Warden’s action"
+        if !proposedPreview.isEmpty {
+            let scroll=NSScrollView(frame:NSRect(x:0,y:0,width:520,height:260));scroll.hasVerticalScroller=true
+            let text=NSTextView(frame:scroll.bounds);text.isEditable=false;text.isSelectable=true;text.font=NSFont.monospacedSystemFont(ofSize:11,weight:.regular)
+            text.string=proposedPreview;text.isVerticallyResizable=true;text.autoresizingMask=[.width];scroll.documentView=text;alert.accessoryView=scroll
+        }
         alert.informativeText = "Apply the change described above? Nothing else will be changed."
         alert.addButton(withTitle:"Apply fix"); alert.addButton(withTitle:"Cancel")
         NSApp.activate(ignoringOtherApps:true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         proposedToken = nil; thinking = true
         Task { @MainActor in
             defer { thinking = false }
@@ -211,7 +271,7 @@ final class CompanionModel: ObservableObject {
     }
 
 }
-struct ChatTurn: Identifiable { let id = UUID(); let role: String; let content: String; var at:Double=Date().timeIntervalSince1970 }
+struct ChatTurn: Identifiable, Sendable { let id = UUID(); let role: String; let content: String; var at:Double=Date().timeIntervalSince1970 }
 func ramColor(_ hex: String) -> Color {
     let n = UInt32(hex, radix:16) ?? 0
     return Color(red:Double((n >> 16) & 255)/255,green:Double((n >> 8) & 255)/255,blue:Double(n & 255)/255)
@@ -357,7 +417,7 @@ struct AssistantView: View {
             if !model.turns.isEmpty {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment:.leading,spacing:10) {
+                    LazyVStack(alignment:.leading,spacing:10) {
                         if model.turns.isEmpty { Text("Ask me what’s using RAM or what I’ve been doing.").foregroundStyle(.secondary) }
                         ForEach(model.turns) { turn in
                             VStack(alignment:.leading,spacing:4) {
@@ -463,13 +523,18 @@ struct ColorsView: View {
         VStack(spacing:12) {
             Text("Customize your ram").font(.title2.bold())
             GoatAlertControl(warden:"ram")
-            Button("Forget local chat history"){model.turns=[]}
+            Button("Forget local chat history"){model.forgetHistory()}
             Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop("ram") } }
             if let error=speech.errors["ram"] {Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
             TextField("Name",text:Binding(get:{model.name},set:{ value in
                 let name = String(value.prefix(40)); model.name = name
                 UserDefaults.standard.set(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? "Warden" : name,forKey:"ram.name")
             })).textFieldStyle(.roundedBorder).accessibilityLabel("Companion name")
+            Button("Choose folder for file tools…"){model.chooseWorkspace()}
+            Text(model.workspaceStatus).font(.caption).foregroundStyle(.secondary)
+            Button("Disconnect folder"){model.setWorkspace(nil)}
+            Toggle("Auto file and terminal tools",isOn:Binding(get:{model.automaticTools},set:{model.setAutomaticTools($0)}))
+            Text(model.automaticTools ? "Auto · supported tools in this folder" : "Manual · review each operation").font(.caption).foregroundStyle(.secondary)
             PetSizeControl(warden:"ram",label:"RAM companion size")
             PetSizeControl(warden:"threat",label:"Threat companion size")
             PixelRam(model:model,animated:false).frame(width:180,height:180)
@@ -484,7 +549,7 @@ struct ColorsView: View {
             }
             Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
         }.padding(24).frame(width:260)
-        }.frame(width:310,height:660)
+        }.frame(width:310,height:660).onAppear{model.refreshWorkspace()}
     }
 }
 
@@ -536,7 +601,7 @@ final class PetHost: NSHostingView<PixelRam> {
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick?() } }
 }
-final class Companion: WardenCompanion, NSWindowDelegate {
+@MainActor final class Companion: WardenCompanion, NSWindowDelegate {
     let voice = VoiceModel()
     var pet: PetPanel?
     var chat: ChatPanel?
@@ -683,6 +748,7 @@ final class Companion: WardenCompanion, NSWindowDelegate {
     }
     func resizeChat() {
         guard let chat = chat else { return }
+        guard chat.frame.height != model.chatHeight else{return}
         var frame = chat.frame; frame.size.height = model.chatHeight
         chat.setFrame(frame,display:true)
         positionChat(movePet:true)

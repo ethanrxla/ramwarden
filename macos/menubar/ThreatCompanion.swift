@@ -15,7 +15,7 @@ private final class ThreatPixels: NSObject, XMLParserDelegate {
     }()
 }
 
-final class ThreatState: ObservableObject {
+@MainActor final class ThreatState: ObservableObject {
     @Published var headline = "Checking protection…"
     @Published var detail = "Waiting for the local security report."
     @Published var level = "setup"
@@ -167,7 +167,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
     @objc func hidePet() { hide?() }
 }
 
-final class ThreatCompanion: WardenCompanion {
+@MainActor final class ThreatCompanion: WardenCompanion {
     let state = ThreatState()
     var panel: NSPanel?
     var report: NSPopover?
@@ -178,7 +178,7 @@ final class ThreatCompanion: WardenCompanion {
         state.onStatus = { [weak self] text in guard let self=self,self.visible else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
             guard notification.userInfo?["warden"] as? String == "threat" else { return }
-            self?.resizePet()
+            Task { @MainActor in self?.resizePet() }
         }
     }
     deinit { if let observer = sizeObserver { NotificationCenter.default.removeObserver(observer) } }
@@ -232,7 +232,7 @@ final class ThreatCompanion: WardenCompanion {
         if report?.isShown == true { report?.performClose(nil); return }
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide(); self?.report?.performClose(nil) },chat:{[weak self] in self?.report?.performClose(nil);self?.openChat()},forget:{[weak self] in self?.model.turns=[]}))
+        popover.contentViewController = NSHostingController(rootView:ThreatReport(state:state,hide:{ [weak self] in self?.hide(); self?.report?.performClose(nil) },chat:{[weak self] in self?.report?.performClose(nil);self?.openChat()},forget:{[weak self] in self?.model.forgetHistory()}))
         popover.contentSize = NSSize(width:340,height:min(state.alerts.isEmpty ? 430 : 680,(button.window?.screen?.visibleFrame.height ?? 800)-70))
         report = popover
         popover.show(relativeTo:button.bounds,of:button,preferredEdge:.minY)

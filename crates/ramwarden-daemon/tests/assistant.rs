@@ -197,3 +197,50 @@ async fn threat_persona_does_not_inherit_memory_actions_or_bypass_its_pass() {
     assert!(value["reply"].as_str().unwrap().contains("Pro pass"));
     assert_eq!(request(state(),json!({"message":"hi","warden":"unknown"}),None).await.status(),StatusCode::BAD_REQUEST);
 }
+
+async fn post_route(app:axum::Router,path:&str,body:Value)->(StatusCode,Value){
+    let response=app.oneshot(Request::builder().method("POST").uri(path).header("content-type","application/json").body(Body::from(body.to_string())).unwrap()).await.unwrap();
+    let status=response.status();let bytes=to_bytes(response.into_body(),100000).await.unwrap();
+    (status,serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+#[tokio::test]
+async fn workspace_tool_is_previewed_confirmed_once_and_invalidated_on_scope_change(){
+    use axum::{Json,Router,routing::post};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
+    let mock=Router::new().route("/api/chat",post(|Json(v):Json<Value>|async move{
+        assert!(v["messages"].as_array().unwrap().iter().any(|m|m["content"].as_str().is_some_and(|s|s.contains("WORKSPACE TOOL CATALOG"))));
+        Json(json!({"message":{"content":json!({"reply":"I can create notes.txt after your approval.","proposed_action":{"kind":"workspace","operation":{"tool":"create_text","path":"notes.txt","content":"fixture notes"}}}).to_string()}}))
+    }));
+    let server=tokio::spawn(async move{axum::serve(listener,mock).await.unwrap()});
+    let folder=tempfile::tempdir().unwrap();let mut st=state();let cfg=Arc::make_mut(&mut st.cfg);
+    cfg.ollama.host=format!("http://{addr}");cfg.assistant.workspace=Some(folder.path().to_path_buf());
+    st.ai=Arc::new(ramwarden_daemon::ai::provider(&st.cfg));let app=ramwarden_daemon::routes::router(st);
+    let (status,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"create notes.txt with fixture notes"})).await;
+    assert_eq!(status,StatusCode::OK);assert!(!folder.path().join("notes.txt").exists());
+    assert!(proposal["proposed_action"]["preview"].as_str().unwrap().contains("fixture notes"));
+    assert_eq!(proposal["proposed_action"]["auto_eligible"],true);
+    assert!(!proposal["proposed_action"]["scope_id"].as_str().unwrap().is_empty());
+    let token=proposal["proposed_action"]["token"].as_str().unwrap();
+    let (status,result)=post_route(app.clone(),"/assistant/action",json!({"token":token})).await;
+    assert_eq!(status,StatusCode::OK);assert!(result["reply"].as_str().unwrap().contains("bytes_written"));
+    assert_eq!(std::fs::read_to_string(folder.path().join("notes.txt")).unwrap(),"fixture notes");
+    assert_eq!(post_route(app.clone(),"/assistant/action",json!({"token":token})).await.0,StatusCode::CONFLICT);
+    let (_,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"create notes.txt"})).await;
+    let token=proposal["proposed_action"]["token"].as_str().unwrap();
+    assert_eq!(post_route(app.clone(),"/assistant/workspace",json!({"path":null})).await.0,StatusCode::OK);
+    assert_eq!(post_route(app,"/assistant/action",json!({"token":token})).await.0,StatusCode::CONFLICT);
+    server.abort();
+}
+#[tokio::test]
+async fn unavailable_desktop_does_not_offer_or_claim_an_action(){
+    let (status,result)=post_route(ramwarden_daemon::routes::router(state()),"/assistant/chat",json!({"message":"arrange my windows"})).await;
+    assert_eq!(status,StatusCode::OK);assert!(result["proposed_action"].is_null());
+    assert!(result["reply"].as_str().unwrap().contains("No desktop changes made"));
+}
+#[tokio::test]
+async fn workspace_scope_rejects_network_listeners_and_web_origins(){
+    let mut st=state();Arc::make_mut(&mut st.cfg).server.host="0.0.0.0".into();
+    assert_eq!(post_route(ramwarden_daemon::routes::router(st),"/assistant/workspace",json!({"path":null})).await.0,StatusCode::NOT_FOUND);
+    let response=ramwarden_daemon::routes::router(state()).oneshot(Request::builder().method("POST").uri("/assistant/workspace").header("content-type","application/json").header("origin","https://example.com").body(Body::from("{\"path\":null}")).unwrap()).await.unwrap();
+    assert_eq!(response.status(),StatusCode::FORBIDDEN);
+}

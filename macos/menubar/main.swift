@@ -45,12 +45,13 @@ func loadSnapshot(previous: Snapshot?) async -> Snapshot? {
 
 func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
 
-final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@MainActor final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu = NSMenu()
     var snap: Snapshot?
     let companion = Companion()
     var refreshing = false
+    var voiceRefreshing = false
     var failedRefreshes = 0
     var menuOpen = false
     let threatCompanion = ThreatCompanion()
@@ -78,8 +79,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() async {
         guard !refreshing else { return }; refreshing = true
         let s = await loadSnapshot(previous:snap)
-        await companion.voice.poll()
-        await threatCompanion.poll()
         await MainActor.run {
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
@@ -87,6 +86,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let current=s {GoatAlerts.shared.memory(percent:current.percent,visible:self.companion.model.companionVisible)}
             self.updateTitle(); self.companion.model.connected = self.snap != nil
             self.refreshing = false
+            Task { @MainActor in
+                if !self.voiceRefreshing {self.voiceRefreshing=true;await self.companion.voice.poll();self.voiceRefreshing=false}
+            }
+            Task { @MainActor in await self.threatCompanion.poll() }
         }
     }
 
@@ -235,8 +238,11 @@ if UserDefaults.standard.object(forKey: positionKey) == nil {
     UserDefaults.standard.set(300.0, forKey: positionKey)
 }
 
+MainActor.assumeIsolated {
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)   // no Dock icon
 let delegate = App()
 app.delegate = delegate
 app.run()
+
+}

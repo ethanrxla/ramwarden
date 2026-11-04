@@ -44,3 +44,7 @@ pub mod decisionlog;
 pub mod recall;
 
 pub mod settings;
+
+pub mod companion_memory;
+
+pub mod workspace_tools;
