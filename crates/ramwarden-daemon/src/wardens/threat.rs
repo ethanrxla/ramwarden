@@ -63,15 +63,15 @@ impl WazuhReport {
     /// Independent endpoint evidence: a connected agent does not prove sensor health.
     pub fn engine_lines(&self) -> Vec<Engine> {
         let wazuh = match self.health() {
-            AgentHealth::Connected => Engine::new("wazuh", "Wazuh agent", "on", "Connected"),
-            AgentHealth::Disconnected => Engine::new("wazuh", "Wazuh agent", "error", "Installed, not connected"),
-            AgentHealth::Unknown => Engine::new("wazuh", "Wazuh agent", "error", "Installed; connection not confirmed"),
-            AgentHealth::Missing => Engine::new("wazuh", "Wazuh agent", "off", "Not installed"),
+            AgentHealth::Connected => Engine::new("wazuh", "Sentinel", "on", "Connected"),
+            AgentHealth::Disconnected => Engine::new("wazuh", "Sentinel", "error", "Installed, not connected"),
+            AgentHealth::Unknown => Engine::new("wazuh", "Sentinel", "error", "Installed; connection not confirmed"),
+            AgentHealth::Missing => Engine::new("wazuh", "Sentinel", "off", "Not installed"),
         };
         vec![
             wazuh,
-            Engine::new("clamav", "ClamAV", self.sensors.clamav.state, &self.sensors.clamav.detail),
-            Engine::new("suricata", "Suricata", self.sensors.suricata.state, &self.sensors.suricata.detail),
+            Engine::new("clamav", "Antivirus", self.sensors.clamav.state, &self.sensors.clamav.detail),
+            Engine::new("suricata", "Threat detection", self.sensors.suricata.state, &self.sensors.suricata.detail),
             Engine::new("network", "Network view", if self.sensors.network.checked_at == 0 || self.sensors.network.problem.is_some() { "unknown" } else { "on" },
                 self.sensors.network.problem.clone().unwrap_or_else(|| format!("{} established TCP connections visible to this user", self.sensors.network.connections.len()))),
         ]

@@ -118,3 +118,8 @@ Fresh packet counters with cumulative capture drops over 1% show watch; display
 raw counters and startup scope so this is not confused with current loss rate.
 The Mac app has a regular Dock presence alongside its menu bar; opening the app
 opens companion chat and quitting the UI continues to leave the daemon running.
+
+User-facing engine labels: Sentinel (Wazuh), Antivirus (ClamAV), and Threat
+detection (Suricata). Stable engine IDs and original evidence source names are
+preserved. Mac Dock branding uses the large canonical red pixel mascot over a
+static radar tile; plain mascot assets remain unchanged for other placements.

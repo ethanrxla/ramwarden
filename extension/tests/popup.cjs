@@ -9,7 +9,7 @@ const {chromium}=require('playwright');const fs=require('node:fs');const os=requ
   await page.route('http://localhost:7823/**',route=>{
    if(offline)return route.abort();const pathname=new URL(route.request().url()).pathname;
    const alert={timestamp:'2026-11-03T13:22:00Z',rule_id:'550',level:7,description:'Demo: a monitored configuration file changed.'};
-   const body=pathname==='/stats'?{percent:67,used_mb:10977,total_mb:16384,browsers_connected:1}:pathname==='/wardens/threat'?{unlocked:true,status:{headline:'Security events to review',detail:'Demonstration report. No real device data.'},report:{engines:[{name:'Wazuh agent',state:'on'},{name:'ClamAV',state:'planned'}],alerts:Array.from({length:60},(_,i)=>({...alert,rule_id:String(550+i)}))}}:pathname==='/history'?{closed_tabs:[]}:pathname==='/wardens'?{paid:paid?['ram','threat']:[],tier:'pro'}:{};
+   const body=pathname==='/stats'?{percent:67,used_mb:10977,total_mb:16384,browsers_connected:1}:pathname==='/wardens/threat'?{unlocked:true,status:{headline:'Security events to review',detail:'Demonstration report. No real device data.'},report:{engines:[{name:'Sentinel',state:'on'},{name:'Antivirus',state:'on'}],alerts:Array.from({length:60},(_,i)=>({...alert,rule_id:String(550+i)}))}}:pathname==='/history'?{closed_tabs:[]}:pathname==='/wardens'?{paid:paid?['ram','threat']:[],tier:'pro'}:{};
    return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body),headers:{'Access-Control-Allow-Origin':'*'}});
   });
   await page.goto(`chrome-extension://${loaded.id}/popup.html`);
