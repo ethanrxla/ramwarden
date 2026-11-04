@@ -24,11 +24,11 @@ silently breaking agents.
 | `GET /browser/tabs` | Tabs the browser extension reports, with memory and idle time per tab, and each tab's `browser`, `id` and `url` |
 | `GET /actions` | What the ladder did unattended, newest first |
 | `GET /ai` | Which decision tier is answering (local model, hosted Jev, heuristic) and what it can do |
-| `GET /wardens` † | Every warden with `access`, `unlocked`, `status {level, headline, detail}`, and `paid` (ids with a current pass) |
+| `GET /wardens` † | Every warden with `access`, `unlocked`, `status {level, headline, detail}`, and `paid` (ids the subscription unlocks) |
 | `GET /wardens/{id}` † | One warden plus its report. `threat`: agent health and up to 50 recent alerts |
 
 `status.level` is `clear`, `watch`, `alert`, `off` (unlocked but not set up or
-not reachable; the headline says which) or `locked` (needs a pass).
+not reachable; the headline says which) or `locked` (needs a subscription that includes it).
 
 ## Act (only after the user says yes to that action)
 

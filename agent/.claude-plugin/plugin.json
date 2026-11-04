@@ -1,7 +1,7 @@
 {
   "name": "ramwarden",
   "version": "0.2.1",
-  "description": "Free memory without losing your place: drive the local RamWarden daemon, unload idle tabs, read ThreatWarden alerts, and buy passes in crypto with the user confirming in their own wallet.",
+  "description": "Free memory without losing your place: drive the local RamWarden daemon, unload idle tabs, read ThreatWarden alerts, and subscribe in crypto with the user confirming in their own wallet.",
   "author": { "name": "RamWarden" },
   "homepage": "https://ramwarden.app",
   "repository": "https://github.com/ethanrxla/ramwarden",

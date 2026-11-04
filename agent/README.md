@@ -2,7 +2,7 @@
 
 An [Agent Skill](https://agentskills.io) that lets a user's AI agent install
 RamWarden, explain and free memory through the local daemon, read ThreatWarden,
-and help the user buy a pass. The skill is `skills/ramwarden/SKILL.md`; the
+and help the user subscribe or cancel. The skill is `skills/ramwarden/SKILL.md`; the
 behaviour it promises is specified in
 [`docs/specs/agent-skill.md`](../docs/specs/agent-skill.md).
 
@@ -31,7 +31,11 @@ checksum), and how to talk to it on `127.0.0.1:7823`.
 
 ## Paying
 
-RamWarden Pro is $4 for 2 months, ThreatWarden $6 for 2 months, and both $10,
-in USDC on Base (MetaMask, or Phantom's EVM account). The agent never spends on its own: the user asks, the agent
-shows the exact plan and price, and the user approves every signature and
-payment in their own wallet. See `skills/ramwarden/references/buying.md`.
+RamWarden Lite is free (one device, fixed rules). RamWarden Plus is
+$4/month or $20/year with a 14-day free trial, and RamWarden Pro (adds
+ThreatWarden) $5/month or $24/year, charged when it starts. Both renew until
+cancelled, and Plus upgrades to Pro in place. Payment is USDC on Base
+(MetaMask, or Phantom's EVM account), or a card when offered. The agent never spends on its own: the user asks, the agent
+says exactly what they are agreeing to (price, renewal, the one-year USDC
+approval), and the user approves every signature and payment in their own
+wallet. Cancelling is always one request away. See `skills/ramwarden/references/buying.md`.
