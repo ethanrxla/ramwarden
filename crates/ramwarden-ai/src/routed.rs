@@ -36,27 +36,15 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
             return None;
         }
     };
-    let (origin, key_name, model_name) = if work == Work::Conversation {
-        ("https://api.x.ai", "XAI_API_KEY", "XAI_MODEL_ID")
-    } else {
-        (
-            "https://api.openai.com",
-            "OPENAI_API_KEY",
-            match work {
-                Work::Routine => "WARDEN_LUNA_MODEL",
-                Work::MultiStep => "WARDEN_TERRA_MODEL",
-                _ => "WARDEN_SOL_MODEL",
-            },
-        )
+    let latest=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).unwrap_or("");
+    let research=crate::routing::public_web_request(latest);
+    let (origin,key_name,model_name,default_model)=match work {
+        Work::Specialist=>("https://api.openai.com","OPENAI_API_KEY","WARDEN_SPECIALIST_MODEL",work.model()),
+        Work::Conversation|Work::Routine if !research=>("https://api.x.ai","XAI_API_KEY","XAI_CHAT_MODEL_ID",work.model()),
+        _=>("https://api.x.ai","XAI_API_KEY","XAI_TASK_MODEL_ID","grok-4.7"),
     };
-    let key = crate::secret::Secret::new(std::env::var(key_name).ok()?);
-    if key.is_empty() {
-        return None;
-    }
-    let model = std::env::var(model_name)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| work.model().into());
+    let key=crate::secret::Secret::new(std::env::var(key_name).ok()?);if key.is_empty(){return None}
+    let model=std::env::var(model_name).ok().filter(|s|!s.trim().is_empty()).unwrap_or_else(||default_model.into());
     let payload = request_body(work, &model, &messages);
     let r = match http()?
         .post(format!("{origin}/v1/responses"))
@@ -103,6 +91,8 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
             model = model.as_str(),
             input_tokens = usage["input_tokens"].as_u64().unwrap_or(0),
             output_tokens = usage["output_tokens"].as_u64().unwrap_or(0),
+            cached_tokens = usage["input_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
+            reasoning_tokens = usage["output_tokens_details"]["reasoning_tokens"].as_u64().unwrap_or(0),
             cost_in_usd_ticks = usage["cost_in_usd_ticks"].as_u64(),
             "warden model usage"
         );
@@ -129,8 +119,20 @@ fn request_body(work: Work, model: &str, messages: &[Value]) -> Value {
     }
     // High reasoning is the provider default; simple pet conversation should
     // not spend its entire deadline thinking before producing visible text.
-    if work == Work::Conversation {
+    if work != Work::Specialist && !model.contains("non-reasoning") {
         body["reasoning"] = json!({"effort":"low"});
+    }
+    let public_search=crate::routing::public_web_request(latest);
+    let system=messages.first().filter(|m|m["role"]=="system").and_then(|m|m["content"].as_str()).unwrap_or("");
+    let plain_chat=(system.contains("You are ThreatWarden") || system.contains("The chat phase is READ ONLY.")) && !system.contains("FOCUS CHECKLIST MODE");
+    if work==Work::Conversation && !public_search && plain_chat {
+        body["max_output_tokens"]=json!(300);
+        body["text"]=json!({"format":{"type":"json_schema","name":"companion_reply","strict":true,"schema":{"type":"object","properties":{"reply":{"type":"string"},"proposed_action":{"type":"null"}},"required":["reply","proposed_action"],"additionalProperties":false}}});
+    }
+    if work==Work::Specialist && let Some(input)=body["input"].as_array_mut(){input.insert(0,json!({"role":"system","content":"This request is already routed to the selected GPT specialist. Perform the review directly, without claiming you cannot consult GPT or narrating a second delegation. All supplied execution permissions and tool constraints still apply."}));}
+    if work!=Work::Specialist {
+        let threat=messages.first().and_then(|m|m["content"].as_str()).is_some_and(|s|s.contains("You are ThreatWarden"));
+        body["prompt_cache_key"]=json!(format!("warden-{}-{}",std::process::id(),if threat{"threat"}else{"ram"}));
     }
     body
 }
@@ -149,22 +151,38 @@ fn output_text(body: &Value) -> Option<String> {
     if text.is_empty() || text.len() > 24000 {
         return None;
     }
-    let json: Value = serde_json::from_str(&text).ok()?;
+    let mut json: Value = serde_json::from_str(&text).ok()?;
+    let mut sources=Vec::new();
+    for item in body["output"].as_array().into_iter().flatten() {
+        for content in item["content"].as_array().into_iter().flatten() {
+            for citation in content["annotations"].as_array().into_iter().flatten() {
+                if let Some(url)=citation["url"].as_str().or_else(||citation["url_citation"]["url"].as_str()) {sources.push(url.to_string());}
+            }
+        }
+    }
+    for citation in body["citations"].as_array().into_iter().flatten() {if let Some(url)=citation.as_str(){sources.push(url.into());}}
+    sources.sort();sources.dedup();
+    if !sources.is_empty(){json["_source_urls"]=json!(sources);}
+
     if !json.get("reply").is_some_and(Value::is_string) {
         return None;
     }
-    Some(text)
+    Some(json.to_string())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inexpensive_chat_omits_reasoning_and_has_small_budget(){let body=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&[json!({"role":"system","content":"You are ThreatWarden"})]);assert!(body.get("reasoning").is_none());assert_eq!(body["max_output_tokens"],300);assert_eq!(body["text"]["format"]["type"],"json_schema");}
+    #[test]
+    fn focus_checklist_keeps_its_own_output_contract(){let body=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&[json!({"role":"system","content":"The chat phase is READ ONLY. FOCUS CHECKLIST MODE"})]);assert_eq!(body["text"]["format"]["type"],"json_object");assert_eq!(body["max_output_tokens"],1200);}
     #[test]
     fn conversation_uses_low_reasoning_without_changing_planner_effort() {
         let body = request_body(Work::Conversation, "grok-4.6", &[]);
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["store"], false);
         assert!(
-            request_body(Work::Complex, "planner", &[])
+            request_body(Work::Specialist, "planner", &[])
                 .get("reasoning")
                 .is_none()
         );

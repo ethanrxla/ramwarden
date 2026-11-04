@@ -54,3 +54,5 @@ pub mod usage;
 pub mod github;
 
 pub mod threat;
+
+pub mod trivia;
