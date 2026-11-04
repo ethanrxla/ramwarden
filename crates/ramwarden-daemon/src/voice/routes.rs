@@ -18,6 +18,7 @@ pub fn routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/warden/bubble", get(bubble))
+        .route("/warden/facts",get(facts).post(refresh_facts))
         .route("/warden/answer", post(answer))
         .route("/warden/mute", post(mute))
         .route("/warden/focus", get(focus).post(super::focus_chat::suggest))
@@ -46,9 +47,13 @@ pub async fn bubble(State(st): State<AppState>) -> Json<Value> {
     let percent = st.memory().percent();
     let scene = Scene { rows: &rows, closing: &closing, percent, now: Instant::now(), unix };
     let bubble = st.voice.speak(&st.cfg.voice, &scene);
+    if bubble.as_ref().is_some_and(|b|b.kind==super::Kind::Quip){super::facts::warm(&st);}
     let (muted, until) = st.voice.mute_state(unix);
     Json(json!({ "bubble": bubble, "pet": true, "muted": muted, "muted_until": until }))
 }
+
+async fn facts(State(st):State<AppState>)->Json<Value>{Json(st.voice.facts.view())}
+async fn refresh_facts(State(st):State<AppState>)->Json<Value>{Json(json!({"queued":super::facts::warm(&st)}))}
 
 #[derive(Deserialize)]
 pub struct AnswerRequest {

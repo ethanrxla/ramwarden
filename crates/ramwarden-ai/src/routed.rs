@@ -149,11 +149,23 @@ fn output_text(body: &Value) -> Option<String> {
     if text.is_empty() || text.len() > 24000 {
         return None;
     }
-    let json: Value = serde_json::from_str(&text).ok()?;
+    let mut json: Value = serde_json::from_str(&text).ok()?;
+    let mut sources=Vec::new();
+    for item in body["output"].as_array().into_iter().flatten() {
+        for content in item["content"].as_array().into_iter().flatten() {
+            for citation in content["annotations"].as_array().into_iter().flatten() {
+                if let Some(url)=citation["url"].as_str().or_else(||citation["url_citation"]["url"].as_str()) {sources.push(url.to_string());}
+            }
+        }
+    }
+    for citation in body["citations"].as_array().into_iter().flatten() {if let Some(url)=citation.as_str(){sources.push(url.into());}}
+    sources.sort();sources.dedup();
+    if !sources.is_empty(){json["_source_urls"]=json!(sources);}
+
     if !json.get("reply").is_some_and(Value::is_string) {
         return None;
     }
-    Some(text)
+    Some(json.to_string())
 }
 #[cfg(test)]
 mod tests {

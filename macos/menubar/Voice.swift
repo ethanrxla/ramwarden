@@ -16,6 +16,7 @@ struct WardenBubble: Equatable {
     let text: String
     let choices: [WardenChoice]
     let url: String?
+    let source:URL?
     var isQuestion: Bool { !choices.isEmpty }
 
     init?(_ obj: Any?) {
@@ -27,6 +28,7 @@ struct WardenBubble: Equatable {
             guard let id = $0["id"] as? String, let label = $0["label"] as? String else { return nil }
             return WardenChoice(id: id, label: label)
         }
+        source=(b["source_url"] as? String).flatMap(URL.init(string:))
         url = (b["tab"] as? [String: Any])?["url"] as? String
     }
 }
@@ -123,6 +125,7 @@ struct BubbleView: View {
                     Button { voice.answer("dismiss") } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                         .buttonStyle(.plain).accessibilityLabel("Dismiss")
                 }
+                if let source=b.source,source.scheme == "https" {Link("Fact source",destination:source).font(.caption2)}
                 if b.isQuestion {
                     HStack(spacing: 6) {
                         ForEach(b.choices) { c in
