@@ -10,7 +10,6 @@ import plistlib
 import shutil
 import subprocess
 import time
-import yaml
 
 
 def bootstrap(path):
@@ -24,7 +23,28 @@ def bootstrap(path):
     raise RuntimeError('launchd could not reload the job: ' + result.stderr.strip())
 
 
+def apply_candidate(candidate, config_path, plist_path, backup, job):
+    """Restore both files on any apply/reload failure, including failed bootout."""
+    try:
+        candidate.replace(config_path)
+        plist_path.write_bytes(plistlib.dumps(job))
+        subprocess.run(['/bin/launchctl', 'bootout', 'system/com.ramwarden.suricata'], check=True)
+        bootstrap(plist_path)
+    except (OSError, subprocess.CalledProcessError, RuntimeError):
+        shutil.copy2(backup / config_path.name, config_path)
+        shutil.copy2(backup / plist_path.name, plist_path)
+        # Failed bootout may leave the old job registered. Starting a second
+        # instance then fails needlessly; only bootstrap if the job is absent.
+        loaded = subprocess.run(['/bin/launchctl', 'print', 'system/com.ramwarden.suricata'],
+                                capture_output=True)
+        if loaded.returncode != 0:
+            bootstrap(plist_path)
+        raise
+
+
 def main():
+    import yaml
+
     if os.geteuid() != 0:
         raise SystemExit('Administrator rights required')
     os.umask(0o027)
@@ -48,19 +68,10 @@ def main():
     job = plistlib.loads(plist_path.read_bytes())
     executable = job['ProgramArguments'][0]
     subprocess.run([executable, '-T', '-c', str(candidate), '-l', '/var/log/threatwarden/suricata'], check=True)
-    candidate.replace(config_path)
     # Test ordinary I/O scheduling after observing a 36-minute startup with
     # Background scheduling. Keep nice=10 for steady-state CPU priority.
     job['ProcessType'] = 'Standard'
-    plist_path.write_bytes(plistlib.dumps(job))
-    subprocess.run(['/bin/launchctl', 'bootout', 'system/com.ramwarden.suricata'], check=True)
-    try:
-        bootstrap(plist_path)
-    except RuntimeError:
-        shutil.copy2(backup / config_path.name, config_path)
-        shutil.copy2(backup / plist_path.name, plist_path)
-        bootstrap(plist_path)
-        raise
+    apply_candidate(candidate, config_path, plist_path, backup, job)
     print('Capture evidence repaired. Backup:', backup)
 
 
