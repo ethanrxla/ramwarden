@@ -99,9 +99,10 @@ pub fn router(state: AppState) -> Router {
         router.route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
             .route("/assistant/action", post(crate::assistant::act))
+            .route("/assistant/workspace",get(crate::assistant::workspace_status).post(crate::assistant::choose_workspace))
             // "Analyze now" in the extension: the warden's read of the tabs.
             .route("/browser/explain", post(crate::tab_analysis::explain))
-            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::new())))
+            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::with_config(&state.cfg))))
     } else { router };
     router.with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses

@@ -15,7 +15,7 @@ final class ThreatWardenProfile: WardenProfile {
 }
 // Shared identity, conversation transport, glass panel and speech-bubble lifecycle.
 // Memory and security companions specialize their observations, not each other's actions.
-class WardenCompanion: NSObject {
+@MainActor class WardenCompanion: NSObject {
     let model:CompanionModel
     var assistantPanel:ChatPanel?
     var statusBubble:BubblePanel?
@@ -42,7 +42,7 @@ class WardenCompanion: NSObject {
         NSApp.activate(ignoringOtherApps:true);assistantPanel?.makeKeyAndOrderFront(nil)
         DispatchQueue.main.async { NotificationCenter.default.post(name:Notification.Name("WardenChatOpened"),object:self.model.profile.id) }
     }
-    private func resizeAssistant(){guard let p=assistantPanel else{return};p.setContentSize(NSSize(width:304,height:model.chatHeight))}
+    private func resizeAssistant(){guard let p=assistantPanel else{return};let size=NSSize(width:304,height:model.chatHeight);if p.frame.size != size {p.setContentSize(size)}}
     func showStatusBubble(_ text:String,anchor:NSWindow?,open:@escaping ()->Void) {
         guard let anchor=anchor,assistantPanel?.isVisible != true else{return}
         dismissBubble?.cancel()
@@ -107,6 +107,8 @@ struct BaaPolicy {
 
 // Bounded local recall. The shared cross-app hub is a separate explicit integration.
 enum CompanionRecall {
+    static let storage=DispatchQueue(label:"com.ramwarden.companion-memory",qos:.utility)
+    static func saveLater(_ turns:[ChatTurn],warden:String){storage.async{save(turns,warden:warden)}}
     struct Entry:Codable {let role:String;let content:String;let at:Double}
     static func url(_ warden:String)->URL {
         FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("RamWarden/CompanionMemory/\(warden).json")

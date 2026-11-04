@@ -15,6 +15,9 @@ name = "ramwarden-daemon"
 path = "src/main.rs"
 
 [dependencies]
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+same-file = "1"
 reqwest = { workspace = true }
 ramwarden-platform = { path = "../ramwarden-platform" }
 ramwarden-core   = { path = "../ramwarden-core" }

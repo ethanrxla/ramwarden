@@ -6,7 +6,7 @@ static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 fn http() -> Option<&'static reqwest::Client> {
     if HTTP.get().is_none() {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(40))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .ok()?;
@@ -21,7 +21,13 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     if !enabled() {
         return None;
     }
-    let messages = crate::nyquest::compress(messages).await.ok()?;
+    let messages = match crate::nyquest::compress(messages).await {
+        Ok(messages) => messages,
+        Err(_) => {
+            tracing::warn!("warden model request stopped: required compression unavailable");
+            return None;
+        }
+    };
     let (origin, key_name, model_name) = if work == Work::Conversation {
         ("https://api.x.ai", "XAI_API_KEY", "XAI_MODEL_ID")
     } else {
@@ -43,10 +49,31 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| work.model().into());
-    let r=http()?.post(format!("{origin}/v1/responses")).bearer_auth(key.expose()).json(&json!({
-  "model":model,"input":messages,"store":false,"max_output_tokens":1200,"text":{"format":{"type":"json_object"}}
- })).send().await.ok()?;
+    let payload = request_body(work, &model, &messages);
+    let r = match http()?
+        .post(format!("{origin}/v1/responses"))
+        .bearer_auth(key.expose())
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(
+                model = model.as_str(),
+                timeout = error.is_timeout(),
+                connect = error.is_connect(),
+                "warden model request failed"
+            );
+            return None;
+        }
+    };
     if !r.status().is_success() {
+        tracing::warn!(
+            model = model.as_str(),
+            status = r.status().as_u16(),
+            "warden model provider refused request"
+        );
         return None;
     }
     // Cap the response before parsing; do not log provider bodies or keys.
@@ -63,13 +90,32 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     }
     let body: Value = serde_json::from_slice(&bytes).ok()?;
     if let Some(usage) = body.get("usage") {
-        tracing::info!(provider = origin, model = model.as_str(),
+        tracing::info!(
+            provider = origin,
+            model = model.as_str(),
             input_tokens = usage["input_tokens"].as_u64().unwrap_or(0),
             output_tokens = usage["output_tokens"].as_u64().unwrap_or(0),
             cost_in_usd_ticks = usage["cost_in_usd_ticks"].as_u64(),
-            "warden model usage");
+            "warden model usage"
+        );
     }
-    output_text(&body)
+    let reply = output_text(&body);
+    if reply.is_none() {
+        tracing::warn!(
+            model = model.as_str(),
+            "warden model returned no valid structured reply"
+        );
+    }
+    reply
+}
+fn request_body(work: Work, model: &str, messages: &[Value]) -> Value {
+    let mut body = json!({"model":model,"input":messages,"store":false,"max_output_tokens":1200,"text":{"format":{"type":"json_object"}}});
+    // High reasoning is the provider default; simple pet conversation should
+    // not spend its entire deadline thinking before producing visible text.
+    if work == Work::Conversation {
+        body["reasoning"] = json!({"effort":"low"});
+    }
+    body
 }
 fn output_text(body: &Value) -> Option<String> {
     let mut text = String::new();
@@ -95,6 +141,17 @@ fn output_text(body: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn conversation_uses_low_reasoning_without_changing_planner_effort() {
+        let body = request_body(Work::Conversation, "grok-4.6", &[]);
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(body["store"], false);
+        assert!(
+            request_body(Work::Complex, "planner", &[])
+                .get("reasoning")
+                .is_none()
+        );
+    }
     #[test]
     fn reasoning_is_not_chat() {
         assert!(

@@ -34,7 +34,7 @@ struct WardenBubble: Equatable {
 /// The same mute choices as the other faces: (label, hours), nil = until unmuted.
 let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet for today", 12), ("Quiet until I unmute", nil)]
 
-final class VoiceModel: ObservableObject {
+@MainActor final class VoiceModel: ObservableObject {
     @Published var bubble: WardenBubble?
     @Published var muted = false
     /// Pets come with Plus and Pro, not Lite.

@@ -50,7 +50,7 @@ pub fn classify(message: &str) -> Work {
         return Work::Routine;
     }
     let tools = [
-        "create", "move", "rename", "free", "unload", "resume", "pause", "open", "close", "list",
+        "arrange", "organize", "tile", "create", "move", "rename", "free", "unload", "resume", "pause", "open", "close", "list",
         "read", "find", "search", "check", "scan", "start", "stop", "install", "download",
         "connect", "run", "execute", "edit", "delete", "inspect", "diagnose", "fix",
     ];
