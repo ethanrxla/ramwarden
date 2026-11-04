@@ -331,7 +331,8 @@ async function refreshAccount() {
  link.textContent='Sign in with email, wallet or GitHub';
  try {
   const data=await daemonJSON('/wardens');
-  if(data.paid && ['ram','pro'].includes(data.tier)) {
+  const paid=Array.isArray(data.paid)?data.paid.length>0:data.paid===true;
+  if(paid && ['ram','pro'].includes(data.tier)) {
    state.textContent=data.tier==='pro'?'Pro 🐐 · Active on this computer':'Plus ⚡ · Active on this computer';
    link.textContent='Manage account and connected identities';
    help.textContent='This extension uses the desktop app’s verified plan. Website sign-in is separate; no extra extension password is needed.';
