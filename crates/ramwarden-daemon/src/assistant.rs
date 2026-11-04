@@ -177,6 +177,13 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     Ok(Json(json!({"reply":reply,"tier":tier,"facts":facts,"read_only":true,"proposed_action":proposed_action})))
 }
 
+fn security_evidence_request(message:&str)->bool {
+    let text=message.to_lowercase();
+    text.split(|c:char|!c.is_alphanumeric()).any(|word|[
+        "evidence","port","ports","listen","listening","investigate","trace","rule","rules","alert","alerts","login","logins","vulnerability","vulnerabilities","malware","suricata","clamav","sentinel","antivirus","syscheck"
+    ].contains(&word) || word.strip_prefix("rule").is_some_and(|id|!id.is_empty() && id.chars().all(|c|c.is_ascii_digit()))) || text.contains("what changed") || text.contains("file change")
+}
+
 async fn threat_chat(st:&AppState,service:&Service,r:&Request,cloud_allowed:bool)->Result<Json<Value>,StatusCode> {
     let wardens=crate::wardens::Wardens::global(&st.cfg);
     let info=ramwarden_core::wardens::find("threat").ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
@@ -185,7 +192,7 @@ async fn threat_chat(st:&AppState,service:&Service,r:&Request,cloud_allowed:bool
     let report=wardens.threat.report();
     let alerts=report.as_ref().map(|report|report.alerts.iter().take(12).map(|a|json!({"at":a.timestamp,"rule":a.rule_id,"level":a.level,"description":a.description.chars().take(800).collect::<String>(),"advice":a.advice,"event_id":a.id,"evidence":a.evidence,"evidence_objects":a.evidence_objects})).collect::<Vec<_>>()).unwrap_or_default();
     let text=r.message.to_lowercase();
-    let needs_source=["evidence","port","listen","details","what changed","investigate","trace","rule","alert","file","login","vulnerab","malware","suricata","clamav"].iter().any(|word|text.contains(word));
+    let needs_source=security_evidence_request(&text);
     let explicit_rule=text.split_whitespace().collect::<Vec<_>>().windows(2).find(|words|words[0]=="rule").map(|words|words[1].trim_matches(|c:char|!c.is_ascii_digit()).to_string()).filter(|r|!r.is_empty());
     let group=if text.contains("suricata"){Some("suricata")}else if text.contains("clamav"){Some("clamav")}else{None};
     let mut searchable=report.as_ref().map(|r|r.alerts.clone()).unwrap_or_default();
@@ -312,6 +319,11 @@ fn desktop_request(message:&str)->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn security_intent_uses_words_not_substrings() {
+        for message in ["read notes.txt using the supported file operation","create a portfolio folder","can you shut the fuck up dumbass goat"] {assert!(!security_evidence_request(message));}
+        for message in ["explain rule 533","what ports changed?","show all alerts","what changed in that file?","rule533 evidence"] {assert!(security_evidence_request(message));}
+    }
     #[test]
     fn companions_have_independent_folder_capabilities_and_proposals() {
         let ram=tempfile::tempdir().unwrap();let threat=tempfile::tempdir().unwrap();
