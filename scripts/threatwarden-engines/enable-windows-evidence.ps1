@@ -14,8 +14,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Candidate failed validation; running configura
 [IO.File]::Replace($candidate,$config,$backup)
 . (Join-Path $PSScriptRoot 'windows-capture-clock.ps1')
 try {
-    Set-SuricataCaptureClock
-    Restart-Service Suricata -ErrorAction Stop
+    Set-SuricataCaptureClock -Restart
 } catch { Copy-Item $backup $config -Force; Restart-Service Suricata; throw }
 & (Join-Path $PSScriptRoot 'schedule-windows.ps1') -ScanPath $ScanPath
 # Expose evidence read-only to the current interactive user. No script write access.

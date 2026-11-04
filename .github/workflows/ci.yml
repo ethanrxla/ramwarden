@@ -69,6 +69,8 @@ jobs:
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-eve-policy.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-evidence-access.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-capture-clock.ps1
       - name: Mac sensor repair rollback regression
         if: runner.os == 'macOS'
         run: python3 scripts/threatwarden-engines/test-macos-repair.py
