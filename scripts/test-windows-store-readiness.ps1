@@ -11,7 +11,7 @@ $root=(Resolve-Path -LiteralPath $PayloadDirectory).Path
 $checks=New-Object 'System.Collections.Generic.List[object]'
 function Add-Check([string]$Name,[bool]$Pass,[string]$Evidence) {$checks.Add([pscustomobject]@{name=$Name;pass=$Pass;evidence=$Evidence})}
 $files=@(Get-ChildItem -LiteralPath $root -File -Recurse)
-$private=@($files | Where-Object {$_.Name -match '^(\.env.*|root\.env|secrets\.toml|device-token|routing\.json|config-with-chat\.toml)$' -or $_.Extension -in @('.pfx','.key')})
+$private=@($files | Where-Object {$_.Name -match '^(\.env.*|root\.env|secrets\.toml|device-token|companion-chat-(ram|threat)\.json|routing\.json|config-with-chat\.toml)$' -or $_.Extension -in @('.pfx','.key')})
 Add-Check 'No private developer credentials in payload' ($private.Count -eq 0) (($private | ForEach-Object {$_.Name}) -join ', ')
 $pe=@($files | Where-Object {$_.Extension -in @('.exe','.dll','.sys')})
 Add-Check 'PE payload present' ($pe.Count -gt 0) ($pe.Count.ToString()+' PE files')

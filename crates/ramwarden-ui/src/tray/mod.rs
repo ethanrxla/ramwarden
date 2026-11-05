@@ -316,7 +316,7 @@ fn open_surface(child:&mut Option<Child>,pane:Pane,surface:Surface){
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat=>"--chat",Surface::Settings=>"--settings",Surface::Thought=>"--thought"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
+    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat|Surface::ToggleChat=>"--chat",Surface::Settings=>"--settings",Surface::Thought=>"--thought"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
@@ -401,11 +401,11 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             pets.refresh(pro);
             let [ram,threat]=pets.visibility();
             let visible=[ram,threat&&pro];
-            for i in 0..2 {if !visible[i]{close_child(&mut chats[i]);close_child(&mut thoughts[i]);}else if child_running(&mut chats[i]) {close_child(&mut thoughts[i]);}}
+            for i in 0..2 {if !visible[i]{close_child(&mut chats[i]);close_child(&mut thoughts[i]);}}
             let snap=poller.snapshot();
             if let Some(speech)=snap.speech.as_ref().filter(|s|s.pet&&!s.muted) && let Some(b)=&speech.bubble && matches!(b.warden.as_str(),""|"ram"|"threat") {
                 let index=usize::from(b.warden=="threat");
-                if visible[index] && !child_running(&mut chats[index]) && b.id!=last_bubble {
+                if visible[index] && b.id!=last_bubble {
                     last_bubble=b.id.clone();open_attached(&mut thoughts[index],if index==0{Pane::Ram}else{Pane::Threat},Surface::Thought);
                 }
             }
@@ -416,7 +416,13 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             tray.show_question(&poller);
             last = Instant::now();
         }
-        if let Some((pane,surface))=pets.click(){let index=usize::from(pane==Pane::Threat);close_child(&mut thoughts[index]);open_attached(&mut chats[index],pane,surface);}
+        if let Some((pane,surface))=pets.click(){let index=usize::from(pane==Pane::Threat);
+            if toggle_closes(surface,child_running(&mut chats[index])) {close_child(&mut chats[index]);}
+            else {open_attached(&mut chats[index],pane,if surface==Surface::ToggleChat{Surface::Chat}else{surface});}
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+fn toggle_closes(surface:Surface,running:bool)->bool{surface==Surface::ToggleChat&&running}
+#[cfg(test)]mod companion_toggle_tests{use super::*;#[test]fn pet_click_toggles_but_menu_chat_and_settings_open(){assert!(toggle_closes(Surface::ToggleChat,true));assert!(!toggle_closes(Surface::ToggleChat,false));assert!(!toggle_closes(Surface::Chat,true));assert!(!toggle_closes(Surface::Settings,true));}}

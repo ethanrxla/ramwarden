@@ -107,13 +107,6 @@ impl eframe::App for CompanionWindow {
                                     self.options = Options::load();
                                 }
                             }
-                            if ui
-                                .small_button("×")
-                                .on_hover_text("Close this speech box")
-                                .clicked()
-                            {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
                         });
                         ui.separator();
                         if self.surface == Surface::Thought {
@@ -220,7 +213,7 @@ pub fn run(client: Client, pane: Pane) -> Result<(), String> {
                 pane,
                 surface,
                 reader: Reader::for_companion(pane),
-                chat: Chat::default(),
+                chat: Chat::for_warden(pane == Pane::Threat),
                 options: Options::load(),
                 error: None,
                 poller,

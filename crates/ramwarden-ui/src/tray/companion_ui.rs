@@ -32,8 +32,53 @@ pub struct Chat {
     approval: bool,
     result: Option<mpsc::Receiver<Result<Reply, String>>>,
     error: Option<String>,
+    path: Option<std::path::PathBuf>,
 }
 impl Chat {
+    pub fn for_warden(threat: bool) -> Self {
+        let path = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(if threat {
+                "ramwarden/companion-chat-threat.json"
+            } else {
+                "ramwarden/companion-chat-ram.json"
+            });
+        Self::load(path)
+    }
+    fn load(path: std::path::PathBuf) -> Self {
+        let turns: Vec<Turn> = std::fs::read(&path)
+            .ok()
+            .filter(|b| b.len() <= 1300000)
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Self {
+            turns: bounded_turns(turns),
+            path: Some(path),
+            ..Default::default()
+        }
+    }
+    fn save(&mut self) {
+        self.turns = bounded_turns(std::mem::take(&mut self.turns));
+        let Some(path) = &self.path else {
+            return;
+        };
+        let result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+            let pending = path.with_extension("tmp");
+            let mut bytes = serde_json::to_vec(&self.turns).map_err(|e| e.to_string())?;
+            while bytes.len() > 1300000 && self.turns.len() > 1 {
+                self.turns.remove(0);
+                bytes = serde_json::to_vec(&self.turns).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&pending, bytes).map_err(|e| e.to_string())?;
+            std::fs::rename(pending, path).map_err(|e| e.to_string())
+        })();
+        if let Err(e) = result {
+            self.error = Some(format!("Could not save local conversation: {e}"));
+        }
+    }
+
     fn begin(
         &mut self,
         client: Client,
@@ -41,9 +86,13 @@ impl Chat {
         body: serde_json::Value,
         ctx: egui::Context,
     ) {
+        self.error = None;
+        if path == "/assistant/action" {
+            self.turns.push(Turn{role:"assistant".into(),content:"Approved action submitted. Result is unconfirmed until the warden replies; closing chat does not undo completed changes.".into()});
+        }
+        self.save();
         let (tx, rx) = mpsc::channel();
         self.result = Some(rx);
-        self.error = None;
         std::thread::spawn(move || {
             let result = crate::runtime::network_runtime()
                 .map_err(|e| e.to_string())
@@ -69,6 +118,7 @@ impl Chat {
                                 });
                             }
                             self.pending = r.proposed_action;
+                            self.save();
                         }
                         Err(e) => self.error = Some(e),
                     }
@@ -198,6 +248,23 @@ impl Chat {
         }
     }
 }
+fn bounded_turns(turns: Vec<Turn>) -> Vec<Turn> {
+    turns
+        .into_iter()
+        .rev()
+        .filter(|t| matches!(t.role.as_str(), "user" | "assistant"))
+        .take(200)
+        .map(|mut t| {
+            while t.content.len() > 6000 {
+                t.content.pop();
+            }
+            t
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
 fn history(turns: &[Turn]) -> Vec<Turn> {
     let mut bytes = 0;
     let mut result = vec![];
@@ -282,6 +349,65 @@ pub fn settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn escaped_history_stays_within_reload_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ram.json");
+        let mut chat = Chat::load(path.clone());
+        chat.turns = vec![
+            Turn {
+                role: "user".into(),
+                content: "\tX".repeat(3000)
+            };
+            200
+        ];
+        chat.save();
+        assert!(std::fs::metadata(&path).unwrap().len() <= 1300000);
+        let count = chat.turns.len();
+        assert_eq!(Chat::load(path).turns.len(), count);
+    }
+    #[test]
+    fn conversation_survives_close_and_reopen_without_restoring_approval() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ram.json");
+        let mut chat = Chat::load(path.clone());
+        chat.turns.push(Turn {
+            role: "user".into(),
+            content: "Keep my conversation".into(),
+        });
+        chat.pending = Some(Proposal {
+            token: "old-approval".into(),
+            label: "Never replay".into(),
+            preview: "old".into(),
+        });
+        chat.save();
+        let restored = Chat::load(path);
+        assert_eq!(restored.turns.len(), 1);
+        assert_eq!(restored.turns[0].content, "Keep my conversation");
+        assert!(restored.pending.is_none());
+        assert!(restored.result.is_none());
+    }
+    #[test]
+    fn stored_history_is_bounded_and_rejects_untrusted_roles() {
+        let mut turns = vec![
+            Turn {
+                role: "assistant".into(),
+                content: "é".repeat(4000)
+            };
+            250
+        ];
+        turns.push(Turn {
+            role: "system".into(),
+            content: "Not a saved conversation turn".into(),
+        });
+        let turns = bounded_turns(turns);
+        assert_eq!(turns.len(), 200);
+        assert!(
+            turns
+                .iter()
+                .all(|t| t.content.len() <= 6000 && t.role == "assistant")
+        );
+    }
     #[test]
     fn history_respects_daemon_limits_and_utf8() {
         let t = vec![

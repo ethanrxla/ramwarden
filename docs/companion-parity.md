@@ -104,3 +104,12 @@ and its cloud reply rendered there. The independent thought box rendered a
 clearly labeled fixture from an isolated loopback server, not the production
 daemon. The installed daemon supports /warden/bubble but /warden/facts returns
 404; live newer fun-fact cache/feed behavior therefore remains a backend gate.
+
+### Click-toggle and independent upper speech
+
+A direct pet click opens chat; a second click closes its chat window. Context
+menu Chat and Settings commands still open/focus their destination. The chat
+header has no close button. Closing releases the renderer process; bounded
+local conversation history restores on reopening, while proposal tokens and
+approval state are never restored or replayed. Upper proactive speech is now
+independent of chat visibility and may appear while chat is open, as requested.

@@ -12,6 +12,7 @@ pub enum Surface {
     Chat,
     Settings,
     Thought,
+    ToggleChat,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

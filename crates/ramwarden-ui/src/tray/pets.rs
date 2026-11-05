@@ -545,7 +545,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                             s.save();
                         }
                     } else {
-                        let _ = pet.clicks.send((pet.pane, Surface::Chat));
+                        let _ = pet.clicks.send((pet.pane, Surface::ToggleChat));
                     }
                 }
                 LRESULT(0)
