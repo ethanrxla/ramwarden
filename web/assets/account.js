@@ -148,7 +148,7 @@ class AccountPage {
     const input=h("input",{type:"checkbox","aria-label":"Share usage diagnostics"});
     input.checked=this.account.prefs?.share_usage === true;
     let changed=false;
-    api.request("GET","/v1/usage").then(result=>{if(!changed)input.checked=result.enabled===true;}).catch(()=>{});
+    api.usageStatus().then(result=>{if(!changed)input.checked=result.enabled===true;}).catch(()=>{});
     input.addEventListener("change",async () => {
       changed=true;input.disabled=true;
       try {

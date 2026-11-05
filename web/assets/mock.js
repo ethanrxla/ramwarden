@@ -129,6 +129,10 @@ export class MockApi {
     this.account_.prefs = prefs;
     return { prefs };
   }
+  async usageStatus() {
+    if (!this.signedIn) throw new ApiError(401, "Sign in first.");
+    return { enabled: this.account_.prefs?.share_usage === true };
+  }
   async installLink() {
     if (!this.signedIn) throw new ApiError(401, "Sign in first.");
     // Lite (signed in, nothing bought) gets a line too; the device limit of 1
