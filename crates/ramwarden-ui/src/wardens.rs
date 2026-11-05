@@ -332,6 +332,7 @@ pub struct AlertLine {
 /// Everything the ThreatWarden pane shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThreatPane {
+    pub unlocked: bool,
     pub name: String,
     pub level: Level,
     pub headline: String,
@@ -362,6 +363,7 @@ impl ThreatPane {
 
     pub fn unavailable(headline: &str, detail: &str) -> ThreatPane {
         ThreatPane {
+            unlocked: false,
             name: "ThreatWarden".into(),
             level: Level::Off,
             headline: headline.into(),
@@ -397,6 +399,7 @@ impl ThreatPane {
             PaneAction::None
         };
         let mut pane = ThreatPane {
+            unlocked: w.unlocked,
             name: if w.name.is_empty() {
                 "ThreatWarden".into()
             } else {

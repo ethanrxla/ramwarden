@@ -35,6 +35,9 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 
 ## Database, sales reps and support
 
+- [ ] Per-account customer memory hub: durable, consented facts/outcomes with provenance and time, plus bounded vector/keyword retrieval into each prompt. Jev ranks relevance and proposes summaries; deterministic token budgets evict prompt context. Prompt eviction never deletes source events. User erase/retention rules govern durable deletion; explicit Keep/reopening/activity protections override model ranking. Do not reuse the developer agent-memory hub as a shared customer knowledge store.
+- [ ] Separate memory retrieval from the security event transport: bounded durable event spool, retry/acknowledgment, deduplication, backpressure, capacity/retention alerts and recovery tests. Never use LLM relevance to drop security events or conceal queue overflow. Diagnose Wazuh's existing queue before choosing supported tuning or an additional spool.
+
 - [ ] Verify MongoDB schema/versioning, least-privilege accounts, indexes, bounded requests, timeouts and backup retention. No billing-record changes during index checks.
 - [ ] Confirm support chat30day and ticket1year-after-last-message expiry in application code and TTL indexes. Test isolated database contract suite and chat→ticket→staff reply→revisit; unavailable Atlas/Jev, rate limits and account isolation.
 - [ ] Sales/support wardens use current authoritative product/plan answers and write/read the correct visitor/account conversations and tickets. Staff routes require authenticated staff scope; AI cannot invent completed support actions.

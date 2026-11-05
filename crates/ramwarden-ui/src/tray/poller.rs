@@ -128,6 +128,15 @@ impl Poller {
                     tokio::time::sleep(Duration::from_secs(20)).await;
                 }
             });
+        } else {
+            let (shared,client)=(shared.clone(),client.clone());
+            runtime.spawn(async move {
+                loop {
+                    let threat=client.threat_pane().await;
+                    shared.lock().unwrap().threat=Some(threat);
+                    tokio::time::sleep(Duration::from_secs(20)).await;
+                }
+            });
         }
         // Commands, one at a time.
         {

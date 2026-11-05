@@ -64,7 +64,7 @@ impl eframe::App for WindowApp {
 
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.pane,Pane::Ram,"RAM");
+                ui.selectable_value(&mut self.pane,Pane::Ram,"RamWarden");
                 ui.selectable_value(&mut self.pane,Pane::Threat,"ThreatWarden");
                 if let Some(p)=&snap.threat {ui.colored_label(views::level_colour(p.level),p.level.label());}
             });
@@ -190,7 +190,7 @@ struct VoiceItems {
 
 impl Tray {
     fn new() -> Result<Self, String> {
-        let open = MenuItem::new("Open RamWarden", true, None);
+        let open = MenuItem::new("RamWarden", true, None);
         let threat=MenuItem::new("ThreatWarden",true,None);
         let quit = MenuItem::new("Quit", true, None);
         let menu = Menu::new();
@@ -252,28 +252,28 @@ impl Tray {
             let _ = self.menu.insert(item, i + 1);
         }
         let _ = self.menu.insert(&gap, choices.len() + 1);
-        let _ = self.icon.set_tooltip(Some(format!("RamWarden: {}", b.text)));
         self.voice = Some(VoiceItems { bubble: b.id.clone(), line, choices, gap });
     }
 
     /// Redraw the gauge when the figure visibly changes.
     fn update(&mut self, poller: &Poller) {
         let snap = poller.snapshot();
-        let Some(st) = snap.state else {
+        let Some(st) = &snap.state else {
             if let Some(e) = snap.error {
                 let _ = self.icon.set_tooltip(Some(format!("RamWarden — {e}")));
             }
             return;
         };
         let f = (st.percent / 100.0) as f32;
-        if (f - self.shown_fraction).abs() >= 0.01 && self.voice.is_none() {
+        if (f - self.shown_fraction).abs() >= 0.01 {
             let _ = self.icon.set_icon(gauge_icon(f));
-            let _ = self.icon.set_tooltip(Some(format!(
-                "RamWarden — {:.0}% in use, {:.1}% pressure",
-                st.percent, st.psi_some
-            )));
             self.shown_fraction = f;
         }
+        let mut tooltip=format!("RamWarden: {:.1}/{:.1} GB ({:.0}%) · pressure {:.1}%",st.used_mb/1024.0,st.total_mb/1024.0,st.percent,st.psi_some);
+        if let Some(threat)=&snap.threat && threat.unlocked {
+            tooltip.push_str(&format!("\nThreatWarden: {}",threat.headline));
+        }
+        let _=self.icon.set_tooltip(Some(tooltip));
     }
 }
 
