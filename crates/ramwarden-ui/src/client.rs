@@ -221,6 +221,35 @@ pub struct Client {
 }
 
 impl Client {
+    pub(crate) async fn speech_audio(&self, text: &str, warden: &str) -> Result<Vec<u8>> {
+        let mut r=self.http.post(format!("{}/warden/speech",self.base)).json(&serde_json::json!({"text":text.chars().take(800).collect::<String>(),"warden":warden})).timeout(Duration::from_secs(35)).send().await.map_err(|e|Error::Transport(e.to_string()))?;
+        if !r.status().is_success() {
+            return Err(Error::Status {
+                status: r.status().as_u16(),
+                body: "Spoken voice is unavailable; text chat still works.".into(),
+            });
+        }
+        if !r
+            .headers()
+            .get("content-type")
+            .is_some_and(|v| v.to_str().unwrap_or("").starts_with("audio/"))
+        {
+            return Err(Error::Decode("Speech response was not audio".into()));
+        }
+        let mut bytes = vec![];
+        while let Some(chunk) = r
+            .chunk()
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > 2000000 {
+                return Err(Error::Decode("Speech response exceeded limit".into()));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
     pub fn new(host: &str, port: u16) -> Result<Self> {
         // The daemon is always on loopback. Without `no_proxy`, a system or
         // `HTTP_PROXY` proxy (VPNs and corporate setups set one) receives the

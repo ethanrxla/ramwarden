@@ -206,6 +206,16 @@ mod tests {
 pub struct Style {
     pub appearance: Appearance,
     pub scale: u32,
+    #[serde(default)]
+    pub auto_scope: Option<String>,
+    #[serde(default)]
+    pub audio_muted: bool,
+    #[serde(default)]
+    pub spoken_replies: bool,
+    #[serde(default)]
+    pub baa_alerts: bool,
+    #[serde(default)]
+    pub name: String,
 }
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -219,10 +229,20 @@ impl Default for Options {
             ram: Style {
                 appearance: Appearance::ram(),
                 scale: 3,
+                auto_scope: None,
+                audio_muted: false,
+                spoken_replies: false,
+                baa_alerts: false,
+                name: String::new(),
             },
             threat: Style {
                 appearance: Appearance::threat(),
                 scale: 3,
+                auto_scope: None,
+                audio_muted: false,
+                spoken_replies: false,
+                baa_alerts: false,
+                name: String::new(),
             },
         }
     }
@@ -235,8 +255,14 @@ impl Options {
             .join("ramwarden/companion-appearance.json")
     }
     pub fn load() -> Self {
-        let mut options:Self=std::fs::read(Self::path()).ok().filter(|b|b.len()<8192).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default();
-        options.ram.scale=options.ram.scale.clamp(2,6);options.threat.scale=options.threat.scale.clamp(2,6);options
+        let mut options: Self = std::fs::read(Self::path())
+            .ok()
+            .filter(|b| b.len() < 8192)
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        options.ram.scale = options.ram.scale.clamp(2, 6);
+        options.threat.scale = options.threat.scale.clamp(2, 6);
+        options
     }
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path();

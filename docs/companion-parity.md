@@ -113,3 +113,25 @@ header has no close button. Closing releases the renderer process; bounded
 local conversation history restores on reopening, while proposal tokens and
 approval state are never restored or replayed. Upper proactive speech is now
 independent of chat visibility and may appear while chat is open, as requested.
+
+
+## Windows workspace and voice validation (November 5, 2026)
+
+The Windows companion settings now use the same daemon workspace API as Mac:
+connect a folder, disconnect it, and explicitly enable Auto for that exact scope.
+Automatic execution requires both backend eligibility and the saved matching
+scope. Manual review remains available. Forgetting chat clears local history and
+pending approvals. Restoring appearance preserves audio preferences and scope.
+
+Mute and spoken-reply controls are per companion. Voice and bleat test buttons
+are explicit. The Rust speech smoke example completed both wardens using the
+same daemon-generated ElevenLabs voices as Mac. Voice files are bounded and
+temporary; the file handle is closed before native Windows playback. Provider
+credentials remain outside the repo and installer payload.
+
+Validation: 83 Windows UI tests, tray clippy, release build; both wardens' live
+workspace connect/read/disconnect exercised with disposable folders and original
+connections restored. Native folder-picker interaction, newly built daemon
+installation, workflow streaming, proactive audio, microphone input and the full
+Mac settings inventory still require validation/implementation. The source build
+is not evidence that the installed application has been upgraded.

@@ -22,6 +22,8 @@ pub mod poller;
 pub mod views;
 pub mod pets;
 mod activation;
+pub mod audio;
+mod workspace_ui;
 mod companion_ui;
 mod companion_window;
 use activation::Surface;

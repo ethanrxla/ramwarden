@@ -17,6 +17,10 @@ struct Proposal {
     label: String,
     #[serde(default)]
     preview: String,
+    #[serde(default)]
+    scope_id: Option<String>,
+    #[serde(default)]
+    auto_eligible: bool,
 }
 #[derive(Deserialize)]
 struct Reply {
@@ -33,6 +37,7 @@ pub struct Chat {
     result: Option<mpsc::Receiver<Result<Reply, String>>>,
     error: Option<String>,
     path: Option<std::path::PathBuf>,
+    audio_result: Option<mpsc::Receiver<Result<(), String>>>,
 }
 impl Chat {
     pub fn for_warden(threat: bool) -> Self {
@@ -57,6 +62,15 @@ impl Chat {
             path: Some(path),
             ..Default::default()
         }
+    }
+    pub fn forget(&mut self) {
+        self.result = None;
+        self.input.clear();
+        self.error = None;
+        self.turns.clear();
+        self.pending = None;
+        self.approval = false;
+        self.save();
     }
     fn save(&mut self) {
         self.turns = bounded_turns(std::mem::take(&mut self.turns));
@@ -105,6 +119,15 @@ impl Chat {
         });
     }
     pub fn show(&mut self, ui: &mut egui::Ui, client: &Client, threat: bool) {
+        if let Some(rx) = &self.audio_result
+            && let Ok(result) = rx.try_recv()
+        {
+            self.audio_result = None;
+            if let Err(e) = result {
+                self.error = Some(e);
+            }
+        }
+
         if let Some(rx) = &self.result {
             match rx.try_recv() {
                 Ok(reply) => {
@@ -112,6 +135,17 @@ impl Chat {
                     match reply {
                         Ok(r) => {
                             if !r.reply.is_empty() {
+                                let options = Options::load();
+                                let style = if threat { options.threat } else { options.ram };
+                                if style.spoken_replies && !style.audio_muted {
+                                    self.audio_result = Some(super::audio::say(
+                                        client.clone(),
+                                        threat,
+                                        r.reply.clone(),
+                                        false,
+                                    ));
+                                }
+
                                 self.turns.push(Turn {
                                     role: "assistant".into(),
                                     content: r.reply,
@@ -129,6 +163,26 @@ impl Chat {
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
+        }
+        let options = Options::load();
+        let auto_scope = if threat {
+            options.threat.auto_scope
+        } else {
+            options.ram.auto_scope
+        };
+        if self.result.is_none()
+            && let Some(proposal) = &self.pending
+            && auto_allowed(proposal, auto_scope.as_deref())
+        {
+            let token = proposal.token.clone();
+            self.pending = None;
+            self.approval = false;
+            self.begin(
+                client.clone(),
+                "/assistant/action",
+                serde_json::json!({"token":token}),
+                ui.ctx().clone(),
+            );
         }
         ui.heading(if threat {
             "ThreatWarden chat"
@@ -248,6 +302,13 @@ impl Chat {
         }
     }
 }
+fn auto_allowed(proposal: &Proposal, scope: Option<&str>) -> bool {
+    proposal.auto_eligible
+        && proposal
+            .scope_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty() && Some(id) == scope)
+}
 fn bounded_turns(turns: Vec<Turn>) -> Vec<Turn> {
     turns
         .into_iter()
@@ -331,11 +392,13 @@ pub fn settings(
         });
     }
     if ui.button("Restore default appearance").clicked() {
-        *style = if threat {
+        let defaults = if threat {
             Options::default().threat
         } else {
             Options::default().ram
         };
+        style.appearance = defaults.appearance;
+        style.scale = defaults.scale;
         changed = true;
     }
     if changed {
@@ -349,6 +412,21 @@ pub fn settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_requires_backend_eligibility_and_exact_folder_scope() {
+        let mut p = Proposal {
+            token: "t".into(),
+            label: "x".into(),
+            preview: String::new(),
+            scope_id: Some("folder-a".into()),
+            auto_eligible: true,
+        };
+        assert!(auto_allowed(&p, Some("folder-a")));
+        assert!(!auto_allowed(&p, Some("folder-b")));
+        assert!(!auto_allowed(&p, None));
+        p.auto_eligible = false;
+        assert!(!auto_allowed(&p, Some("folder-a")));
+    }
     #[test]
     fn escaped_history_stays_within_reload_size_limit() {
         let dir = tempfile::tempdir().unwrap();
@@ -379,6 +457,8 @@ mod tests {
             token: "old-approval".into(),
             label: "Never replay".into(),
             preview: "old".into(),
+            scope_id: None,
+            auto_eligible: false,
         });
         chat.save();
         let restored = Chat::load(path);

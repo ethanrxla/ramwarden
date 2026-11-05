@@ -23,6 +23,9 @@ struct CompanionWindow {
     size: [f32; 2],
     above: bool,
     shown: bool,
+    workspace: super::workspace_ui::WorkspaceUi,
+    audio_result: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    audio_status: Option<String>,
 }
 impl eframe::App for CompanionWindow {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
@@ -30,6 +33,13 @@ impl eframe::App for CompanionWindow {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if let Some(result) = self.audio_result.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.audio_result = None;
+            self.audio_status = Some(match result {
+                Ok(()) => "Voice playback completed.".into(),
+                Err(e) => e,
+            });
+        }
         ctx.request_repaint_after(Duration::from_millis(400));
         if self.poller.is_none()
             && let Some((_, surface)) = self.reader.next_pane()
@@ -122,12 +132,46 @@ impl eframe::App for CompanionWindow {
                                 }
                             }
                         } else if self.surface == Surface::Settings {
-                            companion_ui::settings(
-                                ui,
-                                self.pane == Pane::Threat,
-                                &mut self.options,
-                                &mut self.error,
-                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt("all-companion-settings")
+                                .max_height(self.size[1] - 95.)
+                                .show(ui, |ui| {
+                                    self.workspace.show(
+                                        ui,
+                                        &self.client,
+                                        self.pane == Pane::Threat,
+                                        &mut self.options,
+                                    );
+                                    ui.separator();
+                                    let threat = self.pane == Pane::Threat;
+                                    let style = if threat { &mut self.options.threat } else { &mut self.options.ram };
+                                    let mut changed = ui.checkbox(&mut style.audio_muted, "Mute companion audio").changed();
+                                    changed |= ui.checkbox(&mut style.spoken_replies, "Read chat replies aloud").changed();
+                                    if changed { self.error = self.options.save().err(); }
+                                    ui.horizontal(|ui| {
+                                        if ui.add_enabled(self.audio_result.is_none(), egui::Button::new("Test voice")).clicked() {
+                                            self.audio_status = Some("Requesting voice...".into());
+                                            self.audio_result = Some(super::audio::say(self.client.clone(), threat,
+                                                if threat { "ThreatWarden here. Your voice connection is working." } else { "RamWarden here. Your voice connection is working." }.into(), true));
+                                        }
+                                        if ui.button("Test bleat").clicked() {
+                                            self.audio_status = Some(match super::audio::bleat(threat) {
+                                                Ok(()) => "Bleat sent to Windows audio.".into(), Err(e) => e,
+                                            });
+                                        }
+                                    });
+                                    if let Some(status) = &self.audio_status { ui.label(status); }
+                                    ui.separator();
+                                    if ui.button("Forget local chat history").clicked() {
+                                        self.chat.forget();
+                                    }
+                                    companion_ui::settings(
+                                        ui,
+                                        self.pane == Pane::Threat,
+                                        &mut self.options,
+                                        &mut self.error,
+                                    );
+                                });
                         } else {
                             self.chat.show(ui, &self.client, self.pane == Pane::Threat);
                         }
@@ -222,6 +266,9 @@ pub fn run(client: Client, pane: Pane) -> Result<(), String> {
                 size,
                 above,
                 shown: false,
+                workspace: super::workspace_ui::WorkspaceUi::default(),
+                audio_result: None,
+                audio_status: None,
             }))
         }),
     )
