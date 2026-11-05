@@ -8,8 +8,22 @@ import Combine
     static let shared = CompanionSpeech()
     private var players: [String:AVAudioPlayer] = [:]
     private var tasks: [String:Task<Void,Never>] = [:]
+    private var visibility: [String:() -> Bool] = [:]
+    private var visibilityObserver: NSObjectProtocol?
+    private init() {
+        visibilityObserver = NotificationCenter.default.addObserver(forName:NSWindow.didChangeOcclusionStateNotification,object:nil,queue:.main) { [weak self] _ in
+            Task { @MainActor in self?.stopHiddenCompanions() }
+        }
+    }
+    func trackVisibility(_ warden:String, visible:@escaping () -> Bool) { visibility[warden]=visible }
+    private func canSpeak(_ warden:String)->Bool {
+        visibility[warden]?() == true && !CompanionAudio.isMuted(warden) && UserDefaults.standard.bool(forKey:"\(warden).speech")
+    }
+    private func stopHiddenCompanions() {
+        for warden in Array(visibility.keys) where visibility[warden]?() != true { stop(warden) }
+    }
     func say(_ text: String, warden: String) {
-        guard !CompanionAudio.isMuted(warden), UserDefaults.standard.bool(forKey:"\(warden).speech"), !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return }
+        guard canSpeak(warden), !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return }
         tasks.values.forEach { $0.cancel() }; players.values.forEach { $0.stop() }
         tasks[warden] = Task { @MainActor in
             do {
@@ -20,7 +34,7 @@ import Combine
                 let (data,response) = try await URLSession.shared.data(for:request)
                 guard !Task.isCancelled else { return }
                 if (response as? HTTPURLResponse)?.statusCode != 200 { self.errors[warden]="Spoken voice is unavailable on this service right now. Text chat still works.";return }
-                guard !CompanionAudio.isMuted(warden), UserDefaults.standard.bool(forKey:"\(warden).speech"),
+                guard canSpeak(warden),
                       (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 2_000_000 else { return }
                 self.errors[warden]=nil
                 let player = try AVAudioPlayer(data:data)

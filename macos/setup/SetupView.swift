@@ -89,8 +89,10 @@ struct SetupView: View {
                     HStack { Button(checking ? "Checking…" : "Check this Mac") { Task { await check() } }.disabled(checking); Text(health).accessibilityLabel("Daemon status: \(health)") }
                     Text("Open the companion to verify its connection. In Customize your ram, choose its name, colors, eyes, and size when supported by your installed version.").foregroundStyle(.secondary)
                 default:
-                    Button("Create a ScholarCal A2A pairing invitation") {SetupEvents.record(.pairingOpened,step:step);if let url=URL(string:"https://scholarcal.com/settings?tab=agents"){NSWorkspace.shared.open(url)}}
-                    Text("ScholarCal provides a copyable, expiring pairing invitation after you sign in. Share that invitation, never an account API key. The local Warden A2A connector is not connected yet.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    Text("Agent pairing").font(.headline)
+                    Text("Pair your agents directly in RamWarden. ScholarCal sign-in is optional and is not required for pairing. The direct pairing connector is still being completed.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    Button("Connect ScholarCal (optional)") {SetupEvents.record(.pairingOpened,step:step);if let url=URL(string:"https://scholarcal.com/settings?tab=agents"){NSWorkspace.shared.open(url)}}
+                    Text("Connect your ScholarCal account if you want to use its calendar skill. This is separate from RamWarden agent pairing and does not grant remote control of your computer.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     Text("Give your own agent this request. It contains no keys, pass files, or personal install links. Your account’s remaining allowance is always checked by the server.")
                     Picker("Plan guidance", selection: $allowance) { Text("Lite · 1 PC").tag(1); Text("Plus · 3 PCs").tag(3); Text("Pro · 5 PCs").tag(5) }.pickerStyle(.segmented)
                     Text("Choosing a plan here only changes the request. It does not purchase or unlock anything.").font(.caption).foregroundStyle(.secondary)

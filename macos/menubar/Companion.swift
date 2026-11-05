@@ -672,7 +672,11 @@ final class PetHost: NSHostingView<PixelRam> {
             self?.resizePet()
         }.store(in:&subscriptions)
         voice.onChange = { [weak self] in self?.updateBubble() }
-        voice.allowSpeech = { [weak self] in self?.chat?.isVisible != true }
+        CompanionSpeech.shared.trackVisibility("ram") { [weak self] in
+            guard let pet=self?.pet else{return false}
+            return pet.isVisible && pet.occlusionState.contains(.visible)
+        }
+        voice.allowSpeech = { [weak self] in self?.pet?.isVisible == true && self?.chat?.isVisible != true }
         voice.onFocusRequested = { [weak self] in self?.requestFocus() }
     }
     /// Show, move or hide the speech bubble to match what the warden is saying.
