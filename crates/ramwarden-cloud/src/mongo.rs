@@ -139,7 +139,7 @@ impl MongoStore {
         ] {
             for model in indexes { self.ensure_named_index(collection, model).await?; }
         }
-        for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY] {
+        for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY, "oauth_attempts"] {
             self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
         }
         self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
@@ -155,6 +155,26 @@ impl MongoStore {
 
 #[async_trait]
 impl Store for MongoStore {
+    async fn put_oauth(&self,ticket:&str,state:OAuthState,now:u64)->Result<()> {
+        if self.raw("oauth_attempts").count_documents(doc!{"expires_at":{"$gt":now as i64}}).await? >=128 {return Err(StoreError::Unavailable("OAuth capacity reached".into()))}
+        let mut d=bson::to_document(&state).expect("serializes");d.insert("_id",hash(ticket));d.insert("expire_at",date(state.expires_at));
+        self.raw("oauth_attempts").insert_one(d).await?;Ok(())
+    }
+    async fn claim_oauth(&self,ticket:&str,now:u64,lease:&str)->Result<OAuthClaim> {
+        let collection=self.raw("oauth_attempts");let key=hash(ticket);
+        let claimed=collection.find_one_and_update(doc!{"_id":&key,"expires_at":{"$gt":now as i64},"next_poll":{"$lte":now as i64}},doc!{"$set":{"lease":lease,"next_poll":(now+90) as i64}}).return_document(ReturnDocument::After).await?;
+        if let Some(d)=claimed {return Ok(OAuthClaim::Ready(bson::from_document(d).map_err(|_|StoreError::Unavailable("Invalid OAuth record".into()))?))}
+        let state=collection.find_one(doc!{"_id":key,"expires_at":{"$gt":now as i64}}).await?;
+        Ok(match state {Some(d)=>OAuthClaim::Wait(d.get_i64("next_poll").unwrap_or(now as i64+5).saturating_sub(now as i64).max(1) as u64),None=>OAuthClaim::Gone})
+    }
+    async fn finish_oauth(&self,ticket:&str,lease:&str,state:Option<OAuthState>)->Result<bool> {
+        let query=doc!{"_id":hash(ticket),"lease":lease};let collection=self.raw("oauth_attempts");
+        if let Some(state)=state {
+            let mut d=bson::to_document(&state).expect("serializes");d.insert("_id",hash(ticket));d.insert("expire_at",date(state.expires_at));
+            Ok(collection.replace_one(query,d).await?.matched_count==1)
+        } else {Ok(collection.delete_one(query).await?.deleted_count==1)}
+    }
+
     async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)> {
         for _ in 0..5 {
             let raw = random_token("rwdc_");

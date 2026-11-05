@@ -34,8 +34,7 @@ project link or deployment. This leaves the ordinary Vercel CLI profile alone.
 ## Production readiness gates
 
 - Correct account/team verification (service names, public routes and absence of bindings confirmed by owner).
-- GitHub pending sign-in tickets moved from process memory into shared storage;
-  other device/email/wallet challenge state reviewed for multi-instance use.
+- Verify shared GitHub state in deployment; email/wallet/device challenges already use MongoDB.
 - Long-running payment polling and shared trivia publishing hosted as durable
   workers or scheduled jobs, not assumed to survive container scale-to-zero.
 - Reachable authenticated security-manager backend and account/device isolation.
@@ -58,3 +57,17 @@ root directory `.`. No deployment, domain change, payment setting, or production
 secret upload has been performed. CLI-generated .env.local and .vercel state
 are ignored. Owner confirmed both service names, all listed public routes,
 and no bindings for the current static-browser topology.
+
+## Shared GitHub authorization state
+
+OAuth attempts live in MongoDB oauth_attempts with a TTL date and application
+expiry checks. Browser tickets are stored only as SHA-256 keys. Provider codes
+and account/device links are AES-256-GCM encrypted using the shared deployment
+RAMWARDEN_OAUTH_STATE_KEY, a base64 32-byte key; ticket-bound authenticated data
+prevents moving ciphertext between attempts. No provider access token is saved.
+Each poll acquires an atomic 90-second lease. Only its current lease can release
+or consume an attempt; a stale instance cannot overwrite another instance's
+work. Verified GitHub numeric IDs survive retryable database failures inside the
+encrypted attempt, avoiding a second provider exchange. Failed/cancelled auth is
+consumed; abandoned leases become retryable until the original attempt expires.
+Changing encryption keys invalidates pending logins but does not unlink accounts.
