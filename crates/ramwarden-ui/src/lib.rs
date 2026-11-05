@@ -8,6 +8,10 @@
 pub mod app;
 pub mod client;
 pub mod model;
+pub mod wardens;
+pub mod companions;
+#[cfg(feature = "gui")]
+pub mod threat;
 #[cfg(feature = "gui")]
 pub mod row_object;
 
@@ -19,3 +23,6 @@ pub mod bubble;
 pub mod tray;
 #[cfg(feature = "gui")]
 pub mod browser;
+
+#[cfg(feature = "tray")]
+mod workspace_events;

@@ -221,6 +221,71 @@ pub struct Client {
 }
 
 impl Client {
+    #[cfg(feature = "tray")]
+    pub(crate) async fn workspace_action_stream(
+        &self, body: serde_json::Value,
+        progress: std::sync::mpsc::SyncSender<String>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<String> {
+        use std::sync::atomic::Ordering;
+        if cancel.load(Ordering::Relaxed) { return Err(Error::Decode("Plan cancelled before submission.".into())); }
+        let mut response = self.http.post(format!("{}/assistant/action/stream", self.base))
+            .timeout(Duration::from_secs(90)).json(&body).send().await
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        if !response.status().is_success() { return Err(Error::Status { status: response.status().as_u16(), body: "Workspace action was refused; do not replay the approval.".into() }); }
+        if !response.headers().get("content-type").is_some_and(|v| v.to_str().unwrap_or("").starts_with("text/event-stream")) { return Err(Error::Decode("Expected workspace event stream".into())); }
+        let mut decoder = crate::workspace_events::Decoder::default();
+        let mut outputs = String::new();
+        loop {
+            if cancel.load(Ordering::Relaxed) { return Err(Error::Decode("Stop requested. Completed changes remain; inspect files before retrying.".into())); }
+            let chunk = tokio::select! {
+                chunk = response.chunk() => chunk.map_err(|e| Error::Transport(e.to_string()))?,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
+            };
+            let Some(chunk) = chunk else { return Err(Error::Decode("Connection ended without a final result. Inspect files before retrying.".into())); };
+            for event in decoder.push(&chunk).map_err(Error::Decode)? {
+                match event["kind"].as_str() {
+                    Some("started") => { let _ = progress.try_send(format!("Running step {}: {}", event["index"].as_u64().unwrap_or(0) + 1, event["label"].as_str().unwrap_or("workspace operation"))); }
+                    Some("result") => {
+                        let text = format!("\nUntrusted tool output for step {} (succeeded={}):\n{}\n", event["index"].as_u64().unwrap_or(0) + 1, event["succeeded"], event["result"]);
+                        if outputs.len() + text.len() <= 24000 { outputs.push_str(&text); }
+                    }
+                    Some("finished") => return Ok(format!("{}{}", event["reply"].as_str().unwrap_or("Workspace plan finished."), outputs)),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn speech_audio(&self, text: &str, warden: &str) -> Result<Vec<u8>> {
+        let mut r=self.http.post(format!("{}/warden/speech",self.base)).json(&serde_json::json!({"text":text.chars().take(800).collect::<String>(),"warden":warden})).timeout(Duration::from_secs(35)).send().await.map_err(|e|Error::Transport(e.to_string()))?;
+        if !r.status().is_success() {
+            return Err(Error::Status {
+                status: r.status().as_u16(),
+                body: "Spoken voice is unavailable; text chat still works.".into(),
+            });
+        }
+        if !r
+            .headers()
+            .get("content-type")
+            .is_some_and(|v| v.to_str().unwrap_or("").starts_with("audio/"))
+        {
+            return Err(Error::Decode("Speech response was not audio".into()));
+        }
+        let mut bytes = vec![];
+        while let Some(chunk) = r
+            .chunk()
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > 2000000 {
+                return Err(Error::Decode("Speech response exceeded limit".into()));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
     pub fn new(host: &str, port: u16) -> Result<Self> {
         // The daemon is always on loopback. Without `no_proxy`, a system or
         // `HTTP_PROXY` proxy (VPNs and corporate setups set one) receives the
@@ -249,6 +314,22 @@ impl Client {
             .await
             .map_err(|e| Error::Transport(e.to_string()))?;
         Self::decode(r).await
+    }
+
+    pub(crate) async fn get_text(&self, path: &str, timeout: Duration) -> Result<String> {
+        if !path.starts_with("/wardens/") || path.contains(['?', '#']) {
+            return Err(Error::Decode("Invalid warden asset path".into()));
+        }
+        let mut response=self.http.get(format!("{}{path}",self.base)).timeout(timeout).send().await.map_err(|e|Error::Transport(e.to_string()))?;
+        let status=response.status();
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.map_err(|e|Error::Transport(e.to_string()))? {
+            if bytes.len()+chunk.len()>256*1024 {return Err(Error::Decode("Warden asset is too large".into()))}
+            bytes.extend_from_slice(&chunk);
+        }
+        let text=String::from_utf8(bytes).map_err(|_|Error::Decode("Warden asset is not UTF-8".into()))?;
+        if !status.is_success(){return Err(Error::Status{status:status.as_u16(),body:text.chars().take(300).collect()})}
+        Ok(text)
     }
 
     pub(crate) async fn post<T: for<'de> Deserialize<'de>>(
@@ -777,5 +858,51 @@ impl Client {
 
     pub async fn predict_eval(&self) -> Result<serde_json::Value> {
         self.get("/predict/eval", TIMEOUT).await
+    }
+}
+
+#[cfg(all(test, feature = "tray"))]
+mod workspace_stream_tests {
+    use super::*;
+    use std::{io::{Read, Write}, sync::{Arc, atomic::AtomicBool, mpsc}};
+    fn fixture(body: &'static str) -> Client {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                assert!(headers.len() < 8192);
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+            }
+            let header = String::from_utf8(headers).unwrap().to_lowercase();
+            let size: usize = header.lines().find_map(|line| line.strip_prefix("content-length:")).unwrap().trim().parse().unwrap();
+            assert!(size < 8192);
+            stream.read_exact(&mut vec![0; size]).unwrap();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        Client::new("127.0.0.1", port).unwrap()
+    }
+    #[tokio::test]
+    async fn stream_requires_a_finished_event_and_marks_output_untrusted() {
+        let (tx, _) = mpsc::sync_channel(8);
+        let c = fixture("data: {\"kind\":\"result\",\"index\":0,\"succeeded\":true,\"result\":{\"output\":\"test.txt\"}}\n\ndata: {\"kind\":\"finished\",\"reply\":\"Completed one step.\"}\n\n");
+        let reply = c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(false))).await.unwrap();
+        assert!(reply.contains("Completed one step."));
+        assert!(reply.contains("Untrusted tool output"));
+        assert!(reply.contains("test.txt"));
+        let (tx, _) = mpsc::sync_channel(8);
+        let c = fixture("data: {\"kind\":\"started\",\"index\":0}\n\n");
+        assert!(c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(false))).await.is_err());
+    }
+    #[tokio::test]
+    async fn cancellation_before_submission_does_not_contact_the_daemon() {
+        let (tx, _) = mpsc::sync_channel(8);
+        let c = Client::new("127.0.0.1", 1).unwrap();
+        let error = c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(true))).await.unwrap_err();
+        assert!(error.to_string().contains("before submission"));
     }
 }

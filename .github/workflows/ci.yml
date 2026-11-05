@@ -50,7 +50,7 @@ jobs:
         if: steps.platform.outputs.supported == 'true'
       - name: Linux GUI dependencies
         if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev xvfb xauth
       - name: Format
         if: steps.platform.outputs.supported == 'true'
         # Advisory until one repo-wide `cargo fmt` commit lands after the
@@ -63,6 +63,9 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Linux native GTK window
+        if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
+        run: xvfb-run -a cargo test -p ramwarden-ui --features gui --lib -- --test-threads=1
       - name: Windows sensor configuration regression
         if: runner.os == 'Windows'
         run: |
@@ -71,6 +74,16 @@ jobs:
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-evidence-access.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-capture-clock.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-eve-access.ps1
+      - name: Windows native tray and panes
+        if: runner.os == 'Windows'
+        run: |
+          cargo clippy -p ramwarden-ui --features tray --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p ramwarden-ui --features tray --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p ramwarden-ui --features tray --bin ramwarden-tray
       - name: Mac sensor repair rollback regression
         if: runner.os == 'macOS'
         run: python3 scripts/threatwarden-engines/test-macos-repair.py
