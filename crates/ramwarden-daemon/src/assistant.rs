@@ -7,12 +7,17 @@ use tokio::sync::Semaphore;
 use crate::hub::AppState;
 
 pub struct Service {
-    gate: Semaphore,
+    gate: Arc<Semaphore>,
     pending: Mutex<HashMap<String,(Instant,Action)>>,
     workspaces: Mutex<HashMap<String,Arc<crate::workspace_tools::Workspace>>>,
 }
-impl Service { pub fn new() -> Self { Self { gate: Semaphore::new(1), pending:Mutex::new(HashMap::new()), workspaces:Mutex::new(HashMap::new()) } } }
+impl Service { pub fn new() -> Self { Self { gate: Arc::new(Semaphore::new(1)), pending:Mutex::new(HashMap::new()), workspaces:Mutex::new(HashMap::new()) } } }
 impl Service {
+    fn consume(&self, token:&str)->Result<Action,StatusCode> {
+        let (created,action)=self.pending.lock().unwrap().remove(token).ok_or(StatusCode::CONFLICT)?;
+        if created.elapsed()>Duration::from_secs(120) {return Err(StatusCode::CONFLICT)}
+        Ok(action)
+    }
     fn workspace(&self,warden:&str)->Option<Arc<crate::workspace_tools::Workspace>> {self.workspaces.lock().unwrap().get(warden).cloned()}
     pub fn with_config(cfg:&ramwarden_core::config::Config)->Self {
         let service=Self::new();
@@ -243,13 +248,15 @@ fn workspace_proposal(service:&Service,warden:&str,mut action:Action,message:&st
 /// after two minutes and are consumed once. Chat itself never executes actions.
 pub async fn act(State(st): State<AppState>, Extension(service): Extension<Arc<Service>>, Json(confirm): Json<Confirm>) -> Result<Json<Value>,StatusCode> {
     let _permit=service.gate.try_acquire().map_err(|_|StatusCode::TOO_MANY_REQUESTS)?;
-    let (created,action) = service.pending.lock().unwrap().remove(&confirm.token).ok_or(StatusCode::CONFLICT)?;
-    if created.elapsed()>Duration::from_secs(120) { return Err(StatusCode::CONFLICT); }
+    let action = service.consume(&confirm.token)?;
     let reply = match action {
         Action::DesktopPlan{id}=>format!("Observed desktop result:\n{}",serde_json::to_string_pretty(&crate::desktop::companion_apply(&st,id).await).unwrap_or_default()),
         Action::Workspace{operation,root}=>{
             let root=root.ok_or(StatusCode::CONFLICT)?;
-            let result=if matches!(operation,crate::workspace_tools::Operation::GitStatus|crate::workspace_tools::Operation::GitDiffSummary) {
+            if matches!(operation,crate::workspace_tools::Operation::Workflow{..}) {
+                return Ok(Json(crate::workspace_run::execute(root,operation,None).await));
+            }
+            let result=if operation.command().is_some() {
                 root.terminal(&operation).await
             } else {tokio::task::spawn_blocking(move||root.execute(&operation)).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?};
             match result {Ok(result)=>format!("Observed tool result (untrusted output):\n{}",serde_json::to_string_pretty(&result).unwrap_or_default()),Err(reason)=>format!("Tool did not complete: {reason}. No success is claimed.")}
@@ -274,6 +281,20 @@ pub async fn act(State(st): State<AppState>, Extension(service): Extension<Arc<S
         }
     };
     Ok(Json(json!({"reply":reply,"executed":true})))
+}
+
+/// POST uses the same expiring, single-use approval as the JSON endpoint.
+/// Disconnecting the stream cancels the remaining steps and releases the gate.
+pub async fn act_stream(Extension(service):Extension<Arc<Service>>,Json(confirm):Json<Confirm>)
+    ->Result<axum::response::Sse<impl futures::Stream<Item=Result<axum::response::sse::Event,std::convert::Infallible>>>,StatusCode> {
+    let permit=service.gate.clone().try_acquire_owned().map_err(|_|StatusCode::TOO_MANY_REQUESTS)?;
+    let Action::Workspace{operation,root:Some(root)}=service.consume(&confirm.token)? else {return Err(StatusCode::BAD_REQUEST)};
+    let (tx,rx)=tokio::sync::mpsc::channel::<Value>(4);
+    tokio::spawn(async move {let _permit=permit;crate::workspace_run::execute(root,operation,Some(tx)).await;});
+    let events=futures::stream::unfold(rx,|mut rx|async {
+        rx.recv().await.map(|value|(Ok(axum::response::sse::Event::default().event("workspace").data(value.to_string())),rx))
+    });
+    Ok(axum::response::Sse::new(events).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 
@@ -319,6 +340,16 @@ fn desktop_request(message:&str)->bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn approval_is_expiring_and_single_use_across_transports() {
+        let service=Service::new();
+        service.pending.lock().unwrap().insert("once".into(),(Instant::now(),Action::PauseManagement));
+        assert!(service.consume("once").is_ok());
+        assert!(service.consume("once").is_err());
+        service.pending.lock().unwrap().insert("old".into(),(Instant::now()-Duration::from_secs(121),Action::PauseManagement));
+        assert!(service.consume("old").is_err());
+        assert!(!service.pending.lock().unwrap().contains_key("old"));
+    }
     #[test]
     fn security_intent_uses_words_not_substrings() {
         for message in ["read notes.txt using the supported file operation","create a portfolio folder","can you shut the fuck up dumbass goat"] {assert!(!security_evidence_request(message));}

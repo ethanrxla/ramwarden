@@ -100,6 +100,7 @@ pub fn router(state: AppState) -> Router {
             .route("/assistant/chat", post(crate::assistant::chat))
             .route("/wardens/threat/events/{id}",get(crate::wardens::event))
             .route("/assistant/action", post(crate::assistant::act))
+            .route("/assistant/action/stream", post(crate::assistant::act_stream))
             .route("/assistant/workspace",get(crate::assistant::workspace_status).post(crate::assistant::choose_workspace))
             // "Analyze now" in the extension: the warden's read of the tabs.
             .route("/browser/explain", post(crate::tab_analysis::explain))
