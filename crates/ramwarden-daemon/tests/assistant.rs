@@ -244,3 +244,78 @@ async fn workspace_scope_rejects_network_listeners_and_web_origins(){
     let response=ramwarden_daemon::routes::router(state()).oneshot(Request::builder().method("POST").uri("/assistant/workspace").header("content-type","application/json").header("origin","https://example.com").body(Body::from("{\"path\":null}")).unwrap()).await.unwrap();
     assert_eq!(response.status(),StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn reviewed_workflow_stream_runs_once_and_scope_changes_revoke_it() {
+    use axum::{Json, Router, routing::post};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let mock=Router::new().route("/api/chat",post(|Json(v):Json<Value>|async move {
+        assert!(v["messages"].as_array().unwrap().iter().any(|m|m["content"].as_str().unwrap_or("").contains("workflow")));
+        Json(json!({"message":{"content":json!({"reply":"Review these two steps.","proposed_action":{"kind":"workspace","operation":{"tool":"workflow","steps":[{"tool":"create_directory","path":"notes"},{"tool":"create_text","path":"notes/hello.txt","content":"reviewed content"}]}}}).to_string()}}))
+    }));
+    let server=tokio::spawn(async move{axum::serve(listener,mock).await.unwrap()});
+    let folder=tempfile::tempdir().unwrap();let mut st=state();let cfg=Arc::make_mut(&mut st.cfg);
+    cfg.ollama.host=format!("http://{addr}");cfg.assistant.workspace=Some(folder.path().to_path_buf());
+    st.ai=Arc::new(ramwarden_daemon::ai::provider(&st.cfg));let app=ramwarden_daemon::routes::router(st);
+    let (_,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"create notes and notes/hello.txt"})).await;
+    assert!(!folder.path().join("notes").exists(),"Planning must not execute");
+    let action=&proposal["proposed_action"];
+    assert_eq!(action["auto_eligible"],false);
+    assert!(action["preview"].as_str().unwrap().contains("2. Create notes/hello.txt"));
+    let token=action["token"].as_str().unwrap();
+    let response=app.clone().oneshot(Request::builder().method("POST").uri("/assistant/action/stream")
+        .header("content-type","application/json").body(Body::from(json!({"token":token}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK);
+    assert_eq!(response.headers()["content-type"],"text/event-stream");
+    let bytes=to_bytes(response.into_body(),100000).await.unwrap();
+    let text=String::from_utf8(bytes.to_vec()).unwrap();
+    let events=text.lines().filter_map(|line|line.strip_prefix("data: ")).map(|line|serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert_eq!(events.iter().map(|e|e["kind"].as_str().unwrap()).collect::<Vec<_>>(),["plan","started","result","started","result","finished"]);
+    assert_eq!(events.last().unwrap()["succeeded"],true);
+    assert_eq!(std::fs::read_to_string(folder.path().join("notes/hello.txt")).unwrap(),"reviewed content");
+    assert_eq!(post_route(app.clone(),"/assistant/action/stream",json!({"token":token})).await.0,StatusCode::CONFLICT);
+    assert_eq!(post_route(app.clone(),"/assistant/action",json!({"token":token})).await.0,StatusCode::CONFLICT);
+    let (_,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"create another plan"})).await;
+    post_route(app.clone(),"/assistant/workspace",json!({"path":null})).await;
+    assert_eq!(post_route(app,"/assistant/action/stream",json!({"token":proposal["proposed_action"]["token"]})).await.0,StatusCode::CONFLICT);
+    server.abort();
+}
+
+#[tokio::test]
+async fn workspace_stream_is_not_available_to_web_origins_or_network_listeners() {
+    let response=ramwarden_daemon::routes::router(state()).oneshot(Request::builder().method("POST").uri("/assistant/action/stream")
+        .header("content-type","application/json").header("origin","https://example.com").body(Body::from("{\"token\":\"none\"}")).unwrap()).await.unwrap();
+    assert_eq!(response.status(),StatusCode::FORBIDDEN);
+    let mut st=state();Arc::make_mut(&mut st.cfg).server.host="0.0.0.0".into();
+    assert_eq!(post_route(ramwarden_daemon::routes::router(st),"/assistant/action/stream",json!({"token":"none"})).await.0,StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn workspace_search_uses_the_selected_folder_and_observed_matches() {
+    use axum::{Json,Router,routing::post};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
+    let mock=Router::new().route("/api/chat",post(|Json(v):Json<Value>|async move {
+        assert!(v["messages"].as_array().unwrap().iter().any(|m|m["content"].as_str().unwrap_or("").contains("search_text(path,query)")));
+        Json(json!({"message":{"content":json!({"reply":"Review the search.","proposed_action":{"kind":"workspace","operation":{"tool":"search_text","path":"src","query":"needle"}}}).to_string()}}))
+    }));
+    let server=tokio::spawn(async move {axum::serve(listener,mock).await.unwrap()});
+    let folder=tempfile::tempdir().unwrap();
+    std::fs::create_dir(folder.path().join("src")).unwrap();
+    std::fs::write(folder.path().join("src/example.rs"),"first\nneedle here\n").unwrap();
+    std::fs::write(folder.path().join("src/.env"),"needle credential").unwrap();
+    let mut st=state();let cfg=Arc::make_mut(&mut st.cfg);
+    cfg.ollama.host=format!("http://{addr}");cfg.assistant.workspace=Some(folder.path().into());
+    st.ai=Arc::new(ramwarden_daemon::ai::provider(&st.cfg));let app=ramwarden_daemon::routes::router(st);
+    let (_,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"search src/ for needle"})).await;
+    let action=&proposal["proposed_action"];
+    assert!(action["preview"].as_str().unwrap().contains("needle"));
+    let (status,result)=post_route(app,"/assistant/action",json!({"token":action["token"]})).await;
+    assert_eq!(status,StatusCode::OK);
+    let report:Value=serde_json::from_str(result["reply"].as_str().unwrap().split_once('\n').unwrap().1).unwrap();
+    assert_eq!(report["matches"].as_array().unwrap().len(),1);
+    assert_eq!(report["matches"][0]["path"],"src/example.rs");
+    assert_eq!(report["matches"][0]["line"],2);
+    assert!(!report.to_string().contains("credential"));
+    server.abort();
+}

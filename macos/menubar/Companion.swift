@@ -108,6 +108,9 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
     @Published var workspaceStatus = "No folder connected"
     @Published var workspaceScope = ""
     @Published var automaticTools = false
+    @Published var runningTools = false
+    @Published var toolProgress = ""
+    @Published var toolBlocks: [WorkspaceToolBlock] = []
     private var proposedScope = ""
     private var proposedAutoEligible = false
     @Published var wool = UserDefaults.standard.string(forKey: "ram.wool") ?? "D84545"
@@ -165,14 +168,45 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             } catch { self.error = "Couldn't update your tab preferences." }
         }
     }
-    func cancelConversation() { task?.cancel(); thinking=false;proposedToken=nil;proposedAutoEligible=false }
+    func cancelConversation() {
+        if runningTools {
+            turns.append(ChatTurn(role:"assistant",content:"Stopped waiting for this plan. Completed changes remain. An in-flight file step may finish; inspect its result before retrying."))
+            markUnconfirmedTools()
+        }
+        task?.cancel(); if task == nil {thinking=false}; proposedToken=nil;proposedAutoEligible=false
+    }
+    func markUnconfirmedTools() {
+        for index in toolBlocks.indices where toolBlocks[index].state == "Running" { toolBlocks[index].state = "Unconfirmed" }
+    }
+    func receiveToolEvent(_ event:[String:Any]) {
+        guard let kind=event["kind"] as? String else{return}
+        if kind == "finished" {
+            toolProgress=event["reply"] as? String ?? "Plan finished"
+            turns.append(ChatTurn(role:"assistant",content:toolProgress));return
+        }
+        guard let index=event["index"] as? Int,(0..<6).contains(index),let label=event["label"] as? String else{return}
+        if kind == "started" {
+            guard !toolBlocks.contains(where:{$0.id == index}) else{return}
+            toolProgress="Step \(index + 1) of \(event["total"] as? Int ?? 1): \(label)"
+            toolBlocks.append(WorkspaceToolBlock(id:index,label:label,state:"Running",output:""))
+        } else if kind == "result",let position=toolBlocks.firstIndex(where:{$0.id == index}) {
+            let ok=event["succeeded"] as? Bool ?? false
+            let value=event["result"] as? [String:Any] ?? [:]
+            let data=(try? JSONSerialization.data(withJSONObject:value,options:[.prettyPrinted,.sortedKeys])) ?? Data()
+            let output=String(data:data,encoding:.utf8) ?? "Unreadable tool result"
+            toolBlocks[position].state=ok ? "Completed" : "Failed"
+            toolBlocks[position].output=String(output.prefix(6000)) + (output.count > 6000 ? "\n[Display truncated]" : "")
+            // Results remain local conversation context; output never authorizes another step.
+            turns.append(ChatTurn(role:"assistant",content:"Observed tool result (untrusted output): \(ok ? "Completed" : "Failed") · \(label)\n\(String(output.prefix(5000)))\(output.count > 5000 ? "\n[Context truncated]" : "")"))
+        }
+    }
     func send(_ message: String) {
         let message = boundedChatText(message.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !message.isEmpty, !thinking else { return }
         if focusMode { saveFocus(message); return }
         let history = CompanionRecall.context(turns,query:message)
         turns.append(ChatTurn(role: "user", content: message))
-        error = nil; thinking = true; speaking = false; proposedToken = nil
+        error = nil; thinking = true; speaking = false; proposedToken = nil; toolBlocks=[];toolProgress=""
         task = Task { @MainActor in
             defer { thinking = false; task = nil }
             do {
@@ -226,7 +260,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
         if !enabled {automaticTools=false;UserDefaults.standard.removeObject(forKey:"\(profile.id).autoToolScope");return}
         guard !workspaceScope.isEmpty else{workspaceStatus="Choose a folder before enabling Auto.";return}
         let alert=NSAlert();alert.messageText="Enable Auto for this folder?"
-        alert.informativeText="Warden may read and list files, create new files and folders, and run the supported Git diagnostics without asking again inside \(workspaceStatus). It cannot overwrite or delete files, run arbitrary commands, or change security settings. You can return to Manual at any time."
+        alert.informativeText="Warden may read and list files, create new files and folders, and run the supported Git diagnostics without asking again inside \(workspaceStatus). Existing-file edits and multi-step plans always require review. Auto cannot delete files, run arbitrary commands, or change security settings. You can return to Manual at any time."
         alert.addButton(withTitle:"Enable Auto");alert.addButton(withTitle:"Stay Manual")
         if alert.runModal() == .alertFirstButtonReturn {automaticTools=true;UserDefaults.standard.set(workspaceScope,forKey:"\(profile.id).autoToolScope")}
     }
@@ -254,29 +288,53 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             let text=NSTextView(frame:scroll.bounds);text.isEditable=false;text.isSelectable=true;text.font=NSFont.monospacedSystemFont(ofSize:11,weight:.regular)
             text.string=proposedPreview;text.isVerticallyResizable=true;text.autoresizingMask=[.width];scroll.documentView=text;alert.accessoryView=scroll
         }
-        alert.informativeText = "Apply the change described above? Nothing else will be changed."
-        alert.addButton(withTitle:"Apply fix"); alert.addButton(withTitle:"Cancel")
+        alert.informativeText = "Run this reviewed plan? Steps stop on failure. Completed changes remain if a later step fails or you stop."
+        alert.addButton(withTitle:"Run plan"); alert.addButton(withTitle:"Cancel")
         NSApp.activate(ignoringOtherApps:true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        proposedToken = nil; thinking = true
-        Task { @MainActor in
-            defer { thinking = false }
+        let streamWorkspace = !proposedScope.isEmpty
+        proposedToken = nil; thinking = true;runningTools=streamWorkspace;toolBlocks=[];toolProgress="Starting reviewed plan"
+        task = Task { @MainActor in
+            defer { markUnconfirmedTools();thinking = false;runningTools=false;task=nil }
             do {
-                var request = URLRequest(url:base.appendingPathComponent("assistant/action"))
-                request.httpMethod = "POST"; request.timeoutInterval = 20
+                var request = URLRequest(url:base.appendingPathComponent(streamWorkspace ? "assistant/action/stream" : "assistant/action"))
+                request.httpMethod = "POST"; request.timeoutInterval = streamWorkspace ? 90 : 20
                 request.setValue("application/json",forHTTPHeaderField:"Content-Type")
                 request.httpBody = try JSONSerialization.data(withJSONObject:["token":token])
+                if streamWorkspace {
+                    request.setValue("text/event-stream",forHTTPHeaderField:"Accept")
+                    let (bytes,response)=try await URLSession.shared.bytes(for:request)
+                    guard (response as? HTTPURLResponse)?.statusCode == 200 else {error="That plan expired or is unavailable. Ask for a new plan.";return}
+                    var finished=false
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        guard line.hasPrefix("data: "),let data=String(line.dropFirst(6)).data(using:.utf8),let event=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else{continue}
+                        receiveToolEvent(event)
+                        if event["kind"] as? String == "finished" {finished=true}
+                    }
+                    if !finished {error="The plan's final result is unconfirmed. Inspect completed steps before retrying."}
+                    return
+                }
                 let (data,response) = try await URLSession.shared.data(for:request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "That proposal expired or the computer changed. Ask me to check again."; return }
                 let result = try JSONSerialization.jsonObject(with:data) as? [String:Any]
                 turns.append(ChatTurn(role:"assistant",content:result?["reply"] as? String ?? "The action finished without a report."))
-            } catch { self.error = "I lost contact with the daemon. I won’t claim the fix succeeded." }
+            } catch { if !Task.isCancelled {self.error = "I lost contact with the daemon. Inspect completed steps before retrying."} }
         }
     }
 
 }
-struct ChatTurn: Identifiable, Sendable { let id = UUID(); let role: String; let content: String; var at:Double=Date().timeIntervalSince1970 }
+struct ChatTurn: Identifiable, Sendable {
+    let id = UUID(); let role: String; let content: String; var at:Double=Date().timeIntervalSince1970
+    var toolResult:(label:String,output:String)? {
+        let prefix="Observed tool result (untrusted output):"
+        guard role == "assistant",content.hasPrefix(prefix),let newline=content.firstIndex(of:"\n") else{return nil}
+        let label=String(content[content.index(content.startIndex,offsetBy:prefix.count)..<newline]).trimmingCharacters(in:.whitespaces)
+        return (label.isEmpty ? "Tool result" : label,String(content[content.index(after:newline)...]))
+    }
+}
+struct WorkspaceToolBlock: Identifiable { let id:Int;let label:String;var state:String;var output:String }
 func ramColor(_ hex: String) -> Color {
     let n = UInt32(hex, radix:16) ?? 0
     return Color(red:Double((n >> 16) & 255)/255,green:Double((n >> 8) & 255)/255,blue:Double(n & 255)/255)
@@ -422,6 +480,10 @@ struct AssistantView: View {
                 Text(model.name).font(.system(size:12,weight:.semibold))
                 Spacer()
                 CompanionMuteMenu(warden:model.profile.id)
+                Button {model.chooseWorkspace()} label: {
+                    Image(systemName:model.workspaceScope.isEmpty ? "folder.badge.plus" : "folder.fill").font(.system(size:11))
+                }.buttonStyle(.plain).disabled(model.thinking).accessibilityLabel("Choose workspace folder")
+                    .help("\(model.workspaceStatus). Choose the folder for this companion.")
                 Button(action:settings) { Image(systemName:"gearshape").font(.system(size:11)) }.buttonStyle(.plain).accessibilityLabel("Settings")
                 Button(action:dismiss) { Image(systemName:"xmark").font(.system(size:10,weight:.semibold)) }
                     .buttonStyle(.plain).accessibilityLabel("Close chat")
@@ -434,11 +496,22 @@ struct AssistantView: View {
                         ForEach(model.turns) { turn in
                             VStack(alignment:.leading,spacing:4) {
                                 Text(turn.role == "user" ? "You" : model.name).font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary)
-                                Text(turn.content).font(.system(size:12)).textSelection(.enabled)
+                                if let result=turn.toolResult {
+                                    DisclosureGroup(result.label) {
+                                        Text(result.output).font(.system(size:10,design:.monospaced)).textSelection(.enabled)
+                                    }.font(.caption).padding(6).background(Color.primary.opacity(0.05),in:RoundedRectangle(cornerRadius:6))
+                                } else {Text(turn.content).font(.system(size:12)).textSelection(.enabled)}
                             }.frame(maxWidth:.infinity,alignment:.leading).id(turn.id)
+                        }
+                        ForEach(model.toolBlocks.filter{$0.state == "Running" || $0.state == "Unconfirmed"}) { block in
+                            DisclosureGroup("\(block.state) · \(block.label)") {
+                                Text(block.output.isEmpty ? "Waiting for tool output" : block.output)
+                                    .font(.system(size:10,design:.monospaced)).textSelection(.enabled)
+                            }.font(.caption).padding(6).background(Color.primary.opacity(0.05),in:RoundedRectangle(cornerRadius:6)).id("workspace-\(block.id)")
                         }
                     }.padding(8)
                 }.onChange(of:model.turns.count) { _ in if let last = model.turns.last { proxy.scrollTo(last.id,anchor:.bottom) } }
+                .onChange(of:model.toolBlocks.count) { _ in if let last=model.toolBlocks.last {proxy.scrollTo("workspace-\(last.id)",anchor:.bottom)} }
             }
             }
             if let review=model.tabReview {
@@ -494,15 +567,16 @@ struct AssistantView: View {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(model.profile.thinkingLine(at:tick.date))
-                            Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)
+                            Text(model.runningTools ? model.toolProgress : model.profile.thinkingLine(at:tick.date))
+                            if model.runningTools {Button("Stop plan") {model.cancelConversation()}.font(.caption)}
+                            else {Text("Waiting for a response").font(.caption2).foregroundStyle(.secondary)}
                         }
                     }.accessibilityLabel("Waiting for a response.")
                 }
             }
             if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
             if model.proposedToken != nil {
-                Button("Review fix…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
+                Button("Review plan…") { model.confirmAction() }.font(.system(size:12,weight:.semibold))
                     .help(model.proposedLabel)
             }
             HStack {
@@ -512,8 +586,8 @@ struct AssistantView: View {
         }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
-            .onAppear { inputFocused = true }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { note in if note.object as? String == model.profile.id { inputFocused = true } }
+            .onAppear { inputFocused = true;model.refreshWorkspace() }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { note in if note.object as? String == model.profile.id { inputFocused = true;model.refreshWorkspace() } }
             .onExitCommand(perform:dismiss)
     }
     func send() { model.send(message); message = "" }
