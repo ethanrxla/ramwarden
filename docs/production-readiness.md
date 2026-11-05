@@ -7,7 +7,7 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 - [x] Windows and Mac linked to the developer Pro account (account page showed2of5; November4 account handoff).
 - [x] Mac Warp exact create/search/read workflow verified through real cloud chat, manual approval, streamed results and replay409 on fcbc297. Failure case preserves completed work and refuses overwrite; later writes never run.
 - [x] Final Mac release workspace tests18 pass; native app and fixture harness compile. Backups and entitlement verification key preserved.
-- [ ] Finish latest CI41993576330, merge integration PR57 into development PR54, and fast-forward the Mac source without discarding concurrent network work.
+- [x] CI41993576330 all5checks passed; PR57 merged into development PR54 as a211b6e. Mac source fast-forwarded; all5 concurrent source files preserved by hash.
 - [ ] Recheck Wazuh001Windows/002Mac and each device's local ClamAV signatures/scans, Suricata capture/drop counters and network view. Record timestamped per-engine evidence, offline/error states and a benign detection fixture. An unlocked pass or zero alerts does not prove coverage.
 - [ ] Upgrade Windows native UI: pixel ram tray icon, RAM/Threat panes, companion/chat access, account state. Current installed tray is the old memory gauge. Test with the existing Pro sign-in, preserving settings and rollback.
 - [ ] Measure real model request rates/costs on both machines; establish Plus/Pro quotas with enforced account budgets. Do not infer a quota from a short sample.
@@ -24,6 +24,7 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 ## Public site, account API and operations
 
 - [ ] Inventory Vercel project ram-warden/ramwarden, Namecheap DNS for ramwarden.com, MongoDB deployment and Oracle services using stored credentials without logging secrets.
+  Current access finding: Vercel connector403 for the team; consent recovery404. Existing browser tabs are present, but tab binding fails. No hosting/DNS change attempted.
 - [ ] Separate development/staging/production environments and databases; host the account API independently of an awake Mac and developer SSH forwards.
 - [ ] Validate a production preview before assigning ramwarden.com/www. Preserve mail/security DNS records; use Vercel's actual returned verification/DNS values. Verify TLS, redirects, CSP/CORS, cookies, auth callback URLs and canonical links.
 - [ ] Real email and wallet sign-in, account recovery, device linking/unlinking, quotas and revocation tested end to end. Never ship developer entitlements or hard-coded local API endpoints.
@@ -37,6 +38,7 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 - [ ] Confirm support chat30day and ticket1year-after-last-message expiry in application code and TTL indexes. Test isolated database contract suite and chat→ticket→staff reply→revisit; unavailable Atlas/Jev, rate limits and account isolation.
 - [ ] Sales/support wardens use current authoritative product/plan answers and write/read the correct visitor/account conversations and tickets. Staff routes require authenticated staff scope; AI cannot invent completed support actions.
 - [ ] Implement useful vector retrieval for approved product/support knowledge and opted-in per-account learning: documented embedding model/version/dimensions, bounded ingestion/retries, update/delete propagation, relevance evaluation and keyword fallback.
+  Existing `ramwarden-cloud::decisions` has feature/text vector indexes and a caller-supplied filter for personal decision recall. This is not yet proof of tenant-scoped hosted sales/support retrieval; audit it before production reuse.
 - [ ] Vector queries pre-filter tenant/account, access scope and non-expired documents before ranking; test adversarial cross-account queries, stale content and deletion. Vector similarity is not authentication or permission to close tabs/run tools. Keep private URLs/page contents out of hosted support storage.
 - [ ] Measure vector/LLM latency, storage and cost under representative load; set budgets and failure behavior before enabling production traffic.
 

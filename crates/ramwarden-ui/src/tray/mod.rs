@@ -147,6 +147,7 @@ pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
         "RamWarden",
         options,
         Box::new(move |cc| {
+            cc.egui_ctx.set_theme(egui::Theme::Dark);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
