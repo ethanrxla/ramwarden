@@ -129,6 +129,38 @@ final class ReviewProtocol: URLProtocol {
         }
         selected.selected="ram";settings.layoutSubtreeIfNeeded();precondition(model.profile.id == "ram")
         settingsWindow.orderOut(nil)
-        print("PASS: native checklist render, unchecked defaults, selected-only close, Keep, Later, expiry and chat sizing")
+        model.receiveToolEvent(["kind":"started","index":0,"total":2,"label":"Create notes"])
+        model.receiveToolEvent(["kind":"started","index":0,"total":2,"label":"Duplicate event"])
+        precondition(model.toolBlocks.count == 1 && model.toolBlocks[0].state == "Running")
+        model.receiveToolEvent(["kind":"result","index":0,"total":2,"label":"Create notes","succeeded":true,"result":["bytes_written":8]])
+        precondition(model.toolBlocks[0].state == "Completed" && model.toolBlocks[0].output.contains("bytes_written"))
+        precondition(model.turns.last?.toolResult?.label == "Completed · Create notes")
+        model.receiveToolEvent(["kind":"started","index":1,"total":2,"label":"Read missing file"])
+        model.receiveToolEvent(["kind":"result","index":1,"total":2,"label":"Read missing file","succeeded":false,"result":["error":"Missing file"]])
+        precondition(model.toolBlocks[1].state == "Failed")
+        model.receiveToolEvent(["kind":"finished","succeeded":false,"reply":"Stopped after 1 successful step of 2."])
+        precondition(model.turns.last?.content == "Stopped after 1 successful step of 2.")
+        precondition(threat.toolBlocks.isEmpty,"Companion tool output must stay separate")
+        model.receiveToolEvent(["kind":"started","index":99,"total":100,"label":"Invalid event"])
+        precondition(model.toolBlocks.count == 2)
+        model.receiveToolEvent(["kind":"started","index":2,"total":3,"label":"Interrupted diagnostic"])
+        model.markUnconfirmedTools()
+        precondition(model.toolBlocks[2].state == "Unconfirmed")
+        if let output=ProcessInfo.processInfo.environment["RW_WORKFLOW_IMAGE"] {
+            model.tabReview=nil;model.focusProposal=nil
+            model.turns=Array(model.turns.suffix(3))
+            let preview=NSHostingView(rootView:AssistantView(model:model,dismiss:{},settings:{}).environment(\.colorScheme,.dark))
+            let frame=NSRect(x:0,y:0,width:304,height:model.chatHeight)
+            preview.frame=frame
+            let window=NSWindow(contentRect:frame,styleMask:[.borderless],backing:.buffered,defer:false)
+            window.contentView=preview;window.orderFrontRegardless();preview.layoutSubtreeIfNeeded()
+            try await Task.sleep(nanoseconds:200_000_000)
+            if let bitmap=preview.bitmapImageRepForCachingDisplay(in:preview.bounds) {
+                preview.cacheDisplay(in:preview.bounds,to:bitmap)
+                if let png=bitmap.representation(using:.png,properties:[:]) {try png.write(to:URL(fileURLWithPath:output))}
+            }
+            window.orderOut(nil)
+        }
+        print("PASS: native checklist, workspace progress/results, companion isolation and chat sizing")
     }
 }

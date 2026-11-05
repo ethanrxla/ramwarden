@@ -98,6 +98,7 @@ export class Api {
   account() {
     return this.request("GET", "/v1/account");
   }
+  usageStatus() { return this.request("GET", "/v1/usage"); }
   // Replaces the whole prefs object (4 KB at most), so send all of it.
   savePrefs(prefs) {
     return this.request("PUT", "/v1/account/prefs", prefs);
