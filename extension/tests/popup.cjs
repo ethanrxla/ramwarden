@@ -39,6 +39,7 @@ const {chromium}=require('playwright');const fs=require('node:fs');const os=requ
   }
   await tile.close();
 
+  await page.getByRole('tab',{name:'ThreatWarden',exact:true}).click();
   offline=true;await page.getByRole('button',{name:'Check connection',exact:true}).click();await page.getByText('Lite · Desktop connection unavailable',{exact:true}).waitFor();await page.getByRole('button',{name:'Refresh security report'}).click();await page.getByText('Protection unverified',{exact:true}).waitFor();assert.equal(await page.locator('.security-alert').count(),0,'offline refresh must remove stale alerts');
   await page.getByRole('tab',{name:'RamWarden',exact:true}).click();await page.getByLabel('Browser Cleanup').check();await page.getByLabel('Keep recent tabs').fill('8');await page.getByLabel('Keep recent tabs').press('Tab');
   assert.deepEqual(errors,[]);console.log('PASS: Threat pane, 50-alert cap, stale-report clearing, Lite settings and popup CSP.');

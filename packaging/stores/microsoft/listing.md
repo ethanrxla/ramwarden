@@ -59,6 +59,9 @@ No certificate purchase or enrollment has been performed.
 ## Required release verification
 
 - Partner Center developer/publisher verification and product identity/reservation.
+  Owner confirmed neither account nor signing is set up. Use the dedicated
+  https://storedeveloper.microsoft.com/ onboarding, not Cloud Partner membership.
+  Individual/Company choice and identity/agreement steps remain with the owner.
 - Valid trusted signatures on every PE, generated uninstaller and installer;
   timestamp and revocation checks. Inspect all runtime DLL dependencies; no web
   bootstrapper may fetch them during Store setup.
