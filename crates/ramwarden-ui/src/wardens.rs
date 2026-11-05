@@ -572,9 +572,9 @@ impl AlertLine {
 pub fn engine_of(groups: &[String]) -> &'static str {
     let has = |g: &str| groups.iter().any(|x| x.eq_ignore_ascii_case(g));
     if has("clamav") || has("freshclam") || has("virus") {
-        "ClamAV"
+        "Antivirus"
     } else if has("suricata") || has("ids") {
-        "Suricata"
+        "Threat detection"
     } else if has("syscheck") || has("fim") {
         "File integrity"
     } else if has("rootcheck") {
@@ -584,14 +584,14 @@ pub fn engine_of(groups: &[String]) -> &'static str {
     } else if has("vulnerability-detector") {
         "Vulnerable software"
     } else {
-        "Wazuh"
+        "Sentinel"
     }
 }
 
 fn engine_name(id: &str) -> &'static str {
     match id {
-        "clamav" => "ClamAV",
-        "suricata" => "Suricata",
+        "clamav" => "Antivirus",
+        "suricata" => "Threat detection",
         _ => "",
     }
 }
@@ -850,13 +850,13 @@ mod tests {
         let a = &p.alerts[0];
         assert_eq!(
             (a.when.as_str(), a.engine, a.tag.as_str()),
-            ("11-01 13:05", "ClamAV", "threat")
+            ("11-01 13:05", "Antivirus", "threat")
         );
         assert_eq!(a.colour, Level::Alert.colour());
         assert_eq!(a.explanation, "A downloaded file matched a known trojan.");
         assert_eq!(
             (p.alerts[1].engine, p.alerts[1].tag.as_str()),
-            ("Suricata", "level 8")
+            ("Threat detection", "level 8")
         );
         assert_eq!(p.alerts[2].engine, "File integrity");
         assert_eq!(p.engines[0].detail, "Connected, last check-in 11-01 13:00");
@@ -873,13 +873,13 @@ mod tests {
     fn engine_lines_from_the_daemon_win() {
         let w = warden(
             r#"{"id":"threat","unlocked":true,"status":{"level":"clear"},
-            "report":{"engines":[{"id":"clamav","name":"ClamAV","state":"on","detail":"Last sweep 02:00, nothing found"}]}}"#,
+            "report":{"engines":[{"id":"clamav","name":"Antivirus","state":"on","detail":"Last sweep 02:00, nothing found"}]}}"#,
         );
         let p = ThreatPane::from_warden(&w);
         assert_eq!(
             p.engines,
             vec![EngineLine {
-                name: "ClamAV".into(),
+                name: "Antivirus".into(),
                 state: "on".into(),
                 detail: "Last sweep 02:00, nothing found".into()
             }]
