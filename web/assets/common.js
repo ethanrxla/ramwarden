@@ -252,7 +252,7 @@ export function chooseSignIn(container, api, { userCode = null, emailOnly = fals
 // One sentence for any failure, whether the server refused, could not be
 // reached, or the wallet said no.
 export function errorText(err) {
-  if (err?.status === 0) return "The RamWarden server could not be reached. Hosted sign-in may not be live yet; the app works fully without it.";
+  if (err?.status === 0) return "The RamWarden server could not be reached. Check your connection and retry. Local monitoring still works; account sign-in and plan changes need the server.";
   if (typeof err?.status === "number") return err.message;
   return walletErrorMessage(err);
 }

@@ -52,7 +52,9 @@ impl MongoStore {
     pub async fn connect(cfg: &CloudConfig) -> Result<Self> {
         let mut opts = ClientOptions::parse(cfg.mongodb_uri.expose()).await?;
         opts.app_name = Some("ramwarden-api".into());
-        opts.server_selection_timeout = Some(Duration::from_secs(10));
+        // Return a database error before the browser's eight-second request limit.
+        opts.server_selection_timeout = Some(Duration::from_secs(5));
+        opts.connect_timeout = Some(Duration::from_secs(3));
         let client = Client::with_options(opts)?;
         let db = client.database(&cfg.database);
         db.run_command(doc! { "ping": 1 }).await?;

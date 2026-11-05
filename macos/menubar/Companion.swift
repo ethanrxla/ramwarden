@@ -415,6 +415,7 @@ struct AssistantView: View {
                 Circle().fill(model.connected ? Color.green : Color.orange).frame(width:6,height:6)
                 Text(model.name).font(.system(size:12,weight:.semibold))
                 Spacer()
+                CompanionMuteMenu(warden:model.profile.id)
                 Button(action:settings) { Image(systemName:"gearshape").font(.system(size:11)) }.buttonStyle(.plain).accessibilityLabel("Settings")
                 Button(action:dismiss) { Image(systemName:"xmark").font(.system(size:10,weight:.semibold)) }
                     .buttonStyle(.plain).accessibilityLabel("Close chat")
@@ -523,11 +524,13 @@ final class PetHost: NSHostingView<PixelRam> {
     var onMoved: (() -> Void)?
     var onSettings: (() -> Void)?
     var onFocus: (() -> Void)?
+    var onQuiet: (() -> Void)?
+    var isQuiet: (() -> Bool)?
     var onHide: (() -> Void)?
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for (title, action) in [("Chat",#selector(chatAction)),("Set current focus…",#selector(focusAction)),("Settings…",#selector(settingsAction)),("Hide ram",#selector(hideAction))] {
+        for (title, action) in [("Chat",#selector(chatAction)),("Set current focus…",#selector(focusAction)),("Settings…",#selector(settingsAction)),(isQuiet?() == true ? "Unmute companion" : "Mute companion",#selector(quietAction)),("Hide ram",#selector(hideAction))] {
             let item = NSMenuItem(title:title,action:action,keyEquivalent:"")
             item.target = self; item.isEnabled = true; menu.addItem(item)
         }
@@ -536,6 +539,7 @@ final class PetHost: NSHostingView<PixelRam> {
     @objc func chatAction() { onClick?() }
     @objc func focusAction() { onFocus?() }
     @objc func settingsAction() { onSettings?() }
+    @objc func quietAction() { onQuiet?() }
     @objc func hideAction() { onHide?() }
 
     var dragged = false
@@ -648,6 +652,8 @@ final class PetHost: NSHostingView<PixelRam> {
         host.onClick = { [weak self] in self?.toggleChat() }
         host.onMoved = { [weak self] in self?.positionChat(movePet:true) }
         host.onSettings = { [weak self] in self?.openColors() }
+        host.isQuiet = { [weak self] in self?.voice.muted == true || UserDefaults.standard.bool(forKey:"ram.audioMuted") }
+        host.onQuiet = { [weak self] in guard let self=self else{return}; if self.voice.muted || UserDefaults.standard.bool(forKey:"ram.audioMuted") {CompanionAudio.setMuted(false,warden:"ram");self.voice.unmute()} else {CompanionAudio.setMuted(true,warden:"ram");self.voice.mute(nil)} }
         host.onFocus = { [weak self] in self?.requestFocus() }
         host.onHide = { [weak self] in self?.toggle() }
         p.delegate = self

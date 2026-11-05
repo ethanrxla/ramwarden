@@ -46,7 +46,8 @@ export class Api {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: "include",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        // GitHub may take 15 seconds upstream plus an account-store lookup.
+        signal: AbortSignal.timeout(path.startsWith("/v1/auth/github/") ? Math.max(this.timeoutMs, 25000) : this.timeoutMs),
       });
     } catch {
       throw new ApiError(0, "The RamWarden server could not be reached.");

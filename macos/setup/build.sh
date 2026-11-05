@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 DEST="${RAMWARDEN_SETUP_DEST:-../../target/RamWarden Setup.app}"
 mkdir -p "$DEST/Contents/MacOS" "$DEST/Contents/Resources"
-swiftc -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" main.swift -o "$DEST/Contents/MacOS/RamWardenSetup"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" main.swift SetupView.swift -o "$DEST/Contents/MacOS/RamWardenSetup"
 cp ../../assets/brand/RamWarden.icns "$DEST/Contents/Resources/"
 ditto ../../agent/skills/ramwarden "$DEST/Contents/Resources/agent-skill"
 cat > "$DEST/Contents/Info.plist" <<'PL'

@@ -196,6 +196,7 @@ private struct ThreatReport: View {
     }
 }
 private final class ThreatHost: NSHostingView<ThreatSprite> {
+    var settings: (() -> Void)?
     var report: (() -> Void)?
     var chat: (() -> Void)?
     var moved: (() -> Void)?
@@ -226,9 +227,13 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         let menu = NSMenu(); menu.autoenablesItems = false
         let show = NSMenuItem(title:"Protection status",action:#selector(showStatus),keyEquivalent:""); show.target = self; menu.addItem(show)
         let talk = NSMenuItem(title:"Open chat",action:#selector(openAssistant),keyEquivalent:""); talk.target = self; menu.addItem(talk)
+        let preferences = NSMenuItem(title:"Settings…",action:#selector(showSettings),keyEquivalent:""); preferences.target=self; menu.addItem(preferences)
+        let quiet = NSMenuItem(title:UserDefaults.standard.bool(forKey:"threat.audioMuted") ? "Unmute companion" : "Mute companion",action:#selector(toggleQuiet),keyEquivalent:""); quiet.target=self; menu.addItem(quiet)
         let close = NSMenuItem(title:"Hide threat companion",action:#selector(hidePet),keyEquivalent:""); close.target = self; menu.addItem(close)
         NSMenu.popUpContextMenu(menu,with:event,for:self)
     }
+    @objc func showSettings() { settings?() }
+    @objc func toggleQuiet() { CompanionAudio.setMuted(!UserDefaults.standard.bool(forKey:"threat.audioMuted"),warden:"threat") }
     @objc func openAssistant() { chat?() }
     @objc func showStatus() { report?() }
     @objc func hidePet() { hide?() }
@@ -272,6 +277,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.level = .floating; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
         let host = ThreatHost(rootView:ThreatSprite(state:state,model:model)); host.report = { [weak self] in self?.showReport() }; host.chat = { [weak self] in self?.toggleChat() }; host.moved = { [weak self] in self?.didMove(anchor:self?.panel) }; host.hide = { [weak self] in self?.hide() }
+        host.settings = { [weak self] in self?.openCustomization?() }
         p.contentView = host
         let d = UserDefaults.standard
         let bounds = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1000,height:800)

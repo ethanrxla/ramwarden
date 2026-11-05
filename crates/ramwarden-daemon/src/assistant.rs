@@ -180,7 +180,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
 fn security_evidence_request(message:&str)->bool {
     let text=message.to_lowercase();
     text.split(|c:char|!c.is_alphanumeric()).any(|word|[
-        "evidence","port","ports","listen","listening","investigate","trace","rule","rules","alert","alerts","login","logins","vulnerability","vulnerabilities","malware","suricata","clamav","sentinel","antivirus","syscheck"
+        "security","threat","threats","evidence","port","ports","listen","listening","investigate","trace","rule","rules","alert","alerts","login","logins","vulnerability","vulnerabilities","malware","suricata","clamav","sentinel","antivirus","syscheck"
     ].contains(&word) || word.strip_prefix("rule").is_some_and(|id|!id.is_empty() && id.chars().all(|c|c.is_ascii_digit()))) || text.contains("what changed") || text.contains("file change")
 }
 

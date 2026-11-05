@@ -5289,7 +5289,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "ramwarden-ai"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "nvml-wrapper",
  "ramwarden-nt",
@@ -5305,7 +5305,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-api"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -5338,7 +5338,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-cli"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "reqwest",
  "serde_json",
@@ -5347,7 +5347,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-cloud"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "dotenvy",
@@ -5370,7 +5370,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-core"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -5391,7 +5391,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-daemon"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5426,7 +5426,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-debloat"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "ramwarden-nt",
  "ramwarden-platform",
@@ -5442,7 +5442,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-helper"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "nix",
  "ramwarden-kernel",
@@ -5455,7 +5455,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-kernel"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "libc",
  "nix",
@@ -5468,7 +5468,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-mac"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "libc",
  "ramwarden-platform",
@@ -5477,7 +5477,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-ml"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -5494,7 +5494,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-nt"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "ramwarden-platform",
  "serde",
@@ -5506,7 +5506,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-platform"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -5515,7 +5515,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-service"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "ramwarden-core",
  "ramwarden-debloat",
@@ -5531,7 +5531,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-ui"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "eframe",
  "gtk4",
@@ -5548,8 +5548,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ramwarden-updates"
+version = "0.3.2"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "ramwarden-core",
+ "rand 0.9.5",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ramwarden-wazuh"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5568,7 +5585,7 @@ dependencies = [
 
 [[package]]
 name = "ramwarden-wm"
-version = "0.2.1"
+version = "0.3.2"
 dependencies = [
  "ramwarden-platform",
  "serde",
