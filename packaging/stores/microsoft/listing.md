@@ -1,6 +1,10 @@
 # Microsoft Store — offline Win32 EXE candidate
 
-Name: pending owner choice. Microsoft rejected exact “RamWarden” as unavailable on 2026-11-05; no product reservation succeeded.
+Name: RamWarden Desktop — reserved and draft product created on 2026-11-05.
+Partner Center ID: 7b5ec7ef-c1d4-4c7c-8731-3ea8fceeef59.
+Public Store ID/link: not assigned until live.
+Pricing: Freemium; category: Productivity, secondary Security.
+Exact “RamWarden” was unavailable; owner approved “RamWarden Desktop”.
 Category: Productivity / utilities (confirm Partner Center category)
 Language: English
 Architecture: x64
@@ -91,3 +95,11 @@ worktree on 2026-11-05; its version resource reports ProductName=RamWarden and
 FileDescription=RamWarden desktop companion. Compiler fixture and lifecycle
 PowerShell parsing passed. The real installed app was not changed. This is not
 fresh-install, upgrade, silent-mode runtime or signing/certification evidence.
+
+
+Partner Center draft checkpoint: Availability and Properties show complete in the
+2026-11-05 overview. English (United States) was added, but opening its editor
+fails with a Partner Center frontend error after a reload. Listing description
+and Windows screenshots are not uploaded. Age ratings and Packages remain open.
+No certification submission has been made. Privacy/support URLs are saved as
+intended production URLs in the draft, not verified as publicly available.

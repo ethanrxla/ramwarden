@@ -16,6 +16,7 @@ for name in ['0-browser-cleanup-1280x800.png','1-threat-pane-1280x800.png','smal
     shutil.copy2(source,chrome/name)
 shutil.copy2(root/'extension/icons/icon128.png',chrome/'store-icon-128.png')
 shutil.copy2(root/'packaging/stores/microsoft/listing.md',microsoft/'listing.md')
+shutil.copy2(root/'packaging/stores/microsoft/product.json',microsoft/'product.json')
 (microsoft/'NOT-AN-INSTALLER.txt').write_text('Windows offline installer source and packaging checks exist. No signed production EXE is supplied in this kit. Trusted signing, clean-machine lifecycle tests, feature parity and an immutable public HTTPS download are still required. Do not upload compiler syntax fixtures or unsigned candidates.\n')
 (chrome/'UPLOAD-NOTES.txt').write_text('Upload only the ramwarden-chrome ZIP as the extension package. The other files are listing assets/notes. Synthetic demonstration data is labeled. Verify public privacy/support URLs and final disclosures before requesting review.\n')
 report.update({'sourceCommit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'chromeSubmitted':False,'microsoftSubmitted':False,'microsoftSignedInstallerIncluded':False,'remaining':['live public privacy/support/account URLs','publisher listing review','Windows trusted signing','Windows clean-machine installation/upgrade/uninstall and feature-parity tests','versioned public Windows download']})
