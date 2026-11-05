@@ -1,6 +1,6 @@
 # Production readiness
 
-Working checklist, November 5, 2026. A checked item has evidence below; all other items are release gates. A working developer installation is not proof that a new customer can install, sign in, update, recover and uninstall successfully.
+Working checklist, November 5, 2026. Windows Store assessment: **NOT READY**; see [the Windows Store evidence and gates](../packaging/WINDOWS_STORE.md). A checked item has evidence below; all other items are release gates. A working developer installation is not proof that a new customer can install, sign in, update, recover and uninstall successfully.
 
 - [ ] Companion pets must be EXACTLY the same on macOS, Windows and Linux: shared artwork, palettes, expressions, animation timing and sizing; preserve Mac customization. Follow [the parity contract](companion-parity.md) and block release on golden pixel comparisons and native checks on all three platforms.
 

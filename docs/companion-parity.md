@@ -80,3 +80,27 @@ but reported Cloud AI disabled, so that test used its factual fallback.
 Full Mac functional parity is still pending: attached chat-window placement,
 persistent chat recall, checklist UI, workspace streaming, voice/mute and
 other Mac controls, disconnected presentation and live two-platform checks.
+
+### Dedicated speech boxes and Store audit
+
+Each Windows pet now owns a separate chat/settings window, with its own IPC
+channel. Dashboard menu commands retain the dashboard process. Chat prefers
+below the pet; proactive thoughts/check-ins/fun facts prefer above, following
+live pet bounds and clamping to its monitor work area in physical pixels.
+The independent box has transparent margins, rounded outline and a tail.
+Thought boxes are opened only for real daemon messages, respect voice mute,
+warden identity and pet visibility, avoid taking focus on creation, and are
+suppressed while that pet's chat is open. No synthetic production fun facts
+are injected to make a demonstration look live.
+
+The dedicated chat window was visually inspected, including the DPI/screen-edge
+placement correction. The Store assessment and read-only artifact gate are in
+packaging/WINDOWS_STORE.md and scripts/test-windows-store-readiness.ps1. All six
+currently installed PE executables were unsigned. This remains a developer
+installation using the owner's private provider keys, not a Store-ready release.
+
+Native UI validation: a typed chat message was sent through the dedicated box
+and its cloud reply rendered there. The independent thought box rendered a
+clearly labeled fixture from an isolated loopback server, not the production
+daemon. The installed daemon supports /warden/bubble but /warden/facts returns
+404; live newer fun-fact cache/feed behavior therefore remains a backend gate.

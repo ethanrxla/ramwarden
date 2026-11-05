@@ -23,6 +23,7 @@ pub mod views;
 pub mod pets;
 mod activation;
 mod companion_ui;
+mod companion_window;
 use activation::Surface;
 
 use std::process::Child;
@@ -144,6 +145,7 @@ if self.surface==Surface::Settings{companion_ui::settings(ui,self.pane==Pane::Th
 
 /// Run the window until it is closed.
 pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
+    if std::env::args().any(|a|a=="--companion") {return companion_window::run(client,pane);}
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
@@ -308,17 +310,27 @@ fn open_window(child: &mut Option<Child>, pane: Pane) {
     open_surface(child,pane,Surface::Dashboard);
 }
 fn open_surface(child:&mut Option<Child>,pane:Pane,surface:Surface){
-    activation::request(pane,surface);
+    activation::request(pane,surface,false);
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat=>"--chat",Surface::Settings=>"--settings"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
+    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat=>"--chat",Surface::Settings=>"--settings",Surface::Thought=>"--thought"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
 }
+
+fn open_attached(child:&mut Option<Child>,pane:Pane,surface:Surface){
+    if surface!=Surface::Thought {activation::request(pane,surface,true);}
+    if child.as_mut().is_some_and(|c|matches!(c.try_wait(),Ok(None))){return;}
+    match std::env::current_exe().and_then(|exe|std::process::Command::new(exe).args(["--window","--companion",if pane==Pane::Threat{"--threat"}else{"--ram"},match surface{Surface::Settings=>"--settings",Surface::Thought=>"--thought",_=>"--chat"}]).spawn()) {
+        Ok(c)=>*child=Some(c),Err(e)=>tracing::error!("cannot open companion box: {e}"),
+    }
+}
+fn close_child(child:&mut Option<Child>){if let Some(mut c)=child.take(){let _=c.kill();let _=c.wait();}}
+fn child_running(child:&mut Option<Child>)->bool{child.as_mut().is_some_and(|c|matches!(c.try_wait(),Ok(None)))}
 
 /// Run the tray until Quit. `start_hidden` (the logon task) does not open the
 /// window at start.
@@ -343,6 +355,9 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
     let mut tray = Tray::new()?;
     let pets=pets::Pets::new()?;
     let mut window: Option<Child> = None;
+    let mut chats:[Option<Child>;2]=[None,None];
+    let mut thoughts:[Option<Child>;2]=[None,None];
+    let mut last_bubble=String::new();
     if !start_hidden {
         open_window(&mut window,Pane::Ram);
     }
@@ -362,6 +377,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             if e.id==*tray.ram_pet.id(){pets.toggle(Pane::Ram);}
             if e.id==*tray.threat_pet.id(){pets.toggle(Pane::Threat);}
             if e.id == tray.quit {
+                for child in chats.iter_mut().chain(thoughts.iter_mut()){close_child(child);}
                 if let Some(mut c) = window.take() {
                     let _ = c.kill();
                 }
@@ -384,13 +400,23 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             let pro=poller.snapshot().threat.as_ref().is_some_and(|p|p.unlocked);
             pets.refresh(pro);
             let [ram,threat]=pets.visibility();
+            let visible=[ram,threat&&pro];
+            for i in 0..2 {if !visible[i]{close_child(&mut chats[i]);close_child(&mut thoughts[i]);}else if child_running(&mut chats[i]) {close_child(&mut thoughts[i]);}}
+            let snap=poller.snapshot();
+            if let Some(speech)=snap.speech.as_ref().filter(|s|s.pet&&!s.muted) && let Some(b)=&speech.bubble && matches!(b.warden.as_str(),""|"ram"|"threat") {
+                let index=usize::from(b.warden=="threat");
+                if visible[index] && !child_running(&mut chats[index]) && b.id!=last_bubble {
+                    last_bubble=b.id.clone();open_attached(&mut thoughts[index],if index==0{Pane::Ram}else{Pane::Threat},Surface::Thought);
+                }
+            }
+
             tray.ram_pet.set_checked(ram);tray.threat_pet.set_checked(threat&&pro);
             tray.threat_pet.set_enabled(pro);
             tray.update(&poller);
             tray.show_question(&poller);
             last = Instant::now();
         }
-        if let Some((pane,surface))=pets.click(){open_surface(&mut window,pane,surface);}
+        if let Some((pane,surface))=pets.click(){let index=usize::from(pane==Pane::Threat);close_child(&mut thoughts[index]);open_attached(&mut chats[index],pane,surface);}
         std::thread::sleep(Duration::from_millis(50));
     }
 }

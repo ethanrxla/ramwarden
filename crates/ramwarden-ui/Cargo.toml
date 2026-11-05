@@ -21,7 +21,7 @@ required-features = ["gui"]
 default = []
 gui = ["dep:gtk4"]
 # The Windows window: egui plus a tray icon.
-tray = ["dep:eframe", "dep:tray-icon", "dep:windows"]
+tray = ["dep:eframe", "dep:tray-icon", "dep:windows", "dep:winit"]
 
 [dependencies]
 serde      = { workspace = true }
@@ -34,6 +34,7 @@ thiserror  = { workspace = true }
 gtk4       = { workspace = true, optional = true }
 eframe     = { version = "0.36", optional = true, default-features = false, features = ["glow", "default_fonts", "accesskit"] }
 windows    = { workspace = true, optional = true, features = ["Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"] }
+winit = { version = "0.30", optional = true, default-features = false }
 tray-icon  = { version = "0.26", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]

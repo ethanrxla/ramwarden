@@ -11,6 +11,7 @@ pub enum Surface {
     Dashboard,
     Chat,
     Settings,
+    Thought,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,20 +21,24 @@ struct Request {
     #[serde(default)]
     surface: Surface,
 }
-fn path() -> PathBuf {
+fn path(companion: Option<Pane>) -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join("ramwarden/window-request.json")
+        .join(match companion {
+            None => "ramwarden/window-request.json",
+            Some(Pane::Ram) => "ramwarden/ram-chat-request.json",
+            Some(Pane::Threat) => "ramwarden/threat-chat-request.json",
+        })
 }
-fn read() -> Option<Request> {
-    let bytes = std::fs::read(path()).ok()?;
+fn read(companion: Option<Pane>) -> Option<Request> {
+    let bytes = std::fs::read(path(companion)).ok()?;
     if bytes.len() > 512 {
         return None;
     }
     serde_json::from_slice(&bytes).ok()
 }
-pub fn request(pane: Pane, surface: Surface) {
+pub fn request(pane: Pane, surface: Surface, companion: bool) {
     let request = Request {
         surface,
         nonce: SystemTime::now()
@@ -42,7 +47,7 @@ pub fn request(pane: Pane, surface: Surface) {
             .as_nanos() as u64,
         pane: if pane == Pane::Ram { "ram" } else { "threat" }.into(),
     };
-    let target = path();
+    let target = path(if companion { Some(pane) } else { None });
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -56,22 +61,31 @@ pub fn request(pane: Pane, surface: Surface) {
 pub struct Reader {
     nonce: u64,
     checked: Instant,
+    companion: Option<Pane>,
 }
 impl Default for Reader {
     fn default() -> Self {
         Self {
-            nonce: read().map(|r| r.nonce).unwrap_or(0),
+            companion: None,
+            nonce: read(None).map(|r| r.nonce).unwrap_or(0),
             checked: Instant::now(),
         }
     }
 }
 impl Reader {
+    pub fn for_companion(pane: Pane) -> Self {
+        Self {
+            nonce: read(Some(pane)).map(|r| r.nonce).unwrap_or(0),
+            checked: Instant::now(),
+            companion: Some(pane),
+        }
+    }
     pub fn next_pane(&mut self) -> Option<(Pane, Surface)> {
         if self.checked.elapsed() < Duration::from_millis(300) {
             return None;
         }
         self.checked = Instant::now();
-        let request = read()?;
+        let request = read(self.companion)?;
         if request.nonce <= self.nonce {
             return None;
         }
@@ -84,8 +98,30 @@ impl Reader {
     }
 }
 
-#[cfg(test)] mod tests {
- use super::*;
- #[test]fn older_dashboard_request_remains_compatible(){let r:Request=serde_json::from_str(r#"{"nonce":1,"pane":"ram"}"#).unwrap();assert!(r.surface==Surface::Dashboard);}
- #[test]fn chat_and_settings_route_independently(){for surface in [Surface::Chat,Surface::Settings] {let r=Request{nonce:2,pane:"threat".into(),surface};let restored:Request=serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();assert!(restored.surface==surface);}}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dashboard_and_each_pet_have_distinct_channels() {
+        assert_ne!(path(None), path(Some(Pane::Ram)));
+        assert_ne!(path(Some(Pane::Ram)), path(Some(Pane::Threat)));
+    }
+    #[test]
+    fn older_dashboard_request_remains_compatible() {
+        let r: Request = serde_json::from_str(r#"{"nonce":1,"pane":"ram"}"#).unwrap();
+        assert!(r.surface == Surface::Dashboard);
+    }
+    #[test]
+    fn chat_and_settings_route_independently() {
+        for surface in [Surface::Chat, Surface::Settings] {
+            let r = Request {
+                nonce: 2,
+                pane: "threat".into(),
+                surface,
+            };
+            let restored: Request =
+                serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+            assert!(restored.surface == surface);
+        }
+    }
 }

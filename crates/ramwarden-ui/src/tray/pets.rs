@@ -611,3 +611,140 @@ mod tests {
         assert_eq!(restored.positions, [Some([42, 63]), Some([222, 111])]);
     }
 }
+
+/// Position an attached box on the virtual desktop, preferring above the pet.
+/// Coordinates use the same desktop coordinate space as persisted native pets.
+pub fn attachment(pane: Pane, size: [f32; 2], prefer_above: bool) -> ([f32; 2], bool) {
+    let path = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("ramwarden/companions.json");
+    let prefs: Preferences = std::fs::read(path)
+        .ok()
+        .filter(|b| b.len() < 4096)
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let index = usize::from(pane == Pane::Threat);
+    let options = Options::load();
+    let scale = if index == 0 {
+        options.ram.scale
+    } else {
+        options.threat.scale
+    };
+    let pet_size = companions::panel_size(index == 1, scale);
+    // SAFETY: read-only virtual desktop metrics; no window manipulation.
+    unsafe {
+        let mut position = prefs.positions[index].unwrap_or([
+            GetSystemMetrics(SM_CXSCREEN) - 180 - index as i32 * 170,
+            GetSystemMetrics(SM_CYSCREEN) - 230,
+        ]);
+        let mut pet_size = pet_size;
+        let mut bounds = [
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        ];
+        // Query the live native pet in this DPI-aware process. Persisted tray
+        // coordinates may be virtualized; using them as physical pixels clips boxes.
+        if let Ok(hwnd) = FindWindowW(
+            w!("RamWardenCompanionV1"),
+            if index == 0 {
+                w!("RamWarden companion")
+            } else {
+                w!("ThreatWarden companion")
+            },
+        ) {
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                position = [rect.left, rect.top];
+                pet_size = [rect.right - rect.left, rect.bottom - rect.top];
+            }
+            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if GetMonitorInfoW(monitor, &mut info).as_bool() {
+                let r = info.rcWork;
+                bounds = [r.left, r.top, r.right - r.left, r.bottom - r.top];
+            }
+        }
+        attached_position(position, pet_size, size, bounds, prefer_above)
+    }
+}
+fn attached_position(
+    pet: [i32; 2],
+    pet_size: [i32; 2],
+    size: [f32; 2],
+    bounds: [i32; 4],
+    prefer_above: bool,
+) -> ([f32; 2], bool) {
+    let [left, top, width, height] = bounds.map(|v| v as f32);
+    let x = pet[0] as f32 + (pet_size[0] as f32 - size[0]) / 2.;
+    let above = pet[1] as f32 - size[1] - 4.;
+    let below = (pet[1] + pet_size[1] + 4) as f32;
+    let y = if prefer_above {
+        if above >= top { above } else { below }
+    } else if below + size[1] <= top + height {
+        below
+    } else {
+        above
+    };
+    let position = [
+        x.clamp(left, (left + width - size[0]).max(left)),
+        y.clamp(top, (top + height - size[1]).max(top)),
+    ];
+    (position, position[1] + size[1] <= pet[1] as f32)
+}
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    #[test]
+    fn above_below_and_negative_monitor_coordinates() {
+        assert_eq!(
+            attached_position(
+                [100, 500],
+                [180, 180],
+                [300., 200.],
+                [0, 0, 1920, 1080],
+                false
+            )
+            .0,
+            [40., 684.]
+        );
+        assert_eq!(
+            attached_position(
+                [100, 500],
+                [180, 180],
+                [300., 200.],
+                [0, 0, 1920, 1080],
+                true
+            )
+            .0,
+            [40., 296.]
+        );
+        assert_eq!(
+            attached_position(
+                [100, 10],
+                [180, 180],
+                [300., 200.],
+                [0, 0, 1920, 1080],
+                true
+            )
+            .0,
+            [40., 194.]
+        );
+        assert!(
+            attached_position(
+                [-1800, 400],
+                [180, 180],
+                [300., 200.],
+                [-1920, 0, 3840, 1080],
+                true
+            )
+            .0[0]
+                < 0.
+        );
+    }
+}
