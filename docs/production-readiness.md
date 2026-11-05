@@ -2,6 +2,14 @@
 
 Working checklist, November 5, 2026. A checked item has evidence below; all other items are release gates. A working developer installation is not proof that a new customer can install, sign in, update, recover and uninstall successfully.
 
+## User-visible blockers — highest priority
+
+- [ ] Actual floating 8-bit RamWarden and ThreatWarden companion pets on Windows, with separate visibility toggles, persistent placement/settings, click-to-chat, safe approval controls, accessible input and low idle CPU/GPU use. Speech-bubble text is not a substitute. Threat pet availability follows the signed-in Pro entitlement. Verify both are visible on the real Windows desktop; retain Mac companions and implement/test Linux equivalents.
+- [ ] Correct packaged Windows app/taskbar/Start-menu icon, not only runtime window/tray icons. The observed generic taskbar icon is a defect. Embed the complete pixel ram in EXE resources and installer/shortcut metadata; verify a fresh install and upgrade after shell-cache refresh. Use the maximal fitted artwork without clipping or changing icon slots.
+- [ ] Scrollable network connection/activity details, with bounded pagination/filtering and per-process attribution where supported. A TCP connection count is not a request list; encrypted payloads must not be claimed as inspected.
+- [ ] Consistent exact labels RamWarden/ThreatWarden and reliable RAM hover statistics plus Pro threat activity. Source fix a5cf5f8 is tested; installed update must be verified after pending UAC.
+- [ ] Resolve Wazuh queue overflow through supported buffering/spooling/backpressure and measured recovery. Preserve evidence and expose losses; do not simply hide the warning or let Jev delete events.
+
 ## Finish the two-device milestone
 
 - [x] Windows and Mac linked to the developer Pro account (account page showed2of5; November4 account handoff).
