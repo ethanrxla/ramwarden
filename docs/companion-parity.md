@@ -58,3 +58,25 @@ drag injection reports an Explorer hit-test mismatch before delivering input,
 so live drag/persistence is not yet verified. Windows palette/size controls,
 chat/checklist UI and disconnected presentation remain incomplete; do not
 claim full functional parity based on the sprite tests alone.
+
+### Windows interaction/flicker follow-up
+
+Off-screen GDI buffering now publishes a complete frame with one BitBlt,
+preventing the transparent-key background from being exposed mid-frame.
+The native right-click menu offers Chat, Settings and Hide companion; the
+WndProc releases its RefCell borrow before delegating default messages or
+pumping the menu, so nested WM_CONTEXTMENU messages are not suppressed.
+The menu was observed in the native preview. Pointer/drag events and saved
+positions were observed after this follow-up.
+
+Left-click now requests a Chat surface instead of the dashboard. Settings
+exposes per-pet integer size, wool/horn/hoof/eye colors, RAM pupil styles and
+restore-default controls, saved locally and applied by the host. Chat uses
+/assistant/chat with separate per-warden in-window histories and bounded
+context. Proposed actions require a separate visible approval; replies do
+not execute actions. The running daemon replied to a harmless smoke test,
+but reported Cloud AI disabled, so that test used its factual fallback.
+
+Full Mac functional parity is still pending: attached chat-window placement,
+persistent chat recall, checklist UI, workspace streaming, voice/mute and
+other Mac controls, disconnected presentation and live two-platform checks.

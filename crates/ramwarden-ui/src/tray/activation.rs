@@ -5,11 +5,20 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Surface {
+    #[default]
+    Dashboard,
+    Chat,
+    Settings,
+}
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
     nonce: u64,
     pane: String,
+    #[serde(default)]
+    surface: Surface,
 }
 fn path() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
@@ -24,8 +33,9 @@ fn read() -> Option<Request> {
     }
     serde_json::from_slice(&bytes).ok()
 }
-pub fn request(pane: Pane) {
+pub fn request(pane: Pane, surface: Surface) {
     let request = Request {
+        surface,
         nonce: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -56,7 +66,7 @@ impl Default for Reader {
     }
 }
 impl Reader {
-    pub fn next_pane(&mut self) -> Option<Pane> {
+    pub fn next_pane(&mut self) -> Option<(Pane, Surface)> {
         if self.checked.elapsed() < Duration::from_millis(300) {
             return None;
         }
@@ -67,9 +77,15 @@ impl Reader {
         }
         self.nonce = request.nonce;
         match request.pane.as_str() {
-            "ram" => Some(Pane::Ram),
-            "threat" => Some(Pane::Threat),
+            "ram" => Some((Pane::Ram, request.surface)),
+            "threat" => Some((Pane::Threat, request.surface)),
             _ => None,
         }
     }
+}
+
+#[cfg(test)] mod tests {
+ use super::*;
+ #[test]fn older_dashboard_request_remains_compatible(){let r:Request=serde_json::from_str(r#"{"nonce":1,"pane":"ram"}"#).unwrap();assert!(r.surface==Surface::Dashboard);}
+ #[test]fn chat_and_settings_route_independently(){for surface in [Surface::Chat,Surface::Settings] {let r=Request{nonce:2,pane:"threat".into(),surface};let restored:Request=serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();assert!(restored.surface==surface);}}
 }

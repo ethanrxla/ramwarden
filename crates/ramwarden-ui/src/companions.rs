@@ -5,13 +5,13 @@ use crate::wardens::Sprite;
 pub const RAM_CELLS: &str = include_str!("../../../assets/companions/ram.cells");
 pub const THREAT_SVG: &str = include_str!("../../../web/assets/pets/threat.svg");
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Pupil {
     Slit,
     Round,
     None,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Appearance {
     pub wool: [u8; 3],
     pub horns: [u8; 3],
@@ -199,5 +199,51 @@ mod tests {
             THREAT_SVG,
             include_str!("../../../web/assets/wardens/threat.svg")
         );
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Style {
+    pub appearance: Appearance,
+    pub scale: u32,
+}
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Options {
+    pub ram: Style,
+    pub threat: Style,
+}
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            ram: Style {
+                appearance: Appearance::ram(),
+                scale: 3,
+            },
+            threat: Style {
+                appearance: Appearance::threat(),
+                scale: 3,
+            },
+        }
+    }
+}
+impl Options {
+    fn path() -> std::path::PathBuf {
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("ramwarden/companion-appearance.json")
+    }
+    pub fn load() -> Self {
+        let mut options:Self=std::fs::read(Self::path()).ok().filter(|b|b.len()<8192).and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default();
+        options.ram.scale=options.ram.scale.clamp(2,6);options.threat.scale=options.threat.scale.clamp(2,6);options
+    }
+    pub fn save(&self) -> Result<(), String> {
+        let path = Self::path();
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_vec(self).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        std::fs::rename(tmp, path).map_err(|e| e.to_string())
     }
 }

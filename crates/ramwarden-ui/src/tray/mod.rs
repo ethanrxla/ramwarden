@@ -22,6 +22,8 @@ pub mod poller;
 pub mod views;
 pub mod pets;
 mod activation;
+mod companion_ui;
+use activation::Surface;
 
 use std::process::Child;
 use std::time::{Duration, Instant};
@@ -49,6 +51,11 @@ enum Tab {
 
 struct WindowApp {
     activation: activation::Reader,
+    surface:Surface,
+    client:Client,
+    chats:[companion_ui::Chat;2],
+    options:crate::companions::Options,
+    settings_error:Option<String>,
     poller: Poller,
     pane: Pane,
     threat_icon: Option<egui::TextureHandle>,
@@ -60,7 +67,7 @@ impl eframe::App for WindowApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(400));
-        if let Some(pane)=self.activation.next_pane(){self.pane=pane;ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));ctx.send_viewport_cmd(egui::ViewportCommand::Focus);}
+        if let Some((pane,surface))=self.activation.next_pane(){self.pane=pane;self.surface=surface;ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));ctx.send_viewport_cmd(egui::ViewportCommand::Focus);}
         let snap = self.poller.snapshot();
 
         if self.threat_icon.is_none() && let Some(sprite)=&snap.threat_icon {
@@ -73,7 +80,8 @@ impl eframe::App for WindowApp {
                 ui.selectable_value(&mut self.pane,Pane::Threat,"ThreatWarden");
                 if let Some(p)=&snap.threat {ui.colored_label(views::level_colour(p.level),p.level.label());}
             });
-            if self.pane==Pane::Ram {
+            ui.horizontal(|ui| {ui.selectable_value(&mut self.surface,Surface::Dashboard,"Overview");ui.selectable_value(&mut self.surface,Surface::Chat,"Chat");if ui.selectable_value(&mut self.surface,Surface::Settings,"Settings").clicked(){self.options=crate::companions::Options::load();}});
+            if self.pane==Pane::Ram && self.surface==Surface::Dashboard {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
                 ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
@@ -101,13 +109,14 @@ impl eframe::App for WindowApp {
                 command = Some(c);
             }
         });
-        egui::CentralPanel::default().show(ui, |ui| match (self.pane,self.tab) {
+        egui::CentralPanel::default().show(ui, |ui| {if self.surface==Surface::Chat {self.chats[usize::from(self.pane==Pane::Threat)].show(ui,&self.client,self.pane==Pane::Threat);return;}
+if self.surface==Surface::Settings{companion_ui::settings(ui,self.pane==Pane::Threat,&mut self.options,&mut self.settings_error);return;}match (self.pane,self.tab) {
             (Pane::Threat,_) => command=views::threat(ui,&snap,self.threat_icon.as_ref(),&mut self.view),
             (Pane::Ram,Tab::Overview) => views::overview(ui, &snap),
             (Pane::Ram,Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
             (Pane::Ram,Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
             (Pane::Ram,Tab::Gpu) => command = views::gpu(ui, &snap),
-        });
+        }});
 
         if let Some((pending, question)) = self.view.confirm.clone() {
             egui::Window::new("Confirm")
@@ -157,6 +166,8 @@ pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
                 activation: activation::Reader::default(),
+                surface:if std::env::args().any(|a|a=="--chat"){Surface::Chat}else if std::env::args().any(|a|a=="--settings"){Surface::Settings}else{Surface::Dashboard},
+                client:client.clone(),chats:std::array::from_fn(|_|companion_ui::Chat::default()),options:crate::companions::Options::load(),settings_error:None,
                 poller: Poller::start(client, true, move || ctx.request_repaint()),
                 pane,
                 threat_icon: None,
@@ -293,13 +304,16 @@ impl Tray {
 
 /// Launch the window process, or leave it alone if it is already open.
 fn open_window(child: &mut Option<Child>, pane: Pane) {
-    activation::request(pane);
+    open_surface(child,pane,Surface::Dashboard);
+}
+fn open_surface(child:&mut Option<Child>,pane:Pane,surface:Surface){
+    activation::request(pane,surface);
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
+    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat=>"--chat",Surface::Settings=>"--settings"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
@@ -377,7 +391,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             tray.show_question(&poller);
             last = Instant::now();
         }
-        if let Some(pane)=pets.click(){open_window(&mut window,pane);}
+        if let Some((pane,surface))=pets.click(){open_surface(&mut window,pane,surface);}
         std::thread::sleep(Duration::from_millis(50));
     }
 }

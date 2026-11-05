@@ -1,7 +1,7 @@
 //! Native, color-keyed companion windows. No graphics driver or extra process.
-use super::Pane;
+use super::{Pane, activation::Surface};
 use crate::{
-    companions::{self, Appearance},
+    companions::{self, Options, Style},
     wardens::Sprite,
 };
 use serde::{Deserialize, Serialize};
@@ -65,12 +65,14 @@ impl Store {
 struct Pet {
     pane: Pane,
     sprite: Sprite,
+    style: Style,
     store: Arc<Mutex<Store>>,
-    clicks: mpsc::Sender<Pane>,
+    clicks: mpsc::Sender<(Pane, Surface)>,
     phase: u64,
     preview: bool,
     drag: Option<(POINT, RECT)>,
     moved: bool,
+    wheel: i32,
 }
 impl Pet {
     fn index(&self) -> usize {
@@ -81,7 +83,7 @@ impl Pet {
 pub struct Pets {
     windows: [HWND; 2],
     store: Arc<Mutex<Store>>,
-    clicks: mpsc::Receiver<Pane>,
+    clicks: mpsc::Receiver<(Pane, Surface)>,
 }
 impl Pets {
     pub fn new() -> Result<Self, String> {
@@ -133,10 +135,18 @@ impl Pets {
                 ),
             ] {
                 let _ = source;
-                let sprite = if pane == Pane::Ram {
-                    companions::ram(1, false, false, &Appearance::ram())
+                let style = if pane == Pane::Ram {
+                    Options::load().ram
                 } else {
-                    companions::threat(&Appearance::threat())
+                    Options::load().threat
+                };
+                let mut style = style;
+                style.scale = style.scale.clamp(2, 6);
+                let dimensions = companions::panel_size(pane == Pane::Threat, style.scale);
+                let sprite = if pane == Pane::Ram {
+                    companions::ram(1, false, false, &style.appearance)
+                } else {
+                    companions::threat(&style.appearance)
                 };
                 let position = store.lock().unwrap().prefs.positions[index].unwrap_or([
                     GetSystemMetrics(SM_CXSCREEN) - 180 - index as i32 * 170,
@@ -146,12 +156,14 @@ impl Pets {
                 let pet = Pet {
                     pane,
                     sprite,
+                    style,
                     store: store.clone(),
                     clicks: tx.clone(),
                     phase: 0,
                     preview,
                     drag: None,
                     moved: false,
+                    wheel: 0,
                 };
                 // WM_NCCREATE stores this allocation; WM_NCDESTROY releases it.
                 let raw = Box::into_raw(Box::new(RefCell::new(pet)));
@@ -169,8 +181,8 @@ impl Pets {
                     WS_POPUP,
                     position[0],
                     position[1],
-                    companions::panel_size(pane == Pane::Threat, 3)[0],
-                    HEIGHT,
+                    dimensions[0],
+                    dimensions[1],
                     None,
                     None,
                     Some(instance.into()),
@@ -215,15 +227,52 @@ impl Pets {
         s.save();
     }
     pub fn refresh(&self, pro: bool) {
+        let options = Options::load();
         let [ram, threat] = self.visibility();
         // SAFETY: HWNDs belong to this UI thread. No activation or focus stealing.
         unsafe {
             for (hwnd, visible) in self.windows.into_iter().zip([ram, threat && pro]) {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<Pet>;
+                if !ptr.is_null() {
+                    let style = if hwnd == self.windows[0] {
+                        options.ram.clone()
+                    } else {
+                        options.threat.clone()
+                    };
+                    let mut resized = None;
+                    if let Ok(mut pet) = (&*ptr).try_borrow_mut()
+                        && pet.style != style
+                    {
+                        pet.style = style;
+                        pet.style.scale = pet.style.scale.clamp(2, 6);
+                        pet.sprite = if pet.pane == Pane::Ram {
+                            companions::ram(pet.phase, false, false, &pet.style.appearance)
+                        } else {
+                            companions::threat(&pet.style.appearance)
+                        };
+                        resized = Some(companions::panel_size(
+                            pet.pane == Pane::Threat,
+                            pet.style.scale,
+                        ));
+                    }
+                    if let Some([width, height]) = resized {
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            0,
+                            0,
+                            width,
+                            height,
+                            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
                 let _ = ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
             }
         }
     }
-    pub fn click(&self) -> Option<Pane> {
+    pub fn click(&self) -> Option<(Pane, Surface)> {
         self.clicks.try_recv().ok()
     }
 }
@@ -236,6 +285,10 @@ impl Drop for Pets {
             }
         }
     }
+}
+
+fn wheel_scale(scale: u32, steps: i32) -> u32 {
+    (i64::from(scale) + i64::from(steps)).clamp(2, 6) as u32
 }
 
 fn clamp_position([x, y]: [i32; 2]) -> [i32; 2] {
@@ -287,7 +340,8 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                         .saturating_sub(978307200000) as u64
                         / 250;
                     if pet.pane == Pane::Ram {
-                        pet.sprite = companions::ram(pet.phase, false, false, &Appearance::ram());
+                        pet.sprite =
+                            companions::ram(pet.phase, false, false, &pet.style.appearance);
                     }
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
@@ -296,15 +350,20 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
             WM_ERASEBKGND => LRESULT(1),
             WM_PAINT => {
                 let mut paint = PAINTSTRUCT::default();
-                let dc = BeginPaint(hwnd, &mut paint);
+                let screen = BeginPaint(hwnd, &mut paint);
+                let mut bounds = RECT::default();
+                let _ = GetClientRect(hwnd, &mut bounds);
+                let dc = CreateCompatibleDC(Some(screen));
+                let bitmap = CreateCompatibleBitmap(screen, bounds.right, bounds.bottom);
+                let previous = SelectObject(dc, bitmap.into());
                 let background = CreateSolidBrush(KEY);
                 FillRect(
                     dc,
                     &RECT {
                         left: 0,
                         top: 0,
-                        right: WIDTH,
-                        bottom: HEIGHT,
+                        right: bounds.right,
+                        bottom: bounds.bottom,
                     },
                     background,
                 );
@@ -314,7 +373,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                 } else {
                     18
                 };
-                let scale = 3;
+                let scale = pet.style.scale as i32;
                 let origin_x = if pet.pane == Pane::Ram { 18 } else { 8 };
                 for y in 0..pet.sprite.height {
                     for x in 0..pet.sprite.width {
@@ -339,7 +398,100 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                         let _ = DeleteObject(brush.into());
                     }
                 }
+                // Publish a complete frame once. Painting the color-key background
+                // directly onto the layered window exposed the desktop each tick.
+                let _ = BitBlt(
+                    screen,
+                    0,
+                    0,
+                    bounds.right,
+                    bounds.bottom,
+                    Some(dc),
+                    0,
+                    0,
+                    SRCCOPY,
+                );
+                SelectObject(dc, previous);
+                let _ = DeleteObject(bitmap.into());
+                let _ = DeleteDC(dc);
                 let _ = EndPaint(hwnd, &paint);
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                pet.wheel += ((wp.0 >> 16) as u16 as i16) as i32;
+                let steps = pet.wheel / 120;
+                pet.wheel %= 120;
+                if steps != 0 {
+                    let mut options = Options::load();
+                    let style = if pet.pane == Pane::Ram {
+                        &mut options.ram
+                    } else {
+                        &mut options.threat
+                    };
+                    style.scale = wheel_scale(style.scale, steps);
+                    let scale = style.scale;
+                    if options.save().is_ok() {
+                        pet.style.scale = scale;
+                        let [width, height] =
+                            companions::panel_size(pet.pane == Pane::Threat, scale);
+                        drop(pet);
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            0,
+                            0,
+                            width,
+                            height,
+                            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_CONTEXTMENU => {
+                if let Ok(menu) = CreatePopupMenu() {
+                    let _ = AppendMenuW(menu, MF_STRING, 1, w!("Chat"));
+                    let _ = AppendMenuW(menu, MF_STRING, 2, w!("Settings…"));
+                    let _ = AppendMenuW(menu, MF_STRING, 3, w!("Hide companion"));
+                    let mut point = POINT::default();
+                    let _ = GetCursorPos(&mut point);
+                    // Release the RefCell before the modal native menu pumps messages.
+                    drop(pet);
+                    let _ = SetForegroundWindow(hwnd);
+                    let selected = TrackPopupMenu(
+                        menu,
+                        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                        point.x,
+                        point.y,
+                        None,
+                        hwnd,
+                        None,
+                    )
+                    .0;
+                    let _ = DestroyMenu(menu);
+                    if let Ok(pet) = (&*ptr).try_borrow() {
+                        match selected {
+                            1 => {
+                                let _ = pet.clicks.send((pet.pane, Surface::Chat));
+                            }
+                            2 => {
+                                let _ = pet.clicks.send((pet.pane, Surface::Settings));
+                            }
+                            3 => {
+                                let mut s = pet.store.lock().unwrap();
+                                if pet.pane == Pane::Ram {
+                                    s.prefs.ram = false
+                                } else {
+                                    s.prefs.threat = false
+                                };
+                                s.save();
+                                let _ = ShowWindow(hwnd, SW_HIDE);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 LRESULT(0)
             }
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
@@ -393,7 +545,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                             s.save();
                         }
                     } else {
-                        let _ = pet.clicks.send(pet.pane);
+                        let _ = pet.clicks.send((pet.pane, Surface::Chat));
                     }
                 }
                 LRESULT(0)
@@ -413,7 +565,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 LRESULT(0)
             }
-            _ => DefWindowProcW(hwnd, message, wp, lp),
+            _ => {
+                drop(pet);
+                DefWindowProcW(hwnd, message, wp, lp)
+            }
         }
     }
 }
@@ -421,6 +576,13 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wheel_size_matches_mac_integer_bounds() {
+        assert_eq!(wheel_scale(3, 1), 4);
+        assert_eq!(wheel_scale(3, -1), 2);
+        assert_eq!(wheel_scale(6, 10), 6);
+        assert_eq!(wheel_scale(2, -10), 2);
+    }
     #[test]
     fn preferences_default_visible_and_restore_independent_positions() {
         let p: Preferences =
