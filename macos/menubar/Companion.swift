@@ -171,9 +171,12 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
     func cancelConversation() {
         if runningTools {
             turns.append(ChatTurn(role:"assistant",content:"Stopped waiting for this plan. Completed changes remain. An in-flight file step may finish; inspect its result before retrying."))
-            for index in toolBlocks.indices where toolBlocks[index].state == "Running" { toolBlocks[index].state = "Unconfirmed" }
+            markUnconfirmedTools()
         }
         task?.cancel(); if task == nil {thinking=false}; proposedToken=nil;proposedAutoEligible=false
+    }
+    func markUnconfirmedTools() {
+        for index in toolBlocks.indices where toolBlocks[index].state == "Running" { toolBlocks[index].state = "Unconfirmed" }
     }
     func receiveToolEvent(_ event:[String:Any]) {
         guard let kind=event["kind"] as? String else{return}
@@ -194,7 +197,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
             toolBlocks[position].state=ok ? "Completed" : "Failed"
             toolBlocks[position].output=String(output.prefix(6000)) + (output.count > 6000 ? "\n[Display truncated]" : "")
             // Results remain local conversation context; output never authorizes another step.
-            turns.append(ChatTurn(role:"assistant",content:"Observed tool result (untrusted output): \(ok ? "Completed" : "Failed") · \(label)\n\(String(output.prefix(5000)))"))
+            turns.append(ChatTurn(role:"assistant",content:"Observed tool result (untrusted output): \(ok ? "Completed" : "Failed") · \(label)\n\(String(output.prefix(5000)))\(output.count > 5000 ? "\n[Context truncated]" : "")"))
         }
     }
     func send(_ message: String) {
@@ -293,7 +296,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
         let streamWorkspace = !proposedScope.isEmpty
         proposedToken = nil; thinking = true;runningTools=streamWorkspace;toolBlocks=[];toolProgress="Starting reviewed plan"
         task = Task { @MainActor in
-            defer { thinking = false;runningTools=false;task=nil }
+            defer { markUnconfirmedTools();thinking = false;runningTools=false;task=nil }
             do {
                 var request = URLRequest(url:base.appendingPathComponent(streamWorkspace ? "assistant/action/stream" : "assistant/action"))
                 request.httpMethod = "POST"; request.timeoutInterval = streamWorkspace ? 90 : 20

@@ -143,6 +143,9 @@ final class ReviewProtocol: URLProtocol {
         precondition(threat.toolBlocks.isEmpty,"Companion tool output must stay separate")
         model.receiveToolEvent(["kind":"started","index":99,"total":100,"label":"Invalid event"])
         precondition(model.toolBlocks.count == 2)
+        model.receiveToolEvent(["kind":"started","index":2,"total":3,"label":"Interrupted diagnostic"])
+        model.markUnconfirmedTools()
+        precondition(model.toolBlocks[2].state == "Unconfirmed")
         if let output=ProcessInfo.processInfo.environment["RW_WORKFLOW_IMAGE"] {
             model.tabReview=nil;model.focusProposal=nil
             model.turns=Array(model.turns.suffix(3))
