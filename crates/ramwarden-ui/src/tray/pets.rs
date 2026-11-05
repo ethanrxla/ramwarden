@@ -239,6 +239,7 @@ impl Pets {
                     } else {
                         options.threat.clone()
                     };
+                    let _ = SetWindowDisplayAffinity(hwnd, if style.capture_hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE });
                     let mut resized = None;
                     if let Ok(mut pet) = (&*ptr).try_borrow_mut()
                         && pet.style != style

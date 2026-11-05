@@ -89,3 +89,13 @@ Working checklist, November 5, 2026. Windows Store assessment: **NOT READY**; se
 - Vercel custom domains: https://vercel.com/docs/domains/set-up-custom-domain
 
 No public launch, DNS migration, store submission or production database change is recorded as completed by this checklist.
+
+
+## Companion meeting mode
+
+- [ ] Implement [meeting mode](specs/meeting-mode.md): right-click recording,
+  local controls/status, transcript-backed upper-bubble insights opening lower
+  chat, Nyquest processing, account-scoped retrievable history and automatic .md
+  summaries. Reuse reviewed ScholarCal job/summary patterns in Rust.
+- [ ] Verify companion screen-capture exclusion in real meeting apps on each OS;
+  do not equate supported capture exclusion with universal undetectability.

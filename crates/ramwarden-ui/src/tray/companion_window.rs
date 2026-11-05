@@ -33,6 +33,20 @@ impl eframe::App for CompanionWindow {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Apply to chat, settings and the independent upper thought window.
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let saved = Options::load();
+        let hidden = if self.pane == Pane::Threat { saved.threat.capture_hidden } else { saved.ram.capture_hidden };
+        if let Some(window) = frame.winit_window()
+            && let Ok(handle) = window.window_handle()
+            && let RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::*};
+            // SAFETY: winit owns this live HWND on the current UI thread.
+            if unsafe { SetWindowDisplayAffinity(HWND(handle.hwnd.get() as *mut _), if hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) }.is_err() && hidden {
+                self.error = Some("Windows could not exclude this speech box from screen capture.".into());
+            }
+        }
         if let Some(result) = self.audio_result.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.audio_result = None;
             self.audio_status = Some(match result {
@@ -145,7 +159,9 @@ impl eframe::App for CompanionWindow {
                                     ui.separator();
                                     let threat = self.pane == Pane::Threat;
                                     let style = if threat { &mut self.options.threat } else { &mut self.options.ram };
-                                    let mut changed = ui.checkbox(&mut style.audio_muted, "Mute companion audio").changed();
+                                    let mut changed = ui.checkbox(&mut style.capture_hidden, "Hide from supported screen capture").changed();
+                                    ui.small("Applies to this companion and its speech boxes. Verify with your meeting app; this is not a guarantee for every capture method.");
+                                    changed |= ui.checkbox(&mut style.audio_muted, "Mute companion audio").changed();
                                     changed |= ui.checkbox(&mut style.spoken_replies, "Read chat replies aloud").changed();
                                     if changed { self.error = self.options.save().err(); }
                                     ui.horizontal(|ui| {

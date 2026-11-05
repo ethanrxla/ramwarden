@@ -211,6 +211,8 @@ pub struct Style {
     #[serde(default)]
     pub audio_muted: bool,
     #[serde(default)]
+    pub capture_hidden: bool,
+    #[serde(default)]
     pub spoken_replies: bool,
     #[serde(default)]
     pub baa_alerts: bool,
@@ -231,6 +233,7 @@ impl Default for Options {
                 scale: 3,
                 auto_scope: None,
                 audio_muted: false,
+                capture_hidden: false,
                 spoken_replies: false,
                 baa_alerts: false,
                 name: String::new(),
@@ -240,6 +243,7 @@ impl Default for Options {
                 scale: 3,
                 auto_scope: None,
                 audio_muted: false,
+                capture_hidden: false,
                 spoken_replies: false,
                 baa_alerts: false,
                 name: String::new(),

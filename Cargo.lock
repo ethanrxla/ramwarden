@@ -5628,6 +5628,7 @@ version = "0.3.3"
 dependencies = [
  "eframe",
  "gtk4",
+ "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",
