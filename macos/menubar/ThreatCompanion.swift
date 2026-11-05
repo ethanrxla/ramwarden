@@ -72,7 +72,7 @@ struct ThreatAlert: Identifiable {
 }
 struct ThreatEvidence:Identifiable {
     let id:String;let summary:String;let source:String;let complete:Bool;let details:String
-    init(row:[String:Any]){summary=row["summary"] as? String ?? "Evidence";source=row["source"] as? String ?? "Wazuh";complete=row["complete"] as? Bool ?? false;id="\(row["event_id"] as? String ?? ""):\(row["kind"] as? String ?? "")";let data=(try? JSONSerialization.data(withJSONObject:row["data"] ?? [:],options:[.prettyPrinted,.sortedKeys])) ?? Data();details=String(data:data,encoding:.utf8) ?? ""}
+    init(row:[String:Any]){summary=row["summary"] as? String ?? "Evidence";source=row["source"] as? String ?? "Sentinel";complete=row["complete"] as? Bool ?? false;id="\(row["event_id"] as? String ?? ""):\(row["kind"] as? String ?? "")";let data=(try? JSONSerialization.data(withJSONObject:row["data"] ?? [:],options:[.prettyPrinted,.sortedKeys])) ?? Data();details=String(data:data,encoding:.utf8) ?? ""}
 }
 @MainActor private enum SecuritySourceViewer {
     static var window:NSWindow?

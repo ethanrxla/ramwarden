@@ -285,6 +285,7 @@ async fn set_prefs(State(state): State<Arc<AppState>>, method: Method, headers: 
         let since=if old_enabled {a.prefs.get("usage_since").and_then(|v|v.as_u64()).unwrap_or(now)} else {now};
         prefs.insert("usage_since".into(),json!(since));
     }
+    if !enabled && prefs.contains_key("share_usage") {c.store.disable_device_consents(&a.id).await.map_err(storage)?;}
     let a = c.store.set_prefs(&a.id, prefs).await.map_err(storage)?.ok_or_else(|| storage("account vanished"))?;
     Ok(Json(json!({"prefs": a.prefs})).into_response())
 }

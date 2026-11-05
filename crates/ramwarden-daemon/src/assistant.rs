@@ -155,7 +155,7 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
             m.percent(), m.used() as f64 / 1073741824.0, m.total as f64 / 1073741824.0,
             actions.len(), if top.is_empty() {"no process sample yet"} else {&top}, if recent.is_empty() {"none recorded"} else {&recent}, if cloud_allowed {"is opted in but did not respond"} else {"is disabled"}), "facts"));
     let parsed = serde_json::from_str::<Value>(raw_reply.trim().trim_start_matches("```json").trim_end_matches("```").trim()).ok();
-    let reply = parsed.as_ref().and_then(|v|v["reply"].as_str()).filter(|s|!s.trim().is_empty()).unwrap_or(&raw_reply).to_string();
+    let reply = ramwarden_core::branding::public_text(parsed.as_ref().and_then(|v|v["reply"].as_str()).filter(|s|!s.trim().is_empty()).unwrap_or(&raw_reply));
     let action = parsed.as_ref().and_then(|v|serde_json::from_value::<Action>(v["proposed_action"].clone()).ok())
         .filter(|a|match a { Action::ResumeApp { name } => frozen.contains(name), Action::UnloadIdleTabs => browser.is_some_and(|(_,n)|n>0), Action::Workspace{operation,..}=>operation.valid() && service.workspace("ram").is_some(), _ => true });
     let proposed_action = action.map(|mut action| {
@@ -219,7 +219,7 @@ async fn threat_chat(st:&AppState,service:&Service,r:&Request,cloud_allowed:bool
     messages.push(json!({"role":"user","content":r.message}));
     let (raw,tier)=ask_model(st,&messages,cloud_allowed).await.unwrap_or_else(||(if needs_source { format!("Security report: {}. {}. Conversational analysis is unavailable. These are reported rule alerts, not confirmed malware; no scan, quarantine or blocking action has been performed.",wardens.threat.status().headline,wardens.threat.status().detail) } else { "I couldn’t reach my conversation service. Try again in a moment; your security report is available in Protection status.".to_string() },"facts"));
     let parsed=serde_json::from_str::<Value>(raw.trim().trim_start_matches("```json").trim_end_matches("```").trim()).ok();
-    let reply=parsed.as_ref().and_then(|v|v["reply"].as_str()).unwrap_or(&raw);
+    let reply=ramwarden_core::branding::public_text(parsed.as_ref().and_then(|v|v["reply"].as_str()).unwrap_or(&raw));
     let proposed_action=parsed.as_ref().and_then(|v|serde_json::from_value::<Action>(v["proposed_action"].clone()).ok()).and_then(|action|workspace_proposal(service,"threat",action,&r.message));
     Ok(Json(json!({"reply":reply,"tier":tier,"facts":facts,"proposed_action":proposed_action,"read_only":true})))
 }

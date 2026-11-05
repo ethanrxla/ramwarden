@@ -2,9 +2,10 @@
 
 ## Contract
 
-macOS distributes a signed/notarized DMG containing RamWarden.app and an
-Applications shortcut. Drag the actual app to Applications, open it, and use its
-first-run setup to install/update bundled monitoring components. Offline setup
+macOS distributes a signed/notarized DMG containing separate RamWarden Installer.app
+and RamWarden.app bundles plus an Applications shortcut. The installer handles
+license, account approval, required modules and component updates. RamWarden.app
+is the everyday companion/menu-bar app and does not reopen the setup walkthrough. Offline setup
 is supported; account connection and telemetry consent are separate. Windows
 ships an interactive installer with optional desktop shortcut and a final Run
 RamWarden choice. Existing configuration, credentials, identity and history stay.
@@ -35,9 +36,11 @@ and install checks before signing and publishing its update manifest.
 ## Telemetry
 
 Reuse existing device-authenticated numeric diagnostics and 90-day retention.
-Sharing is off until the account owner opts in through account settings. Setup
-shows what is collected and links to the actual consent control; no checked
-box or account login silently enables uploads. No process names, URLs, chat,
+The installer presents a checked usage-sharing choice directly above the privacy
+link. Users can uncheck it. Only confirming the account step saves that choice;
+signing in alone does not enable uploads. Device-authenticated consent affects
+only this computer, and the account-level off control revokes all device choices.
+An offline choice stays pending locally and blocks uploads until synchronized. No process names, URLs, chat,
 file contents or credentials are usage telemetry. Update checks work without
 usage-sharing consent. Installation health checks are local observations, not
 proof every security engine or account feature is operational.
@@ -53,7 +56,7 @@ integration context, not permission to register identities or enable networking.
 
 ## Current release assessment (2026-11-04)
 
-Native Mac source builds with first-run setup in the actual app, persistent chat
+Native Mac source builds with a separate setup installer and companion app, persistent chat
 mute controls, and a six-hour update check while the app is running. The update
 helper verifies signed metadata and streams bounded downloads to disk. Missing
 trust configuration is an explicit error, never an up-to-date claim.
@@ -116,3 +119,30 @@ The development Mac's LaunchAgent explicitly selects localhost:8000 for setup
 sign-in until the production service exists. This override is private local
 configuration; distributable builds retain HTTPS production defaults and accept
 only their trusted approval origins.
+
+## Diagnostics and required modules
+
+Setup emits bounded, fixed-schema local events for steps, license confirmation,
+account connection, installation, health checks, sharing choices and completion.
+Logs rotate at 1 MB and contain no account identifiers, URLs, tokens, commands,
+private keys or chat. A Show diagnostic log action opens the local file. These
+setup events are not yet uploaded to the hosted service; existing numeric usage
+summaries remain the data sent under the sharing choice.
+
+Core binaries are bundled. Optional Pro setup checks the Sentinel and security
+packages, enrolls a missing Sentinel through the existing verified installer,
+installs missing Antivirus/Threat detection dependencies through the supported
+package manager, then configures endpoint services after OS administrator
+approval. An absent package manager opens its vendor's signed OS installer after
+size/hash/signature checks. Completing that separate OS approval and retrying is
+required. Existing configured monitoring is not restarted merely to inspect it.
+Fresh-host end-to-end module setup remains unverified; do not label it production
+ready based solely on this Mac's already-installed modules.
+
+## Agent pairing
+
+The installer links to ScholarCal's existing signed-in agent-pairing page, which
+creates a copyable short-lived invitation. It never fabricates a pairing secret
+or copies an account API key. A native Warden identity/receive connector and a
+browser-to-desktop pairing handoff remain unfinished; a ScholarCal platform-agent
+invitation alone is not proof the local Warden can receive A2A tasks.

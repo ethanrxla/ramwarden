@@ -17,7 +17,7 @@ import SwiftUI
     private func run(_ command:String){
         guard !busy else{return};busy=true
         let bundled=Bundle.main.resourceURL?.appendingPathComponent("payload/ramwarden-launcher").path
-        let helper=bundled ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/ramwarden-launcher").path
+        let helper=bundled.flatMap{FileManager.default.isExecutableFile(atPath:$0) ? $0 : nil} ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/ramwarden-launcher").path
         Task {
             let result:(Int32,String)=await Task.detached {
                 do {

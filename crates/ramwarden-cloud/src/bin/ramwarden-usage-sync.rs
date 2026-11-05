@@ -16,8 +16,9 @@ fn now() -> u64 {
 }
 fn api_base() -> Result<String, Error> {
     let value = std::env::var("RAMWARDEN_ACCOUNT_API")
+        .or_else(|_|std::fs::read_to_string(config::config_dir().join("ramwarden/account-origin")))
         .unwrap_or_else(|_| "https://api.ramwarden.com".into());
-    validated_base(&value)
+    validated_base(value.trim())
 }
 fn validated_base(value: &str) -> Result<String, Error> {
     let url = reqwest::Url::parse(value)?;
@@ -71,6 +72,15 @@ struct Settings {
     enabled: bool,
     since: Option<u64>,
 }
+fn choice_path()->std::path::PathBuf {config::config_dir().join("ramwarden/usage-choice.json")}
+async fn apply_choice(http:&reqwest::Client,base:&str)->Result<(),Error> {
+    let path=choice_path();let Ok(bytes)=std::fs::read(&path) else{return Ok(())};
+    let mut choice:Value=serde_json::from_slice(&bytes)?;
+    if choice["pending"]!=true{return Ok(())}
+    let token=config::device_token().ok_or("Connect this computer to save its sharing choice")?;
+    http.post(format!("{base}/v1/usage/config")).bearer_auth(token).json(&json!({"enabled":choice["enabled"].as_bool().ok_or("Invalid sharing choice")?})).send().await?.error_for_status()?;
+    choice["pending"]=json!(false);save_token(&path,&serde_json::to_string(&choice)?)?;Ok(())
+}
 async fn upload(http: &reqwest::Client, base: &str) -> Result<usize, Error> {
     let token = config::device_token()
         .ok_or("Sign this computer in first with ramwarden-usage-sync login")?;
@@ -114,6 +124,7 @@ async fn login(http: &reqwest::Client, base: &str) -> Result<(), Error> {
             .await?;
         if response.status().is_success() {
             refresh_entitlement(http, base).await?;
+            save_token(&config::config_dir().join("ramwarden/account-origin"),base)?;
             println!("This computer is already connected. Signed access refreshed.");
             return Ok(());
         }
@@ -162,9 +173,8 @@ async fn login(http: &reqwest::Client, base: &str) -> Result<(), Error> {
                 token,
             )?;
             refresh_entitlement(http, base).await?;
-            println!(
-                "This computer is connected. Usage sharing is controlled on your account page."
-            );
+            save_token(&config::config_dir().join("ramwarden/account-origin"),base)?;
+            println!("This computer is connected. Your confirmed sharing choice applies only to this computer.");
             return Ok(());
         }
         if body["error"] != "authorization_pending" {
@@ -181,6 +191,11 @@ async fn main() -> Result<(), Error> {
         .build()?;
     let base = api_base()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s|s=="consent") {
+        let enabled=match args.get(1).map(String::as_str){Some("on")=>true,Some("off")=>false,_=>return Err("Use consent on or consent off".into())};
+        save_token(&choice_path(),&json!({"enabled":enabled,"pending":true}).to_string())?;
+        return match apply_choice(&http,&base).await {Ok(())=>{println!("Usage sharing choice saved for this computer.");Ok(())},Err(_)=>{println!("Sharing choice saved locally; account confirmation is pending. No new sharing was enabled.");Ok(())}};
+    }
     if args.first().is_some_and(|s| s == "login") {
         return login(&http, &base).await;
     }
@@ -191,6 +206,7 @@ async fn main() -> Result<(), Error> {
     }
     let watch = args.iter().any(|s| s == "--watch");
     loop {
+        if let Err(error)=apply_choice(&http,&base).await {eprintln!("Usage sharing choice deferred: {error}");if watch {tokio::time::sleep(Duration::from_secs(300)).await;continue}else{return Err(error)}}
         if let Err(error) = refresh_entitlement(&http,&base).await { eprintln!("Account access refresh deferred: {error}"); }
         match upload(&http, &base).await {
             Ok(0) => println!("Usage sharing is off. No local activity was uploaded."),

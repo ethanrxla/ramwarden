@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/ramwarden-platform", "crates/ramwarden-kernel", "crates/ramwarden-nt", "crates/ramwarden-mac", "crates/ramwarden-debloat", "crates/ramwarden-service", "crates/ramwarden-ml", "crates/ramwarden-core", "crates/ramwarden-daemon", "crates/ramwarden-ai", "crates/ramwarden-api", "crates/ramwarden-wazuh", "crates/ramwarden-wm", "crates/ramwarden-helper", "crates/ramwarden-ui", "crates/ramwarden-cloud", "crates/ramwarden-cli", "crates/ramwarden-updates"]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/ethanrisden/ramwarden"

@@ -147,19 +147,21 @@ class AccountPage {
     const status=h("div");
     const input=h("input",{type:"checkbox","aria-label":"Share usage diagnostics"});
     input.checked=this.account.prefs?.share_usage === true;
+    let changed=false;
+    api.request("GET","/v1/usage").then(result=>{if(!changed)input.checked=result.enabled===true;}).catch(()=>{});
     input.addEventListener("change",async () => {
-      input.disabled=true;
+      changed=true;input.disabled=true;
       try {
         const result=await api.savePrefs({...this.account.prefs,share_usage:input.checked});
         this.account.prefs=result.prefs;
-        show(status,notice("ok",input.checked ? "Sharing starts now on connected devices." : "Usage sharing is off."));
+        show(status,notice("ok",input.checked ? "Sharing enabled. Computers you opted out stay off." : "Usage sharing is off."));
       } catch(error) {input.checked=!input.checked;show(status,notice("error",errorText(error)));}
       finally {input.disabled=false;}
     });
     return h("section",{class:"panel",id:"usage-sharing"},h("h2",{},"Help improve your warden"),
       h("label",{},input," Share usage diagnostics"),
       h("p",{class:"muted"},"Share daily action counts and measured RAM recovery, including close, reopen, pause and resume events. No tab titles, URLs, page contents, app names or file paths. Summaries are kept for 90 days."),
-      h("p",{class:"muted"},"Off by default. Only connected devices can send data, starting when you enable it."),status);
+      h("p",{class:"muted"},"Choose sharing during installation or here. Turning this off disables sharing on connected devices. Only numeric summaries since your choice are sent."),status);
   }
 
   signInMethods() {

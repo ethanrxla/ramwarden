@@ -524,6 +524,11 @@ pub mod contract {
         s.put_oauth("oauth-race",concurrent,NOW).await.unwrap();
         let (a,b)=tokio::join!(s.claim_oauth("oauth-race",NOW,"a"),s.claim_oauth("oauth-race",NOW,"b"));
         assert_eq!(usize::from(matches!(a.unwrap(),OAuthClaim::Ready(_)))+usize::from(matches!(b.unwrap(),OAuthClaim::Ready(_))),1,"one instance owns the poll");
+        s.set_device_consent(crate::usage::DeviceConsent{account_id:"consent-owner".into(),device_id:"mac".into(),enabled:true,since:NOW}).await.unwrap();
+        assert_eq!(s.device_consents("consent-owner").await.unwrap().len(),1);
+        assert!(s.device_consents("other-owner").await.unwrap().is_empty());
+        s.disable_device_consents("consent-owner").await.unwrap();
+        assert!(!s.device_consents("consent-owner").await.unwrap()[0].enabled);
         device_codes(s).await;
         email_codes(s).await;
         accounts_and_billing(s).await;

@@ -272,7 +272,7 @@ pub struct Status {
 
 impl Status {
     pub fn new(level: Level, headline: impl Into<String>, detail: impl Into<String>, checked_at: u64) -> Self {
-        Status { level, headline: headline.into(), detail: detail.into(), checked_at }
+        Status { level, headline: crate::branding::public_text(&headline.into()), detail: crate::branding::service_detail(&detail.into()), checked_at }
     }
 
     pub fn locked(w: &WardenInfo) -> Self {

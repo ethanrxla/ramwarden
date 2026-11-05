@@ -943,3 +943,26 @@ async fn source_events_require_pro_bound_device_and_reject_foreign_records(){
     a.store.revoke_device(&account,&device.id).await.unwrap();assert_eq!(a.call("GET",path,Auth::Bearer(&token),None).await.0,StatusCode::UNAUTHORIZED);
     server.abort();
 }
+
+#[tokio::test]
+async fn installer_sharing_choice_is_device_scoped_and_global_off_revokes_it() {
+    let a=app();let(cookie,id)=a.web(&EvmWallet::new(81)).await;
+    a.store.update_billing(&id,&BillingUpdate{tier:Some(Tier::Pro),paid_until:Some(NOW+86400),..Default::default()}).await.unwrap();
+    let(_,mac)=a.store.register_device(&id,"mac",Platform::Macos,NOW).await.unwrap().unwrap();
+    let(_,pc)=a.store.register_device(&id,"pc",Platform::Windows,NOW).await.unwrap().unwrap();
+    let(status,choice)=a.call("POST","/v1/usage/config",Auth::Bearer(&mac),Some(json!({"enabled":true}))).await;
+    assert_eq!(status,StatusCode::OK,"{choice}");assert_eq!(choice["since"],NOW);
+    let(_,other)=a.call("GET","/v1/usage/config",Auth::Bearer(&pc),None).await;
+    assert_eq!(other["enabled"],false,"one installer cannot opt in another device");
+    let(status,_)=a.call("POST","/v1/usage/config",Auth::Cookie(&cookie),Some(json!({"enabled":true}))).await;
+    assert_eq!(status,StatusCode::UNAUTHORIZED);
+    let(status,_)=a.call("POST","/v1/usage/config",Auth::Bearer(&mac),Some(json!({"enabled":true,"device_id":"another-device"}))).await;
+    assert_eq!(status,StatusCode::UNPROCESSABLE_ENTITY);
+    let(_,settings)=a.call("GET","/v1/usage",Auth::Cookie(&cookie),None).await;
+    assert_eq!(settings["enabled"],true);
+    a.call("PUT","/v1/account/prefs",Auth::Cookie(&cookie),Some(json!({"share_usage":false}))).await;
+    let(_,settings)=a.call("GET","/v1/usage/config",Auth::Bearer(&mac),None).await;
+    assert_eq!(settings["enabled"],false,"account off revokes installer consent");
+    let(status,_)=a.call("POST","/v1/usage/config",Auth::Bearer(&mac),Some(json!({"enabled":false}))).await;
+    assert_eq!(status,StatusCode::OK);
+}

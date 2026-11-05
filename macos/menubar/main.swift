@@ -50,14 +50,6 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu = NSMenu()
     let updates=UpdateController()
-    var setupWindow:NSWindow?
-    func showSetup() {
-        if let window=setupWindow {window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
-        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:680,height:680),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-        window.title="Set up your wardens";window.isReleasedWhenClosed=false
-        window.contentView=NSHostingView(rootView:SetupView(done:{[weak self] in self?.setupWindow?.close()}))
-        window.center();setupWindow=window;window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
-    }
     var snap: Snapshot?
     let companion = Companion()
     var refreshing = false
@@ -77,8 +69,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
         item.menu = menu
         item.button?.title = "RW …"
         rebuild()
-        if Bundle.main.url(forResource:"install-payload",withExtension:"sh") != nil && SetupView.needsSetup {showSetup()}
-        if Bundle.main.url(forResource:"payload/ramwarden-launcher",withExtension:nil) != nil {updates.check();Timer.scheduledTimer(withTimeInterval:21600,repeats:true){_ in Task{@MainActor in self.updates.check()}}}
+        if FileManager.default.isExecutableFile(atPath:FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/ramwarden-launcher").path) {updates.check();Timer.scheduledTimer(withTimeInterval:21600,repeats:true){_ in Task{@MainActor in self.updates.check()}}}
         companion.restore()
         threatCompanion.restore()
         Task { await refresh() }

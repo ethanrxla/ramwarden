@@ -9,6 +9,7 @@ struct SetupView: View {
         let hash=SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()
         return d.string(forKey:"setup.installedVersion") != Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String || d.string(forKey:"setup.licenseHash") != hash
     }
+    @StateObject private var modules=RequiredModules()
     var done: (() -> Void)?
     @State private var step = 0
     @State private var licenseAccepted=false
@@ -20,6 +21,9 @@ struct SetupView: View {
     @State private var installing = false
     @State private var installationComplete = false
     @State private var installResult = ""
+    @State private var shareUsage=true
+    @State private var sharingConfirmed=false
+    @State private var sharingStatus=""
     @State private var connecting = false
     @State private var connectStatus = ""
     @State private var connectURL: URL?
@@ -37,11 +41,11 @@ struct SetupView: View {
                 if i < titles.count - 1 { Rectangle().frame(height: 1).foregroundStyle(.secondary) }
             }}
             Text(titles[step]).font(.title2.bold())
-            Group {
+            ScrollView { VStack(alignment:.leading,spacing:14) {
                 switch step {
                 case 0:
                     Text("Your RAM companion keeps a crowded computer comfortable. ThreatWarden adds security monitoring with Pro. We’ll connect your account, update safely, and check what is actually running.")
-                    Text("Existing settings, credentials, and history should stay with your installation. Do not uninstall or delete your configuration to update.").foregroundStyle(.secondary)
+                    Text("This is RamWarden Installer. RamWarden.app is the separate companion app. Keep only RamWarden.app in Applications; this installer handles setup and updates without deleting your settings.").foregroundStyle(.secondary)
                 case 1:
                     Text("Read the license to the end, then choose whether to accept it.").fixedSize(horizontal:false,vertical:true)
                     GeometryReader { viewport in
@@ -55,7 +59,7 @@ struct SetupView: View {
                     }.frame(height:210).background(Color.primary.opacity(0.04),in:RoundedRectangle(cornerRadius:8))
                     Toggle("I have read and agree to the license agreement",isOn:$licenseAccepted).disabled(!reachedLicenseEnd || licenseText.isEmpty)
                         .onChange(of:licenseAccepted){accepted in
-                            if accepted {UserDefaults.standard.set(licenseHash,forKey:"setup.licenseHash");UserDefaults.standard.set(Date().timeIntervalSince1970,forKey:"setup.licenseAcceptedAt")}
+                            if accepted {SetupEvents.record(.licenseAccepted,step:step,result:true);UserDefaults.standard.set(licenseHash,forKey:"setup.licenseHash");UserDefaults.standard.set(Date().timeIntervalSince1970,forKey:"setup.licenseAcceptedAt")}
                             else {UserDefaults.standard.removeObject(forKey:"setup.licenseHash")}
                         }
                     if !reachedLicenseEnd {Text("Scroll to the bottom to enable acceptance.").font(.caption).foregroundStyle(.secondary)}
@@ -65,13 +69,19 @@ struct SetupView: View {
                     Button(connecting ? "Waiting for account approval…" : "Connect this Mac") { Task { await connect() } }.disabled(connecting)
                     if let url = connectURL { Button("Approve this computer in browser") { NSWorkspace.shared.open(url) } }
                     if !connectStatus.isEmpty { Text(connectStatus).font(.callout).textSelection(.enabled) }
-                    Text("Usage sharing is off until you enable it in account settings. It sends numeric activity totals, not tab URLs, chats, file contents, or process names.").font(.callout).foregroundStyle(.secondary)
-                    Button("Review usage-sharing settings"){open("/account.html")}
+                    Toggle("Share usage data to improve Warden",isOn:$shareUsage)
+                    Text("Numeric action counts and measured RAM recovery from this computer. No tab URLs, chat or file contents. You can uncheck this or change it later.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    Button("Privacy policy"){open("/privacy.html")}.buttonStyle(.link)
+                    if !sharingStatus.isEmpty {Text(sharingStatus).font(.caption)}
                     Text("GitHub sign-in does not grant remote access. Tailscale remains optional and separately authorized.").font(.callout).foregroundStyle(.secondary)
                 case 3:
                     Text("Everything needed for this Mac is bundled here. Install the daemon, menu bar companion, and browser extension without downloading another installer. Existing settings and account credentials stay in place.")
                     Button(installing ? "Installing…" : "Install on this Mac") { Task { await install() } }.disabled(installing)
+                    Button(modules.busy ? "Installing required modules…" : "Install required security modules (Pro)"){Task{await modules.install()}}.disabled(modules.busy || !installationComplete)
+                    Button("Check installed modules"){Task{await modules.check()}}
+                    Text(modules.status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     if !installResult.isEmpty { Text(installResult).font(.callout).textSelection(.enabled) }
+                    Button("Get the browser extension"){SetupEvents.record(.extensionOpened,step:step);open("/setup.html#browser-extension")}
                     Button("Show browser extension folder") { NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RamWarden/extension")) }
                     Text("After installation, enable the browser extension in each profile you want your warden to manage. The browser page explains the steps.").foregroundStyle(.secondary)
                 case 4:
@@ -79,15 +89,17 @@ struct SetupView: View {
                     HStack { Button(checking ? "Checking…" : "Check this Mac") { Task { await check() } }.disabled(checking); Text(health).accessibilityLabel("Daemon status: \(health)") }
                     Text("Open the companion to verify its connection. In Customize your ram, choose its name, colors, eyes, and size when supported by your installed version.").foregroundStyle(.secondary)
                 default:
+                    Button("Create a ScholarCal A2A pairing invitation") {SetupEvents.record(.pairingOpened,step:step);if let url=URL(string:"https://scholarcal.com/settings?tab=agents"){NSWorkspace.shared.open(url)}}
+                    Text("ScholarCal provides a copyable, expiring pairing invitation after you sign in. Share that invitation, never an account API key. The local Warden A2A connector is not connected yet.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     Text("Give your own agent this request. It contains no keys, pass files, or personal install links. Your account’s remaining allowance is always checked by the server.")
                     Picker("Plan guidance", selection: $allowance) { Text("Lite · 1 PC").tag(1); Text("Plus · 3 PCs").tag(3); Text("Pro · 5 PCs").tag(5) }.pickerStyle(.segmented)
                     Text("Choosing a plan here only changes the request. It does not purchase or unlock anything.").font(.caption).foregroundStyle(.secondary)
                     Button(copied ? "Copied" : "Copy setup request + agent skill") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(prompt + "\n\n" + bundledSkill, forType: .string); copied = true }
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal:false,vertical:true)
-            Spacer()
-            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 5 ? "Done" : "Continue") { if step == 5 { if let done=done {done()} else {NSApp.terminate(nil)} } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 5 && !installationComplete) || (step == 1 && !licenseAccepted)) }
-        }.padding(32).onAppear{licenseAccepted=UserDefaults.standard.string(forKey:"setup.licenseHash") == licenseHash && !licenseText.isEmpty;reachedLicenseEnd=licenseAccepted}.onDisappear { loginProcess?.terminate() }
+            }.frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true) }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 5 ? "Done" : "Continue") { if step == 5 { SetupEvents.record(.completed,step:step,result:installationComplete);if let done=done {done()} else {NSApp.terminate(nil)} } else { if step == 2 {sharingConfirmed=true;Task{await saveSharingChoice()}};step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 5 && !installationComplete) || (step == 1 && !licenseAccepted)) }
+                    Button("Show setup diagnostic log"){NSWorkspace.shared.activateFileViewerSelecting([SetupEvents.path])}.font(.caption)
+        }.padding(32).onChange(of:step){SetupEvents.record(.stepEntered,step:$0)}.onAppear{SetupEvents.record(.opened,step:step);if let previous=UserDefaults.standard.object(forKey:"setup.shareUsage") as? Bool {shareUsage=previous};licenseAccepted=UserDefaults.standard.string(forKey:"setup.licenseHash") == licenseHash && !licenseText.isEmpty;reachedLicenseEnd=licenseAccepted}.onDisappear { SetupEvents.record(.closed,step:step);loginProcess?.terminate() }
     }
     private var licenseText:String {
         guard let url=Bundle.main.url(forResource:"LICENSE",withExtension:"txt") else{return ""}
@@ -100,10 +112,25 @@ struct SetupView: View {
         return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
     private var prompt: String {
-        "Help me set up RamWarden on up to \(allowance) of my chosen computers within my account’s remaining device allowance. Follow https://github.com/ethanrxla/ramwarden/blob/main/agent/skills/ramwarden/SKILL.md. Check each OS and existing installation first; update in place and preserve settings, credentials, and history. Use only remote access I already authorized. Sign each computer in separately using its own approval code; never copy tokens, fingerprints, signed passes, or reuse an install link. Ask me before granting remote access or changing network/security settings. Verify daemon health, companion, and browser extension per computer. Do not buy anything. Report actual results."
+        "Help me set up RamWarden on up to \(allowance) of my chosen computers within my account’s remaining device allowance. Follow https://ramwarden.com/assets/ramwarden-skill.md. Check each OS and existing installation first; update in place and preserve settings, credentials, and history. Use only remote access I already authorized. Sign each computer in separately using its own approval code; never copy tokens, fingerprints, signed passes, or reuse an install link. Ask me before granting remote access or changing network/security settings. Verify daemon health, companion, and browser extension per computer. Do not buy anything. Report actual results."
+    }
+    @MainActor private func saveSharingChoice() async {
+        UserDefaults.standard.set(shareUsage,forKey:"setup.shareUsage")
+        guard let helper=Bundle.main.resourceURL?.appendingPathComponent("payload/ramwarden-usage-sync") else{return}
+        let enabled=shareUsage;let api=site == "http://localhost:8000" ? site : "https://api.ramwarden.com"
+        sharingStatus=await Task.detached {
+            do {
+                let process=Process();process.executableURL=helper;process.arguments=["consent",enabled ? "on" : "off"]
+                var environment=ProcessInfo.processInfo.environment;environment["RAMWARDEN_ACCOUNT_API"]=api;process.environment=environment
+                let pipe=Pipe();process.standardOutput=pipe;process.standardError=pipe;try process.run();let data=pipe.fileHandleForReading.readDataToEndOfFile();process.waitUntilExit()
+                return process.terminationStatus == 0 ? (String(data:data,encoding:.utf8) ?? "Choice saved.") : "Choice could not be saved yet."
+            } catch {return "Choice could not be saved yet."}
+        }.value
+        SetupEvents.record(.sharingChoiceSaved,step:2,result:!sharingStatus.contains("could not"))
     }
     @MainActor private func connect() async {
         guard let helper = Bundle.main.resourceURL?.appendingPathComponent("payload/ramwarden-usage-sync"), FileManager.default.isExecutableFile(atPath: helper.path) else { connectStatus = "Open the complete disk image to connect this Mac."; return }
+        let started=Date();SetupEvents.record(.connectionStarted,step:step)
         connecting = true; connectURL = nil; connectStatus = "Starting this computer’s sign-in…"
         defer { connecting = false; loginProcess = nil }
         let process = Process(); process.executableURL = helper; process.arguments = ["login"]
@@ -129,9 +156,12 @@ struct SetupView: View {
             return process.terminationStatus == 0 ? "This Mac is connected to your account." : "Sign-in did not finish. Try again when the account service is reachable."
         }.value
         connectStatus = result; connectURL = nil
+        SetupEvents.record(.connectionFinished,step:step,result:result == "This Mac is connected to your account.",duration:Date().timeIntervalSince(started))
+        if result == "This Mac is connected to your account." && sharingConfirmed {await saveSharingChoice()}
     }
     @MainActor private func install() async {
         guard licenseAccepted && reachedLicenseEnd && !licenseText.isEmpty else {installResult="Read and accept the bundled license before installation.";return}
+        let started=Date();SetupEvents.record(.installationStarted,step:step)
         installing = true; defer { installing = false }
         guard let resources = Bundle.main.resourceURL,
               FileManager.default.fileExists(atPath: resources.appendingPathComponent("install-payload.sh").path) else { installResult = "This build has no installation payload. Use the complete disk image."; return }
@@ -175,6 +205,7 @@ struct SetupView: View {
                 } catch { return "Installation could not start: " + error.localizedDescription }
             }.value
             installResult = result
+            SetupEvents.record(.installationFinished,step:step,result:result.contains("Installed. Your settings"),duration:Date().timeIntervalSince(started))
             if result.contains("Installed. Your settings") {installationComplete=true;UserDefaults.standard.set(Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String,forKey:"setup.installedVersion")}
         } catch { installResult = "Installation stopped: " + error.localizedDescription }
     }
@@ -187,6 +218,7 @@ struct SetupView: View {
             let value = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             health = (response as? HTTPURLResponse)?.statusCode == 200 && value?["ok"] as? Bool == true ? "Daemon is answering" : "Daemon returned an unexpected status"
         } catch { health = "Not connected yet" }
+        SetupEvents.record(.healthChecked,step:step,result:health == "Daemon is answering")
     }
 }
 
