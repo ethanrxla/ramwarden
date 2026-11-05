@@ -38,7 +38,7 @@ bash "$RES/install-payload.sh" --verify
 codesign "${SIGN[@]}" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 ln -s /Applications "$STAGE/Applications"
-printf '%s\n' 'Open RamWarden Installer for the license, account connection and bundled component installation. RamWarden.app is the separate everyday companion app; only that app belongs in Applications. The installer preserves existing settings and credentials.' > "$STAGE/READ ME.txt"
+printf '%s\n' 'Drag RamWarden.app to Applications first. Then open RamWarden Installer for the license, account connection and bundled component installation. RamWarden.app is the separate everyday companion app; only that app belongs in Applications. The installer preserves existing settings and credentials.' > "$STAGE/READ ME.txt"
 hdiutil create -volname 'RamWarden' -srcfolder "$STAGE" -ov -format UDZO "$OUT/RamWarden.dmg"
 codesign "${SIGN[@]}" "$OUT/RamWarden.dmg"
 printf 'Built %s\n' "$OUT/RamWarden.dmg"

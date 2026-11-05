@@ -41,7 +41,7 @@ project link or deployment. This leaves the ordinary Vercel CLI profile alone.
 - Atlas access from the deployment network without opening management systems.
 - Production account/payment tests, secrets, HTTPS and rollback verification.
 - Signed/notarized Mac and Windows release artifacts published to GitHub Releases
-  (currently no releases exist), with checksums and the signed updater manifest.
+  (only a draft candidate exists; no public release), with checksums and the signed updater manifest.
 
 A preview with isolated development data can precede production. Do not promote
 this draft API topology or enable live payments until the gates pass. Vercel
@@ -71,3 +71,23 @@ work. Verified GitHub numeric IDs survive retryable database failures inside the
 encrypted attempt, avoiding a second provider exchange. Failed/cancelled auth is
 consumed; abandoned leases become retryable until the original attempt expires.
 Changing encryption keys invalidates pending logins but does not unlink accounts.
+
+
+## Deployment check — 2026-11-05
+
+Isolated CLI still identifies the expected Ethan Risden account under ram-warden.
+`vercel ls ramwarden --scope ram-warden` reports no deployments and `vercel env
+ls` reports no environment variables. No public API, sign-in or production
+pairing readiness is implied by the local installer build. PR #54's previous
+head passed all five CI jobs; newer installer integration needs fresh CI.
+
+Guest pairing is implemented in the daemon and separate installer. Its hosted
+relay is proposed separately in smartcalendar PR #18, disabled by default. Twelve
+backend tests plus a real Rust-client HTTP interoperability test pass locally.
+The additive hosted database migration, shared abuse-control configuration and
+HTTPS smoke test are still required before turning it on. ScholarCal login is
+optional for calendar skill access and never required for guest pairing.
+
+The private 0.3.3 Mac candidate deliberately uses localhost:8000 for account
+setup. Public release builds must use the deployed HTTPS account service instead.
+Do not publish the private development candidate as the production download.

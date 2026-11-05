@@ -49,3 +49,5 @@ pub mod companion_memory;
 
 pub mod workspace_tools;
 pub mod workspace_run;
+
+pub mod agent_network;

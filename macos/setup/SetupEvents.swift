@@ -2,7 +2,7 @@ import Foundation
 
 // Fixed-schema diagnostics: callers cannot pass URLs, account details or command output.
 enum SetupEvents {
-    enum Event:String {case modulesStarted,modulesFinished,opened,stepEntered,licenseAccepted,connectionStarted,connectionFinished,installationStarted,installationFinished,healthChecked,sharingChoiceSaved,extensionOpened,pairingOpened,completed,closed}
+    enum Event:String {case modulesStarted,modulesFinished,opened,stepEntered,licenseAccepted,connectionStarted,connectionFinished,installationStarted,installationFinished,healthChecked,sharingChoiceSaved,extensionOpened,pairingOpened,pairingOperationStarted,pairingOperationFinished,completed,closed}
     private static let queue=DispatchQueue(label:"com.ramwarden.setup-events",qos:.utility)
     private static let flow=UUID().uuidString
     static var path:URL {FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/RamWarden/setup-events.jsonl")}
