@@ -10,6 +10,7 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 - [x] CI41993576330 all5checks passed; PR57 merged into development PR54 as a211b6e. Mac source fast-forwarded; all5 concurrent source files preserved by hash.
 - [ ] Recheck Wazuh001Windows/002Mac and each device's local ClamAV signatures/scans, Suricata capture/drop counters and network view. Record timestamped per-engine evidence, offline/error states and a benign detection fixture. An unlocked pass or zero alerts does not prove coverage.
 - [ ] Upgrade Windows native UI: pixel ram tray icon, RAM/Threat panes, companion/chat access, account state. Current installed tray is the old memory gauge. Test with the existing Pro sign-in, preserving settings and rollback.
+  November5 update: pixel-icon tray and RAM/Threat panes installed and verified on the existing Pro account. Companion/chat remains open. Windows engine report1793869329: Wazuh/ClamAV/Suricata/network all on; scan completed just now,11560capture packets/0drops since restart. Wazuh queue warnings during recovery remain to be checked; protected state files require administrator read access.
 - [ ] Measure real model request rates/costs on both machines; establish Plus/Pro quotas with enforced account budgets. Do not infer a quota from a short sample.
 - [ ] Verify account-scoped learning and reopen/Keep feedback across restarts and supported platforms. Tailscale discovery must never grant entitlement or cross-account access.
 
@@ -46,6 +47,7 @@ Working checklist, November 5, 2026. A checked item has evidence below; all othe
 
 - [ ] Windows standalone signed .exe installer with product icon/version metadata, per-user app plus narrowly scoped elevated sensor setup, Start menu/uninstaller, logon behavior, silent flags/exit codes, upgrade from the original installed version and repair/rollback. Verify no console flashes or duplicate tray/daemon.
 - [ ] Windows desktop exposes RAM, ThreatWarden, both companions and account/sign-in status; a Pro login unlocks features without reinstalling or copying developer credentials. Offline or missing engines report truthfully.
+  RAM/Threat engine panes now work in the installed app. Pixel ram fitted to unchanged Windows/extension canvas sizes; generated extension assets are pushed, live extension reload/store delivery remains unverified.
 - [ ] Linux separately packaged GTK app and daemon: supported distro/architecture matrix, .deb/.rpm or documented chosen formats, desktop entry/icon, systemd user/service separation, polkit/capabilities only where needed, upgrade/uninstall and Wayland/X11 tests.
 - [ ] Mac signed/notarized app/installer for Intel/Apple Silicon, verified update feed, Gatekeeper fresh-download test, permissions, upgrade/repair/uninstall and rollback. Draft54 is not yet release-ready.
 - [ ] Signed release metadata, artifact integrity checks, version/channel migration, resumable update failures and a known-good rollback. App settings and account tokens survive updates securely.
