@@ -479,6 +479,10 @@ struct AssistantView: View {
                 Circle().fill(model.connected ? Color.green : Color.orange).frame(width:6,height:6)
                 Text(model.name).font(.system(size:12,weight:.semibold))
                 Spacer()
+                Button {model.chooseWorkspace()} label: {
+                    Image(systemName:model.workspaceScope.isEmpty ? "folder.badge.plus" : "folder.fill").font(.system(size:11))
+                }.buttonStyle(.plain).disabled(model.thinking).accessibilityLabel("Choose workspace folder")
+                    .help("\(model.workspaceStatus). Choose the folder for this companion.")
                 Button(action:settings) { Image(systemName:"gearshape").font(.system(size:11)) }.buttonStyle(.plain).accessibilityLabel("Settings")
                 Button(action:dismiss) { Image(systemName:"xmark").font(.system(size:10,weight:.semibold)) }
                     .buttonStyle(.plain).accessibilityLabel("Close chat")
@@ -581,8 +585,8 @@ struct AssistantView: View {
         }.padding(12).frame(width:288,height:model.chatHeight - 16)
             .modifier(ChatGlass())
             .padding(8)
-            .onAppear { inputFocused = true }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { note in if note.object as? String == model.profile.id { inputFocused = true } }
+            .onAppear { inputFocused = true;model.refreshWorkspace() }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("WardenChatOpened"))) { note in if note.object as? String == model.profile.id { inputFocused = true;model.refreshWorkspace() } }
             .onExitCommand(perform:dismiss)
     }
     func send() { model.send(message); message = "" }

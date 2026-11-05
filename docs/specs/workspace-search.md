@@ -4,6 +4,9 @@
 It is a literal, case-sensitive search with a nonempty, single-line query of at
 most 200 bytes. Results contain relative paths, one-based line numbers and text
 excerpts. It can be proposed alone or as a step in a reviewed workflow.
+The Mac chat header has a folder button for choosing the current companion's
+workspace directly. Its tooltip shows the selected path; folder selection is
+disabled while a request or tool plan is running.
 
 Search uses the existing capability-based text reader, excluding credential
 paths and symlinks. It skips binary files, non-UTF-8 files and files over 16 KB.
