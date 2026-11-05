@@ -304,7 +304,7 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
         ui.filter.connect_search_changed(move |_| repopulate(&u));
     }
 
-    window.set_child(Some(&outer));
+    window.set_child(Some(&panes(&outer, &client)));
     window.present();
 
     // ── refresh loop ────────────────────────────────────────────────────────
@@ -322,6 +322,47 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
             glib::timeout_future(REFRESH).await;
         }
     });
+}
+
+/// The window as one pane per warden: the RAM pane is the memory view above,
+/// ThreatWarden's is `crate::threat`. A linked pair of toggles switches them;
+/// ThreatWarden's carries its level dot so an alert is visible from the RAM
+/// pane too.
+fn panes(ram: &gtk4::Box, client: &Rc<Client>) -> gtk4::Box {
+    let stack = gtk4::Stack::builder().transition_type(gtk4::StackTransitionType::Crossfade).build();
+    stack.add_named(ram, Some("ram"));
+    let threat = crate::threat::pane(Rc::clone(client));
+    stack.add_named(&threat.widget, Some("threat"));
+
+    let ram_button = gtk4::ToggleButton::with_label("RAM");
+    ram_button.set_active(true);
+    let threat_button = gtk4::ToggleButton::new();
+    let inner = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    inner.append(&gtk4::Label::new(Some("ThreatWarden")));
+    inner.append(&threat.badge);
+    threat_button.set_child(Some(&inner));
+    threat_button.set_group(Some(&ram_button));
+    for (button, name) in [(&ram_button, "ram"), (&threat_button, "threat")] {
+        button.set_hexpand(true);
+        let stack = stack.clone();
+        button.connect_toggled(move |b| {
+            if b.is_active() {
+                stack.set_visible_child_name(name);
+            }
+        });
+    }
+    let switcher = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    switcher.add_css_class("linked");
+    switcher.set_margin_top(10);
+    switcher.set_margin_start(14);
+    switcher.set_margin_end(14);
+    switcher.append(&ram_button);
+    switcher.append(&threat_button);
+
+    let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    root.append(&switcher);
+    root.append(&stack);
+    root
 }
 
 /// A comparator for one column, in GTK's own sorter form.
@@ -968,6 +1009,16 @@ mod live_tests {
         build_for_test(&app, Client::new("127.0.0.1", port).unwrap());
         let window = app.windows()[0].clone();
         let tree = widgets(window.upcast_ref());
+        let stack=tree.iter().find_map(|w|w.clone().downcast::<gtk4::Stack>().ok()).expect("warden panes");
+        assert!(stack.child_by_name("ram").is_some());
+        assert!(stack.child_by_name("threat").is_some());
+        let toggles:Vec<_>=tree.iter().filter_map(|w|w.clone().downcast::<gtk4::ToggleButton>().ok()).collect();
+        let ram_toggle=toggles.iter().find(|b|b.label().as_deref()==Some("RAM")).expect("RAM toggle");
+        let threat_toggle=toggles.iter().find(|b|b.child().is_some_and(|c|widgets(&c).iter().filter_map(|w|w.clone().downcast::<gtk4::Label>().ok()).any(|l|l.text()=="ThreatWarden"))).expect("ThreatWarden toggle");
+        threat_toggle.set_active(true);
+        assert_eq!(stack.visible_child_name().as_deref(),Some("threat"));
+        ram_toggle.set_active(true);
+        assert_eq!(stack.visible_child_name().as_deref(),Some("ram"));
         let labels: Vec<_> = tree.iter().filter_map(|w| w.clone().downcast::<gtk4::Label>().ok()).collect();
         let has_text = |needle: &str| labels.iter().any(|l| l.text().contains(needle));
         let analyse = tree.iter().filter_map(|w| w.clone().downcast::<gtk4::Button>().ok())

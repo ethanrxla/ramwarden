@@ -160,7 +160,7 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
     if !p.detail.is_empty() {
         c.append(&label(&p.detail, true));
     }
-    if let Some(s) = &p.summary {
+    if let Some(s) = &p.summary && s != &p.detail && s != &p.headline {
         c.append(&markup(&format!("<i>{}</i>", esc(s))));
     }
 
@@ -184,17 +184,12 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
                 );
             });
             c.append(&b);
-            c.append(&label(
-                &format!(
-                    "{price}. Pay with Phantom, MetaMask or card. Your RAM warden stays free."
-                ),
-                true,
-            ));
+            c.append(&label(price, true));
         }
         PaneAction::TurnOn => {
             let b = gtk4::Button::with_label("Turn on");
             b.add_css_class("suggested-action");
-            b.set_tooltip_text(Some("Installs Wazuh's own agent and connects it. Your system asks for your password once."));
+            b.set_tooltip_text(Some("Requests engine setup. Installation may require an operating system permission prompt."));
             let note = label("", true);
             let (cl, u, n) = (client.clone(), ui.clone(), note.clone());
             b.connect_clicked(move |b| {
@@ -274,7 +269,7 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
 
     if !p.agents.is_empty() {
         c.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        c.append(&heading("Your other computers"));
+        c.append(&heading("Reporting devices"));
         for a in &p.agents {
             c.append(&label(a, true));
         }

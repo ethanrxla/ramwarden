@@ -50,7 +50,7 @@ jobs:
         if: steps.platform.outputs.supported == 'true'
       - name: Linux GUI dependencies
         if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev xvfb xauth
       - name: Format
         if: steps.platform.outputs.supported == 'true'
         # Advisory until one repo-wide `cargo fmt` commit lands after the
@@ -63,6 +63,9 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Linux native GTK window
+        if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
+        run: xvfb-run -a cargo test -p ramwarden-ui --features gui --lib -- --test-threads=1
       - name: Windows sensor configuration regression
         if: runner.os == 'Windows'
         run: |
