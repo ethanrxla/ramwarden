@@ -395,6 +395,8 @@ struct PixelRam: View {
 // Native clear Liquid Glass follows system contrast/transparency preferences.
 struct ChatGlass: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
+        // Xcode 26 ships Swift 6.2 and the SDK that declares glassEffect.
+        // The runtime check alone cannot compile against the older CI SDK.
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content.glassEffect(.clear, in: RoundedRectangle(cornerRadius:20))

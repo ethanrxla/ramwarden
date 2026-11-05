@@ -20,7 +20,9 @@ jobs:
             platform_crate: crates/ramwarden-kernel
           - os: windows-latest
             platform_crate: crates/ramwarden-nt
-          - os: macos-latest
+          # ARM hosted jobs repeatedly expired without acquiring a runner.
+          # Keep the full macOS suite on the supported Intel image.
+          - os: macos-15-intel
             platform_crate: crates/ramwarden-mac
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +65,12 @@ jobs:
         run: cargo test --workspace
       - name: Windows sensor configuration regression
         if: runner.os == 'Windows'
-        run: powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-eve-policy.ps1
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-eve-policy.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-evidence-access.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-capture-clock.ps1
       - name: Mac sensor repair rollback regression
         if: runner.os == 'macOS'
         run: python3 scripts/threatwarden-engines/test-macos-repair.py

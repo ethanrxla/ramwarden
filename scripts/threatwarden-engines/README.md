@@ -74,6 +74,23 @@ capture counters, refreshes the existing scheduled scan/update tasks, and grants
 read-only evidence access. This operator script targets the established
 `D:\ThreatWarden` installation; it is not a general-purpose Windows installer.
 
+Windows evidence permissions distinguish directories from files: inherited
+folder grants alone did not make existing protected EVE files readable. The
+repair script grants RX explicitly to existing files and inheritable RX to their
+directories, with a regression covering protected files and newly rotated files.
+It does not grant write access to sensor scripts, logs or definitions.
+
+The Windows Suricata 8.0.7 build emits an incorrect timezone offset when DST is
+supported, causing fresh counters to appear in the future. The installer sets
+`TZ=UTC0` only in the Suricata service's Environment value, preserving other
+variables and backing up the old value. It does not change the Windows timezone.
+The source issue is in `WinStrftime` in
+[Suricata 8.0.7 util-time.c](https://github.com/OISF/suricata/blob/suricata-8.0.7/src/util-time.c).
+Use the offline privacy test with `--check-clock` and process environment
+`TZ=UTC0` to verify the EVE timestamp equals the synthetic PCAP timestamp.
+Live validation on November 4 confirmed timestamped successful Windows scan
+events at the manager, fresh capture counters and zero reported capture drops.
+
 The daemon's paid `/wardens/threat` report now includes local sensor evidence and
 `sensors.network.connections`. Connection inventory is established TCP only,
 limited to what the OS exposes to the current user (UDP and other users may be

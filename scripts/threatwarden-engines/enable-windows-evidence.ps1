@@ -12,12 +12,12 @@ $text=Set-ThreatWardenEve $text
 & (Join-Path $root 'suricata.exe') -T -c $candidate -l (Join-Path $root 'log') *> (Join-Path $root 'log\evidence-validation.log')
 if ($LASTEXITCODE -ne 0) { throw 'Candidate failed validation; running configuration retained' }
 [IO.File]::Replace($candidate,$config,$backup)
-try { Restart-Service Suricata -ErrorAction Stop } catch { Copy-Item $backup $config -Force; Restart-Service Suricata; throw }
+. (Join-Path $PSScriptRoot 'windows-capture-clock.ps1')
+try {
+    Set-SuricataCaptureClock -Restart
+} catch { Copy-Item $backup $config -Force; Restart-Service Suricata; throw }
 & (Join-Path $PSScriptRoot 'schedule-windows.ps1') -ScanPath $ScanPath
 # Expose evidence read-only to the current interactive user. No script write access.
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-foreach ($path in @('C:\ProgramData\ThreatWarden\logs', (Join-Path $root 'log'), 'D:\ThreatWarden\ClamAV\database')) {
-    & icacls.exe $path /grant "*$($sid):(OI)(CI)RX" /T | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Could not grant evidence read access' }
-}
+& (Join-Path $PSScriptRoot 'repair-windows-evidence-access.ps1') -ReaderSid $sid
 Write-Output 'Sensor evidence and daily scan/update tasks configured. Defender unchanged.'
