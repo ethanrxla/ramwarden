@@ -184,6 +184,13 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
 
 fn security_evidence_request(message:&str)->bool {
     let text=message.to_lowercase();
+    let mut command=text.trim();
+    for prefix in ["please ","can you ","could you ","please "] {command=command.strip_prefix(prefix).unwrap_or(command);}
+    let file_command=["search ","find ","read ","list ","create ","write "].iter().any(|prefix|command.starts_with(prefix));
+    let file_target=command.starts_with("search . ") || command.split_whitespace().any(|word|
+        ["files","folder","folders","code","project","workspace"].contains(&word)
+        || word.contains('/') || [".rs",".swift",".json",".toml",".md",".txt",".py",".js",".log"].iter().any(|ext|word.ends_with(ext)));
+    if file_command && file_target {return false}
     text.split(|c:char|!c.is_alphanumeric()).any(|word|[
         "evidence","port","ports","listen","listening","investigate","trace","rule","rules","alert","alerts","login","logins","vulnerability","vulnerabilities","malware","suricata","clamav","sentinel","antivirus","syscheck"
     ].contains(&word) || word.strip_prefix("rule").is_some_and(|id|!id.is_empty() && id.chars().all(|c|c.is_ascii_digit()))) || text.contains("what changed") || text.contains("file change")
@@ -352,8 +359,8 @@ mod tests {
     }
     #[test]
     fn security_intent_uses_words_not_substrings() {
-        for message in ["read notes.txt using the supported file operation","create a portfolio folder","can you shut the fuck up dumbass goat"] {assert!(!security_evidence_request(message));}
-        for message in ["explain rule 533","what ports changed?","show all alerts","what changed in that file?","rule533 evidence"] {assert!(security_evidence_request(message));}
+        for message in ["read notes.txt using the supported file operation","create a portfolio folder","can you shut the fuck up dumbass goat","search . for alert","please find ports in project files","read alerts.json"] {assert!(!security_evidence_request(message),"{message}");}
+        for message in ["explain rule 533","what ports changed?","show all alerts","what changed in that file?","rule533 evidence","search all alerts","find port 443","read file change alerts"] {assert!(security_evidence_request(message),"{message}");}
     }
     #[test]
     fn companions_have_independent_folder_capabilities_and_proposals() {

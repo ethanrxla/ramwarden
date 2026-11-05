@@ -290,3 +290,32 @@ async fn workspace_stream_is_not_available_to_web_origins_or_network_listeners()
     let mut st=state();Arc::make_mut(&mut st.cfg).server.host="0.0.0.0".into();
     assert_eq!(post_route(ramwarden_daemon::routes::router(st),"/assistant/action/stream",json!({"token":"none"})).await.0,StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn workspace_search_uses_the_selected_folder_and_observed_matches() {
+    use axum::{Json,Router,routing::post};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
+    let mock=Router::new().route("/api/chat",post(|Json(v):Json<Value>|async move {
+        assert!(v["messages"].as_array().unwrap().iter().any(|m|m["content"].as_str().unwrap_or("").contains("search_text(path,query)")));
+        Json(json!({"message":{"content":json!({"reply":"Review the search.","proposed_action":{"kind":"workspace","operation":{"tool":"search_text","path":"src","query":"needle"}}}).to_string()}}))
+    }));
+    let server=tokio::spawn(async move {axum::serve(listener,mock).await.unwrap()});
+    let folder=tempfile::tempdir().unwrap();
+    std::fs::create_dir(folder.path().join("src")).unwrap();
+    std::fs::write(folder.path().join("src/example.rs"),"first\nneedle here\n").unwrap();
+    std::fs::write(folder.path().join("src/.env"),"needle credential").unwrap();
+    let mut st=state();let cfg=Arc::make_mut(&mut st.cfg);
+    cfg.ollama.host=format!("http://{addr}");cfg.assistant.workspace=Some(folder.path().into());
+    st.ai=Arc::new(ramwarden_daemon::ai::provider(&st.cfg));let app=ramwarden_daemon::routes::router(st);
+    let (_,proposal)=post_route(app.clone(),"/assistant/chat",json!({"message":"search src/ for needle"})).await;
+    let action=&proposal["proposed_action"];
+    assert!(action["preview"].as_str().unwrap().contains("needle"));
+    let (status,result)=post_route(app,"/assistant/action",json!({"token":action["token"]})).await;
+    assert_eq!(status,StatusCode::OK);
+    let report:Value=serde_json::from_str(result["reply"].as_str().unwrap().split_once('\n').unwrap().1).unwrap();
+    assert_eq!(report["matches"].as_array().unwrap().len(),1);
+    assert_eq!(report["matches"][0]["path"],"src/example.rs");
+    assert_eq!(report["matches"][0]["line"],2);
+    assert!(!report.to_string().contains("credential"));
+    server.abort();
+}
