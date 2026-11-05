@@ -361,47 +361,17 @@ struct PixelRam: View {
         default: return Color(red:0.10,green:0.05,blue:0.08)
         }
     }
+    // Shared with Windows/Linux; missing artwork must never become a different pet.
+    static let baseCells: [Character] = {
+        guard let url=Bundle.main.url(forResource:"ram",withExtension:"cells"),
+              let text=try? String(contentsOf:url,encoding:.utf8) else { return Array(repeating:".",count:48*48) }
+        let cells=Array(text.filter { !$0.isWhitespace })
+        return cells.count == 48*48 ? cells : Array(repeating:".",count:48*48)
+    }()
     func sprite(_ frame: Int) -> [Character] {
-        var cells = [Character](repeating:".",count:48*48)
+        var cells = Self.baseCells
         func put(_ x: Int,_ y: Int,_ key: Character) { if (0..<48).contains(x) && (0..<48).contains(y) { cells[y*48+x] = key } }
         func box(_ x: Int,_ y: Int,_ w: Int,_ h: Int,_ key: Character) { for yy in y..<(y+h) { for xx in x..<(x+w) { put(xx,yy,key) } } }
-        func ellipse(_ cx: Double,_ cy: Double,_ rx: Double,_ ry: Double,_ wool: Bool) {
-            for y in 0..<48 { for x in 0..<48 {
-                let dx=Double(x)-cx,dy=Double(y)-cy
-                guard dx*dx/(rx*rx)+dy*dy/(ry*ry)<=1 else { continue }
-                let edge=dx*dx/((rx-1.2)*(rx-1.2))+dy*dy/((ry-1.2)*(ry-1.2))>1
-                put(x,y,edge ? "o" : wool ? (dx>rx*0.45 || dy>ry*0.55 ? "s" : dx < -rx*0.35 && dy < 0 ? "b" : "w") : "k")
-            } }
-        }
-        // Tiny body, plush outline, and two cloven hooves.
-        box(17,42,5,6,"o"); box(27,42,5,6,"o")
-        box(18,43,3,4,"k"); box(28,43,3,4,"k")
-        ellipse(24,38,9,7,true)
-        box(18,34,2,3,"b"); box(29,35,2,3,"s")
-        // Pixel-quantized curls with an outline, warm highlight, and inner shade.
-        for center in [8.0,40.0] {
-            for y in 10..<33 { for x in 0..<48 {
-                let dx=Double(x)-center,dy=Double(y)-21
-                let r=(dx*dx+dy*dy).squareRoot()
-                guard r<=9.4 && r>=3.7 else { continue }
-                let inward = center<24 ? dx>1 : dx < -1
-                if inward && dy>3 { continue }
-                let key: Character = r>8.2 || r<4.8 ? "o" : dy < -2 ? "H" : dy>3 ? "j" : "h"
-                put(x,y,key)
-            } }
-            let x=Int(center)
-            box(x-1,20,3,2,"h"); box(x,21,2,4,"H")
-        }
-        // Ears and a large, expressive head.
-        ellipse(11,23,5,4,true); ellipse(37,23,5,4,true)
-        for y in 12...36 {
-            let half = y<17 ? 8+(y-12) : y<23 ? 12 : max(4,12-(y-22)*2/3)
-            for x in (24-half)...(24+half) {
-                let edge=x==24-half || x==24+half || y==12 || y==36
-                put(x,y,edge ? "o" : x>27 || y>29 ? "s" : x<19 ? "b" : "w")
-            }
-        }
-        box(21,10,3,2,"o"); box(24,9,2,3,"o"); box(22,11,5,3,"b")
         let blink = frame % 25 == 0 && !model.thinking
         for x in [15,26] {
             box(x-1,19,9,6,"o")

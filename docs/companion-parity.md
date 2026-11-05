@@ -1,0 +1,60 @@
+# Cross-platform companion parity
+
+The RamWarden and ThreatWarden pets must be exactly the same on macOS,
+Windows and Linux. Native window chrome may follow the operating system;
+the characters must not be independently redesigned or approximated.
+
+The existing Mac companions are the reference until their definition is
+extracted into shared, versioned assets. This includes the 48-by-48 pixel
+geometry, palette and customization defaults, pupil styles, expressions,
+animation frames and timing, integer scale choices (2 through 6, default 3),
+transparent margins and status presentation. Compare equivalent state and
+settings at the same logical pixel scale; display DPI must not blur pixels.
+
+Confirmed reference behavior:
+
+- RamWarden uses PixelRam in macos/menubar/Companion.swift: 250 ms frames,
+  blinking every 25 frames unless thinking, a one-pixel idle bob over eight
+  frames, a two-pixel thinking bob, and an alternating speaking mouth.
+- RamWarden disconnected opacity is 60%; reconnecting/thinking text appears
+  only for those states. There is no permanent dark character nameplate.
+- ThreatWarden uses ThreatAvatar in macos/menubar/ThreatCompanion.swift and
+  the bundled ThreatWarden.svg, with its own customizable palette. Its
+  current avatar has no independent bob animation.
+- PetSizing.swift defines integer scale and transparent panel padding.
+
+Release requirements:
+
+- [ ] Extract a single shared sprite/palette/frame definition consumed by all
+  three renderers. Do not confuse static website/brand SVG colors with the
+  Mac companion defaults.
+- [ ] Retain existing Mac customization and settings during migration.
+- [ ] Match Windows and Linux to that definition, including all expressions
+  and size choices, without platform-only artwork, bobbing or nameplates.
+- [ ] Add deterministic golden pixel comparisons for both characters,
+  expression frames, palette changes and scales; compare fixed animation
+  phases rather than wall-clock screenshot timing.
+- [ ] Verify native transparent rendering, dragging, visibility, Pro gating
+  and click-to-chat on each platform. Native accessibility text remains
+  available even when it is not painted onto the character.
+
+The current uninstalled Windows native companion preview is incomplete and
+must not be presented or installed as parity-complete. Linux companion
+parity is also pending. Existing Mac pets remain the reference, not evidence
+that the other two platform implementations are finished.
+
+## Windows implementation checkpoint
+
+Windows now consumes the shared RAM cell map and the exact ThreatWarden
+SVG bundled on Mac (web/assets/pets/threat.svg). The website wardens/threat.svg
+is different and is deliberately not used for the companion. RAM idle blink,
+bob timing, default palette, and expression frames have regression coverage.
+The permanent preview nameplates and invented Threat bob are removed.
+Mac now bundles the same RAM base map, retaining its original expression and
+customization code. Its app build still needs CI validation for this change.
+
+Native Windows rendering has been visually checked for both pets. Automated
+drag injection reports an Explorer hit-test mismatch before delivering input,
+so live drag/persistence is not yet verified. Windows palette/size controls,
+chat/checklist UI and disconnected presentation remain incomplete; do not
+claim full functional parity based on the sprite tests alone.

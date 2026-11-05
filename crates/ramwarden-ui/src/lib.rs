@@ -9,6 +9,7 @@ pub mod app;
 pub mod client;
 pub mod model;
 pub mod wardens;
+pub mod companions;
 #[cfg(feature = "gui")]
 pub mod threat;
 #[cfg(feature = "gui")]

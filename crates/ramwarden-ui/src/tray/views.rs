@@ -12,6 +12,7 @@ use crate::wardens::{Level, PaneAction};
 /// View state that survives between frames.
 #[derive(Default)]
 pub struct UiState {
+    pub network_filter:String,
     pub filter: String,
     /// A command waiting for the user to confirm it, with the question.
     pub confirm: Option<(Command, String)>,
@@ -362,7 +363,7 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
 }
 /// The ThreatWarden pane. Layout only: the words and the button come from
 /// [`ThreatPane`], shared with the Linux window.
-pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHandle>) -> Option<Command> {
+pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHandle>, view:&mut UiState) -> Option<Command> {
     let Some(p) = &snap.threat else {
         ui.label("Loading ThreatWarden…");
         return None;
@@ -425,6 +426,23 @@ pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHan
             });
         }
 
+        if let Some(network)=&p.network {
+            ui.separator();
+            ui.strong(format!("Network connections ({})",network.connections.len()));
+            ui.label(&network.scope);
+            ui.weak("Local connection snapshot, not HTTP requests or decrypted traffic.");
+            if let Some(problem)=&network.problem {ui.colored_label(colour("#facc15"),problem);}
+            ui.horizontal(|ui|{ui.label("Filter connections");ui.text_edit_singleline(&mut view.network_filter);});
+            let filter=view.network_filter.to_lowercase();
+            egui::ScrollArea::both().id_salt("network-connections").max_height(190.0).show(ui,|ui|{
+                egui::Grid::new("network-rows").striped(true).show(ui,|ui|{
+                    for name in ["Process","PID","Local","Remote"] {ui.strong(name);}ui.end_row();
+                    for row in network.connections.iter().filter(|r|filter.is_empty()||format!("{} {} {} {}",r.process,r.pid,r.local,r.remote).to_lowercase().contains(&filter)) {
+                        ui.label(&row.process);ui.label(row.pid.to_string());ui.label(&row.local);ui.label(&row.remote);ui.end_row();
+                    }
+                });
+            });
+        }
         if !p.action.is_upgrade() {
             ui.separator();
             ui.strong("Recent alerts");

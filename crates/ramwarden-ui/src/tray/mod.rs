@@ -20,6 +20,8 @@ pub mod icon;
 pub mod launch;
 pub mod poller;
 pub mod views;
+pub mod pets;
+mod activation;
 
 use std::process::Child;
 use std::time::{Duration, Instant};
@@ -28,7 +30,7 @@ use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Pane { Ram, Threat }
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, CheckMenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::client::Client;
@@ -46,6 +48,7 @@ enum Tab {
 }
 
 struct WindowApp {
+    activation: activation::Reader,
     poller: Poller,
     pane: Pane,
     threat_icon: Option<egui::TextureHandle>,
@@ -56,6 +59,8 @@ struct WindowApp {
 impl eframe::App for WindowApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        ctx.request_repaint_after(Duration::from_millis(400));
+        if let Some(pane)=self.activation.next_pane(){self.pane=pane;ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));ctx.send_viewport_cmd(egui::ViewportCommand::Focus);}
         let snap = self.poller.snapshot();
 
         if self.threat_icon.is_none() && let Some(sprite)=&snap.threat_icon {
@@ -97,7 +102,7 @@ impl eframe::App for WindowApp {
             }
         });
         egui::CentralPanel::default().show(ui, |ui| match (self.pane,self.tab) {
-            (Pane::Threat,_) => command=views::threat(ui,&snap,self.threat_icon.as_ref()),
+            (Pane::Threat,_) => command=views::threat(ui,&snap,self.threat_icon.as_ref(),&mut self.view),
             (Pane::Ram,Tab::Overview) => views::overview(ui, &snap),
             (Pane::Ram,Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
             (Pane::Ram,Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
@@ -151,6 +156,7 @@ pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
+                activation: activation::Reader::default(),
                 poller: Poller::start(client, true, move || ctx.request_repaint()),
                 pane,
                 threat_icon: None,
@@ -174,6 +180,8 @@ struct Tray {
     menu: Menu,
     open: MenuId,
     threat: MenuId,
+    ram_pet: CheckMenuItem,
+    threat_pet: CheckMenuItem,
     quit: MenuId,
     shown_fraction: f32,
     /// The warden's question at the top of the menu, so it can be answered
@@ -193,9 +201,13 @@ impl Tray {
         let open = MenuItem::new("RamWarden", true, None);
         let threat=MenuItem::new("ThreatWarden",true,None);
         let quit = MenuItem::new("Quit", true, None);
+        let ram_pet=CheckMenuItem::new("Show RamWarden companion",true,true,None);
+        let threat_pet=CheckMenuItem::new("Show ThreatWarden companion",false,true,None);
         let menu = Menu::new();
         menu.append(&open).map_err(|e| e.to_string())?;
         menu.append(&threat).map_err(|e| e.to_string())?;
+        menu.append(&ram_pet).map_err(|e|e.to_string())?;
+        menu.append(&threat_pet).map_err(|e|e.to_string())?;
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
@@ -208,6 +220,8 @@ impl Tray {
             menu,
             open: open.id().clone(),
             threat: threat.id().clone(),
+            ram_pet,
+            threat_pet,
             quit: quit.id().clone(),
             shown_fraction: -1.0,
             voice: None,
@@ -279,6 +293,7 @@ impl Tray {
 
 /// Launch the window process, or leave it alone if it is already open.
 fn open_window(child: &mut Option<Child>, pane: Pane) {
+    activation::request(pane);
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
@@ -311,6 +326,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
 
     let poller = Poller::start(client, false, || {});
     let mut tray = Tray::new()?;
+    let pets=pets::Pets::new()?;
     let mut window: Option<Child> = None;
     if !start_hidden {
         open_window(&mut window,Pane::Ram);
@@ -328,6 +344,8 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             }
         }
         while let Ok(e) = MenuEvent::receiver().try_recv() {
+            if e.id==*tray.ram_pet.id(){pets.toggle(Pane::Ram);}
+            if e.id==*tray.threat_pet.id(){pets.toggle(Pane::Threat);}
             if e.id == tray.quit {
                 if let Some(mut c) = window.take() {
                     let _ = c.kill();
@@ -350,10 +368,16 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             }
         }
         if last.elapsed() >= Duration::from_secs(2) {
+            let pro=poller.snapshot().threat.as_ref().is_some_and(|p|p.unlocked);
+            pets.refresh(pro);
+            let [ram,threat]=pets.visibility();
+            tray.ram_pet.set_checked(ram);tray.threat_pet.set_checked(threat&&pro);
+            tray.threat_pet.set_enabled(pro);
             tray.update(&poller);
             tray.show_question(&poller);
             last = Instant::now();
         }
+        if let Some(pane)=pets.click(){open_window(&mut window,pane);}
         std::thread::sleep(Duration::from_millis(50));
     }
 }
