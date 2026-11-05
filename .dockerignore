@@ -7,7 +7,8 @@
 !contracts/plans.json
 !packaging/
 !packaging/vercel/
-!packaging/vercel/API.Dockerfile
+!packaging/vercel/api/
+!packaging/vercel/api/Dockerfile
 **/.env*
 **/secrets.toml
 **/target/**

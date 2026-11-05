@@ -9,7 +9,7 @@
     "api": {
       "root": ".",
       "runtime": "container",
-      "entrypoint": "packaging/vercel/API.Dockerfile"
+      "entrypoint": "packaging/vercel/api/Dockerfile"
     }
   },
   "rewrites": [

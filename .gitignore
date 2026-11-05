@@ -26,3 +26,5 @@ Cargo.lock.orig
 
 # Local Vercel project links and generated deployment state
 .vercel/
+.vercel
+.env*

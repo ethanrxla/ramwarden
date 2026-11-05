@@ -1,10 +1,10 @@
 # Vercel services deployment
 
-## Proposed topology — owner confirmation pending
+## Confirmed topology
 
 Use the Services preset with repository root `.`. `website` builds `web/` as an
 Nginx container serving the existing static pages. `api` builds the Cargo
-workspace's ramwarden-api using packaging/vercel/API.Dockerfile. Desktop daemon,
+workspace's ramwarden-api using packaging/vercel/api/Dockerfile. Desktop daemon,
 UI, helper, service and debloat binaries run on customers' computers, never as
 hosted Vercel services.
 
@@ -33,7 +33,7 @@ project link or deployment. This leaves the ordinary Vercel CLI profile alone.
 
 ## Production readiness gates
 
-- Correct account/team and explicit service/route/binding confirmation.
+- Correct account/team verification (service names, public routes and absence of bindings confirmed by owner).
 - GitHub pending sign-in tickets moved from process memory into shared storage;
   other device/email/wallet challenge state reviewed for multi-instance use.
 - Long-running payment polling and shared trivia publishing hosted as durable
@@ -49,3 +49,12 @@ this draft API topology or enable live payments until the gates pass. Vercel
 containers are a beta runtime and scale down when idle; local source compilation
 is not proof a container deployment works. Docker is not currently available in
 this Mac's PATH, so container build/dev validation remains outstanding.
+
+## Verified account and project
+
+Isolated CLI identity verified as ethanrisden97@gmail.com. Created and linked
+ram-warden/ramwarden; Vercel project inspection confirms Services preset and
+root directory `.`. No deployment, domain change, payment setting, or production
+secret upload has been performed. CLI-generated .env.local and .vercel state
+are ignored. Owner confirmed both service names, all listed public routes,
+and no bindings for the current static-browser topology.
