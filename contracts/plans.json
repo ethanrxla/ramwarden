@@ -1,0 +1,65 @@
+{
+  "_comment": "Monthly and annual subscriptions. Plus has a 14-day trial; Pro is paid from day one. Monthly pricing updated by owner 2026-11-02. Existing sixty-day subscriptions must retain their original terms.",
+  "wardens": {
+    "0": {
+      "slug": "ram",
+      "name": "RAM warden"
+    },
+    "1": {
+      "slug": "threat",
+      "name": "ThreatWarden"
+    }
+  },
+  "plans": [
+    {
+      "id": 1,
+      "tier": "ram",
+      "name": "RamWarden Plus, monthly",
+      "usd": 4,
+      "interval": "month",
+      "days": 30,
+      "trial": true,
+      "wardens": [
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "tier": "pro",
+      "name": "RamWarden Pro, monthly",
+      "usd": 5,
+      "interval": "month",
+      "days": 30,
+      "trial": false,
+      "wardens": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "tier": "ram",
+      "name": "RamWarden Plus, annual",
+      "usd": 20,
+      "interval": "year",
+      "days": 365,
+      "trial": true,
+      "wardens": [
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "tier": "pro",
+      "name": "RamWarden Pro, annual",
+      "usd": 24,
+      "interval": "year",
+      "days": 365,
+      "trial": false,
+      "wardens": [
+        0,
+        1
+      ]
+    }
+  ]
+}

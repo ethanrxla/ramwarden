@@ -10,7 +10,8 @@
 export const config = {
   // The hosted API (`ramwarden-api`). Changing it also means changing the
   // `connect-src` in each page's Content-Security-Policy.
-  apiBase: "https://api.ramwarden.app",
+  apiBase: typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)
+    ? location.origin : "https://api.ramwarden.com",
 
   repo: "https://github.com/ethanrxla/ramwarden",
   releases: "https://github.com/ethanrxla/ramwarden/releases/latest",
@@ -19,12 +20,61 @@ export const config = {
   // the page explains how to load the extension unpacked.
   chromeStore: null,
 
-  // Two tiers, each monthly or yearly, both with a 14-day trial
-  // (docs/product-spec.md 1.2). Ids are the checkout contract's plan ids.
+  // Three cards (docs/product-spec.md 1.2, as changed 2026-11-01/02):
+  // - Lite (free): the memory algorithm with no AI and no warden pet, on one
+  //   computer. A free account (email or wallet, no card) is what makes
+  //   "1 computer" true: devices are counted per account.
+  // - Plus (tier id "ram"): the AI and the warden pet, 3 computers. The only
+  //   plan with a trial.
+  // - Pro: adds ThreatWarden, 5 computers. Paid from day one.
+  // Upgrades are enforced by the server and the signed entitlement, not by
+  // the page. Bullets describe the shipped behavior in everyday language
+  // (README, docs/specs/browser-memory.md, threatwarden.md).
+  // `soon` marks a part that is specified but not shipped yet.
   trialDays: 14,
+  lite: {
+    name: "RamWarden Lite",
+    tagline: "Keep it tidy.",
+    cta: "Get it free",
+    features: [
+      "An enhanced memory algorithm that tracks which apps are active",
+      "Frees memory in stages, starting with changes that are easy to undo",
+      "A configurable tab budget, with a reopen list for tabs Warden closes",
+      "Protects active work, games, calls, terminals and virtual machines",
+      "Resumes paused apps when memory pressure eases",
+      "1 computer, free account, no card",
+    ],
+  },
   tiers: {
-    ram: { name: "RamWarden", blurb: "AI-powered memory management and system resource optimization.", devices: 5 },
-    pro: { name: "RamWarden Pro", blurb: "Everything in RamWarden, plus the ThreatWarden security companion.", devices: 5 },
+    ram: {
+      name: "RamWarden Plus",
+      tagline: "Let it decide.",
+      badge: "Most popular",
+      trialDays: 14,
+      devices: 3,
+      features: [
+        "Everything in Lite, plus:",
+        "A customizable AI companion for chat and memory advice",
+        "Ranks idle apps by how likely you are to return, then pauses or closes those you're unlikely to need when your settings allow it",
+        "AI-guided tab cleanup, with a reopen list for tabs it closes",
+        "3 computers: Windows, macOS and Linux",
+      ],
+    },
+    pro: {
+      name: "RamWarden Pro",
+      tagline: "Fast and safe.",
+      trialDays: 0,
+      devices: 5,
+      features: [
+        "Everything in Plus, plus ThreatWarden:",
+        "Security checks for changed files, suspicious activity and vulnerable software",
+        { text: "Malware scans when your computer has room to spare, plus scan on demand", soon: true },
+        { text: "Network alerts and a view of which apps connect to the internet", soon: true },
+        "Explains security findings; quarantine and blocking are planned",
+        "Your cyborg ThreatWarden companion",
+        "5 computers",
+      ],
+    },
   },
   plans: [
     { id: 1, tier: "ram", interval: "month", usd: 4 },
@@ -39,10 +89,14 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against twelve months, in whole percent.
+// What a year of the annual plan saves against twelve monthly payments, in whole percent.
 export function annualSaving(plans, tier) {
   const m = planFor(plans, tier, "month");
   const y = planFor(plans, tier, "year");
   if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * 12)) * 100);
+  return Math.round((1 - y.usd / (m.usd * PER_YEAR["month"])) * 100);
 }
+
+// Monthly and annual pricing (owner decision, 2026-11-02).
+export const PERIOD = { "month": "month", year: "year" };
+export const PER_YEAR = { "month": 12, year: 1 };

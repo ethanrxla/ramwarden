@@ -1,0 +1,49 @@
+[package]
+name    = "ramwarden-api"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "RamWarden's hosted API: answers the daemon's Jev questions with the operator's key, behind tokens and quotas."
+
+[lib]
+name = "ramwarden_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ramwarden-api"
+path = "src/main.rs"
+
+[dependencies]
+tempfile = { workspace = true }
+ramwarden-ai = { path = "../ramwarden-ai" }
+ramwarden-cloud = { path = "../ramwarden-cloud" }
+ramwarden-wazuh = { path = "../ramwarden-wazuh" }
+axum       = { workspace = true }
+tokio      = { workspace = true, features = ["fs"] }
+tokio-util = { version = "0.7", features = ["io"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+reqwest    = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+sha2 = "0.10"
+hmac = "0.12"
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+sha3 = "0.10"
+ed25519-dalek = "2.1"
+bs58 = "0.5"
+async-trait = "0.1"
+hex = "0.4"
+rand = "0.9"
+thiserror = { workspace = true }
+base64 = "0.22"
+tower-http = { workspace = true }
+
+[dev-dependencies]
+# Only to build the daemon's real Jev requests in a test, so a question the
+# daemon changes without updating the catalog fails here, not in production.
+ramwarden-daemon = { path = "../ramwarden-daemon" }
+ramwarden-core   = { path = "../ramwarden-core" }
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true, features = ["net"] }

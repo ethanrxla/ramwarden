@@ -284,6 +284,7 @@ async function buildTabReport(activity) {
           autoDiscardable: tab.autoDiscardable !== false,
           status: tab.status,
           discardSupported: typeof chrome.tabs.discard === "function",
+          safeCloseSupported: !IS_FIREFOX, // correlated close acknowledgements use the live socket
           activations: known?.activations ?? [],
           activityVersion: 1,
           workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,
@@ -536,6 +537,12 @@ async function discardTabs(command) {
   const confirmed = [];
   const minimum = Math.max(5, Number(command.minInactiveMinutes) || 5);
   for (const target of (command.tabs || []).slice(0, 5)) {
+    if(command.standaloneLite){
+      const live=await new Promise(resolve=>chrome.storage.local.get(['liteEnabled','liteBudget'],resolve));
+      if(live.liteEnabled!==true || _connected)break;
+      const current=await new Promise(resolve=>chrome.tabs.query({},resolve));
+      if(liteKeepSet(current,live.liteBudget).has(target.id))continue;
+    }
     if (typeof chrome.tabs.discard !== "function") break;
     const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
       resolve(chrome.runtime.lastError ? null : tab);
@@ -638,4 +645,28 @@ async function closeSafe(command) {
   if (closed.length) await _rememberReleased(closed);
   _send({action:"tabs_closed_safe",requestId:command.requestId,tabIds:closed.map(t=>t.id)});
   return closed.map(t=>t.id);
+}
+
+// Standalone Lite: opt-in, reversible tab unloading only. Never closes tabs.
+// Desktop policy takes over whenever its connection is healthy.
+function liteKeepSet(tabs,value){
+ const budget=Math.max(1,Math.min(50,Math.floor(Number(value)||6)));
+ const recent=[...tabs].sort((a,b)=>Math.max(tabActivity[b.id]?.lastActiveMs||0,b.lastAccessed||0)-Math.max(tabActivity[a.id]?.lastActiveMs||0,a.lastAccessed||0));
+ return new Set(recent.slice(0,budget).map(t=>t.id));
+}
+async function runStandaloneLite() {
+  if (_connected) return [];
+  await safetyReady;
+  const settings=await new Promise(resolve=>chrome.storage.local.get(['liteEnabled','liteBudget'],resolve));
+  if(settings.liteEnabled!==true)return [];
+  const tabs=await new Promise(resolve=>chrome.tabs.query({},resolve));
+  const keep=liteKeepSet(tabs,settings.liteBudget);
+  const eligible=tabs.filter(t=>!keep.has(t.id)&&!isWorkPage(t.url)&&!isHardProtected(t.url)&&_idleMinutes(t)>=60);
+  return discardTabs({tabs:eligible.slice(0,5).map(t=>({id:t.id,url:t.url})),minInactiveMinutes:60,requestId:'standalone-lite',standaloneLite:true});
+}
+if(chrome.alarms){
+ const scheduleLite=enabled=>{if(enabled)chrome.alarms.create('ramwarden-standalone-lite',{periodInMinutes:1});else chrome.alarms.clear?.('ramwarden-standalone-lite');};
+ chrome.storage.local.get('liteEnabled',settings=>scheduleLite(settings.liteEnabled===true));
+ chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local' && changes.liteEnabled)scheduleLite(changes.liteEnabled.newValue===true);});
+ chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='ramwarden-standalone-lite')runStandaloneLite();});
 }

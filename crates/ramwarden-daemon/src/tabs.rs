@@ -68,6 +68,9 @@ pub struct Tab {
     pub status: Option<String>,
     #[serde(default, rename = "discardSupported")]
     pub discard_supported: Option<bool>,
+    /// Explicit protocol capability: legacy workers silently ignore `close_safe`.
+    #[serde(default, rename = "safeCloseSupported")]
+    pub safe_close_supported: bool,
     /// JavaScript millisecond timestamps of the last activations of this tab,
     /// oldest first. Absent from older extensions.
     #[serde(default, deserialize_with = "lenient_f64_list")]

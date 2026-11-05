@@ -1,9 +1,10 @@
 // The install box, shared by both warden tabs and the account page.
 //
 // It knows who is looking (docs/product-spec.md 2.4):
-// - signed out, or signed in with no plan: OS tabs and Start free trial, no
+// - signed out, or signed in with no plan: OS tabs and a link to the plans, no
 //   command, because the command is personal;
-// - trial, active or grace: a personal one-liner and installer download from
+// - signed in with nothing bought (RamWarden Lite) or trial, active or
+//   grace: a personal one-liner and installer download from
 //   `POST /v1/install/link`, which signs the new computer in on first run;
 // - lapsed or cancelled: Renew.
 // The open-source repo sits beside it, small, as the do-it-yourself route.
@@ -31,8 +32,11 @@ export function detectOs(nav = globalThis.navigator) {
 
 // Which face the box shows for an account (or none).
 // A cancelled plan still counts until what was paid for runs out.
+// A signed-in account with nothing bought is RamWarden Lite: free, rules
+// only, 1 device. The server enforces that; the page only picks the face.
 export function installState(account, now = Date.now()) {
-  if (!account || !account.status) return "signed-out";
+  if (!account) return "signed-out";
+  if (!account.status) return account.identity ? "lite" : "signed-out";
   if (LIVE.includes(account.status)) return "ready";
   const until = Date.parse(account.paid_until || account.trial_ends_at || "");
   if (account.status === "cancelled" && until > now) return "ready";
@@ -50,7 +54,8 @@ export class InstallBox {
 
   async render() {
     const state = installState(this.account);
-    if (state === "ready" && this.api) {
+    const live = state === "ready" || state === "lite";
+    if (live && this.api) {
       try {
         this.link = await this.api.installLink();
       } catch {
@@ -59,7 +64,7 @@ export class InstallBox {
     }
     this.el.dataset.state = state;
     this.el.replaceChildren(
-      h("div", { class: "install-main" }, this.tabs(), ...Object.keys(OS_NAMES).map((os) => this.panel(os, state))),
+      h("div", { class: "install-main" }, this.tabs(), ...Object.keys(OS_NAMES).map((os) => this.panel(os, live ? "ready" : state))),
       h(
         "aside",
         { class: "install-oss" },
@@ -68,6 +73,7 @@ export class InstallBox {
         h("a", { href: config.repo }, "View on GitHub"),
       ),
     );
+    this.el.append(h("a", { class: "button secondary small", href: pageHref("setup.html") }, "Step-by-step setup"));
     this.pick(this.os);
   }
 
@@ -100,8 +106,8 @@ export class InstallBox {
       body.push(h("p", {}, "Your plan has ended. RamWarden keeps running in local mode until you renew."), h("a", { class: "button", href: pageHref("account.html#buy") }, "Renew"));
     } else {
       body.push(
-        h("p", {}, NEEDS[os], " Your install line appears here once your trial starts."),
-        h("a", { class: "button", href: "#pricing" }, `Start free trial`),
+        h("p", {}, NEEDS[os], " Pick a plan, Lite included, and your install line appears here."),
+        h("a", { class: "button", href: "#pricing" }, "Choose a plan"),
       );
     }
     return h("div", { class: "os-panel", "data-os-panel": os, role: "tabpanel" }, body);

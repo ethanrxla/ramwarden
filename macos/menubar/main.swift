@@ -45,17 +45,23 @@ func loadSnapshot(previous: Snapshot?) async -> Snapshot? {
 
 func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
 
-final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@MainActor final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu = NSMenu()
     var snap: Snapshot?
     let companion = Companion()
     var refreshing = false
+    var voiceRefreshing = false
     var failedRefreshes = 0
     var menuOpen = false
     let threatCompanion = ThreatCompanion()
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        if let url=Bundle.main.url(forResource:"RamWarden",withExtension:"icns"),let icon=NSImage(contentsOf:url) { NSApp.applicationIconImage=icon }
+
+        threatCompanion.statusButton = item.button
+        companion.threatCustomizationModel=threatCompanion.model
+        threatCompanion.openCustomization = { [weak self] in self?.companion.openColors(warden:"threat") }
         item.autosaveName = "RamWarden"
         menu.delegate = self
         item.menu = menu
@@ -77,14 +83,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() async {
         guard !refreshing else { return }; refreshing = true
         let s = await loadSnapshot(previous:snap)
-        await companion.voice.poll()
-        await threatCompanion.poll()
         await MainActor.run {
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
             if self.failedRefreshes >= 3 { self.snap = nil }
+            if let current=s {GoatAlerts.shared.memory(percent:current.percent,visible:self.companion.model.companionVisible)}
             self.updateTitle(); self.companion.model.connected = self.snap != nil
             self.refreshing = false
+            Task { @MainActor in
+                if !self.voiceRefreshing {self.voiceRefreshing=true;await self.companion.voice.poll();self.voiceRefreshing=false}
+            }
+            Task { @MainActor in await self.threatCompanion.poll() }
         }
     }
 
@@ -143,8 +152,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if companion.voice.pet {
             add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
         }
+        add("ThreatWarden status…", #selector(showThreatStatus))
         add(threatCompanion.visible ? "Hide threat companion" : "Show threat companion", #selector(toggleThreatCompanion))
-        add("Customize ram colors…", #selector(customizeRam))
+        add("Customize companions…", #selector(customizeRam))
         menu.addItem(.separator())
         guard let s = snap else {
             add("RamWarden daemon not reachable", nil)
@@ -212,6 +222,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let choice = sender.representedObject as? String else { return }
         companion.voice.answer(choice)
     }
+    @objc func showThreatStatus() { DispatchQueue.main.async { self.threatCompanion.showReport() } }
     @objc func toggleThreatCompanion() { threatCompanion.toggle(); rebuild() }
     @objc func customizeRam() { companion.openColors() }
 
@@ -231,8 +242,11 @@ if UserDefaults.standard.object(forKey: positionKey) == nil {
     UserDefaults.standard.set(300.0, forKey: positionKey)
 }
 
+MainActor.assumeIsolated {
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)   // no Dock icon
+app.setActivationPolicy(.regular)   // Dock app and menu-bar companion share one process
 let delegate = App()
 app.delegate = delegate
 app.run()
+
+}

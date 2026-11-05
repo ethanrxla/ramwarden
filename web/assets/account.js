@@ -1,12 +1,13 @@
 // /account: sign in, start a trial, see the plan, get the personal install
 // line and the browser helper, and manage devices (docs/product-spec.md 3).
 //
-// Signing in with a new wallet goes straight to choosing a plan: there is no
-// "account with nothing bought" state worth showing. Starting a trial
-// charges nothing; the server reports the plan and its status.
+// A signed-in account with nothing bought is RamWarden Lite: free, rules
+// only, 1 device, with its install line and an Upgrade to Plus. Plus shows
+// Upgrade to Pro. The server enforces every limit; this page only offers the
+// step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
-import { config, planFor } from "./config.js";
-import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
+import { publishAccount, chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -22,7 +23,7 @@ const STATUS = {
 
 function priceText(a) {
   const plan = planFor(config.plans, a.tier, a.interval);
-  return plan ? `$${plan.usd} a ${a.interval}` : "your plan's price";
+  return plan ? `$${plan.usd} every ${PERIOD[a.interval] || a.interval}` : "your plan's price";
 }
 
 const root = document.getElementById("flow");
@@ -46,7 +47,12 @@ class AccountPage {
         return;
       }
     }
-    if (!this.account) await this.signIn();
+    const emailOnly = new URLSearchParams(location.search).get("signin") === "email";
+    if (!this.account || emailOnly) await this.signIn(emailOnly);
+    if (emailOnly) {
+      const url = new URL(location.href); url.searchParams.delete("signin");
+      history.replaceState(null, "", url);
+    }
     await this.loadCheckout();
     this.render();
     // Back from card checkout: follow the payment until it confirms.
@@ -58,10 +64,11 @@ class AccountPage {
     }
   }
 
-  async signIn() {
+  async signIn(emailOnly = false) {
     const area = h("div");
-    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
-    this.account = (await chooseSignIn(area, api)).account;
+    show(root, h("h1", {}, emailOnly ? "Email sign-in" : "Your account"),
+      h("p", {}, emailOnly ? "Enter your email, then request a code or use one you already received. Signing in switches this browser to the account for that email." : "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api, { emailOnly })).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -82,7 +89,11 @@ class AccountPage {
 
   render() {
     const a = this.account;
-    const live = installState(a) === "ready";
+    publishAccount(a);
+    const state = installState(a);
+    const live = state === "ready" || state === "lite";
+    // What the Upgrade button offers: Lite and lapsed go to Plus, Plus to Pro.
+    const next = state === "lite" ? "ram" : state === "ready" && a.tier === "ram" ? "pro" : null;
     this.flashArea = h("div");
     const install = live ? h("div", { class: "install" }) : null;
 
@@ -90,25 +101,29 @@ class AccountPage {
       root,
       h("h1", {}, "Your account"),
       this.flashArea,
-      a.tier
+      a.identity || a.tier
         ? h(
             "section",
             { class: "panel" },
-            h("h2", {}, config.tiers[a.tier]?.name || "Your plan"),
-            h("p", {}, (STATUS[a.status] || (() => ""))(a)),
-            h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
+            h("p", {}, a.developer_access ? "Developer access · complimentary. No card or wallet will be charged." : a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
+            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "github" ? `GitHub account ${a.identity.id}` : a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
-              ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
+              h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
+              next && !a.developer_access ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
+              !a.developer_access && ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
           )
         : null,
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
       live ? this.extensionPanel() : null,
+      this.signInMethods(),
+      this.usagePanel(),
       live ? this.devicesPanel() : null,
-      live ? null : this.buyPanel(),
+      state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
     if (install) new InstallBox(install, { api, account: a }).render();
   }
@@ -126,6 +141,47 @@ class AccountPage {
       h("p", {}, "Lets your warden unload tabs you aren't using. It pairs with RamWarden on this computer by itself."),
       action,
     );
+  }
+
+  usagePanel() {
+    const status=h("div");
+    const input=h("input",{type:"checkbox","aria-label":"Share usage diagnostics"});
+    input.checked=this.account.prefs?.share_usage === true;
+    input.addEventListener("change",async () => {
+      input.disabled=true;
+      try {
+        const result=await api.savePrefs({...this.account.prefs,share_usage:input.checked});
+        this.account.prefs=result.prefs;
+        show(status,notice("ok",input.checked ? "Sharing starts now on connected devices." : "Usage sharing is off."));
+      } catch(error) {input.checked=!input.checked;show(status,notice("error",errorText(error)));}
+      finally {input.disabled=false;}
+    });
+    return h("section",{class:"panel",id:"usage-sharing"},h("h2",{},"Help improve your warden"),
+      h("label",{},input," Share usage diagnostics"),
+      h("p",{class:"muted"},"Share daily action counts and measured RAM recovery, including close, reopen, pause and resume events. No tab titles, URLs, page contents, app names or file paths. Summaries are kept for 90 days."),
+      h("p",{class:"muted"},"Off by default. Only connected devices can send data, starting when you enable it."),status);
+  }
+
+  signInMethods() {
+    const identities = this.account.identities || [this.account.identity].filter(Boolean);
+    const github = h("span");
+    if (api.githubConfig) api.githubConfig().then(c => {if(c.enabled) github.append(h("button",{class:"button secondary small",onclick:()=>this.linkMethod("github")},"Add GitHub"));}).catch(()=>{});
+    return h("section", {class:"panel",id:"sign-in-methods"},
+      h("h2", {}, "Sign-in methods"),
+      h("p", {}, "Connect sign-in methods to this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, i.kind === "github" ? `GitHub account ${i.id}` : i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("div", {class:"row-actions"},
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email"),github));
+  }
+
+  async linkMethod(kind) {
+    const area = h("div");
+    show(root, h("h1", {}, kind === "github" ? "Add GitHub" : kind === "email" ? "Add an email" : "Add a wallet"),
+      h("p", {}, "Verify the new sign-in method to add it to this account. Your plan and devices stay here; this does not start a payment."),
+      area, h("button", {class:"linkish",onclick:() => this.render()}, "Back to account"));
+    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",githubOnly:kind === "github",purpose:"Verify this wallet to add it to your account. No payment."})).account;
+    this.render();
   }
 
   devicesPanel() {
@@ -172,26 +228,36 @@ class AccountPage {
     );
   }
 
+  // Upgrade opens the plan picker on the next tier. Plus to Pro is an
+  // upgrade of the running plan, which the server prices.
+  upgradeTo(tier) {
+    this.upgrading = tier;
+    this.render();
+    document.getElementById("buy")?.scrollIntoView();
+  }
+
   buyPanel() {
     const any = this.methods.base || this.methods.solana || this.methods.stripe;
     const area = h("div");
     // `?plan=<id>` (sent by agents and the pricing cards) preselects a plan
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
-    let tier = wanted?.tier || "ram";
+    let tier = this.upgrading || wanted?.tier || "ram";
     let interval = wanted?.interval || "month";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
     const refresh = () => {
       const p = plan();
       for (const i of picker.querySelectorAll("input")) i.checked = i.value === (i.name === "tier" ? tier : interval);
-      const approve = p?.approval_usd ?? (p && (p.interval === "month" ? p.usd * 12 : p.usd));
-      const trialDays = p?.trial_days ?? config.trialDays;
+      const approve = p?.approval_usd ?? (p && p.usd * (PER_YEAR[p.interval] || 1));
+      const per = `every ${PERIOD[interval] || interval}`;
+      // Only Plus has a trial; Pro is paid from day one.
+      const trialDays = p ? (p.trial_days ?? config.tiers[p.tier]?.trialDays ?? 0) : 0;
       terms.textContent = !p
         ? ""
-        : this.account.trial_available === false
-          ? `$${p.usd} a ${interval}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
-          : `Nothing is charged today. After ${trialDays} days, $${p.usd} a ${interval} until you cancel. A wallet approves $${approve} at most (one year).`;
+        : this.account.trial_available === false || !trialDays
+          ? `$${p.usd} ${per}, charged today, until you cancel. A wallet approves $${approve} at most (one year).`
+          : `Nothing is charged today. After ${trialDays} days, $${p.usd} ${per} until you cancel. A wallet approves $${approve} at most (one year).`;
     };
     const choice = (name, value, label, sub) =>
       h(
@@ -216,7 +282,17 @@ class AccountPage {
     return h(
       "section",
       { class: "panel", id: "buy" },
-      h("h2", {}, this.account.trial_available === false ? (this.account.status ? "Renew" : "Choose a plan") : `Start your ${config.trialDays}-day free trial`),
+      h(
+        "h2",
+        {},
+        this.upgrading === "pro"
+          ? "Upgrade to Pro"
+          : this.account.status
+            ? "Renew"
+            : this.account.trial_available === false
+              ? "Upgrade from Lite"
+              : "Upgrade from Lite. Plus is free for 14 days.",
+      ),
       any
         ? [
             picker,
@@ -240,10 +316,23 @@ class AccountPage {
       purpose: "Pick the wallet to pay from. It does not have to be the one you signed in with.",
     });
     try {
-      show(area, notice("info", "Preparing your trial…"));
+      show(area, notice("info", this.upgrading ? "Preparing your upgrade…" : "Preparing your plan…"));
       const order = chain === "evm" ? await api.checkoutBase(plan, wallet.address) : await api.checkoutSolana(plan, wallet.address);
-      show(area, notice("info", chain === "evm" ? "Confirm in your wallet: allow up to one year of the plan, then start the trial. Nothing is charged today." : "Confirm in Phantom. Nothing is charged today."));
-      await wallet.pay(order);
+      let payer = wallet;
+      // An upgrade changes the running plan, so it has to be sent from the
+      // wallet that already pays for it.
+      if (order.upgrade && order.payer && order.payer.toLowerCase() !== String(wallet.address).toLowerCase()) {
+        payer = await pickWallet(area, { chain, purpose: `Upgrades are confirmed in the wallet that pays (${shortAddress(order.payer)}).` });
+      }
+      const say = order.upgrade
+        ? "Confirm the upgrade in your wallet. Pro is charged from today."
+        : order.trial
+          ? chain === "evm"
+            ? "Confirm in your wallet: allow up to one year of the plan, then start the trial. Nothing is charged today."
+            : "Confirm in Phantom. Nothing is charged today."
+          : "Confirm in your wallet. The first payment is charged today.";
+      show(area, notice("info", say));
+      await payer.pay(order);
       await this.waitForPayment(order.payment_id, area);
     } catch (err) {
       show(area, notice("error", errorText(err)));
@@ -253,7 +342,14 @@ class AccountPage {
   async payStripe(plan, area) {
     try {
       show(area, notice("info", "Opening card checkout…"));
-      const { url, payment_id } = await api.checkoutStripe(plan);
+      const { url, payment_id, upgrade } = await api.checkoutStripe(plan);
+      // A card upgrade changes the subscription in place, prorated: there is
+      // no checkout page, only the confirmation to follow.
+      if (upgrade) {
+        show(area, notice("info", "Upgrading your card plan…"));
+        await this.waitForPayment(payment_id, area);
+        return;
+      }
       if (isMock) {
         show(area, notice("info", "Preview mode: card checkout would open here."));
         await this.waitForPayment(payment_id, area);
@@ -269,7 +365,7 @@ class AccountPage {
   // Card plans cancel server side. Wallet plans are cancelled from the wallet
   // that pays, so the server hands back that transaction to send.
   async cancel(button) {
-    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to local mode.")) return;
+    if (!confirm("Cancel your plan? It keeps working until the end of what you've paid for, then RamWarden drops to Lite.")) return;
     button.disabled = true;
     try {
       const r = await api.cancel();
@@ -295,6 +391,7 @@ class AccountPage {
       const p = await api.payment(id);
       if (p.status === "confirmed") {
         this.account = await api.account();
+        this.upgrading = null;
         this.render();
         this.flash(notice("ok", this.account.status === "trial" ? "Your trial has started. Install RamWarden below." : "You're all set. Install RamWarden below."));
         return;

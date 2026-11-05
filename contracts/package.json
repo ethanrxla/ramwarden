@@ -1,0 +1,20 @@
+{
+  "name": "ramwarden-contracts",
+  "private": true,
+  "description": "RamWarden's on-chain checkout: warden passes paid in USDC on Base.",
+  "license": "MIT",
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.cjs"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "2.1.2",
+    "@nomicfoundation/hardhat-ethers": "3.1.3",
+    "@openzeppelin/contracts": "5.4.0",
+    "chai": "4.5.0",
+    "ethers": "6.17.0",
+    "hardhat": "2.29.1",
+    "solc": "0.8.28"
+  }
+}

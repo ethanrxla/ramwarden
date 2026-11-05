@@ -144,6 +144,10 @@ impl Ladder {
 pub struct Assistant {
     pub cloud_enabled: bool,
     pub cloud_model: Option<String>,
+    /// Explicit per-user private hub connection; disabled by default.
+    pub memory_hub_enabled: bool,
+    pub workspace: Option<PathBuf>,
+    pub threat_workspace: Option<PathBuf>,
 }
 
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.
@@ -315,11 +319,12 @@ pub struct Tabs {
     /// this long idle, whatever its return chance: the newer tab already covers
     /// the site. 0 turns this off.
     pub close_duplicates_after_hours: f64,
-    /// The tab budget: the most recently used tabs kept open per browser. Any
-    /// other tab untouched for `budget_idle_minutes` is closed, whatever its
-    /// return chance. 0 turns the budget off.
+    /// The most recently used tabs kept open per browser. Outside this floor,
+    /// tabs still need every automatic-close safety check; a budget never
+    /// authorizes a closure on its own. 0 disables this keep floor.
     pub keep_tabs: usize,
-    /// How long a tab outside the budget may sit before it is closed.
+    /// Legacy field retained for config compatibility; never overrides the
+    /// automatic-close idle floor and return-chance checks.
     pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
@@ -605,7 +610,7 @@ impl Default for Wazuh {
         Wazuh {
             enabled: true,
             mode: "hosted".to_string(),
-            cloud_url: "https://api.ramwarden.app".to_string(),
+            cloud_url: "https://api.ramwarden.com".to_string(),
             manager_url: String::new(),
             api_user: "wazuh-wui".to_string(),
             api_password: String::new(),
@@ -1014,7 +1019,7 @@ mod tests {
         let d = Config::default().wardens.threat;
         assert!(d.enabled, "a pass is all a user should need");
         assert_eq!(d.mode, "hosted");
-        assert_eq!(d.cloud_url, "https://api.ramwarden.app");
+        assert_eq!(d.cloud_url, "https://api.ramwarden.com");
         let cfg = parse(
             r#"
 [wardens.threat]

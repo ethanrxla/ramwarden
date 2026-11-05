@@ -39,8 +39,7 @@ icons = {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon1
 # Every permission here has to be one the code actually calls; the Web Store
 # rejects unused permissions under its minimum-permissions policy.
 #   - "notifications" is dropped: chrome.notifications is never called.
-#   - "alarms" is dropped: the alarm path is the Firefox polling fallback, guarded
-#     by IS_FIREFOX. Chrome uses the WebSocket instead.
+#   - "alarms" drives the opted-in standalone Lite browser cleanup.
 #   - ws:// is dropped from host_permissions: it is not a valid match-pattern
 #     scheme, and WebSockets from a service worker are not gated by host
 #     permissions anyway.
@@ -54,7 +53,7 @@ chrome = {
     "minimum_chrome_version": "116",   # WebSockets in service workers
     "icons": icons,
     "content_scripts": base["content_scripts"],
-    "permissions": ["tabs", "storage"],
+    "permissions": ["tabs", "storage", "alarms"],
     "host_permissions": [
         "http://localhost:7823/*",
         "http://127.0.0.1:7823/*",

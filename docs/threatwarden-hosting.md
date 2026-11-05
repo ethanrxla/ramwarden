@@ -81,5 +81,16 @@ cover it). Alerts are history and can be lost without breaking anything.
 
 The script keeps port 443 private for an optional Wazuh dashboard. Detection setup does not install or depend on that dashboard. Deploying the public
 RamWarden API needs a separate HTTPS ingress configuration; do not expose the
-dashboard by simply removing that firewall rule. Hosted enroll/status routes are
-still required before the customer one-click flow can work.
+dashboard by simply removing that firewall rule. Hosted enroll/status routes are implemented; configure them and verify tenant isolation before enabling the customer one-click flow. Public HTTPS deployment and platform package pins are still required.
+
+## Hosted route configuration
+
+`GET /v1/wardens/threat/status` and `POST /v1/wardens/threat/enroll` require an authenticated device and an active Pro entitlement. Status is scoped to that device's server-stored Wazuh binding; a client hostname, agent id or query parameter cannot select someone else's agent. MongoDB enforces a unique security agent binding across devices. Device removal and plan expiry are checked before cached reports can be returned.
+
+Set `WAZUH_PACKAGES_FILE` to an operator-managed JSON manifest keyed by `macos-aarch64`, `linux-x86_64`, etc. Each entry has `url`, `sha256` and `kind`. Pin verified official `packages.wazuh.com` installers. Missing platform pins return an explicit unavailable response; no installer is guessed or downloaded without a pin. Set `WAZUH_AGENT_HOST` to the public agent endpoint, not the private management API.
+
+Use a PEM trust bundle containing the manager's certificate authority and the indexer's authority. For Wazuh's default self-signed API certificate, pin the exact certificate obtained over an authenticated operator connection and use its valid hostname. Certificate verification remains enabled. Keep management credentials on the API server; customers receive only their own validated agent enrollment key, with `Cache-Control: no-store`.
+
+Enrollment derives a stable opaque agent name from account and device ids, assigns its account group while retaining the baseline configuration group, and reuses that name after retries. Attempts are rate limited. A manager operation can succeed before a network failure; retrying must recover the same agent, not create a replacement. Existing agents require an audited operator binding; clients cannot claim an installed agent by name.
+
+Reports cache for 30 seconds, return at most 50 level-7-or-higher alerts from the last 24 hours, and explicitly describe that cap. These are reported Wazuh alerts, not AI-confirmed malware. Antivirus and network sensors remain separate engine capabilities and must not be inferred from Wazuh connectivity.

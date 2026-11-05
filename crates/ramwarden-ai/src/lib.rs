@@ -26,3 +26,11 @@ pub mod provider;
 pub mod rerank;
 pub mod secret;
 pub mod vram;
+
+pub mod routing;
+
+pub mod routed;
+
+pub mod nyquest;
+
+pub mod trivia;

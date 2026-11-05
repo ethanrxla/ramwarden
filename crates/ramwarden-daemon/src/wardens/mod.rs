@@ -138,6 +138,7 @@ pub async fn list(State(st): State<AppState>) -> Json<Value> {
         "paid": ent.paid_at(wardens::now()),
         "tier": ent.tier,
         "plan_status": ent.status,
+        "pet": ent.shows_pet(wardens::now()),
         "wardens": wardens::CATALOGUE.iter().map(|x| w.entry(&st, x)).collect::<Vec<_>>(),
     }))
 }
@@ -180,6 +181,14 @@ pub async fn icon_svg(Path(id): Path<String>) -> impl IntoResponse {
         Some(svg) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/svg+xml")], svg).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+pub async fn event(State(st):State<AppState>,Path(id):Path<String>)->Result<Json<Value>,StatusCode>{
+    let wardens=Wardens::global(&st.cfg);let info=wardens::find("threat").ok_or(StatusCode::NOT_FOUND)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    let record=wardens.threat.event(&id).await.map_err(|_|StatusCode::BAD_GATEWAY)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    Ok(Json(record))
 }
 
 #[cfg(test)]

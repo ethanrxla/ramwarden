@@ -78,8 +78,23 @@ async function start(code) {
     walletArea,
   );
 
-  // A 409 (the account already has 5 devices) is shown in place.
-  await chooseSignIn(walletArea, api, { userCode: code, purpose: "Sign in with your wallet or your email. Signing costs nothing." });
+  // An already signed-in user confirms the named computer, rather than
+  // repeating a wallet signature or email code. Approval is never automatic.
+  let account=null;
+  try {account=await api.account();} catch { /* signed out: use the normal flow */ }
+  if (account) {
+    await new Promise(resolve => {
+      const status=h("div");
+      const button=h("button",{class:"button",onclick:async () => {
+        button.disabled=true;
+        try {await api.approveDevice(code);resolve();}
+        catch(error) {show(status,notice("error",errorText(error)));button.disabled=false;}
+      }},`Connect ${device.device_name || "this computer"}`);
+      show(walletArea,h("p",{},"This connects the computer to your signed-in account. It does not buy a plan or enable usage sharing."),button,status);
+    });
+  } else {
+    await chooseSignIn(walletArea, api, { userCode: code, purpose: "Sign in with your wallet or your email. Signing costs nothing." });
+  }
 
   show(
     root,

@@ -20,7 +20,9 @@ jobs:
             platform_crate: crates/ramwarden-kernel
           - os: windows-latest
             platform_crate: crates/ramwarden-nt
-          - os: macos-latest
+          # ARM hosted jobs repeatedly expired without acquiring a runner.
+          # Keep the full macOS suite on the supported Intel image.
+          - os: macos-15-intel
             platform_crate: crates/ramwarden-mac
     steps:
       - uses: actions/checkout@v4
@@ -61,12 +63,26 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Windows sensor configuration regression
+        if: runner.os == 'Windows'
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-eve-policy.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-evidence-access.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-capture-clock.ps1
+      - name: Mac sensor repair rollback regression
+        if: runner.os == 'macOS'
+        run: python3 scripts/threatwarden-engines/test-macos-repair.py
       - name: Mac checklist and app build
         if: runner.os == 'macOS'
         run: |
-          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/Settings.swift macos/menubar/ThreatCompanion.swift macos/menubar/WardenCompanion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/PetSizing.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
           "$RUNNER_TEMP/review-test"
           RAMWARDEN_APP_DEST="$RUNNER_TEMP/RamWarden.app" bash macos/menubar/build.sh
+          swiftc -O macos/menubar/PetSizing.swift macos/menubar/tests/PetSizingTests.swift -o "$RUNNER_TEMP/pet-sizing-test"
+          "$RUNNER_TEMP/pet-sizing-test"
+          RAMWARDEN_SETUP_DEST="$RUNNER_TEMP/RamWarden Setup.app" bash macos/setup/build.sh
 
   # The website in web/: plain HTML, CSS and ES modules with no build step.
   # Unit tests need only Node; the browser tests drive Chromium against the
@@ -92,3 +108,21 @@ jobs:
         run: |
           node --test extension/tests/discard.cjs
           node extension/tests/live.cjs
+
+  # The checkout contract in contracts/. Hardhat compiles with the solc-js build
+  # pinned in contracts/package.json and runs the tests on its in-process chain.
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+      - run: npm ci
+      - run: npx hardhat test
