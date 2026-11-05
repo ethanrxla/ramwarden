@@ -33,7 +33,7 @@ use eframe::egui;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Pane { Ram, Threat }
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, CheckMenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::client::Client;
 use poller::{Command, Poller};
@@ -222,6 +222,7 @@ impl Tray {
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
+            .with_menu_on_left_click(true)
             .with_tooltip("RamWarden")
             .with_icon(gauge_icon(0.0).ok_or("icon")?)
             .build()
@@ -376,11 +377,9 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
                 poller.send(c);
             }
         }
-        while let Ok(e) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = e {
-                open_window(&mut window,Pane::Ram);
-            }
-        }
+        // The icon opens its menu. Only explicit menu commands open panes;
+        // otherwise opening the menu to toggle a pet also opens the RAM pane.
+        while TrayIconEvent::receiver().try_recv().is_ok() {}
         if last.elapsed() >= Duration::from_secs(2) {
             let pro=poller.snapshot().threat.as_ref().is_some_and(|p|p.unlocked);
             pets.refresh(pro);
