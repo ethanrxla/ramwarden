@@ -125,7 +125,8 @@ fn request_body(work: Work, model: &str, messages: &[Value]) -> Value {
     let public_search=crate::routing::public_web_request(latest);
     let system=messages.first().filter(|m|m["role"]=="system").and_then(|m|m["content"].as_str()).unwrap_or("");
     let plain_chat=(system.contains("You are ThreatWarden") || system.contains("The chat phase is READ ONLY.")) && !system.contains("FOCUS CHECKLIST MODE");
-    if work==Work::Conversation && !public_search && plain_chat {
+    let workspace_tools=messages.iter().any(|message|message["role"]=="system" && message["content"].as_str().is_some_and(|text|text.starts_with("WORKSPACE TOOL CATALOG:")));
+    if work==Work::Conversation && !public_search && plain_chat && !workspace_tools {
         body["max_output_tokens"]=json!(300);
         body["text"]=json!({"format":{"type":"json_schema","name":"companion_reply","strict":true,"schema":{"type":"object","properties":{"reply":{"type":"string"},"proposed_action":{"type":"null"}},"required":["reply","proposed_action"],"additionalProperties":false}}});
     }
@@ -174,6 +175,18 @@ mod tests {
     use super::*;
     #[test]
     fn inexpensive_chat_omits_reasoning_and_has_small_budget(){let body=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&[json!({"role":"system","content":"You are ThreatWarden"})]);assert!(body.get("reasoning").is_none());assert_eq!(body["max_output_tokens"],300);assert_eq!(body["text"]["format"]["type"],"json_schema");}
+    #[test]
+    fn selected_workspace_can_propose_actions_in_conversational_requests() {
+        for persona in ["You are ThreatWarden", "The chat phase is READ ONLY."] {
+            let mut messages=vec![json!({"role":"system","content":persona}),json!({"role":"system","content":"WORKSPACE TOOL CATALOG: approved file tools"}),json!({"role":"user","content":"In my selected folder, propose a file plan"})];
+            let body=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&messages);
+            assert_eq!(body["text"]["format"]["type"],"json_object");
+            assert_eq!(body["max_output_tokens"],1200);
+            messages[1]["role"]=json!("user");
+            let untrusted=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&messages);
+            assert_eq!(untrusted["text"]["format"]["schema"]["properties"]["proposed_action"]["type"],"null");
+        }
+    }
     #[test]
     fn focus_checklist_keeps_its_own_output_contract(){let body=request_body(Work::Conversation,"grok-4.20-0309-non-reasoning",&[json!({"role":"system","content":"The chat phase is READ ONLY. FOCUS CHECKLIST MODE"})]);assert_eq!(body["text"]["format"]["type"],"json_object");assert_eq!(body["max_output_tokens"],1200);}
     #[test]
