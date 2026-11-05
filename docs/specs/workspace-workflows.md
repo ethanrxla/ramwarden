@@ -49,3 +49,23 @@ This adds reviewed multi-step execution, not a general shell. Unconditional over
 delete, package installation, elevation, arbitrary argv and autonomous follow-up
 plans remain outside this catalog. Windows and Linux clients can consume the
 shared API; their native chat surfaces are separate work.
+
+
+## Windows companion transport (November 5)
+
+The Rust Windows companion now consumes workspace SSE events, shows the current
+step, offers Stop plan, and marks returned tool output as untrusted in local chat
+history. It requires a finished event before reporting completion; truncated or
+oversized streams remain unconfirmed. Closing chat drops the stream and requests
+cancellation. Memory/desktop actions retain their existing JSON transport.
+
+Validation: bounded decoder tests include arbitrary chunk splits, UTF-8, multiple
+events, invalid JSON and size limits. HTTP transport tests cover a missing final
+event and cancellation before submission. A live installed-daemon disposable
+folder listing emitted plan/started/result/finished, succeeded once and refused
+cross-transport token replay. Native UI Stop interaction remains to be exercised.
+The Windows suite now has 87 passing tests; daemon library tests have 216.
+
+Developer Windows uses a limited-user logon/restart task for the private Oracle
+Nyquest loopback tunnel. Customer production must use the hosted/co-located
+compression service; no customer SSH key or tailnet dependency is acceptable.

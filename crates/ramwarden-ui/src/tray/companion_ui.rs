@@ -38,6 +38,9 @@ pub struct Chat {
     error: Option<String>,
     path: Option<std::path::PathBuf>,
     audio_result: Option<mpsc::Receiver<Result<(), String>>>,
+    progress: Option<mpsc::Receiver<String>>,
+    progress_text: Option<String>,
+    cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 impl Chat {
     pub fn for_warden(threat: bool) -> Self {
@@ -60,10 +63,12 @@ impl Chat {
         Self {
             turns: bounded_turns(turns),
             path: Some(path),
-            ..Default::default()
+            input: String::new(), pending: None, approval: false, result: None, error: None,
+            audio_result: None, progress: None, progress_text: None, cancellation: None,
         }
     }
     pub fn forget(&mut self) {
+        self.stop_plan();
         self.result = None;
         self.input.clear();
         self.error = None;
@@ -71,6 +76,9 @@ impl Chat {
         self.pending = None;
         self.approval = false;
         self.save();
+    }
+    fn stop_plan(&mut self) {
+        if let Some(cancel) = &self.cancellation { cancel.store(true, std::sync::atomic::Ordering::Relaxed); }
     }
     fn save(&mut self) {
         self.turns = bounded_turns(std::mem::take(&mut self.turns));
@@ -101,24 +109,36 @@ impl Chat {
         ctx: egui::Context,
     ) {
         self.error = None;
-        if path == "/assistant/action" {
+        if path.starts_with("/assistant/action") {
             self.turns.push(Turn{role:"assistant".into(),content:"Approved action submitted. Result is unconfirmed until the warden replies; closing chat does not undo completed changes.".into()});
         }
         self.save();
         let (tx, rx) = mpsc::channel();
         self.result = Some(rx);
+        let (progress_tx, progress_rx) = mpsc::sync_channel(8);
+        self.progress = Some(progress_rx);
+        self.progress_text = None;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.cancellation = (path == "/assistant/action/stream").then(|| cancel.clone());
         std::thread::spawn(move || {
             let result = crate::runtime::network_runtime()
                 .map_err(|e| e.to_string())
                 .and_then(|rt| {
-                    rt.block_on(client.post::<Reply>(path, body, Duration::from_secs(90)))
-                        .map_err(|e| e.to_string())
+                    if path == "/assistant/action/stream" {
+                        rt.block_on(client.workspace_action_stream(body, progress_tx, cancel))
+                            .map(|reply| Reply { reply, proposed_action: None }).map_err(|e| e.to_string())
+                    } else {
+                        rt.block_on(client.post::<Reply>(path, body, Duration::from_secs(90))).map_err(|e| e.to_string())
+                    }
                 });
             let _ = tx.send(result);
             ctx.request_repaint();
         });
     }
     pub fn show(&mut self, ui: &mut egui::Ui, client: &Client, threat: bool) {
+        if let Some(progress) = &self.progress {
+            while let Ok(text) = progress.try_recv() { self.progress_text = Some(text); }
+        }
         if let Some(rx) = &self.audio_result
             && let Ok(result) = rx.try_recv()
         {
@@ -132,6 +152,8 @@ impl Chat {
             match rx.try_recv() {
                 Ok(reply) => {
                     self.result = None;
+                    self.cancellation = None;
+                    self.progress_text = None;
                     match reply {
                         Ok(r) => {
                             if !r.reply.is_empty() {
@@ -175,11 +197,12 @@ impl Chat {
             && auto_allowed(proposal, auto_scope.as_deref())
         {
             let token = proposal.token.clone();
+            let path = if proposal.scope_id.is_some() { "/assistant/action/stream" } else { "/assistant/action" };
             self.pending = None;
             self.approval = false;
             self.begin(
                 client.clone(),
-                "/assistant/action",
+                path,
                 serde_json::json!({"token":token}),
                 ui.ctx().clone(),
             );
@@ -251,6 +274,8 @@ impl Chat {
                 && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)));
         if busy {
             ui.spinner();
+            if let Some(text) = &self.progress_text { ui.label(text); }
+            if self.cancellation.is_some() && ui.button("Stop plan").clicked() { self.stop_plan(); }
         }
         if send && !self.input.trim().is_empty() && self.input.len() <= 4000 {
             let message = self.input.trim().to_owned();
@@ -268,6 +293,7 @@ impl Chat {
             && let Some(p) = &self.pending
         {
             let token = p.token.clone();
+            let path = if p.scope_id.is_some() { "/assistant/action/stream" } else { "/assistant/action" };
             let label = p.label.clone();
             let preview = p.preview.clone();
             let mut confirm = false;
@@ -294,7 +320,7 @@ impl Chat {
                 self.approval = false;
                 self.begin(
                     client.clone(),
-                    "/assistant/action",
+                    path,
                     serde_json::json!({"token":token}),
                     ui.ctx().clone(),
                 );
@@ -408,6 +434,9 @@ pub fn settings(
         ui.colored_label(egui::Color32::LIGHT_RED, e.as_str());
     }
     ui.label("Changes save on this device and apply to the floating companion within two seconds.");
+}
+impl Drop for Chat {
+    fn drop(&mut self) { self.stop_plan(); }
 }
 #[cfg(test)]
 mod tests {

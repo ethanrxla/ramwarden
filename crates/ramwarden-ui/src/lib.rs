@@ -23,3 +23,6 @@ pub mod bubble;
 pub mod tray;
 #[cfg(feature = "gui")]
 pub mod browser;
+
+#[cfg(feature = "tray")]
+mod workspace_events;
