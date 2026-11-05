@@ -1,6 +1,6 @@
 # Microsoft Store — offline Win32 EXE candidate
 
-Name: RamWarden (availability/reservation unverified)
+Name: pending owner choice. Microsoft rejected exact “RamWarden” as unavailable on 2026-11-05; no product reservation succeeded.
 Category: Productivity / utilities (confirm Partner Center category)
 Language: English
 Architecture: x64
@@ -59,9 +59,10 @@ No certificate purchase or enrollment has been performed.
 ## Required release verification
 
 - Partner Center developer/publisher verification and product identity/reservation.
-  Owner confirmed neither account nor signing is set up. Use the dedicated
+  Owner completed Individual developer registration and the Apps and Games
+  dashboard is active. Trusted signing remains unconfigured. Use the dedicated
   https://storedeveloper.microsoft.com/ onboarding, not Cloud Partner membership.
-  Individual/Company choice and identity/agreement steps remain with the owner.
+  Publisher agreements and any further identity verification remain with the owner.
 - Valid trusted signatures on every PE, generated uninstaller and installer;
   timestamp and revocation checks. Inspect all runtime DLL dependencies; no web
   bootstrapper may fetch them during Store setup.
@@ -83,3 +84,10 @@ https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/uplo
 
 Status: submission preparation, not a submitted or certified app. Production
 signing, public HTTPS hosting and clean-machine lifecycle evidence are mandatory.
+
+
+Validation checkpoint: native Windows tray compiled successfully in an isolated
+worktree on 2026-11-05; its version resource reports ProductName=RamWarden and
+FileDescription=RamWarden desktop companion. Compiler fixture and lifecycle
+PowerShell parsing passed. The real installed app was not changed. This is not
+fresh-install, upgrade, silent-mode runtime or signing/certification evidence.
