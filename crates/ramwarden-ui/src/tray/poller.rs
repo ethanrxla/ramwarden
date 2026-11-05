@@ -16,6 +16,8 @@ use crate::client::{Client, DebloatState, Error, GpuReport, State, TidyState};
 /// Everything the window shows, as last fetched.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub threat: Option<crate::wardens::ThreatPane>,
+    pub threat_icon: Option<crate::wardens::Sprite>,
     pub state: Option<State>,
     pub tidy: Option<TidyState>,
     pub gpu: Option<GpuReport>,
@@ -35,6 +37,7 @@ pub struct Snapshot {
 /// What the user asked for.
 #[derive(Clone, Debug)]
 pub enum Command {
+    WardenSetup(String),
     Suspend { name: String, force: bool },
     Resume(String),
     Kill { name: String, force: bool },
@@ -154,8 +157,12 @@ impl Poller {
     }
 
     async fn refresh_slow(client: &Client, shared: &Mutex<Snapshot>) {
-        let (gpu, debloat) = tokio::join!(client.gpu(), client.debloat());
+        let (gpu, debloat, threat) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
+        let need_icon=shared.lock().unwrap().threat_icon.is_none();
+        let icon=match (&threat.icon,need_icon){(Some(path),true)=>client.warden_icon(path).await.ok(),_=>None};
         let mut s = shared.lock().unwrap();
+        s.threat=Some(threat);
+        if icon.is_some(){s.threat_icon=icon;}
         if let Ok(g) = gpu {
             s.gpu = Some(g);
         }
@@ -167,6 +174,11 @@ impl Poller {
     /// Execute one command and describe what happened.
     async fn run(client: &Client, cmd: Command) -> String {
         match cmd {
+            Command::WardenSetup(id) => match client.warden_setup(&id).await {
+                Ok(r) if r.started => "Setup requested. Approve the operating system prompt if one appears; check engine status for the outcome.".into(),
+                Ok(r) => format!("Setup did not start: {}",r.error.unwrap_or_default()),
+                Err(e) => format!("Setup did not start: {e}"),
+            },
             Command::Suspend { name, force } => match client.suspend(&name, force).await {
                 Ok(r) => r.describe("suspend"),
                 Err(e) => format!("suspend {name}: {e}"),

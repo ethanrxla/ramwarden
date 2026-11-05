@@ -8,6 +8,9 @@
 pub mod app;
 pub mod client;
 pub mod model;
+pub mod wardens;
+#[cfg(feature = "gui")]
+pub mod threat;
 #[cfg(feature = "gui")]
 pub mod row_object;
 

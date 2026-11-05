@@ -25,6 +25,9 @@ use std::process::Child;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pane { Ram, Threat }
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -44,6 +47,8 @@ enum Tab {
 
 struct WindowApp {
     poller: Poller,
+    pane: Pane,
+    threat_icon: Option<egui::TextureHandle>,
     tab: Tab,
     view: UiState,
 }
@@ -53,7 +58,17 @@ impl eframe::App for WindowApp {
         let ctx = ui.ctx().clone();
         let snap = self.poller.snapshot();
 
+        if self.threat_icon.is_none() && let Some(sprite)=&snap.threat_icon {
+            self.threat_icon=Some(ctx.load_texture("threatwarden",egui::ColorImage::from_rgba_unmultiplied([sprite.width as usize,sprite.height as usize],&sprite.rgba),egui::TextureOptions::NEAREST));
+        }
+
         egui::Panel::top("tabs").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.pane,Pane::Ram,"RAM");
+                ui.selectable_value(&mut self.pane,Pane::Threat,"ThreatWarden");
+                if let Some(p)=&snap.threat {ui.colored_label(views::level_colour(p.level),p.level.label());}
+            });
+            if self.pane==Pane::Ram {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
                 ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
@@ -63,6 +78,7 @@ impl eframe::App for WindowApp {
                     ui.spinner();
                 }
             });
+            }
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             if let Some(e) = &snap.error {
@@ -80,11 +96,12 @@ impl eframe::App for WindowApp {
                 command = Some(c);
             }
         });
-        egui::CentralPanel::default().show(ui, |ui| match self.tab {
-            Tab::Overview => views::overview(ui, &snap),
-            Tab::Processes => command = views::processes(ui, &snap, &mut self.view),
-            Tab::Debloat => command = views::debloat(ui, &snap, &mut self.view),
-            Tab::Gpu => command = views::gpu(ui, &snap),
+        egui::CentralPanel::default().show(ui, |ui| match (self.pane,self.tab) {
+            (Pane::Threat,_) => command=views::threat(ui,&snap,self.threat_icon.as_ref()),
+            (Pane::Ram,Tab::Overview) => views::overview(ui, &snap),
+            (Pane::Ram,Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
+            (Pane::Ram,Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
+            (Pane::Ram,Tab::Gpu) => command = views::gpu(ui, &snap),
         });
 
         if let Some((pending, question)) = self.view.confirm.clone() {
@@ -112,7 +129,7 @@ impl eframe::App for WindowApp {
 }
 
 /// Run the window until it is closed.
-pub fn run_window(client: Client) -> Result<(), String> {
+pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
@@ -130,9 +147,12 @@ pub fn run_window(client: Client) -> Result<(), String> {
         "RamWarden",
         options,
         Box::new(move |cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
                 poller: Poller::start(client, true, move || ctx.request_repaint()),
+                pane,
+                threat_icon: None,
                 tab: Tab::Overview,
                 view: UiState::default(),
             }))
@@ -152,6 +172,7 @@ struct Tray {
     icon: TrayIcon,
     menu: Menu,
     open: MenuId,
+    threat: MenuId,
     quit: MenuId,
     shown_fraction: f32,
     /// The warden's question at the top of the menu, so it can be answered
@@ -169,9 +190,11 @@ struct VoiceItems {
 impl Tray {
     fn new() -> Result<Self, String> {
         let open = MenuItem::new("Open RamWarden", true, None);
+        let threat=MenuItem::new("ThreatWarden",true,None);
         let quit = MenuItem::new("Quit", true, None);
         let menu = Menu::new();
         menu.append(&open).map_err(|e| e.to_string())?;
+        menu.append(&threat).map_err(|e| e.to_string())?;
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
@@ -183,6 +206,7 @@ impl Tray {
             icon,
             menu,
             open: open.id().clone(),
+            threat: threat.id().clone(),
             quit: quit.id().clone(),
             shown_fraction: -1.0,
             voice: None,
@@ -253,13 +277,13 @@ impl Tray {
 }
 
 /// Launch the window process, or leave it alone if it is already open.
-fn open_window(child: &mut Option<Child>) {
+fn open_window(child: &mut Option<Child>, pane: Pane) {
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").spawn()) {
+    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
@@ -281,14 +305,14 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         if start_hidden {
             return Ok(()); // a second logon start: the tray is already there
         }
-        return run_window(client);
+        return run_window(client,Pane::Ram);
     }
 
     let poller = Poller::start(client, false, || {});
     let mut tray = Tray::new()?;
     let mut window: Option<Child> = None;
     if !start_hidden {
-        open_window(&mut window);
+        open_window(&mut window,Pane::Ram);
     }
 
     let mut last = Instant::now() - Duration::from_secs(10);
@@ -310,7 +334,10 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
                 return Ok(());
             }
             if e.id == tray.open {
-                open_window(&mut window);
+                open_window(&mut window,Pane::Ram);
+            }
+            if e.id==tray.threat {
+                open_window(&mut window,Pane::Threat);
             }
             if let Some(c) = tray.voice_command(&e.id) {
                 poller.send(c);
@@ -318,7 +345,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         }
         while let Ok(e) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = e {
-                open_window(&mut window);
+                open_window(&mut window,Pane::Ram);
             }
         }
         if last.elapsed() >= Duration::from_secs(2) {

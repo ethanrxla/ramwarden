@@ -251,6 +251,22 @@ impl Client {
         Self::decode(r).await
     }
 
+    pub(crate) async fn get_text(&self, path: &str, timeout: Duration) -> Result<String> {
+        if !path.starts_with("/wardens/") || path.contains(['?', '#']) {
+            return Err(Error::Decode("Invalid warden asset path".into()));
+        }
+        let mut response=self.http.get(format!("{}{path}",self.base)).timeout(timeout).send().await.map_err(|e|Error::Transport(e.to_string()))?;
+        let status=response.status();
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await.map_err(|e|Error::Transport(e.to_string()))? {
+            if bytes.len()+chunk.len()>256*1024 {return Err(Error::Decode("Warden asset is too large".into()))}
+            bytes.extend_from_slice(&chunk);
+        }
+        let text=String::from_utf8(bytes).map_err(|_|Error::Decode("Warden asset is not UTF-8".into()))?;
+        if !status.is_success(){return Err(Error::Status{status:status.as_u16(),body:text.chars().take(300).collect()})}
+        Ok(text)
+    }
+
     pub(crate) async fn post<T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,

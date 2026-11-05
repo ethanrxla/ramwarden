@@ -71,6 +71,16 @@ jobs:
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-evidence-access.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-capture-clock.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -NonInteractive -File scripts/threatwarden-engines/test-windows-eve-access.ps1
+      - name: Windows native tray and panes
+        if: runner.os == 'Windows'
+        run: |
+          cargo clippy -p ramwarden-ui --features tray --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p ramwarden-ui --features tray --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p ramwarden-ui --features tray --bin ramwarden-tray
       - name: Mac sensor repair rollback regression
         if: runner.os == 'macOS'
         run: python3 scripts/threatwarden-engines/test-macos-repair.py
