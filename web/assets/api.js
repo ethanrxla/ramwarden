@@ -46,7 +46,8 @@ export class Api {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: "include",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        // GitHub may take 15 seconds upstream plus an account-store lookup.
+        signal: AbortSignal.timeout(path.startsWith("/v1/auth/github/") ? Math.max(this.timeoutMs, 25000) : this.timeoutMs),
       });
     } catch {
       throw new ApiError(0, "The RamWarden server could not be reached.");
@@ -97,6 +98,7 @@ export class Api {
   account() {
     return this.request("GET", "/v1/account");
   }
+  usageStatus() { return this.request("GET", "/v1/usage"); }
   // Replaces the whole prefs object (4 KB at most), so send all of it.
   savePrefs(prefs) {
     return this.request("PUT", "/v1/account/prefs", prefs);

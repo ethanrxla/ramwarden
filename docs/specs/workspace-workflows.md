@@ -39,7 +39,13 @@ untrusted-output marker; model context cannot turn them into permission for a
 new operation. A lost connection can leave an unreceived result unavailable in
 chat. Persisted server-side run recovery is not implemented in this increment.
 
-This adds reviewed multi-step execution, not a general shell. File overwrite,
+The local installer integration retains `edit_text(path, expected, content)`.
+Existing-file edits always require manual review, match the complete expected
+contents before writing, and count toward the workflow's new-text budget. Stale
+edits fail the plan without starting later steps. The old Auto grant for creating
+new files does not authorize existing-file edits.
+
+This adds reviewed multi-step execution, not a general shell. Unconditional overwrite,
 delete, package installation, elevation, arbitrary argv and autonomous follow-up
 plans remain outside this catalog. Windows and Linux clients can consume the
 shared API; their native chat surfaces are separate work.

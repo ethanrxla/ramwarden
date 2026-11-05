@@ -145,3 +145,24 @@ struct BubbleView: View {
 
 /// A nonactivating panel: clicking a choice never steals focus from your work.
 final class BubblePanel: NSPanel { override var canBecomeKey: Bool { false } }
+
+struct CompanionMuteMenu: View {
+    let warden:String
+    @StateObject private var voice=VoiceModel()
+    @State private var quiet=false
+    var body:some View {
+        Menu {
+            Button("Unmute companion"){set(false,nil)}
+            ForEach(wardenMuteChoices.indices,id:\.self){i in
+                Button(wardenMuteChoices[i].0){set(true,wardenMuteChoices[i].1)}
+            }
+        } label:{Image(systemName:quiet ? "speaker.slash" : "speaker.wave.2").font(.system(size:11))}
+        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Mute or unmute companion")
+        .onAppear{Task{if warden == "ram" {await voice.poll()};quiet=CompanionAudio.isMuted(warden) || (warden == "ram" && voice.muted)}}
+    }
+    private func set(_ muted:Bool,_ hours:Double?){
+        CompanionAudio.setMuted(muted,warden:warden,hours:hours)
+        if warden == "ram" {if muted {voice.mute(hours)} else {voice.unmute()}}
+        quiet=muted
+    }
+}

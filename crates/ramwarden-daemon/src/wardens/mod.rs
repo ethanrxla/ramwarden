@@ -85,6 +85,9 @@ impl Wardens {
 
     /// One warden's current status.
     fn status(&self, st: &AppState, w: &WardenInfo) -> Status {
+        if self.public_key.is_none() {
+            return Status::off("Plan verification unavailable", "This build is missing its pass verification key. Reinstall the signed release; this is not a request to purchase another plan.", 0);
+        }
         if !self.unlocked(w) {
             return Status::locked(w);
         }
@@ -153,8 +156,22 @@ pub async fn one(State(st): State<AppState>, Path(id): Path<String>) -> impl Int
         "threat" if w.unlocked(info) => json!(w.threat.report()),
         _ => Value::Null,
     };
-    entry["report"] = report;
+    entry["report"] = customer_fields(report);
     (StatusCode::OK, Json(entry))
+}
+
+// Keep stable identifiers and raw evidence intact; normalize public prose only.
+fn customer_fields(mut value:Value)->Value {
+    match &mut value {
+        Value::Array(items)=>for item in items {*item=customer_fields(item.take());},
+        Value::Object(fields)=>for (key,item) in fields {
+            if ["description","advice","headline","detail","summary","source"].contains(&key.as_str()) {
+                if let Some(text)=item.as_str(){*item=json!(ramwarden_core::branding::public_text(text));}
+            } else {*item=customer_fields(item.take());}
+        },
+        _=>{}
+    }
+    value
 }
 
 /// "Turn on": install and enrol what the warden needs. Started only by the

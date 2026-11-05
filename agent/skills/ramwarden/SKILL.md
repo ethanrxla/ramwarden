@@ -12,8 +12,8 @@ browser tabs next, freezing or closing apps last. Its agents are called
 
 | Warden | What it does | Access |
 | --- | --- | --- |
-| RAM Warden | memory pressure, reclaim, tab unloading | free; **Pro** adds hosted Jev decisions |
-| ThreatWarden | security alerts from the machine's Wazuh agent, read-only | paid pass |
+| RAM Warden | memory pressure, reclaim, tab unloading | free; **Plus** adds hosted AI assistance |
+| ThreatWarden | security alerts from the machine's Sentinel, read-only | paid pass |
 
 Current plans: Lite is free on **1 computer**; Plus is **$4/month or $20/year
 on 3 computers** with a 14-day trial; Pro is **$5/month or $24/year on 5

@@ -12,13 +12,13 @@ use axum::{
     routing::{get, post},
 };
 use ramwarden_cloud::{model::Identity, store::random_bytes};
-use serde::Deserialize;
+use serde::{Deserialize,Serialize};
+use aes_gcm::{Aes256Gcm,Nonce,aead::{Aead,KeyInit,Payload}};
+use base64::{Engine as _,engine::general_purpose::STANDARD};
+use ramwarden_cloud::store::{OAuthState,OAuthClaim};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, OnceLock},
-    time::Duration,
-};
+use std::{sync::Arc,time::Duration};
+#[derive(Serialize,Deserialize)]
 struct Pending {
     code: String,
     expires: u64,
@@ -26,10 +26,30 @@ struct Pending {
     interval: u64,
     user_code: Option<String>,
     link_account: Option<String>,
+    #[serde(default)]
+    verified_id: Option<String>,
 }
-static PENDING: OnceLock<Mutex<HashMap<String, Pending>>> = OnceLock::new();
-fn pending() -> &'static Mutex<HashMap<String, Pending>> {
-    PENDING.get_or_init(Default::default)
+fn cipher()->Result<Aes256Gcm,axum::response::Response> {
+    let key=std::env::var("RAMWARDEN_OAUTH_STATE_KEY").ok().and_then(|v|STANDARD.decode(v).ok()).filter(|v|v.len()==32)
+        .ok_or_else(||error(StatusCode::SERVICE_UNAVAILABLE,"GitHub sign-in encryption is not configured."))?;
+    Aes256Gcm::new_from_slice(&key).map_err(storage)
+}
+fn seal(p:&Pending,ticket:&str)->Result<OAuthState,axum::response::Response> {
+    seal_with(&cipher()?,p,ticket)
+}
+fn seal_with(cipher:&Aes256Gcm,p:&Pending,ticket:&str)->Result<OAuthState,axum::response::Response> {
+    let nonce=random_bytes::<12>();let bytes=serde_json::to_vec(p).map_err(storage)?;
+    let encrypted=cipher.encrypt(Nonce::from_slice(&nonce),Payload{msg:&bytes,aad:ticket.as_bytes()}).map_err(|_|storage("OAuth encryption failed"))?;
+    Ok(OAuthState{encrypted:STANDARD.encode([nonce.to_vec(),encrypted].concat()),expires_at:p.expires,next_poll:p.next,lease:None})
+}
+fn unseal(state:&OAuthState,ticket:&str)->Result<Pending,axum::response::Response> {
+    unseal_with(&cipher()?,state,ticket)
+}
+fn unseal_with(cipher:&Aes256Gcm,state:&OAuthState,ticket:&str)->Result<Pending,axum::response::Response> {
+    let bytes=STANDARD.decode(&state.encrypted).map_err(storage)?;
+    if bytes.len()<28 {return Err(storage("Invalid encrypted OAuth state"))}
+    let plain=cipher.decrypt(Nonce::from_slice(&bytes[..12]),Payload{msg:&bytes[12..],aad:ticket.as_bytes()}).map_err(|_|storage("OAuth state verification failed"))?;
+    serde_json::from_slice(&plain).map_err(storage)
 }
 fn client_id() -> Option<String> {
     std::env::var("GITHUB_CLIENT_ID")
@@ -60,7 +80,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/auth/github/poll", post(poll))
 }
 async fn config() -> Json<Value> {
-    Json(json!({"enabled":client_id().is_some()}))
+    Json(json!({"enabled":client_id().is_some() && cipher().is_ok()}))
 }
 #[derive(Deserialize)]
 struct Start {
@@ -95,16 +115,7 @@ async fn start(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Jso
         ));
     }
     let user_code = crate::signin::pending_code(c, b.user_code.as_deref(), now).await?;
-    {
-        let mut map = pending().lock().map_err(storage)?;
-        map.retain(|_, p| p.expires > now);
-        if map.len() >= 128 {
-            return Err(error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Sign-in is busy. Try again shortly.",
-            ));
-        }
-    }
+    let _ = cipher()?;
     let r = client()?
         .post("https://github.com/login/device/code")
         .header("Accept", "application/json")
@@ -136,21 +147,8 @@ async fn start(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Jso
     let ttl = v["expires_in"].as_u64().unwrap_or(600).min(900);
     let interval = v["interval"].as_u64().unwrap_or(5).clamp(5, 60);
     let ticket = hex::encode(random_bytes::<32>());
-    let mut map = pending().lock().map_err(storage)?;
-    if map.len() >= 128 {
-        return Err(error(StatusCode::TOO_MANY_REQUESTS, "Sign-in is busy."));
-    }
-    map.insert(
-        ticket.clone(),
-        Pending {
-            code,
-            expires: now + ttl,
-            next: now + interval,
-            interval,
-            user_code,
-            link_account: linked,
-        },
-    );
+    let p=Pending{code,expires:now+ttl,next:now+interval,interval,user_code,link_account:linked,verified_id:None};
+    c.store.put_oauth(&ticket,seal(&p,&ticket)?,now).await.map_err(storage)?;
     Ok(Json(json!({"ticket":ticket,"user_code":display,"verification_uri":"https://github.com/login/device","expires_in":ttl,"interval":interval})).into_response())
 }
 #[derive(Deserialize)]
@@ -164,25 +162,28 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
     if b.ticket.len() != 64 {
         return Err(error(StatusCode::BAD_REQUEST, "Invalid sign-in ticket."));
     }
-    let mut p = {
-        let mut map = pending().lock().map_err(storage)?;
-        let p = map
-            .get(&b.ticket)
-            .ok_or_else(|| error(StatusCode::GONE, "Start GitHub sign-in again."))?;
-        if p.expires <= now {
-            map.remove(&b.ticket);
-            return Err(error(StatusCode::GONE, "GitHub sign-in expired."));
-        }
-        if now < p.next {
-            return Err(error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Wait before checking GitHub again.",
-            ));
-        }
-        map.remove(&b.ticket).expect("entry exists")
+    let lease=hex::encode(random_bytes::<32>());
+    let state=match c.store.claim_oauth(&b.ticket,now,&lease).await.map_err(storage)? {
+        OAuthClaim::Ready(p)=>p,
+        OAuthClaim::Wait(seconds)=>return Ok(Json(json!({"pending":true,"interval":seconds})).into_response()),
+        OAuthClaim::Gone=>return Err(error(StatusCode::GONE,"GitHub sign-in expired. Start again.")),
     };
+    let mut p=unseal(&state,&b.ticket)?;
+    let result=poll_claimed(c,&headers,&mut p,now).await;
+    let keep=match &result {Ok(response)=>response.status()==StatusCode::ACCEPTED,Err(response)=>response.status().is_server_error()};
+    p.next=now+p.interval;
+    let replacement=if keep {Some(seal(&p,&b.ticket)?)}else{None};
+    if !c.store.finish_oauth(&b.ticket,&lease,replacement).await.map_err(storage)? {
+        return Err(error(StatusCode::CONFLICT,"Sign-in changed. Retry approval."));
+    }
+    match result {
+        Ok(response) if response.status()==StatusCode::ACCEPTED=>Ok(Json(json!({"pending":true,"interval":p.interval})).into_response()),
+        other=>other,
+    }
+}
+async fn poll_claimed(c:&crate::accounts::Cloud,headers:&HeaderMap,p:&mut Pending,now:u64)->Reply {
     if let Some(account) = &p.link_account
-        && session(c, &axum::http::Method::POST, &headers, now)
+        && session(c, &axum::http::Method::POST, headers, now)
             .await?
             .id
             != *account
@@ -192,6 +193,7 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
             "Account changed. Start again.",
         ));
     }
+    let verified_id=if let Some(id)=&p.verified_id {id.clone()} else {
     let id = client_id().ok_or_else(|| {
         error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -223,8 +225,7 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
             }
             p.next = now + p.interval;
             let interval = p.interval;
-            pending().lock().map_err(storage)?.insert(b.ticket, p);
-            return Ok(Json(json!({"pending":true,"interval":interval})).into_response());
+            return Ok((StatusCode::ACCEPTED,Json(json!({"pending":true,"interval":interval}))).into_response());
         }
         Some(_) => {
             return Err(error(
@@ -254,12 +255,15 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
         .as_u64()
         .filter(|n| *n > 0)
         .ok_or_else(|| error(StatusCode::BAD_GATEWAY, "GitHub returned no account ID."))?;
-    let identity = Identity::Github { id: id.to_string() };
+    p.verified_id=Some(id.to_string());
+    id.to_string()
+    };
+    let identity = Identity::Github { id: verified_id };
     // Never match by email or mutable login name, and never retain the GitHub token.
-    let account = if let Some(account) = p.link_account {
+    let account = if let Some(account) = &p.link_account {
         if !c
             .store
-            .link_identity(&account, &identity)
+            .link_identity(account, &identity)
             .await
             .map_err(storage)?
         {
@@ -269,7 +273,7 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
             ));
         }
         c.store
-            .account(&account)
+            .account(account)
             .await
             .map_err(storage)?
             .ok_or_else(|| storage("account vanished"))?
@@ -285,6 +289,16 @@ async fn poll(State(st): State<Arc<AppState>>, headers: HeaderMap, Json(b): Json
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn oauth_state_is_encrypted_and_bound_to_ticket() {
+        let key=Aes256Gcm::new_from_slice(&[7;32]).unwrap();
+        let p=Pending{code:"provider-secret".into(),expires:200,next:105,interval:5,user_code:None,link_account:Some("owner".into()),verified_id:None};
+        let state=seal_with(&key,&p,"ticket-a").unwrap();
+        assert!(!state.encrypted.contains("provider-secret"));
+        assert_eq!(unseal_with(&key,&state,"ticket-a").unwrap().code,"provider-secret");
+        assert!(unseal_with(&key,&state,"ticket-b").is_err());
+        assert!(unseal_with(&Aes256Gcm::new_from_slice(&[8;32]).unwrap(),&state,"ticket-a").is_err());
+    }
     #[test]
     fn tickets_are_unpredictable_and_unique() {
         let a = hex::encode(random_bytes::<32>());

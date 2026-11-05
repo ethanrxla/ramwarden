@@ -2,6 +2,7 @@
 // It holds no policy and takes no destructive action of its own; the only write
 // it ever makes is resuming an app the daemon froze.
 import AppKit
+import SwiftUI
 import Darwin
 
 let base = URL(string: "http://127.0.0.1:7823")!
@@ -48,6 +49,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
 @MainActor final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu = NSMenu()
+    let updates=UpdateController()
     var snap: Snapshot?
     let companion = Companion()
     var refreshing = false
@@ -67,6 +69,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
         item.menu = menu
         item.button?.title = "RW …"
         rebuild()
+        if FileManager.default.isExecutableFile(atPath:FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/ramwarden-launcher").path) {updates.check();Timer.scheduledTimer(withTimeInterval:21600,repeats:true){_ in Task{@MainActor in self.updates.check()}}}
         companion.restore()
         threatCompanion.restore()
         Task { await refresh() }
@@ -87,7 +90,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
             if self.failedRefreshes >= 3 { self.snap = nil }
-            if let current=s {GoatAlerts.shared.memory(percent:current.percent,visible:self.companion.model.companionVisible)}
+            if let current=s {GoatAlerts.shared.memory(percent:current.percent)}
             self.updateTitle(); self.companion.model.connected = self.snap != nil
             self.refreshing = false
             Task { @MainActor in
@@ -160,7 +163,8 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
             add("RamWarden daemon not reachable", nil)
             menu.addItem(.separator())
             add("Start daemon", #selector(startDaemon))
-            add("Quit", #selector(quit), key: "q")
+            add("Check for updates…", #selector(checkUpdates))
+        add("Quit", #selector(quit), key: "q")
             return
         }
         add("Pressure: \(s.rung)  (some \(String(format: "%.1f", s.someAvg10))%)", nil)
@@ -188,6 +192,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
         menu.addItem(.separator())
         add("Open Activity Monitor", #selector(openActivityMonitor))
         add("Open daemon log", #selector(openLog))
+        add("Check for updates…", #selector(checkUpdates))
         add("Quit", #selector(quit), key: "q")
     }
 
@@ -224,6 +229,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
     }
     @objc func showThreatStatus() { DispatchQueue.main.async { self.threatCompanion.showReport() } }
     @objc func toggleThreatCompanion() { threatCompanion.toggle(); rebuild() }
+    @objc func checkUpdates(){updates.show();updates.check()}
     @objc func customizeRam() { companion.openColors() }
 
     @objc func quit() { NSApp.terminate(nil) }

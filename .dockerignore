@@ -1,0 +1,15 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!contracts/
+!contracts/plans.json
+!packaging/
+!packaging/vercel/
+!packaging/vercel/api/
+!packaging/vercel/api/Dockerfile
+**/.env*
+**/secrets.toml
+**/target/**
+**/*.log

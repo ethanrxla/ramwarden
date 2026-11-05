@@ -21,14 +21,25 @@ pub struct UsageRecord {
     pub received_at: u64,
 }
 #[derive(Default)]
-pub(crate) struct MemoryUsage(Mutex<HashMap<String, UsageRecord>>);
+pub(crate) struct MemoryUsage(Mutex<HashMap<String, UsageRecord>>,Mutex<HashMap<String, DeviceConsent>>);
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct DeviceConsent {pub account_id:String,pub device_id:String,pub enabled:bool,pub since:u64}
 #[async_trait]
 pub trait UsageStore: Send + Sync {
+    async fn set_device_consent(&self,choice:DeviceConsent)->Result<()>;
+    async fn device_consents(&self,account:&str)->Result<Vec<DeviceConsent>>;
+    async fn device_consent(&self,account:&str,device:&str)->Result<Option<DeviceConsent>>;
+    async fn disable_device_consents(&self,account:&str)->Result<()>;
     async fn save_usage(&self, record: UsageRecord) -> Result<()>;
     async fn account_usage(&self, account: &str) -> Result<Vec<UsageRecord>>;
 }
 #[async_trait]
 impl UsageStore for MemoryStore {
+    async fn set_device_consent(&self,choice:DeviceConsent)->Result<()> {self.usage.1.lock().unwrap().insert(format!("{}:{}",choice.account_id,choice.device_id),choice);Ok(())}
+    async fn device_consent(&self,account:&str,device:&str)->Result<Option<DeviceConsent>> {Ok(self.usage.1.lock().unwrap().get(&format!("{account}:{device}")).cloned())}
+    async fn device_consents(&self,account:&str)->Result<Vec<DeviceConsent>> {Ok(self.usage.1.lock().unwrap().values().filter(|c|c.account_id==account).cloned().collect())}
+    async fn disable_device_consents(&self,account:&str)->Result<()> {for c in self.usage.1.lock().unwrap().values_mut().filter(|c|c.account_id==account){c.enabled=false}Ok(())}
+
     async fn save_usage(&self, record: UsageRecord) -> Result<()> {
         let key = format!(
             "{}:{}:{}",
@@ -64,6 +75,7 @@ impl UsageStore for MemoryStore {
 }
 impl MongoStore {
     pub async fn ensure_usage_indexes(&self) -> Result<()> {
+        self.database().collection::<bson::Document>("device_usage_consent").create_index(IndexModel::builder().keys(doc!{"account_id":1}).options(IndexOptions::builder().name("consent_by_account".to_string()).build()).build()).await?;
         self.database()
             .collection::<bson::Document>(COLLECTION)
             .create_indexes([
@@ -91,6 +103,15 @@ impl MongoStore {
 }
 #[async_trait]
 impl UsageStore for MongoStore {
+    async fn set_device_consent(&self,choice:DeviceConsent)->Result<()> {
+        let query=doc!{"_id":format!("{}:{}",choice.account_id,choice.device_id)};
+        let mut record=bson::to_document(&choice).expect("consent serializes");record.insert("_id",format!("{}:{}",choice.account_id,choice.device_id));
+        self.database().collection::<bson::Document>("device_usage_consent").replace_one(query,record).upsert(true).await?;Ok(())
+    }
+    async fn device_consent(&self,account:&str,device:&str)->Result<Option<DeviceConsent>> {Ok(self.database().collection::<DeviceConsent>("device_usage_consent").find_one(doc!{"_id":format!("{account}:{device}")}).await?)}
+    async fn device_consents(&self,account:&str)->Result<Vec<DeviceConsent>> {Ok(self.database().collection::<DeviceConsent>("device_usage_consent").find(doc!{"account_id":account}).limit(20).await?.try_collect().await?)}
+    async fn disable_device_consents(&self,account:&str)->Result<()> {self.database().collection::<bson::Document>("device_usage_consent").update_many(doc!{"account_id":account},doc!{"$set":{"enabled":false}}).await?;Ok(())}
+
     async fn save_usage(&self, record: UsageRecord) -> Result<()> {
         let key = format!(
             "{}:{}:{}",

@@ -17,7 +17,9 @@ struct WardenSettingsView:View {
 struct ColorsView: View {
     @ObservedObject private var speech=CompanionSpeech.shared
     @AppStorage private var spoken:Bool
-    init(model:CompanionModel){self.model=model;self._spoken=AppStorage(wrappedValue:false,"\(model.profile.id).speech")}
+    @AppStorage private var audioMuted:Bool
+    @StateObject private var quietVoice=VoiceModel()
+    init(model:CompanionModel){self.model=model;self._audioMuted=AppStorage(wrappedValue:false,"\(model.profile.id).audioMuted");self._spoken=AppStorage(wrappedValue:false,"\(model.profile.id).speech")}
     @ObservedObject var model: CompanionModel
     func binding(_ key: ReferenceWritableKeyPath<CompanionModel,String>) -> Binding<Color> {
         Binding(get: { ramColor(model[keyPath:key]) }, set: { color in
@@ -30,6 +32,8 @@ struct ColorsView: View {
         ScrollView {
         VStack(spacing:12) {
             Text(model.profile.id == "ram" ? "Customize your ram" : "Customize ThreatWarden").font(.title2.bold())
+            Toggle("Mute companion audio",isOn:$audioMuted).onChange(of:audioMuted){CompanionAudio.setMuted($0,warden:model.profile.id)}
+            if model.profile.id == "ram" {Toggle("Quiet automatic comments",isOn:Binding(get:{quietVoice.muted},set:{if $0 {quietVoice.mute(nil)} else {quietVoice.unmute()}}))}
             GoatAlertControl(warden:model.profile.id)
             Button("Forget local chat history"){model.forgetHistory()}
             Toggle("Spoken replies",isOn:$spoken).onChange(of:spoken) { if !$0 { CompanionSpeech.shared.stop(model.profile.id) } }
@@ -59,7 +63,7 @@ struct ColorsView: View {
             Button("Reset eyes") { model.eyes = "FFFFFF"; model.pupilStyle = "slit"; model.saveColors() }
             }
         }.padding(24).frame(width:260)
-        }.frame(width:310,height:660).onAppear{model.refreshWorkspace()}
+        }.frame(width:310,height:660).onAppear{model.refreshWorkspace();Task{await quietVoice.poll()}}
     }
 }
 

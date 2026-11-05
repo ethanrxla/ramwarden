@@ -87,6 +87,13 @@ test("prefs are replaced with PUT and email sign-in carries the device code", as
   assert.deepEqual(JSON.parse(fetchImpl.calls[1].init.body), { email: "a@b.c", user_code: "BCDF-GHJK", link: false });
 });
 
+test("usage status uses the authenticated API route", async () => {
+  const fetchImpl = fakeFetch({ "GET /v1/usage": { body: { enabled: false } } });
+  const api = new Api("https://api.example", { fetchImpl });
+  assert.deepEqual(await api.usageStatus(), { enabled: false });
+  assert.equal(fetchImpl.calls[0].init.credentials, "include");
+});
+
 test("challenge sends a null user code for a plain web sign-in", async () => {
   const fetchImpl = fakeFetch({ "POST /v1/auth/challenge": { body: { message: "m" } } });
   const api = new Api("https://api.example", { fetchImpl });

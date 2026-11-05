@@ -291,4 +291,46 @@ mod tests {
                 .is_err()
         );
     }
+    #[tokio::test]
+    async fn stale_existing_file_edits_stop_the_plan_and_always_need_review() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("notes.txt"), "new work").unwrap();
+        let root = Arc::new(Workspace::open(temp.path()).unwrap());
+        let edit = Operation::EditText {
+            path: "notes.txt".into(),
+            expected: "old work".into(),
+            content: "replacement".into(),
+        };
+        assert!(!edit.auto_eligible("edit notes.txt"));
+        let result = execute(
+            root,
+            Operation::Workflow {
+                steps: vec![edit, create("later")],
+            },
+            None,
+        )
+        .await;
+        assert_eq!(result["succeeded"], false);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes.txt")).unwrap(),
+            "new work"
+        );
+        assert!(!temp.path().join("later").exists());
+        assert!(
+            !Operation::Workflow {
+                steps: vec![
+                    Operation::EditText {
+                        path: "notes.txt".into(),
+                        expected: "new work".into(),
+                        content: "x".repeat(9000)
+                    },
+                    Operation::CreateText {
+                        path: "second".into(),
+                        content: "x".repeat(9000)
+                    }
+                ]
+            }
+            .valid()
+        );
+    }
 }

@@ -74,6 +74,9 @@ jobs:
       - name: Mac sensor repair rollback regression
         if: runner.os == 'macOS'
         run: python3 scripts/threatwarden-engines/test-macos-repair.py
+      - name: Mac installer transaction and rollback regression
+        if: runner.os == 'macOS'
+        run: python3 scripts/tests/macos-install-rollback.py
       - name: Mac checklist and app build
         if: runner.os == 'macOS'
         run: |

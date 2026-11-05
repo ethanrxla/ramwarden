@@ -55,7 +55,7 @@ pub struct Engine {
 
 impl Engine {
     fn new(id: &'static str, name: &'static str, state: &'static str, detail: impl Into<String>) -> Engine {
-        Engine { id, name, state, detail: detail.into() }
+        Engine { id, name, state, detail: ramwarden_core::branding::service_detail(&detail.into()) }
     }
 }
 

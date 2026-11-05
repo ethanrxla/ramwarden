@@ -42,7 +42,7 @@ private final class ThreatPixels: NSObject, XMLParserDelegate {
         checkedAt = status["checked_at"] as? Double ?? 0
         alerts = (((report["report"] as? [String:Any])?["alerts"] as? [[String:Any]]) ?? []).prefix(50).enumerated().map { ThreatAlert(index:$0.offset,row:$0.element) }
         alertCount = ((report["report"] as? [String:Any])?["alerts"] as? [[String:Any]])?.count ?? 0
-        if previouslyChecked,isVisible?() == true,let serious=alerts.first(where:{$0.level >= 12 && $0.isRecent}) {
+        if previouslyChecked,let serious=alerts.first(where:{$0.level >= 12 && $0.isRecent}) {
             GoatAlerts.shared.notify(warden:"threat",event:serious.timestamp+":"+serious.rule,critical:serious.level >= 15)
         }
         let previousHeadline = headline
@@ -72,7 +72,7 @@ struct ThreatAlert: Identifiable {
 }
 struct ThreatEvidence:Identifiable {
     let id:String;let summary:String;let source:String;let complete:Bool;let details:String
-    init(row:[String:Any]){summary=row["summary"] as? String ?? "Evidence";source=row["source"] as? String ?? "Wazuh";complete=row["complete"] as? Bool ?? false;id="\(row["event_id"] as? String ?? ""):\(row["kind"] as? String ?? "")";let data=(try? JSONSerialization.data(withJSONObject:row["data"] ?? [:],options:[.prettyPrinted,.sortedKeys])) ?? Data();details=String(data:data,encoding:.utf8) ?? ""}
+    init(row:[String:Any]){summary=row["summary"] as? String ?? "Evidence";source=row["source"] as? String ?? "Sentinel";complete=row["complete"] as? Bool ?? false;id="\(row["event_id"] as? String ?? ""):\(row["kind"] as? String ?? "")";let data=(try? JSONSerialization.data(withJSONObject:row["data"] ?? [:],options:[.prettyPrinted,.sortedKeys])) ?? Data();details=String(data:data,encoding:.utf8) ?? ""}
 }
 @MainActor private enum SecuritySourceViewer {
     static var window:NSWindow?
@@ -196,6 +196,7 @@ private struct ThreatReport: View {
     }
 }
 private final class ThreatHost: NSHostingView<ThreatSprite> {
+    var settings: (() -> Void)?
     var report: (() -> Void)?
     var chat: (() -> Void)?
     var moved: (() -> Void)?
@@ -226,9 +227,13 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         let menu = NSMenu(); menu.autoenablesItems = false
         let show = NSMenuItem(title:"Protection status",action:#selector(showStatus),keyEquivalent:""); show.target = self; menu.addItem(show)
         let talk = NSMenuItem(title:"Open chat",action:#selector(openAssistant),keyEquivalent:""); talk.target = self; menu.addItem(talk)
+        let preferences = NSMenuItem(title:"Settings…",action:#selector(showSettings),keyEquivalent:""); preferences.target=self; menu.addItem(preferences)
+        let quiet = NSMenuItem(title:UserDefaults.standard.bool(forKey:"threat.audioMuted") ? "Unmute companion" : "Mute companion",action:#selector(toggleQuiet),keyEquivalent:""); quiet.target=self; menu.addItem(quiet)
         let close = NSMenuItem(title:"Hide threat companion",action:#selector(hidePet),keyEquivalent:""); close.target = self; menu.addItem(close)
         NSMenu.popUpContextMenu(menu,with:event,for:self)
     }
+    @objc func showSettings() { settings?() }
+    @objc func toggleQuiet() { CompanionAudio.setMuted(!UserDefaults.standard.bool(forKey:"threat.audioMuted"),warden:"threat") }
     @objc func openAssistant() { chat?() }
     @objc func showStatus() { report?() }
     @objc func hidePet() { hide?() }
@@ -243,6 +248,10 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
     private var sizeObserver: NSObjectProtocol?
     override init() {
         super.init(profile:ThreatWardenProfile())
+        CompanionSpeech.shared.trackVisibility("threat") { [weak self] in
+            guard let panel=self?.panel else{return false}
+            return panel.isVisible && panel.occlusionState.contains(.visible)
+        }
         state.onStatus = { [weak self] text in guard let self=self,self.visible,!self.model.thinking,self.assistantPanel?.isVisible != true else{return};self.recordStatus(text);self.showStatusBubble(text,anchor:self.panel,open:{[weak self] in self?.openChat()}) }
         sizeObserver = NotificationCenter.default.addObserver(forName:.wardenPetSizeChanged,object:nil,queue:.main) { [weak self] notification in
             guard notification.userInfo?["warden"] as? String == "threat" else { return }
@@ -263,7 +272,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         if visible { hide() }
         else { UserDefaults.standard.set(true,forKey:"threat.visible"); show() }
     }
-    @MainActor func poll() async { if visible { await state.poll() } }
+    @MainActor func poll() async { await state.poll() }
     func show() {
         guard panel == nil else { return }
         state.pixelScale = PetSizing.scale("threat")
@@ -272,6 +281,7 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.level = .floating; p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]
         let host = ThreatHost(rootView:ThreatSprite(state:state,model:model)); host.report = { [weak self] in self?.showReport() }; host.chat = { [weak self] in self?.toggleChat() }; host.moved = { [weak self] in self?.didMove(anchor:self?.panel) }; host.hide = { [weak self] in self?.hide() }
+        host.settings = { [weak self] in self?.openCustomization?() }
         p.contentView = host
         let d = UserDefaults.standard
         let bounds = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1000,height:800)

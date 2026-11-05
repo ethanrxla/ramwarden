@@ -92,11 +92,26 @@ impl From<mongodb::error::Error> for StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// Encrypted short-lived OAuth state. Raw browser tickets are never stored.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct OAuthState {
+    pub encrypted: String,
+    pub expires_at: u64,
+    pub next_poll: u64,
+    pub lease: Option<String>,
+}
+pub enum OAuthClaim { Ready(OAuthState), Wait(u64), Gone }
+
 #[async_trait]
 /// Everything the hosted API stores. The site wardens' conversations are a
 /// trait of their own ([`crate::support::SupportStore`]) so this one stays about
 /// accounts and money.
 pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send + Sync {
+    async fn put_oauth(&self, ticket: &str, state: OAuthState, now:u64) -> Result<()>;
+    /// Atomically leases one poll. Abandoned leases expire after 90 seconds.
+    async fn claim_oauth(&self, ticket: &str, now: u64, lease: &str) -> Result<OAuthClaim>;
+    /// Only the current lease may replace or consume this attempt.
+    async fn finish_oauth(&self, ticket: &str, lease: &str, state: Option<OAuthState>) -> Result<bool>;
     // --- device sign-in (RFC 8628)
     /// A new attempt. Returns the raw device code, for the daemon only.
     async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)>;
@@ -163,6 +178,7 @@ pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send 
 
 #[derive(Default)]
 struct Inner {
+    oauth: HashMap<String, OAuthState>,
     accounts: HashMap<Id, Account>,
     identities: HashMap<Identity, Id>,
     device_codes: HashMap<String, DeviceCode>,
@@ -198,6 +214,26 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
+    async fn put_oauth(&self,ticket:&str,state:OAuthState,now:u64)->Result<()> {
+        let mut g=self.lock();
+        g.oauth.retain(|_,p|p.expires_at>now);
+        if g.oauth.len()>=128 || g.oauth.contains_key(&hash(ticket)) {return Err(StoreError::Unavailable("OAuth capacity reached".into()))}
+        if g.oauth.insert(hash(ticket),state).is_some() {return Err(StoreError::Unavailable("Duplicate OAuth attempt".into()))}
+        Ok(())
+    }
+    async fn claim_oauth(&self,ticket:&str,now:u64,lease:&str)->Result<OAuthClaim> {
+        let mut g=self.lock();let key=hash(ticket);
+        g.oauth.retain(|_,p|p.expires_at>now);
+        let Some(p)=g.oauth.get_mut(&key) else{return Ok(OAuthClaim::Gone)};
+        if p.next_poll>now {return Ok(OAuthClaim::Wait(p.next_poll-now))}
+        p.next_poll=now+90;p.lease=Some(lease.into());Ok(OAuthClaim::Ready(p.clone()))
+    }
+    async fn finish_oauth(&self,ticket:&str,lease:&str,state:Option<OAuthState>)->Result<bool> {
+        let mut g=self.lock();let key=hash(ticket);
+        if !g.oauth.get(&key).is_some_and(|p|p.lease.as_deref()==Some(lease)){return Ok(false)}
+        if let Some(state)=state {g.oauth.insert(key,state);} else {g.oauth.remove(&key);}Ok(true)
+    }
+
     async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)> {
         let raw = random_token("rwdc_");
         let mut g = self.lock();
@@ -469,6 +505,30 @@ pub mod contract {
     }
 
     pub async fn run(s: &dyn Store) {
+        let attempt=OAuthState{encrypted:"encrypted-fixture".into(),expires_at:NOW+1000,next_poll:NOW+5,lease:None};
+        s.put_oauth("oauth-fixture",attempt.clone(),NOW).await.unwrap();
+        assert!(matches!(s.claim_oauth("oauth-fixture",NOW,"lease-a").await.unwrap(),OAuthClaim::Wait(5)));
+        assert!(matches!(s.claim_oauth("oauth-fixture",NOW+5,"lease-a").await.unwrap(),OAuthClaim::Ready(_)));
+        assert!(matches!(s.claim_oauth("oauth-fixture",NOW+5,"lease-b").await.unwrap(),OAuthClaim::Wait(_)));
+        assert!(!s.finish_oauth("oauth-fixture","lease-b",None).await.unwrap());
+        assert!(matches!(s.claim_oauth("oauth-fixture",NOW+96,"lease-b").await.unwrap(),OAuthClaim::Ready(_)));
+        assert!(!s.finish_oauth("oauth-fixture","lease-a",Some(attempt.clone())).await.unwrap());
+        assert!(s.finish_oauth("oauth-fixture","lease-b",Some(attempt.clone())).await.unwrap());
+        assert!(matches!(s.claim_oauth("oauth-fixture",NOW+1001,"lease-c").await.unwrap(),OAuthClaim::Gone));
+        s.put_oauth("oauth-consume",attempt,NOW).await.unwrap();
+        assert!(matches!(s.claim_oauth("oauth-consume",NOW+5,"lease-z").await.unwrap(),OAuthClaim::Ready(_)));
+        assert!(s.finish_oauth("oauth-consume","lease-z",None).await.unwrap());
+        assert!(matches!(s.claim_oauth("oauth-consume",NOW+6,"lease-y").await.unwrap(),OAuthClaim::Gone));
+
+        let concurrent=OAuthState{encrypted:"opaque".into(),expires_at:NOW+1000,next_poll:NOW,lease:None};
+        s.put_oauth("oauth-race",concurrent,NOW).await.unwrap();
+        let (a,b)=tokio::join!(s.claim_oauth("oauth-race",NOW,"a"),s.claim_oauth("oauth-race",NOW,"b"));
+        assert_eq!(usize::from(matches!(a.unwrap(),OAuthClaim::Ready(_)))+usize::from(matches!(b.unwrap(),OAuthClaim::Ready(_))),1,"one instance owns the poll");
+        s.set_device_consent(crate::usage::DeviceConsent{account_id:"consent-owner".into(),device_id:"mac".into(),enabled:true,since:NOW}).await.unwrap();
+        assert_eq!(s.device_consents("consent-owner").await.unwrap().len(),1);
+        assert!(s.device_consents("other-owner").await.unwrap().is_empty());
+        s.disable_device_consents("consent-owner").await.unwrap();
+        assert!(!s.device_consents("consent-owner").await.unwrap()[0].enabled);
         device_codes(s).await;
         email_codes(s).await;
         accounts_and_billing(s).await;
