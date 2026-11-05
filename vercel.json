@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "website": {
+      "root": "web",
+      "runtime": "container",
+      "entrypoint": "Dockerfile"
+    },
+    "api": {
+      "root": ".",
+      "runtime": "container",
+      "entrypoint": "packaging/vercel/API.Dockerfile"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "api.ramwarden.com" }],
+      "destination": { "service": "api" }
+    },
+    { "source": "/v1/(.*)", "destination": { "service": "api" } },
+    { "source": "/healthz", "destination": { "service": "api" } },
+    { "source": "/(.*)", "destination": { "service": "website" } }
+  ]
+}

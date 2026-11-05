@@ -81,3 +81,8 @@ quiet expires when audio is next requested, without a per-pet polling timer.
 
 Security chat treats unreachable feeds as unknown, never as zero alerts. Short
 security-status questions request evidence; casual banter does not attach it.
+
+Release builds of the daemon must include RAMWARDEN_ENTITLEMENT_PUBLIC_KEY.
+Omitting it correctly rejects signed paid passes, but makes existing Pro users
+look locked. The Nov 4 local rebuild omitted it; the daemon was rebuilt with the
+configured public key and `/wardens/threat` returned unlocked:true again.

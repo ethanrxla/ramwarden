@@ -85,6 +85,9 @@ impl Wardens {
 
     /// One warden's current status.
     fn status(&self, st: &AppState, w: &WardenInfo) -> Status {
+        if self.public_key.is_none() {
+            return Status::off("Plan verification unavailable", "This build is missing its pass verification key. Reinstall the signed release; this is not a request to purchase another plan.", 0);
+        }
         if !self.unlocked(w) {
             return Status::locked(w);
         }
