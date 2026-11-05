@@ -319,7 +319,7 @@ async function run() {
     const toggle=p.getByRole("checkbox",{name:"Share usage diagnostics"});
     assert.equal(await toggle.isChecked(),false);
     await toggle.check();
-    await p.waitForSelector("#usage-sharing >> text=Sharing starts now");
+    await p.waitForSelector("#usage-sharing >> text=Sharing enabled. Computers you opted out stay off.");
     await toggle.uncheck();
     await p.waitForSelector("#usage-sharing >> text=Usage sharing is off");
     assert.deepEqual(p.errors, []);
