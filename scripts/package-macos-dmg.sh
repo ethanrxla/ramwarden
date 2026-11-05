@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${RAMWARDEN_PACKAGE_DIR:-$ROOT/target/macos-package}"
 IDENTITY="${RAMWARDEN_SIGN_IDENTITY:-Developer ID Application: ETHAN JAMES RISDEN (KC39RL5C7W)}"
+# A release without either trust key breaks existing plans or disables updates.
+: "${RAMWARDEN_ENTITLEMENT_PUBLIC_KEY:?pass verification public key required}"
+: "${RAMWARDEN_UPDATE_PUBLIC_KEY:?update verification public key required}"
+python3 - "$ROOT/target/release/ramwarden-daemon" "$ROOT/target/release/ramwarden-launcher" <<'CHECK_KEYS'
+import os,pathlib,sys
+for path,key in zip(sys.argv[1:],["RAMWARDEN_ENTITLEMENT_PUBLIC_KEY","RAMWARDEN_UPDATE_PUBLIC_KEY"]):
+    if os.environ[key].encode() not in pathlib.Path(path).read_bytes():
+        raise SystemExit("Rebuild release binaries with "+key+" before packaging")
+CHECK_KEYS
 mkdir -p "$OUT"
 SIGN=(--force --sign "$IDENTITY")
 if [ "$IDENTITY" != '-' ]; then SIGN+=(--options runtime --timestamp); fi

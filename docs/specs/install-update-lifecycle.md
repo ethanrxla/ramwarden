@@ -86,3 +86,18 @@ Release builds of the daemon must include RAMWARDEN_ENTITLEMENT_PUBLIC_KEY.
 Omitting it correctly rejects signed paid passes, but makes existing Pro users
 look locked. The Nov 4 local rebuild omitted it; the daemon was rebuilt with the
 configured public key and `/wardens/threat` returned unlocked:true again.
+
+## Transactional Mac component installation
+
+The setup window stages LaunchAgent definitions in a private temporary directory;
+it does not overwrite live definitions before the installer starts. The installer
+backs up existing binaries, app/extension and definitions, stages replacements,
+and stops jobs before swapping. Any failure after swapping restores the saved
+components and prior definitions, then attempts to restart the previous jobs.
+Definitions containing operator credentials are staged and installed with mode
+0600; backup directories use 0700. Existing config, credentials and history are
+never reset. Synthetic temporary-home success and forced-failure tests cover
+both installation and restoration. Setup cannot finish until installation succeeds.
+
+Packaging checks that daemon/updater binaries contain their configured public
+trust keys. Signing private keys remain outside the app and repository.

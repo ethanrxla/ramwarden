@@ -9,6 +9,7 @@ struct SetupView: View {
     @State private var checking = false
     @State private var copied = false
     @State private var installing = false
+    @State private var installationComplete = false
     @State private var installResult = ""
     @State private var connecting = false
     @State private var connectStatus = ""
@@ -59,7 +60,7 @@ struct SetupView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Spacer()
-            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { if let done=done {done()} else {NSApp.terminate(nil)} } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red) }
+            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { if let done=done {done()} else {NSApp.terminate(nil)} } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 4 && !installationComplete)) }
         }.padding(32).onDisappear { loginProcess?.terminate() }
     }
     private func open(_ path: String) { if let url = URL(string: site + path) { NSWorkspace.shared.open(url) } }
@@ -111,6 +112,9 @@ struct SetupView: View {
         do {
             let agents = home.appendingPathComponent("Library/LaunchAgents")
             try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+            let definitionsDirectory=FileManager.default.temporaryDirectory.appendingPathComponent("warden-definitions-"+UUID().uuidString)
+            try FileManager.default.createDirectory(at:definitionsDirectory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+            defer {try? FileManager.default.removeItem(at:definitionsDirectory)}
             let definitions: [(String, [String])] = [
                 ("com.ramwarden.daemon", [home.appendingPathComponent(".local/bin/ramwarden-daemon").path]),
                 ("com.ramwarden.menubar", [unified ? Bundle.main.executablePath! : home.appendingPathComponent("Applications/RamWarden.app/Contents/MacOS/RamWarden").path]),
@@ -123,12 +127,14 @@ struct SetupView: View {
                 if let old=try? Data(contentsOf:file), let previous=try? PropertyListSerialization.propertyList(from:old,format:nil) as? [String:Any], let environment=previous["EnvironmentVariables"] as? [String:String] {var merged=environment; for (key,value) in plist["EnvironmentVariables"] as? [String:String] ?? [:] {merged[key]=value};plist["EnvironmentVariables"]=merged}
                 if label == "com.ramwarden.daemon" {plist.removeValue(forKey:"ProcessType")}
                 let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-                try data.write(to: file, options: .atomic)
+                let staged=definitionsDirectory.appendingPathComponent(label+".plist")
+                try data.write(to:staged,options:.atomic)
+                try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:staged.path)
             }
             let script = resources.appendingPathComponent("install-payload.sh").path
             let result: String = await Task.detached {
                 do {
-                    let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = unified ? [script,"--app",Bundle.main.bundlePath] : [script]
+                    let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = (unified ? [script,"--app",Bundle.main.bundlePath] : [script])+["--definitions",definitionsDirectory.path]
                     let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
                     try process.run()
                     let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
@@ -137,7 +143,7 @@ struct SetupView: View {
                 } catch { return "Installation could not start: " + error.localizedDescription }
             }.value
             installResult = result
-            if !result.hasPrefix("Installation stopped") && !result.hasPrefix("Installation could not") {UserDefaults.standard.set(Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String,forKey:"setup.installedVersion")}
+            if result.contains("Installed. Your settings") {installationComplete=true;UserDefaults.standard.set(Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String,forKey:"setup.installedVersion")}
         } catch { installResult = "Installation stopped: " + error.localizedDescription }
     }
     @MainActor private func check() async {
