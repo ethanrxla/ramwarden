@@ -395,11 +395,15 @@ struct PixelRam: View {
 // Native clear Liquid Glass follows system contrast/transparency preferences.
 struct ChatGlass: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content.glassEffect(.clear, in: RoundedRectangle(cornerRadius:20))
         } else {
             content.background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:20))
         }
+        #else
+        content.background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:20))
+        #endif
     }
 }
 
