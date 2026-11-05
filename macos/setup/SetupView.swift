@@ -1,9 +1,18 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 
 struct SetupView: View {
+    static var needsSetup:Bool {
+        let d=UserDefaults.standard
+        guard let url=Bundle.main.url(forResource:"LICENSE",withExtension:"txt"),let data=try? Data(contentsOf:url) else{return true}
+        let hash=SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()
+        return d.string(forKey:"setup.installedVersion") != Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String || d.string(forKey:"setup.licenseHash") != hash
+    }
     var done: (() -> Void)?
     @State private var step = 0
+    @State private var licenseAccepted=false
+    @State private var reachedLicenseEnd=false
     @State private var allowance = 3
     @State private var health = "Not checked"
     @State private var checking = false
@@ -15,7 +24,7 @@ struct SetupView: View {
     @State private var connectStatus = ""
     @State private var connectURL: URL?
     @State private var loginProcess: Process?
-    private let titles = ["Welcome", "Your account", "Install or update", "Check your warden", "Bring your other PCs"]
+    private let titles = ["Welcome", "License agreement", "Your account", "Install or update", "Check your warden", "Bring your other PCs"]
     private var site: String {
         let configured = ProcessInfo.processInfo.environment["RAMWARDEN_SETUP_SITE"] ?? (Bundle.main.object(forInfoDictionaryKey: "WardenSiteURL") as? String) ?? "https://ramwarden.com"
         return configured == "http://localhost:8000" ? configured : "https://ramwarden.com"
@@ -24,7 +33,7 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 22) {
             Text("A little setup. A lot more breathing room.").font(.largeTitle.bold())
             HStack { ForEach(titles.indices, id: \.self) { i in
-                Button("\(i + 1)") { step = i }.buttonStyle(.borderedProminent).tint(step == i ? .red : .gray)
+                Button("\(i + 1)") { step = i }.buttonStyle(.borderedProminent).tint(step == i ? .red : .gray).disabled(i > 1 && !licenseAccepted)
                 if i < titles.count - 1 { Rectangle().frame(height: 1).foregroundStyle(.secondary) }
             }}
             Text(titles[step]).font(.title2.bold())
@@ -34,6 +43,23 @@ struct SetupView: View {
                     Text("Your RAM companion keeps a crowded computer comfortable. ThreatWarden adds security monitoring with Pro. We’ll connect your account, update safely, and check what is actually running.")
                     Text("Existing settings, credentials, and history should stay with your installation. Do not uninstall or delete your configuration to update.").foregroundStyle(.secondary)
                 case 1:
+                    Text("Read the license to the end, then choose whether to accept it.").fixedSize(horizontal:false,vertical:true)
+                    GeometryReader { viewport in
+                        ScrollView {
+                            VStack(alignment:.leading,spacing:12){
+                                Text(licenseText).font(.system(size:12,design:.monospaced)).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
+                                Color.clear.frame(height:1).background(GeometryReader { marker in Color.clear.preference(key:LicenseEndPreference.self,value:marker.frame(in:.named("licenseViewport")).maxY) })
+                            }.padding(12)
+                        }.coordinateSpace(name:"licenseViewport")
+                        .onPreferenceChange(LicenseEndPreference.self){bottom in if bottom >= 0 && bottom <= viewport.size.height+2 {reachedLicenseEnd=true}}
+                    }.frame(height:210).background(Color.primary.opacity(0.04),in:RoundedRectangle(cornerRadius:8))
+                    Toggle("I have read and agree to the license agreement",isOn:$licenseAccepted).disabled(!reachedLicenseEnd || licenseText.isEmpty)
+                        .onChange(of:licenseAccepted){accepted in
+                            if accepted {UserDefaults.standard.set(licenseHash,forKey:"setup.licenseHash");UserDefaults.standard.set(Date().timeIntervalSince1970,forKey:"setup.licenseAcceptedAt")}
+                            else {UserDefaults.standard.removeObject(forKey:"setup.licenseHash")}
+                        }
+                    if !reachedLicenseEnd {Text("Scroll to the bottom to enable acceptance.").font(.caption).foregroundStyle(.secondary)}
+                case 2:
                     Text("Sign in with your email, wallet, or GitHub when available. Use the same Warden account on all your computers. Approve each computer’s own name and code.")
                     Button("Open my account") { open("/account.html") }
                     Button(connecting ? "Waiting for account approval…" : "Connect this Mac") { Task { await connect() } }.disabled(connecting)
@@ -42,13 +68,13 @@ struct SetupView: View {
                     Text("Usage sharing is off until you enable it in account settings. It sends numeric activity totals, not tab URLs, chats, file contents, or process names.").font(.callout).foregroundStyle(.secondary)
                     Button("Review usage-sharing settings"){open("/account.html")}
                     Text("GitHub sign-in does not grant remote access. Tailscale remains optional and separately authorized.").font(.callout).foregroundStyle(.secondary)
-                case 2:
+                case 3:
                     Text("Everything needed for this Mac is bundled here. Install the daemon, menu bar companion, and browser extension without downloading another installer. Existing settings and account credentials stay in place.")
                     Button(installing ? "Installing…" : "Install on this Mac") { Task { await install() } }.disabled(installing)
                     if !installResult.isEmpty { Text(installResult).font(.callout).textSelection(.enabled) }
                     Button("Show browser extension folder") { NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RamWarden/extension")) }
                     Text("After installation, enable the browser extension in each profile you want your warden to manage. The browser page explains the steps.").foregroundStyle(.secondary)
-                case 3:
+                case 4:
                     Text("Check whether this Mac’s existing daemon is answering. This does not verify your subscription, browser extension, or every security engine.")
                     HStack { Button(checking ? "Checking…" : "Check this Mac") { Task { await check() } }.disabled(checking); Text(health).accessibilityLabel("Daemon status: \(health)") }
                     Text("Open the companion to verify its connection. In Customize your ram, choose its name, colors, eyes, and size when supported by your installed version.").foregroundStyle(.secondary)
@@ -58,11 +84,16 @@ struct SetupView: View {
                     Text("Choosing a plan here only changes the request. It does not purchase or unlock anything.").font(.caption).foregroundStyle(.secondary)
                     Button(copied ? "Copied" : "Copy setup request + agent skill") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(prompt + "\n\n" + bundledSkill, forType: .string); copied = true }
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal:false,vertical:true)
             Spacer()
-            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 4 ? "Done" : "Continue") { if step == 4 { if let done=done {done()} else {NSApp.terminate(nil)} } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 4 && !installationComplete)) }
-        }.padding(32).onDisappear { loginProcess?.terminate() }
+            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 5 ? "Done" : "Continue") { if step == 5 { if let done=done {done()} else {NSApp.terminate(nil)} } else { step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 5 && !installationComplete) || (step == 1 && !licenseAccepted)) }
+        }.padding(32).onAppear{licenseAccepted=UserDefaults.standard.string(forKey:"setup.licenseHash") == licenseHash && !licenseText.isEmpty;reachedLicenseEnd=licenseAccepted}.onDisappear { loginProcess?.terminate() }
     }
+    private var licenseText:String {
+        guard let url=Bundle.main.url(forResource:"LICENSE",withExtension:"txt") else{return ""}
+        return (try? String(contentsOf:url,encoding:.utf8)) ?? ""
+    }
+    private var licenseHash:String {SHA256.hash(data:Data(licenseText.utf8)).map{String(format:"%02x",$0)}.joined()}
     private func open(_ path: String) { if let url = URL(string: site + path) { NSWorkspace.shared.open(url) } }
     private var bundledSkill: String {
         guard let url = Bundle.main.resourceURL?.appendingPathComponent("agent-skill/SKILL.md") else { return "" }
@@ -100,6 +131,7 @@ struct SetupView: View {
         connectStatus = result; connectURL = nil
     }
     @MainActor private func install() async {
+        guard licenseAccepted && reachedLicenseEnd && !licenseText.isEmpty else {installResult="Read and accept the bundled license before installation.";return}
         installing = true; defer { installing = false }
         guard let resources = Bundle.main.resourceURL,
               FileManager.default.fileExists(atPath: resources.appendingPathComponent("install-payload.sh").path) else { installResult = "This build has no installation payload. Use the complete disk image."; return }
@@ -156,4 +188,9 @@ struct SetupView: View {
             health = (response as? HTTPURLResponse)?.statusCode == 200 && value?["ok"] as? Bool == true ? "Daemon is answering" : "Daemon returned an unexpected status"
         } catch { health = "Not connected yet" }
     }
+}
+
+private struct LicenseEndPreference:PreferenceKey {
+    static var defaultValue:CGFloat {CGFloat.greatestFiniteMagnitude}
+    static func reduce(value:inout CGFloat,nextValue:()->CGFloat){value=nextValue()}
 }

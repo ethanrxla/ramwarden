@@ -38,7 +38,6 @@ ln -s /Applications "$STAGE/Applications"
 printf '%s\n' 'Drag RamWarden to Applications, then open it. It installs the bundled daemon and companion, preserves your settings, and guides each computer’s account approval.' > "$STAGE/READ ME.txt"
 hdiutil create -volname 'RamWarden' -srcfolder "$STAGE" -ov -format UDZO "$OUT/RamWarden.dmg"
 codesign "${SIGN[@]}" "$OUT/RamWarden.dmg"
-shasum -a 256 "$OUT/RamWarden.dmg" > "$OUT/RamWarden.dmg.sha256"
 printf 'Built %s\n' "$OUT/RamWarden.dmg"
 # Public distribution still requires notarization and stapling with the owner’s
 # configured notarytool keychain profile. Never bypass Gatekeeper checks.
@@ -47,3 +46,6 @@ if [ -n "${RAMWARDEN_NOTARY_PROFILE:-}" ]; then
   xcrun stapler staple "$OUT/RamWarden.dmg"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$OUT/RamWarden.dmg"
 fi
+
+# Stapling changes the disk image; checksum the final distributable bytes.
+shasum -a 256 "$OUT/RamWarden.dmg" > "$OUT/RamWarden.dmg.sha256"

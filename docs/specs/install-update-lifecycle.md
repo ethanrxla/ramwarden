@@ -101,3 +101,18 @@ both installation and restoration. Setup cannot finish until installation succee
 
 Packaging checks that daemon/updater binaries contain their configured public
 trust keys. Signing private keys remain outside the app and repository.
+
+## License acceptance
+
+The workspace declares MIT licensing. Bundle its standard text as LICENSE.txt
+and show it as setup step two, before account connection and installation.
+Users must scroll to the end before the unchecked acceptance control becomes
+available. Continue, later-step navigation and installation remain gated until
+acceptance. Store only the accepted text SHA-256 and timestamp in local defaults;
+a changed license prompts again. Never accept the agreement automatically for
+a user. Hosted service/payment terms and usage consent remain separate.
+
+The development Mac's LaunchAgent explicitly selects localhost:8000 for setup
+sign-in until the production service exists. This override is private local
+configuration; distributable builds retain HTTPS production defaults and accept
+only their trusted approval origins.
