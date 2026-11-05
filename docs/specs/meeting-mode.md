@@ -1,6 +1,6 @@
 # Companion meeting mode
 
-Status: planned; recording is not shipped. Windows capture-exclusion controls
+Status: Rust persistence/export foundation implemented; recording is not shipped. Windows capture-exclusion controls
 are implemented separately and still need real meeting-app verification.
 
 ## Source reviewed
@@ -65,3 +65,29 @@ Summaries and retrieval should cite the originating meeting and time ranges.
 - [ ] Retention controls and no cross-account or developer-hub leakage.
 - [ ] Real capture exclusion tests in supported meeting apps; unsupported paths honest.
 - [ ] Same flow/artwork/settings on Windows, Mac and Linux where OS support permits.
+
+
+## Implemented foundation
+
+`crates/ramwarden-daemon/src/meetings.rs` provides an owner-scoped SQLite store,
+recording/stopped/processing/ready/failed lifecycle, ordered timestamped transcript
+segments with retry deduplication, bounded source-linked insights, lightweight
+history listings and deletion. A summary attempt has a five-minute durable lease;
+a restarted worker can reclaim an expired lease, and stale/duplicate completions
+cannot overwrite a result. Empty transcripts and failed attempts do not become
+completed summaries. Completed summaries export atomically to a caller-selected
+directory under a generated UUID filename, refusing existing files.
+
+Five regressions cover restart persistence, owner isolation, segment ordering and
+replay, stale summary attempts/retries, source-bound insights, deletion, failed
+summaries and no-overwrite Markdown export. The daemon library suite has 221 tests
+passing and library clippy is clean.
+
+This is an internal storage API, not a recorder or an exposed hosted endpoint.
+The `recording` state is lifecycle bookkeeping; it does not turn on an audio
+capture device. No database is created until a caller opens a store. No transcript
+is uploaded and no microphone is enabled by this increment. Authenticated routes,
+OS capture, transcription, Nyquest summarization, automatic export scheduling,
+upper-bubble/lower-chat insight interaction and hosted hub sync remain to wire.
+Callers must derive the owner scope from authenticated identity, never request
+text, and run SQLite work on a blocking worker when adding async HTTP routes.
