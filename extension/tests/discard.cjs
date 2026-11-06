@@ -199,3 +199,16 @@ test('standalone Lite rechecks opt-in immediately before unloading',async()=>{
  f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:++reads===1,liteBudget:1});
  assert.equal((await f.context.runStandaloneLite()).length,0);assert.equal(f.discards.length,0);
 });
+
+test('explicit approval closes recent selected tabs but preserves live-work guards',async()=>{
+  const url='chrome://extensions/';
+  for (const extra of [{},{active:true},{pinned:true},{audible:true},{status:'loading'},{url:'https://example.org/navigated'}]) {
+    const f=fixture({url,lastAccessed:Date.now(),...extra});const removed=[];
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    const result=await f.context.closeSafe({requestId:'approved',approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000});
+    assert.equal(result.length,Object.keys(extra).length===0?1:0);
+  }
+  const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
+  vm.runInContext('safety.work[7]={dirty:true}',f.context);
+  assert.equal((await f.context.closeSafe({approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000})).length,0);
+});

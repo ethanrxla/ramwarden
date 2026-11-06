@@ -228,12 +228,12 @@ private final class ThreatHost: NSHostingView<ThreatSprite> {
         let show = NSMenuItem(title:"Protection status",action:#selector(showStatus),keyEquivalent:""); show.target = self; menu.addItem(show)
         let talk = NSMenuItem(title:"Open chat",action:#selector(openAssistant),keyEquivalent:""); talk.target = self; menu.addItem(talk)
         let preferences = NSMenuItem(title:"Settings…",action:#selector(showSettings),keyEquivalent:""); preferences.target=self; menu.addItem(preferences)
-        let quiet = NSMenuItem(title:UserDefaults.standard.bool(forKey:"threat.audioMuted") ? "Unmute companion" : "Mute companion",action:#selector(toggleQuiet),keyEquivalent:""); quiet.target=self; menu.addItem(quiet)
+        let quiet = NSMenuItem(title:CompanionAudio.isMuted("threat") ? "Unmute companion" : "Mute companion",action:#selector(toggleQuiet),keyEquivalent:""); quiet.target=self; menu.addItem(quiet)
         let close = NSMenuItem(title:"Hide threat companion",action:#selector(hidePet),keyEquivalent:""); close.target = self; menu.addItem(close)
         NSMenu.popUpContextMenu(menu,with:event,for:self)
     }
     @objc func showSettings() { settings?() }
-    @objc func toggleQuiet() { CompanionAudio.setMuted(!UserDefaults.standard.bool(forKey:"threat.audioMuted"),warden:"threat") }
+    @objc func toggleQuiet() { CompanionAudio.setMuted(!CompanionAudio.isMuted("threat"),warden:"threat") }
     @objc func openAssistant() { chat?() }
     @objc func showStatus() { report?() }
     @objc func hidePet() { hide?() }
