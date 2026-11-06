@@ -7,18 +7,19 @@ function fixture(overrides = {}, fail = false, userAgent = "Firefox") {
   const noop = () => {};
   const event = {addListener: noop};
   let discards = [];
+  let activated,removed;
   const now = Date.now();
   const tab = {id: 7, url:'https://example.org/article', active:false, pinned:false, audible:false,
     discarded:false, incognito:false, autoDiscardable:true, status:'complete', lastAccessed:now - 120*60000, ...overrides};
   const chrome = {
     runtime:{}, storage:{local:{get:(k,cb)=>cb({}),set:(v,cb)=>cb?.()},sync:{get:noop}},
     action:{setBadgeText:noop,setBadgeBackgroundColor:noop},
-    tabs:{onActivated:event,onUpdated:event,onRemoved:event,query:noop,
+    tabs:{onActivated:{addListener:f=>activated=f},onUpdated:event,onRemoved:{addListener:f=>removed=f},query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
   const context = vm.createContext({chrome,navigator:{userAgent},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
-  return {context,chrome,tab,discards};
+  return {context,chrome,tab,discards,activate:x=>activated(x),remove:id=>removed(id)};
 }
 const command = {requestId:'r',minInactiveMinutes:45,tabs:[{id:7,url:'https://example.org/article'}]};
 test('confirms successful discards only, keeps tabs open', async()=>{
@@ -211,4 +212,34 @@ test('explicit approval closes recent selected tabs but preserves live-work guar
   const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
   vm.runInContext('safety.work[7]={dirty:true}',f.context);
   assert.equal((await f.context.closeSafe({approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000})).length,0);
+});
+
+test('reading an active tab persists recency after leaving and stale storage cannot rewind it',async()=>{
+  const f=fixture({active:true,windowId:1,lastAccessed:Date.now()-7200000});
+  f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+  const old={7:{url:f.tab.url,lastActiveMs:Date.now()-7200000}};
+  await f.context.buildTabReport(old);
+  f.tab.active=false;
+  const next=await f.context.buildTabReport(old);
+  assert.equal(next[0].inactiveMinutes,0);
+  assert.equal((await f.context.discardTabs(command)).length,0);
+});
+
+test('sleep gap is not counted as idle work and removal attribution is not user intent',async()=>{
+ const f=fixture();
+ vm.runInContext('tabActivity[7]={url:"https://example.org/article",lastActiveMs:Date.now()-7200000};lastActivitySample=Date.now()-7200000;accountForActivityGap(Date.now())',f.context);
+ assert.ok(vm.runInContext('Date.now()-tabActivity[7].lastActiveMs<1000',f.context));
+});
+
+test('switching away stamps the end of a long reading session',async()=>{
+ const f=fixture({active:true,windowId:3});f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+ await f.context.buildTabReport({});
+ vm.runInContext('tabActivity[7].lastActiveMs=Date.now()-7200000',f.context);
+ f.activate({tabId:8,windowId:3});
+ assert.ok(vm.runInContext('Date.now()-tabActivity[7].lastActiveMs<1000',f.context));
+});
+test('unattributed browser removal preserves keep feedback',()=>{
+ const f=fixture();vm.runInContext('tabActivity[7]={url:"https://example.org/article"};safety.pages["https://example.org/article"]={until:Date.now()+600000}',f.context);
+ f.remove(7);
+ assert.ok(vm.runInContext('safety.pages["https://example.org/article"].until>Date.now()',f.context));
 });

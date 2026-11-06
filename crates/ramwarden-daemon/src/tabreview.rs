@@ -45,10 +45,10 @@ pub fn routes()->Router<AppState> {
         .route("/browser/feedback",post(feedback))
 }
 async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
-    if st.cfg.tabs.close!="live" || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
+    if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
     let auto=crate::browser::close_candidates(&rows,&st.tabs_config());
-    let uncertain=rows.into_iter().filter(|r|r.closeable && !auto.contains(&r.target)
+    let uncertain=rows.into_iter().filter(|r|r.closeable && (st.cfg.tabs.close=="review" || !auto.contains(&r.target))
         && matches!(r.status,"candidate"|"unloaded"|"retained")).take(10).collect();
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());
     Json(serde_json::json!({"proposal":proposal}))
@@ -78,7 +78,7 @@ async fn respond(State(st):State<AppState>,Json(body):Json<Response>)->Result<Js
 #[derive(Deserialize)]
 struct Feedback {url:String,kind:String}
 async fn feedback(State(st):State<AppState>,Json(body):Json<Feedback>)->Result<StatusCode,StatusCode> {
-    if body.url.len()>8192 || !matches!(body.kind.as_str(),"reopened"|"manual_close"|"confirmed") {return Err(StatusCode::BAD_REQUEST);}
+    if body.url.len()>8192 || !matches!(body.kind.as_str(),"reopened"|"manual_close"|"browser_removed"|"confirmed") {return Err(StatusCode::BAD_REQUEST);}
     let url=url::Url::parse(&body.url).map_err(|_|StatusCode::BAD_REQUEST)?;
     if !matches!(url.scheme(),"http"|"https") {return Err(StatusCode::BAD_REQUEST);}
     let h=st.history.lock().map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
