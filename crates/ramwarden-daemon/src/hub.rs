@@ -330,7 +330,7 @@ impl AppState {
                 let (tx,rx)=oneshot::channel();
                 hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
                 let message=serde_json::json!({"action":"close_safe","requestId":request,
-                    "tabs":[target],"minInactiveMinutes":if approved {60} else {1440},
+                    "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {1440},
                     "expiresAt":ramwarden_core::history::unix_now()*1000+10000});
                 hub.send(&target.browser,&message);
                 rx

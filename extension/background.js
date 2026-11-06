@@ -627,12 +627,13 @@ async function closeSafe(command) {
     if (Date.now()>=command.expiresAt || !Number.isFinite(command.expiresAt)) break;
     const tab=await new Promise(r=>chrome.tabs.get(target.id,t=>r(chrome.runtime.lastError?null:t)));
     const disposable=isDisposableBrowserPage(tab?.url);
-    if (!tab || tab.url!==target.url || isWorkPage(tab.url)
-      || (!disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
+    const approved=command.approved===true;
+    if (!tab || tab.url!==target.url || (!approved && isWorkPage(tab.url))
+      || (!approved && !disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
       || tab.status!=="complete" || tab.autoDiscardable===false
-      || safety.work[tab.id]?.dirty || (safety.pages[tab.url]?.until||0)>Date.now()
-      || _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440)) continue;
+      || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
+      || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))) continue;
     safetyClosing.add(tab.id);
     const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
     if (ok) {
