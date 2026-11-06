@@ -51,6 +51,7 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
         await MainActor.run {
+            muted = obj["muted"] as? Bool ?? false
             guard Date() >= answerVisibleUntil else { return }
             let next = WardenBubble(obj["bubble"])
             let changed = next != bubble || (obj["pet"] as? Bool ?? true) != pet
@@ -99,12 +100,12 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
         Task {
             var body: [String: Any] = ["muted": true]
             if let h = hours { body["hours"] = h }
-            _ = await post("warden/mute", body)
+            if let response = await post("warden/mute", body), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }
             await poll()
         }
     }
 
-    func unmute() { Task { _ = await post("warden/mute", ["muted": false]); await poll() } }
+    func unmute() { Task { if let response = await post("warden/mute", ["muted": false]), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }; await poll() } }
 }
 
 struct BubbleView: View {
