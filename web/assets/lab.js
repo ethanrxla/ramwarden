@@ -14,7 +14,7 @@ const steps = [
   ['Reclaim','Ask the OS for cold, reclaimable memory first.'],
   ['Page out','Move eligible cold pages out of active RAM where the platform supports it.'],
   ['Unload idle tabs','Keep eligible tabs open; their contents reload when you return.'],
-  ['Pause watchlisted apps','Only eligible apps you allow can be paused. Closing is a separate last resort with a countdown.'],
+  ['Pause watchlisted apps','Only eligible apps you allow can be paused. Closing an app always starts with a countdown you can cancel.'],
 ];
 function draw(root) {
   const slider=root.querySelector('[data-pressure]');

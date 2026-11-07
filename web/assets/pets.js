@@ -1,12 +1,15 @@
 // The wardens' pixel pets: the corner pet that comments as you scroll, the
-// big pet under the scroll world, and the color picker (docs/product-spec.md
+// big pet under the scroll world, and the look controls (docs/product-spec.md
 // 2.5).
 //
 // Lines live in assets/pets/<warden>-lines.json so they can be edited without
-// touching code. The comments are light: one joke every 45 to 90 seconds at
-// most, 6 a visit, never while the visitor is typing, and one click mutes
-// them for good. The site cannot see the visitor's machine, so a comment is
+// touching code. The comments stay out of the way (owner: "don't make the
+// warden annoying"): one line per section, said once a visit; one joke every
+// 2.5 to 5 minutes at most, 3 a visit; never while the visitor is typing;
+// and one click mutes them for good. The site cannot see the visitor's machine, so a comment is
 // only ever about the page (the section in view, the demo slider).
+
+import { DEFAULT_LOOKS, PUPILS, normalizeLook, spriteSvg, tint } from "./sprite.js";
 
 const store = {
   get(k) {
@@ -26,90 +29,75 @@ const store = {
   },
 };
 
-// ---- Color --------------------------------------------------------------
+// ---- Look ---------------------------------------------------------------
 
-// The body colors of each sprite, the ones a recolor moves. Outline, eyes
-// and metal stay put, so the pet keeps its face whatever its color.
-export const BODY_PALETTES = {
-  ram: ["#2a1418", "#7a1822", "#a8232f", "#c4303d", "#f24455", "#f29ca6", "#ff7a86"],
-  threat: ["#1a0f2e", "#3b0f7a", "#5b21b6", "#7c3aed", "#8b5cf6", "#c4b5fd", "#ddd6fe"],
-};
+// The same controls as the Mac app's Colors pane: wool, horns, hooves and
+// eyes, the pupil style, and (ThreatWarden) the visor. The sprite is redrawn
+// from its pixel grid (sprite.js), so the warden keeps its own shape and
+// only its colors change.
 export const PRESETS = [
-  { name: "Crimson", hue: 354 },
-  { name: "Amber", hue: 30 },
-  { name: "Gold", hue: 48 },
-  { name: "Mint", hue: 145 },
-  { name: "Sky", hue: 205 },
-  { name: "Violet", hue: 265 },
+  { name: "Crimson", wool: "#f24455" },
+  { name: "Amber", wool: "#f2913a" },
+  { name: "Gold", wool: "#e8c547" },
+  { name: "Mint", wool: "#3fcf86" },
+  { name: "Sky", wool: "#3fa2f2" },
+  { name: "Violet", wool: "#8b5cf6" },
 ];
+export const PARTS = {
+  ram: [["wool", "Wool"], ["horns", "Horns"], ["hooves", "Hooves"], ["eyes", "Eyes"]],
+  threat: [["wool", "Wool"], ["horns", "Horns"], ["hooves", "Hooves"], ["eyes", "Eye"], ["visor", "Visor"]],
+};
 
-function hexToHsl(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  if (max === min) return [0, 0, l];
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  return [h * 60, s, l];
+// A preset recolors the wool and gives the horns a darker shade of it, as the
+// original ram has.
+export function presetLook(warden, look, wool) {
+  return normalizeLook(warden, { ...look, wool, horns: tint(wool, 0.8) });
 }
 
-function hslToHex(h, s, l) {
-  const k = (n) => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
-  return "#" + [f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, "0")).join("");
-}
-
-// Moves every body color of `svg` to `hue`, keeping each one's saturation and
-// lightness so the shading survives. Other colors are left alone.
-export function recolorSvg(svg, palette, hue) {
-  const body = new Set(palette.map((c) => c.toLowerCase()));
-  return svg.replace(/fill="(#[0-9a-fA-F]{6})"/g, (m, c) => {
-    if (!body.has(c.toLowerCase())) return m;
-    const [, s, l] = hexToHsl(c);
-    return `fill="${hslToHex(((hue % 360) + 360) % 360, s, l)}"`;
-  });
-}
-
-// One warden's color: remembered per browser, recolors every sprite of that
+// One warden's look: remembered per browser, redraws every sprite of that
 // warden on the page, and tells listeners so a signed-in page can save it.
-export class PetColor extends EventTarget {
-  constructor(warden, src) {
+export class PetLook extends EventTarget {
+  constructor(warden) {
     super();
     this.warden = warden;
-    this.src = src;
-    this.svg = null;
-    this.hue = Number.parseFloat(store.get(`rw.pet.color.${warden}`));
-    if (!Number.isFinite(this.hue)) this.hue = null;
+    let saved = null;
+    try {
+      saved = JSON.parse(store.get(`rw.pet.look.${warden}`) || "null");
+    } catch {
+      saved = null;
+    }
+    this.custom = !!saved;
+    this.look = normalizeLook(warden, saved || {});
   }
 
   sprites() {
     return document.querySelectorAll(`img[data-sprite="${this.warden}"]`);
   }
 
-  async load() {
-    try {
-      this.svg = await (await fetch(this.src)).text();
-    } catch {
-      this.svg = null; // the original sprite stays
-    }
-    this.paint();
+  // A look from the account, used when this browser has none of its own.
+  adopt(look) {
+    if (this.custom || !look) return;
+    this.look = normalizeLook(this.warden, look);
+    this.custom = true;
   }
 
-  set(hue) {
-    this.hue = hue;
-    store.set(`rw.pet.color.${this.warden}`, hue == null ? null : String(Math.round(hue)));
+  set(look) {
+    this.look = normalizeLook(this.warden, look);
+    this.custom = true;
+    store.set(`rw.pet.look.${this.warden}`, JSON.stringify(this.look));
     this.paint();
-    this.dispatchEvent(new CustomEvent("change", { detail: { warden: this.warden, hue } }));
+    this.dispatchEvent(new CustomEvent("change", { detail: { warden: this.warden, look: this.look } }));
+  }
+
+  reset() {
+    this.set(DEFAULT_LOOKS[this.warden]);
+    this.custom = false;
+    store.set(`rw.pet.look.${this.warden}`, null);
   }
 
   paint() {
-    let url = this.src;
-    if (this.svg && this.hue != null) {
-      url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(recolorSvg(this.svg, BODY_PALETTES[this.warden], this.hue));
-    }
+    if (!this.custom) return; // the shipped SVG is the original look
+    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(spriteSvg(this.warden, this.look));
     for (const img of this.sprites()) img.src = url;
   }
 }
@@ -131,7 +119,7 @@ const MUTE_KEY = "rw.pet.muted";
 const COUNT_KEY = "rw.pet.jokes";
 
 export class WardenPet {
-  constructor(el, lines, { minGap = 45_000, maxGap = 90_000, maxJokes = 6 } = {}) {
+  constructor(el, lines, { minGap = 150_000, maxGap = 300_000, maxJokes = 3 } = {}) {
     this.el = el;
     this.say = el.querySelector("[data-say]");
     this.muteButton = el.querySelector("[data-mute]");
@@ -140,6 +128,7 @@ export class WardenPet {
     this.lastKey = 0;
     this.joking = false;
     this.section = null;
+    this.said = new Set(); // sections already introduced this visit
     el.warden = this; // lets the tests call joke() without waiting a minute
   }
 
@@ -186,6 +175,8 @@ export class WardenPet {
         for (const [t, r] of seen) if (!best || r > seen.get(best)) best = t;
         if (!best || seen.get(best) <= 0 || this.joking) return;
         this.section = best.id;
+        if (this.said.has(best.id)) return;
+        this.said.add(best.id);
         this.speak(this.lines.sections[best.id]);
       },
       { threshold: [0, 0.25, 0.5, 0.75, 1] },
@@ -242,10 +233,7 @@ export class WardenPet {
     }
     this.joking = true;
     this.speak(jokes[Math.floor(Math.random() * jokes.length)]);
-    setTimeout(() => {
-      this.joking = false;
-      if (this.section) this.speak(this.lines.sections[this.section]);
-    }, 9000);
+    setTimeout(() => (this.joking = false), 9000);
     return true;
   }
 }
@@ -278,40 +266,54 @@ export class PetStage {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     new IntersectionObserver(([e]) => {
       clearInterval(timer);
-      if (e.isIntersecting) timer = setInterval(next, 4200);
+      if (e.isIntersecting) timer = setInterval(next, 9000);
     }).observe(this.el);
   }
 
+  // The controls, built here so both tabs share them: quick wool colors,
+  // one color well per part, the pupil style, Reset eyes and Original.
   picker() {
     const box = this.el.querySelector("[data-colors]");
     if (!box) return;
-    const slider = box.querySelector("input[type=range]");
-    const mark = () => {
-      for (const b of box.querySelectorAll("[data-hue]")) b.setAttribute("aria-pressed", String(b.dataset.hue === String(this.color.hue)));
-      if (slider && this.color.hue != null) slider.value = String(Math.round(this.color.hue));
+    const pet = this.color;
+    const w = pet.warden;
+    const el = (tag, attrs = {}, ...kids) => {
+      const n = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      n.append(...kids);
+      return n;
     };
+    const swatches = el("div", { class: "swatches", "data-swatches": "" });
     for (const p of PRESETS) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "swatch";
-      b.dataset.hue = String(p.hue);
-      b.title = p.name;
-      b.setAttribute("aria-label", p.name);
-      b.style.setProperty("--swatch", `hsl(${p.hue} 70% 55%)`);
-      b.addEventListener("click", () => {
-        this.color.set(p.hue);
-        mark();
-      });
-      box.querySelector("[data-swatches]").append(b);
+      const b = el("button", { type: "button", class: "swatch", "data-wool": p.wool, title: p.name, "aria-label": `${p.name} wool` });
+      b.style.setProperty("--swatch", p.wool);
+      b.addEventListener("click", () => pet.set(presetLook(w, pet.look, p.wool)));
+      swatches.append(b);
     }
-    slider?.addEventListener("input", () => {
-      this.color.set(Number(slider.value));
-      mark();
+    const parts = el("div", { class: "parts" });
+    for (const [key, name] of PARTS[w]) {
+      const input = el("input", { type: "color", "data-part": key, "aria-label": `${name} color` });
+      input.addEventListener("input", () => pet.set({ ...pet.look, [key]: input.value }));
+      parts.append(el("label", { class: "part" }, input, name));
+    }
+    const select = el("select", { "data-part": "pupil", "aria-label": "Pupils" });
+    for (const p of PUPILS) select.append(el("option", { value: p.id }, p.name));
+    select.addEventListener("change", () => pet.set({ ...pet.look, pupil: select.value }));
+    parts.append(el("label", { class: "part pupils" }, "Pupils", select));
+    const eyes = el("button", { type: "button", class: "button secondary small", "data-reset-eyes": "" }, "Reset eyes");
+    eyes.addEventListener("click", () => {
+      const d = DEFAULT_LOOKS[w];
+      pet.set({ ...pet.look, eyes: d.eyes, pupil: d.pupil });
     });
-    box.querySelector("[data-reset]")?.addEventListener("click", () => {
-      this.color.set(null);
-      mark();
-    });
+    const all = el("button", { type: "button", class: "button secondary small", "data-reset": "" }, "Original");
+    all.addEventListener("click", () => pet.reset());
+    box.replaceChildren(swatches, parts, el("div", { class: "row-actions" }, eyes, all));
+
+    const mark = () => {
+      for (const b of box.querySelectorAll("[data-wool]")) b.setAttribute("aria-pressed", String(b.dataset.wool === pet.look.wool));
+      for (const i of box.querySelectorAll("[data-part]")) i.value = pet.look[i.dataset.part];
+    };
+    pet.addEventListener("change", mark);
     mark();
   }
 }
