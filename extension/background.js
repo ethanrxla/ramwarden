@@ -378,6 +378,7 @@ function _confirmClosed(ids) {
 // stored state. The user's own groups and pinned tabs are never touched.
 const IDLE_PREFIX = "Idle";
 const NO_GROUP = -1;
+const wardenDiscarded = new Set();
 
 function _idleTitle(n) { return `${IDLE_PREFIX} · ${n}`; }
 
@@ -396,7 +397,7 @@ async function _tidyIdleGroups(liveTabs) {
   for (const [windowId, tabs] of byWindow) {
     const group = await _idleGroupIn(windowId);
     const gid = group?.id ?? NO_GROUP;
-    const loose = tabs.filter(t => t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
+    const loose = tabs.filter(t => wardenDiscarded.has(t.id) && t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
     const members = tabs.filter(t => gid !== NO_GROUP && t.groupId === gid).length;
     // One tab is not worth a group of its own.
     if (!loose.length || (gid === NO_GROUP && loose.length < 2)) {
@@ -407,7 +408,7 @@ async function _tidyIdleGroups(liveTabs) {
     const opts = gid === NO_GROUP ? { tabIds: ids, createProperties: { windowId } } : { tabIds: ids, groupId: gid };
     const newId = await new Promise(r => chrome.tabs.group(opts, id => r(chrome.runtime.lastError ? NO_GROUP : id)));
     if (newId === NO_GROUP) continue;
-    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: true });
+    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: group ? group.collapsed : false });
   }
 }
 
@@ -588,7 +589,7 @@ async function discardTabs(command) {
         resolve(!chrome.runtime.lastError && observed?.url === target.url && observed?.discarded === true);
       });
     }));
-    if (ok) confirmed.push(tab.id);
+    if (ok) { confirmed.push(tab.id); wardenDiscarded.add(tab.id); }
   }
   if (!IS_FIREFOX) {
     _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed});

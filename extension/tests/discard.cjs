@@ -79,8 +79,9 @@ test('closing answers every command, skips guarded tabs and saves what closed', 
     assert.equal(saved?.[0]?.url, expected.length ? f.tab.url : undefined);
   }
 });
-test('unloaded tabs are gathered into one collapsed Idle group, leaving user groups and pinned tabs', async()=>{
+test('only Warden-unloaded tabs are grouped visibly, leaving browser-discarded and user groups untouched', async()=>{
   const f=fixture(); const grouped=[]; const updates=[];
+  vm.runInContext('wardenDiscarded.add(1);wardenDiscarded.add(2)',f.context);
   const tabs=[
     {id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
     {id:2,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
@@ -93,7 +94,7 @@ test('unloaded tabs are gathered into one collapsed Idle group, leaving user gro
   f.chrome.tabs.group=(opts,cb)=>{grouped.push(opts);cb(77);};
   await f.context._tidyIdleGroups(tabs);
   assert.deepEqual(Array.from(grouped[0].tabIds),[1,2]);
-  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,true); assert.equal(updates[0][1].title,'Idle · 2');
+  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,false); assert.equal(updates[0][1].title,'Idle · 2');
 });
 test('a single unloaded tab does not get a group of its own', async()=>{
   const f=fixture(); let grouped=0;
@@ -242,4 +243,11 @@ test('unattributed browser removal preserves keep feedback',()=>{
  const f=fixture();vm.runInContext('tabActivity[7]={url:"https://example.org/article"};safety.pages["https://example.org/article"]={until:Date.now()+600000}',f.context);
  f.remove(7);
  assert.ok(vm.runInContext('safety.pages["https://example.org/article"].until>Date.now()',f.context));
+});
+
+test('Chrome-discarded tabs alone never get silently moved into Idle',async()=>{
+ const f=fixture();let grouped=0;
+ f.chrome.tabGroups={query:(_,cb)=>cb([]),update:()=>{}};f.chrome.tabs.group=()=>grouped++;
+ await f.context._tidyIdleGroups([1,2].map(id=>({id,windowId:1,discarded:true,groupId:-1,active:false,pinned:false})));
+ assert.equal(grouped,0);
 });
