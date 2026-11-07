@@ -214,3 +214,20 @@ fn estimated_pressure_is_logged_as_an_estimate() {
     let rows = l.history().unwrap().recent_actions(10).unwrap();
     assert!(rows.iter().all(|r| r.trigger == "pressure-estimate"), "{rows:?}");
 }
+
+#[test]
+fn a_rung_the_platform_cannot_run_is_logged_once_not_every_tick() {
+    let shared = world();
+    shared.lock().unwrap().groups_ready = false;
+    let p = fake::platform(shared.clone());
+    let det = warm_detector(&p, &shared);
+    let mut l = Ladder::new(config::Ladder::default(), Actuator::for_platform(&p))
+        .with_history(ramwarden_core::history::History::in_memory().unwrap());
+    for _ in 0..3 {
+        let report = step(&mut l, &p, &det, 3.0, 0.0, &[]);
+        assert!(report.steps.iter().any(|(a, _, _)| *a == "reclaim"), "the report still says why");
+    }
+    let rows = l.history().unwrap().recent_actions(100).unwrap();
+    let reclaims = rows.iter().filter(|r| r.action == "reclaim").count();
+    assert_eq!(reclaims, 1, "{rows:?}");
+}
