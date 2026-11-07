@@ -258,6 +258,45 @@ pub struct Ladder {
     last_tabs: Option<Instant>,
     tidy: Option<Tidy>,
     ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
+    /// The last refusal written to history per (action, target), so a refusal
+    /// that repeats every tick is logged once per change, not once a second.
+    refusals: RefusalLog,
+}
+
+/// Remembers the last refusal logged for each (action, target).
+///
+/// Measured on a MacBook: with no group reclaim and no page-out route, the
+/// reclaim and page-out rungs each refused every tick, and history grew by
+/// about 720k identical rows, which the decision sync then copied to Atlas. A
+/// refusal is still logged the first time, whenever its reason changes, and
+/// again after the same step has succeeded in between.
+#[derive(Default)]
+struct RefusalLog {
+    last: std::collections::HashMap<(String, String), String>,
+}
+
+impl RefusalLog {
+    /// Bounds the map: past this many distinct pairs it starts over, which
+    /// costs one repeated row per pair, never a lost success.
+    const CAP: usize = 512;
+
+    /// Whether this step should be written to history.
+    fn admit(&mut self, action: &str, target: &str, outcome: &Outcome) -> bool {
+        let key = (action.to_string(), target.to_string());
+        if !outcome.did_nothing() {
+            self.last.remove(&key);
+            return true;
+        }
+        let notes = outcome.notes.join("; ");
+        if self.last.get(&key) == Some(&notes) {
+            return false;
+        }
+        if self.last.len() >= Self::CAP {
+            self.last.clear();
+        }
+        self.last.insert(key, notes);
+        true
+    }
 }
 
 impl Ladder {
@@ -273,6 +312,7 @@ impl Ladder {
             last_tabs: None,
             tidy: None,
             ranker: None,
+            refusals: RefusalLog::default(),
         }
     }
 
@@ -957,9 +997,12 @@ impl Ladder {
         }
     }
 
-    fn log(&self, report: &Report, w: &World<'_>, rung: Rung) {
+    fn log(&mut self, report: &Report, w: &World<'_>, rung: Rung) {
         let Some(h) = &self.history else { return };
         for (action, target, outcome) in &report.steps {
+            if !self.refusals.admit(action, target, outcome) {
+                continue;
+            }
             let _ = h.log(&NewAction {
                 rung: rung.index(),
                 trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
@@ -2104,4 +2147,18 @@ mod tests {
         assert!(l.undo_last().is_none());
         assert!(l.undo_stack().is_empty());
     }
+
+    #[test]
+    fn a_refusal_repeated_every_tick_is_logged_once_per_change() {
+        let mut r = RefusalLog::default();
+        let refused = Outcome::refused(GROUPS_UNAVAILABLE);
+        assert!(r.admit("reclaim", "", &refused));
+        assert!(!r.admit("reclaim", "", &refused), "same refusal, same step: skipped");
+        assert!(r.admit("pageout", "", &refused), "another step is its own entry");
+        assert!(r.admit("reclaim", "", &Outcome::refused("a new reason")));
+        let freed = Outcome { bytes_freed: 1 << 20, ..Outcome::default() };
+        assert!(r.admit("reclaim", "", &freed), "successes are always logged");
+        assert!(r.admit("reclaim", "", &Outcome::refused("a new reason")), "a success resets the step");
+    }
+
 }
