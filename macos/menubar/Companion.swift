@@ -736,8 +736,8 @@ final class PetHost: NSHostingView<PixelRam> {
         host.onClick = { [weak self] in self?.toggleChat() }
         host.onMoved = { [weak self] in self?.positionChat(movePet:true) }
         host.onSettings = { [weak self] in self?.openColors() }
-        host.isQuiet = { [weak self] in self?.voice.muted == true || UserDefaults.standard.bool(forKey:"ram.audioMuted") }
-        host.onQuiet = { [weak self] in guard let self=self else{return}; if self.voice.muted || UserDefaults.standard.bool(forKey:"ram.audioMuted") {CompanionAudio.setMuted(false,warden:"ram");self.voice.unmute()} else {CompanionAudio.setMuted(true,warden:"ram");self.voice.mute(nil)} }
+        host.isQuiet = { [weak self] in self?.voice.muted == true || CompanionAudio.isMuted("ram") }
+        host.onQuiet = { [weak self] in guard let self=self else{return}; if self.voice.muted || CompanionAudio.isMuted("ram") {CompanionAudio.setMuted(false,warden:"ram");self.voice.unmute()} else {CompanionAudio.setMuted(true,warden:"ram");self.voice.mute(nil)} }
         host.onFocus = { [weak self] in self?.requestFocus() }
         host.onHide = { [weak self] in self?.toggle() }
         p.delegate = self

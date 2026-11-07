@@ -63,6 +63,9 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Windows offline installer compiler regression
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -File scripts/tests/windows-store-package.ps1
       - name: Windows sensor configuration regression
         if: runner.os == 'Windows'
         run: |
@@ -111,6 +114,9 @@ jobs:
         run: |
           node --test extension/tests/discard.cjs
           node extension/tests/live.cjs
+          bash scripts/build-ext.sh
+          python3 scripts/tests/store-package.py
+          node extension/tests/popup.cjs
 
   # The checkout contract in contracts/. Hardhat compiles with the solc-js build
   # pinned in contracts/package.json and runs the tests on its in-process chain.

@@ -1,0 +1,22 @@
+{
+  "displayName": "RamWarden Desktop",
+  "partnerCenterId": "7b5ec7ef-c1d4-4c7c-8731-3ea8fceeef59",
+  "dashboard": "https://partner.microsoft.com/en-us/dashboard/win32apps/7b5ec7ef-c1d4-4c7c-8731-3ea8fceeef59/overview",
+  "packageType": "EXE/MSI",
+  "publisherAccount": "Individual developer",
+  "status": "draft",
+  "pricingModel": "Freemium",
+  "primaryCategory": "Productivity",
+  "secondaryCategory": "Security",
+  "publicStoreId": null,
+  "publicStoreUrl": null,
+  "verifiedDate": "2026-11-05",
+  "draftSections": {
+    "availability": "complete",
+    "properties": "complete",
+    "ageRatings": "pending",
+    "packages": "pending",
+    "storeListing": "English US editor recovered; description, four Windows screenshots, box and poster art saved; publication pending"
+  },
+  "publicUrlsVerified": false
+}
