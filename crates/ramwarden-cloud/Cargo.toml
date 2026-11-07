@@ -4,9 +4,12 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
-description = "RamWarden Cloud: the hosted backend's storage (MongoDB Atlas) for accounts, wallets, devices, passes, payments and usage."
+description = "RamWarden Cloud: MongoDB Atlas storage for accounts, wallets, devices, passes, payments and usage, and the decision-log sync with vector search."
 
 [dependencies]
+# The local decision log (decisions.rs, History) that `decisions sync` reads.
+ramwarden-core = { path = "../ramwarden-core" }
+reqwest    = { workspace = true }
 mongodb    = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }

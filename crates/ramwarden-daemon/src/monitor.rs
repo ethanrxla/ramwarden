@@ -30,7 +30,7 @@ use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::signals::Signals;
 use ramwarden_ai::jev::Jev;
 use ramwarden_ai::secret::Secret;
-use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement};
+use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement, Prejudged};
 use ramwarden_core::ladder::{self, TabCloser, World};
 
 use crate::hub::AppState;
@@ -116,29 +116,42 @@ impl TabCloser for Tabs {
 /// user is unlikely to come back to (when `[tabs] close` allows it).
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
-    let threshold = state.cfg.thresholds.inactivity_minutes as i64;
-    let (to_unload, to_close, titles) = {
-        let hub = state.hub.lock().unwrap();
-        let rows = crate::browser::snapshot(&hub.reg, threshold);
-        let close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
-        let titles: std::collections::HashMap<_, _> = rows.iter()
-            .filter(|r| close.contains(&r.target))
-            .map(|r| (r.target.clone(), r.title.clone())).collect();
-        let unload: Vec<_> = rows.into_iter()
+    let (to_unload, to_close, decided, est_mb) = {
+        let rows = crate::tabreview::snapshot(state);
+        let mut close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        state.voice.hold_back(&state.cfg.voice, &mut close, Instant::now());
+        let unload: Vec<_> = rows.iter()
             .filter(|r| r.eligible && !close.contains(&r.target))
-            .take(crate::browser::BATCH_LIMIT).map(|r| r.target).collect();
-        (unload, close, titles)
+            .take(crate::browser::BATCH_LIMIT).map(|r| r.target.clone()).collect();
+        let est_mb: std::collections::HashMap<_, _> = rows.iter()
+            .map(|r| (r.target.clone(), r.est_mb as u64)).collect();
+        let decided: std::collections::HashMap<_, _> = rows.into_iter()
+            .filter(|r| close.contains(&r.target) || unload.contains(&r.target))
+            .map(|r| (r.target.clone(), r)).collect();
+        (unload, close, decided, est_mb)
     };
+    let (to_close, recalled) = crate::recall::Recall::load(&state.cfg.db_path).hold_back(to_close);
 
     let unloaded = state.discard_tabs(&to_unload).await;
     let mut closed = crate::hub::DiscardResult::default();
     match state.cfg.tabs.close.as_str() {
-        "live" if !to_close.is_empty() => closed = state.close_selected_tabs(&to_close).await,
+        "live" if !to_close.is_empty() => closed = state.close_safe(&to_close, false).await,
         "dry-run" => for t in &to_close {
             tracing::info!("tabs: would close {} (dry-run)", t.url);
         },
         _ => {}
     }
+    if let Ok(h) = state.history.lock() {
+        let cfg = &state.cfg.tabs;
+        crate::decisionlog::record_batch(&h, &decided, &unloaded, "unload", trigger, |r| r.unload_reason());
+        crate::decisionlog::record_batch(&h, &decided, &closed, "close", trigger, |r| r.close_reason(cfg));
+        if cfg.close == "dry-run" {
+            crate::decisionlog::record_dry_run(&h, &decided, &to_close, trigger, cfg);
+        }
+        crate::recall::record_kept(&h, &decided, &recalled, trigger);
+    }
+    let titles: std::collections::HashMap<_, _> =
+        decided.iter().map(|(t, r)| (t.clone(), r.title.clone())).collect();
 
     let notes = format!("{} unloaded, {} closed, {} queued, {} refused",
         unloaded.confirmed.len(), closed.confirmed.len(),
@@ -146,14 +159,18 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     tracing::info!("tabs ({trigger}): {notes}");
     // Closed tabs also go in the daemon's own closed_tabs table, so the popup
     // can list them for reopening even before the extension is reloaded.
-    let closed_rows: Vec<(String, String)> = closed.confirmed.iter().chain(&closed.queued)
+    let closed_rows: Vec<(String, String)> = closed.confirmed.iter()
         .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
     for (url, _) in &closed_rows {
-        tracing::info!("tabs: closed {url}");
+        tracing::info!("tabs: confirmed closed {url}");
     }
     if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
         let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
     }
+    // Only what a browser confirmed is worth telling the user about.
+    let freed: u64 = unloaded.confirmed.iter().chain(&closed.confirmed)
+        .map(|t| est_mb.get(t).copied().unwrap_or(0)).sum();
+    state.voice.note_release(unloaded.confirmed.len(), closed.confirmed.len(), freed, Instant::now());
     if unloaded.confirmed.is_empty() && closed.confirmed.is_empty() && closed.queued.is_empty() {
         return;
     }
@@ -184,8 +201,16 @@ fn sweep_tabs(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Inst
     });
 }
 
-/// Bridges the ladder's judge to Jev, the same way [`Tabs`] bridges to the
-/// browsers: the ladder is synchronous, so block on the request here.
+/// Bridges the ladder's judge to Jev.
+///
+/// It blocks on the request, so it must never be called with a lock held: the
+/// monitor asks it through [`Ladder::judge_requests`](ladder::Ladder::judge_requests)
+/// *before* the step, with the detector and ladder released, and hands the
+/// step a [`Prejudged`] copy of the answers. Asking from inside the step, as
+/// the first version did, held the ladder mutex and the detector read lock for
+/// a whole network round trip (up to `ladder_timeout_ms`), and every HTTP
+/// handler that wanted either — the window's status poll among them — sat on a
+/// runtime worker waiting for Jev.
 struct JevJudge {
     jev: Jev,
     suspend_threshold: f64,
@@ -267,6 +292,7 @@ enum Phase {
     Desktop,
     Sample,
     Pressure,
+    Judge,
     Ladder,
     Gpu,
     Behaviour,
@@ -274,11 +300,12 @@ enum Phase {
 }
 
 impl Phase {
-    const ALL: [Phase; 8] = [
+    const ALL: [Phase; 9] = [
         Phase::Waiting,
         Phase::Desktop,
         Phase::Sample,
         Phase::Pressure,
+        Phase::Judge,
         Phase::Ladder,
         Phase::Gpu,
         Phase::Behaviour,
@@ -301,6 +328,7 @@ impl Phase {
             Phase::Desktop => "desktop probe (windows, focus, audio)",
             Phase::Sample => "process sample",
             Phase::Pressure => "pressure read",
+            Phase::Judge => "asking Jev (no lock held)",
             Phase::Ladder => "ladder step",
             Phase::Gpu => "VRAM policy",
             Phase::Behaviour => "behaviour log",
@@ -501,6 +529,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
 
     let cfg = Arc::clone(&state.cfg);
     let mut judge = jev_judge(&cfg, &handle);
+    // The monitor samples the process table itself, outside the detector's
+    // write lock, and takes the lock only to score the result.
+    let mut source = state.det.write().unwrap().take_source();
     let mut gpu_policy = crate::gpu::GpuPolicy::default();
     // Train soon after start when no model exists yet, then once a day.
     let mut last_train = if state.predictor.model_path().exists() {
@@ -551,10 +582,15 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         Phase::Desktop.enter();
         let desktop = probe.sample();
         Phase::Sample.enter();
-        if let Err(e) = state.det.write().unwrap().sample(&desktop) {
-            tracing::warn!("sampling failed: {e}");
-            continue;
-        }
+        let table = match source.sample() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("sampling failed: {e}");
+                continue;
+            }
+        };
+        let degraded = source.accounting_degraded();
+        state.det.write().unwrap().ingest(table, &desktop, degraded);
 
         // 1b. Has the user come back to a tab we unloaded? Cheap: one query per
         // browser, then a hash lookup per reported tab.
@@ -574,7 +610,35 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         };
         let available = ladder::available_bytes(state.platform.memory.as_ref());
 
-        // 3. Act.
+        // 3. Judge, with no lock held. Collect what the step will ask under
+        // the locks, release them, ask Jev, and let the step re-check every
+        // answer against the detector it then holds. Only at the suspend rung
+        // and above, and only with Jev configured; otherwise this is free.
+        let mut prejudged = match judge.as_mut() {
+            Some(j) => {
+                let requests = {
+                    let det = state.det.read().unwrap();
+                    let ladder = state.ladder.lock().unwrap();
+                    ladder.judge_requests(&World {
+                        det: &det,
+                        groups: None,
+                        psi: pressure,
+                        available_bytes: available,
+                        watchlist: &cfg.watchlist,
+                        goal: String::new(),
+                        tabs: None,
+                        judge: None,
+                    })
+                };
+                if !requests.is_empty() {
+                    Phase::Judge.enter();
+                }
+                Some(Prejudged::ask(j, &requests))
+            }
+            None => None,
+        };
+
+        // 4. Act.
         Phase::Ladder.enter();
         let mut closer = Tabs::new(state.clone(), handle.clone());
         let det = state.det.read().unwrap();
@@ -586,7 +650,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
             watchlist: &cfg.watchlist,
             goal: String::new(),
             tabs: Some(&mut closer),
-            judge: judge.as_mut().map(|j| j as &mut dyn Judge),
+            judge: prejudged.as_mut().map(|j| j as &mut dyn Judge),
         };
 
         let report = {
@@ -708,6 +772,12 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 && n > 0
             {
                 tracing::info!("pruned {n} behaviour sample(s) older than {} days", cfg.logging.keep_days);
+            }
+            if let Ok(h) = state.history.lock()
+                && let Ok(n) = h.prune_decisions(crate::decisionlog::KEEP_DAYS, ramwarden_core::history::unix_now() as i64)
+                && n > 0
+            {
+                tracing::info!("pruned {n} decision(s) older than {} days", crate::decisionlog::KEEP_DAYS);
             }
         }
 

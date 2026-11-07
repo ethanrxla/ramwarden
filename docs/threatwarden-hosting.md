@@ -26,15 +26,14 @@ when passes grow (see "Scaling" below). The behaviour this supports is in
    `agents.ramwarden.app` → that IP. Agents connect to this name, so the
    server can move later without touching any user's computer.
 
-## 2. Install Wazuh (one command, ~20 minutes)
+## 2. Install Wazuh detection components
 
 ```bash
 scp scripts/threatwarden-server/setup.sh ubuntu@agents.ramwarden.app:
 ssh ubuntu@agents.ramwarden.app 'sudo bash setup.sh'
 ```
 
-It enforces IPv4/IPv6 management-port filtering before service startup, adds swap, installs Wazuh's official all-in-one (manager, indexer,
-dashboard), turns off password enrolment (each agent gets its own key from
+It enforces IPv4/IPv6 management-port filtering before service startup, adds swap, installs Wazuh's official manager and indexer components, turns off password enrolment (each agent gets its own key from
 ramwarden-api instead), and opens only port 1514 in the host firewall. At the
 end it prints where the generated passwords are.
 
@@ -58,7 +57,7 @@ variables (never in a file in git):
 - `sudo systemctl status wazuh-manager wazuh-indexer` are both active.
 - From your computer: `nc -vz agents.ramwarden.app 1514` connects, and
   `nc -vz agents.ramwarden.app 55000` does **not**.
-- The dashboard, for you only: `ssh -L 8443:127.0.0.1:443 ubuntu@agents.ramwarden.app`,
+- If you separately install the optional dashboard, access it privately: `ssh -L 8443:127.0.0.1:443 ubuntu@agents.ramwarden.app`,
   then open `https://localhost:8443` (user `admin`).
 - Buy a ThreatWarden pass on a test account, sign in on a test computer, click
   **Turn on**, approve the prompt, and the agent shows as active in the
@@ -80,7 +79,7 @@ The agent keys and groups live in `/var/ossec/etc` (`client.keys`,
 `shared/`). Back that directory up daily (Oracle's free block-volume backups
 cover it). Alerts are history and can be lost without breaking anything.
 
-The script reserves port 443 for the private Wazuh dashboard. Deploying the public
+The script keeps port 443 private for an optional Wazuh dashboard. Detection setup does not install or depend on that dashboard. Deploying the public
 RamWarden API needs a separate HTTPS ingress configuration; do not expose the
 dashboard by simply removing that firewall rule. Hosted enroll/status routes are
 still required before the customer one-click flow can work.

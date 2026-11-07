@@ -61,6 +61,12 @@ jobs:
       - name: Test
         if: steps.platform.outputs.supported == 'true'
         run: cargo test --workspace
+      - name: Mac checklist and app build
+        if: runner.os == 'macOS'
+        run: |
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" macos/menubar/Companion.swift macos/menubar/Voice.swift macos/menubar/Speech.swift macos/menubar/tests/review.swift -o "$RUNNER_TEMP/review-test"
+          "$RUNNER_TEMP/review-test"
+          RAMWARDEN_APP_DEST="$RUNNER_TEMP/RamWarden.app" bash macos/menubar/build.sh
 
   # The website in web/: plain HTML, CSS and ES modules with no build step.
   # Unit tests need only Node; the browser tests drive Chromium against the
@@ -75,8 +81,14 @@ jobs:
           node-version: 22
       - name: Unit tests
         run: node --test web/tests/*.test.mjs
+      - name: Extension tests
+        run: node --test extension/tests/discard.cjs extension/tests/warden.cjs
       - name: Browser tests
         run: |
           npm install --no-save --no-package-lock playwright@1
           npx playwright install --with-deps chromium
           node web/tests/e2e.cjs
+      - name: Extension activity and closure guards
+        run: |
+          node --test extension/tests/discard.cjs
+          node extension/tests/live.cjs

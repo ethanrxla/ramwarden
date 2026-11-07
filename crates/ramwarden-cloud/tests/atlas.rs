@@ -49,6 +49,8 @@ async fn the_database_enforces_the_money_and_abuse_rules() {
 }
 
 async fn run(db: &Db) {
+    decisions_sync_is_idempotent_and_takes_late_outcomes(db).await;
+
     // One wallet is one account, whatever the case of its address.
     let a = db.account_for_wallet(Chain::Evm, "0xAbC0000000000000000000000000000000000dEf").await.unwrap();
     let b = db.account_for_wallet(Chain::Evm, "0xabc0000000000000000000000000000000000def").await.unwrap();
@@ -124,4 +126,46 @@ async fn run(db: &Db) {
     assert!(matches!(db.rotate_refresh_token(&t1, Duration::from_secs(3600)).await.unwrap(), Rotation::Reused));
     assert!(matches!(db.rotate_refresh_token(&t2, Duration::from_secs(3600)).await.unwrap(), Rotation::Invalid));
     assert!(db.active_devices(other.id).await.unwrap().is_empty());
+}
+
+/// The decision log: a re-sync replaces, and an outcome that arrives later
+/// lands on the same document. (Vector search is not checked here: Atlas
+/// builds search indexes asynchronously, so a fresh test database has none.)
+async fn decisions_sync_is_idempotent_and_takes_late_outcomes(db: &Db) {
+    use ramwarden_cloud::decision_sync::{Syncer, Cursor};
+    use ramwarden_core::decisions::NewDecision;
+    use ramwarden_core::history::History;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let h = History::open(&path).unwrap();
+    let id = h
+        .record_decision(
+            &NewDecision {
+                kind: "tab".into(),
+                action: "close".into(),
+                result: "confirmed".into(),
+                subject: "docs.example.com".into(),
+                title: "Plan".into(),
+                url: "https://docs.example.com/d/secret".into(),
+                vector: vec![0.5; 16],
+                ..Default::default()
+            },
+            1_700_000_000,
+        )
+        .unwrap();
+    let syncer = Syncer { db, history_path: path.clone(), device: "test".into(), titles: true, embedder: None };
+    assert_eq!(syncer.sync().await.unwrap().decisions, 1);
+    assert_eq!(syncer.sync().await.unwrap().decisions, 0, "nothing new, nothing sent");
+
+    h.mark_decision_outcome(id, "reopened", 1_700_000_100).unwrap();
+    assert_eq!(syncer.sync().await.unwrap().decisions, 1);
+    let doc = db.decision(&format!("test:{id}")).await.unwrap().unwrap();
+    assert_eq!(doc.outcome.as_deref(), Some("reopened"));
+    assert_eq!(db.decisions().count_documents(mongodb::bson::doc! {}).await.unwrap(), 1);
+
+    // Starting over from an empty cursor resends, and still makes one document.
+    std::fs::remove_file(Cursor::path(&path)).unwrap();
+    syncer.sync().await.unwrap();
+    assert_eq!(db.decisions().count_documents(mongodb::bson::doc! {}).await.unwrap(), 1);
 }

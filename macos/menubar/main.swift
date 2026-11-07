@@ -52,6 +52,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let companion = Companion()
     var refreshing = false
     var failedRefreshes = 0
+    var menuOpen = false
+    let threatCompanion = ThreatCompanion()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         item.autosaveName = "RamWarden"
@@ -60,6 +62,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = "RW …"
         rebuild()
         companion.restore()
+        threatCompanion.restore()
         Task { await refresh() }
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             Task { await self.refresh() }
@@ -74,6 +77,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() async {
         guard !refreshing else { return }; refreshing = true
         let s = await loadSnapshot(previous:snap)
+        await companion.voice.poll()
+        await threatCompanion.poll()
         await MainActor.run {
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
@@ -84,6 +89,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func updateTitle() {
+        guard !menuOpen else { return }
         guard let s = snap else { item.button?.title = "RW ⚠︎"; return }
         let dot: String
         switch s.rung {
@@ -96,8 +102,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        Task { await refresh(); await MainActor.run { self.rebuild() } }
+        // Never mutate a tracking menu when an asynchronous refresh finishes.
         rebuild()
+        menuOpen = true
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        menuOpen = false
+        updateTitle()
     }
 
     func add(_ title: String, _ action: Selector? = nil, key: String = "", enabled: Bool = true) {
@@ -116,9 +127,23 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func rebuild() {
+        guard !menuOpen else { return }
         menu.removeAllItems()
-        add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
-        add("Open assistant", #selector(openAssistant))
+        // The warden's question, answerable here when the ram is hidden.
+        if companion.pet == nil, companion.voice.pet, let b = companion.voice.bubble, b.isQuestion {
+            header("YOUR WARDEN ASKS")
+            add("🐏 \(b.text)", nil)
+            for c in b.choices {
+                let m = NSMenuItem(title: "    \(c.label)", action: #selector(answerWarden(_:)), keyEquivalent: "")
+                m.target = self; m.representedObject = c.id
+                menu.addItem(m)
+            }
+            menu.addItem(.separator())
+        }
+        if companion.voice.pet {
+            add(companion.visible ? "Hide ram companion" : "Show ram companion", #selector(toggleCompanion))
+        }
+        add(threatCompanion.visible ? "Hide threat companion" : "Show threat companion", #selector(toggleThreatCompanion))
         add("Customize ram colors…", #selector(customizeRam))
         menu.addItem(.separator())
         guard let s = snap else {
@@ -183,7 +208,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func toggleCompanion() { companion.toggle(); rebuild() }
-    @objc func openAssistant() { companion.openChat() }
+    @objc func answerWarden(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? String else { return }
+        companion.voice.answer(choice)
+    }
+    @objc func toggleThreatCompanion() { threatCompanion.toggle(); rebuild() }
     @objc func customizeRam() { companion.openColors() }
 
     @objc func quit() { NSApp.terminate(nil) }

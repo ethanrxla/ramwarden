@@ -34,6 +34,58 @@ fn waiting(ui: &mut egui::Ui, snap: &Snapshot) {
     ui.label(snap.daemon.as_deref().unwrap_or("Waiting for the daemon…"));
 }
 
+// ── The warden's speech bubble ──────────────────────────────────────────────
+
+/// The bubble across the top of the window. Returns the user's answer.
+pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
+    let speech = snap.speech.as_ref()?;
+    if !speech.pet {
+        return None; // pets come with Plus and Pro
+    }
+    let mut command = None;
+    egui::Frame::group(ui.style())
+        .stroke(egui::Stroke::new(2.0, colour("#c0392b")))
+        .corner_radius(12.0)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("🐏").size(20.0));
+                match &speech.bubble {
+                    None if speech.muted => {
+                        ui.label(RichText::new("Your warden is keeping quiet.").weak());
+                        if ui.small_button("Unmute").clicked() {
+                            command = Some(Command::Unmute);
+                        }
+                    }
+                    None => {
+                        ui.label(RichText::new("All quiet.").weak());
+                    }
+                    Some(b) => {
+                        ui.label(&b.text).on_hover_text(b.tab.as_ref().map(|t| t.url.as_str()).unwrap_or(""));
+                        for c in &b.choices {
+                            if ui.button(&c.label).clicked() {
+                                command = Some(Command::Answer { id: b.id.clone(), choice: c.id.clone() });
+                            }
+                        }
+                        if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
+                            command = Some(Command::Answer { id: b.id.clone(), choice: "dismiss".into() });
+                        }
+                    }
+                }
+                if !speech.muted {
+                    ui.menu_button("🔇", |ui| {
+                        for (label, hours) in crate::voice::MUTE_CHOICES {
+                            if ui.button(label).clicked() {
+                                command = Some(Command::Mute(hours));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    command
+}
+
 // ── Overview ────────────────────────────────────────────────────────────────
 
 pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::Result;
@@ -25,10 +26,19 @@ pub enum Owner {
 pub struct ProcessSample {
     pub pid: i32,
     pub ppid: i32,
+    /// When the process started, in the platform's own units: `starttime`
+    /// ticks on Linux, the creation FILETIME on Windows, microseconds since the
+    /// epoch on macOS. Only compared for equality: together with `pid` it
+    /// identifies one process instance, so nothing cached for a process is ever
+    /// handed to a later one that reused its PID. 0 when unknown.
+    pub started: u64,
     /// Short process name: `comm` on Linux, the image name without `.exe` on
     /// Windows.
     pub name: String,
-    pub cmdline: String,
+    /// Shared rather than owned: sources cache it per process instance, and a
+    /// Chromium command line is kilobytes long, so each tick hands out the same
+    /// allocation instead of copying it.
+    pub cmdline: Arc<str>,
     pub owner: Owner,
     /// Total CPU time consumed since the process started, in seconds.
     pub cpu_seconds: f64,
