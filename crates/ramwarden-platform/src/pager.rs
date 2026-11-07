@@ -23,7 +23,7 @@ impl Pager for NoPager {
     }
 
     fn route(&self) -> &'static str {
-        "unavailable — group reclaim only"
+        "unavailable on this platform"
     }
 
     fn page_out(&self, pid: i32, _: f64, _: u64) -> Outcome {
