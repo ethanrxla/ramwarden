@@ -31,8 +31,11 @@ use serde::{Deserialize, Serialize};
 use crate::db::Db;
 use crate::decisions::{DecisionDoc, Neighbour, TEXT_INDEX, settled_closes, to_document};
 
-/// Rows per round trip.
+/// Decision rows per round trip; each batch is also one Ollama request.
 const BATCH: u32 = 200;
+/// Action rows per round trip. They are not embedded, so they go in bigger
+/// batches: a log can hold hundreds of thousands.
+const ACTION_BATCH: u32 = 2000;
 /// A close older than this with no reopen is counted as "not missed".
 pub const SETTLE_SECS: i64 = 24 * 3600;
 /// Title neighbours below this cosine score are a different kind of tab.
@@ -235,7 +238,7 @@ impl Syncer<'_> {
             cursor.save(&self.history_path)?;
         }
         loop {
-            let rows = history.actions_after(cursor.action_id, BATCH)?;
+            let rows = history.actions_after(cursor.action_id, ACTION_BATCH)?;
             let Some(last) = rows.last().map(|a| a.id) else { break };
             let docs: Vec<DecisionDoc> = rows.iter().map(|a| action_doc(&self.device, a)).collect();
             report.actions += self.db.upsert_decisions(&docs).await?;

@@ -208,10 +208,16 @@ impl Db {
 
     /// Insert or replace each document by `_id`. Returns how many were written.
     pub async fn upsert_decisions(&self, docs: &[DecisionDoc]) -> Result<usize> {
-        let coll = self.decisions();
-        for d in docs {
-            coll.replace_one(doc! { "_id": &d.id }, d).upsert(true).await?;
+        // Replace the batch in two round trips; one per document takes hours
+        // on a large backlog. A failure between the two is repaired by the
+        // resend, since the caller moves its cursor only after this returns.
+        if docs.is_empty() {
+            return Ok(0);
         }
+        let coll = self.decisions();
+        let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+        coll.delete_many(doc! { "_id": { "$in": ids } }).await?;
+        coll.insert_many(docs).await?;
         Ok(docs.len())
     }
 
