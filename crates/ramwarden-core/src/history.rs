@@ -1219,7 +1219,7 @@ mod tests {
 
 /// Local tab feedback is never sent to the hosted support database.
 impl History {
-    fn tab_safety_schema(&self) -> Result<()> {
+    pub(crate) fn tab_safety_schema(&self) -> Result<()> {
         self.conn.execute_batch("CREATE TABLE IF NOT EXISTS tab_feedback (
             url TEXT PRIMARY KEY, protected_until INTEGER NOT NULL, negative INTEGER NOT NULL,
             updated_at INTEGER NOT NULL);
