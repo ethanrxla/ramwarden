@@ -47,7 +47,7 @@ pub struct WardenInfo {
 
 /// The pricing page. Prices live on the site and in the checkout; the
 /// `price` strings here are display copies, kept in step with them.
-pub const PRICING_URL: &str = "https://ramwarden.app/#pricing";
+pub const PRICING_URL: &str = "https://ramwarden.com/#pricing";
 
 pub const RAM: WardenInfo = WardenInfo {
     id: "ram",

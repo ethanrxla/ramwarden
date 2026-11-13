@@ -34,7 +34,7 @@ const store = {
 const NAMES = { ram: "RamWarden", threat: "ThreatWarden" };
 
 export function errorLine(e) {
-  if (e instanceof ApiError && e.offline) return "I can't reach the RamWarden server right now. Try again in a minute.";
+  if (e instanceof ApiError && e.offline) return "Chat is temporarily unavailable. You can still browse pricing and setup on this site.";
   return (e && e.message) || "Something went wrong. Try again in a minute.";
 }
 
@@ -143,6 +143,7 @@ export class SupportChat {
   // the team) if this browser has one.
   async load() {
     this.loaded = true;
+    this.log.querySelector(".chat-msg.error")?.remove();
     try {
       const r = await this.api.supportHistory({ conversation: this.conversation, warden: this.warden });
       if (!r.live) this.conversation = null;

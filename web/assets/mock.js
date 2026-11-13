@@ -70,12 +70,12 @@ export class MockApi {
 
   async challenge({ chain, address, userCode, link = false }) {
     const lines = [
-      "ramwarden.app wants you to sign in with your " + (chain === "evm" ? "Ethereum" : "Solana") + " account:",
+      "ramwarden.com wants you to sign in with your " + (chain === "evm" ? "Ethereum" : "Solana") + " account:",
       address,
       "",
       link ? "Link this wallet as a sign-in method. No payment." : userCode ? `Link the device with code ${userCode} to your RamWarden account.` : "Sign in to your RamWarden account.",
       "",
-      "URI: https://ramwarden.app",
+      "URI: https://ramwarden.com",
       "Version: 1",
       "Nonce: mock" + Math.random().toString(36).slice(2, 10),
       "Issued At: " + new Date().toISOString(),
@@ -138,14 +138,14 @@ export class MockApi {
     return {
       expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       commands: {
-        macos: `curl -fsSL https://get.ramwarden.app/i/${token} | sh`,
-        linux: `curl -fsSL https://get.ramwarden.app/i/${token} | sh`,
-        windows: `irm https://get.ramwarden.app/i/${token}/ps | iex`,
+        macos: `curl -fsSL https://api.ramwarden.com/i/${token} | sh`,
+        linux: `curl -fsSL https://api.ramwarden.com/i/${token} | sh`,
+        windows: `irm https://api.ramwarden.com/i/${token}/ps | iex`,
       },
       installers: {
-        macos: `https://get.ramwarden.app/i/${token}/RamWarden.dmg`,
-        windows: `https://get.ramwarden.app/i/${token}/RamWarden.msi`,
-        linux: `https://get.ramwarden.app/i/${token}/ramwarden.deb`,
+        macos: `https://api.ramwarden.com/i/${token}/RamWarden.dmg`,
+        windows: `https://api.ramwarden.com/i/${token}/RamWarden.msi`,
+        linux: `https://api.ramwarden.com/i/${token}/ramwarden.deb`,
       },
     };
   }

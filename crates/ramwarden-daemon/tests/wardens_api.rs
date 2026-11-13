@@ -103,7 +103,7 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     assert_eq!(threat["status"]["level"], "locked");
     assert_eq!(threat["icon"], "/wardens/threat/icon.svg");
     assert_eq!(threat["price"], "In RamWarden Pro, from $5 a month");
-    assert_eq!(threat["upgrade_url"], "https://ramwarden.app/#pricing");
+    assert_eq!(threat["upgrade_url"], "https://ramwarden.com/#pricing");
     assert!(ram["price"].is_null() && ram["upgrade_url"].is_null());
     assert!(json(&st, "/wardens/threat").await["report"].is_null());
 

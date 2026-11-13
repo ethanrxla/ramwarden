@@ -14,7 +14,7 @@ and card payment are offered only when `checkout/config` lists them (`solana`
 or `stripe` not null or false).
 
 **Always quote from the server, not from this table.** `GET
-https://api.ramwarden.app/v1/checkout/config` answers `{plans: [{id, name, usd,
+https://api.ramwarden.com/v1/checkout/config` answers `{plans: [{id, name, usd,
 days, wardens}], wardens, base: {chain_id, network, contract, usdc}, solana,
 stripe}`. Plan `id`s are numbers; pick the plan by its `wardens` list (for
 example `["threat"]`), not by its name. If it fails, or lists no plans or no
@@ -60,7 +60,7 @@ This works whether or not you have a wallet tool, and is the default.
 3. Give the user the checkout link, and open it in their default browser if
    you can (`open` on macOS, `start ""` on Windows, `xdg-open` on Linux):
 
-   `https://ramwarden.app/account.html?plan=<plan id>`
+   `https://ramwarden.com/account.html?plan=<plan id>`
 
    On that page the user signs in with MetaMask or Phantom (a message to sign,
    no payment), then pays: the page asks their wallet to approve the USDC
@@ -78,7 +78,7 @@ This works whether or not you have a wallet tool, and is the default.
 Use this only if you have a wallet tool (for example a MetaMask or Phantom
 connector) that shows the user every signature request and transaction and
 waits for them to approve or reject it. Everything below runs against
-`https://api.ramwarden.app`; the server builds every message and transaction,
+`https://api.ramwarden.com`; the server builds every message and transaction,
 and you only pass them to the wallet.
 
 1. Confirm the plan with the user (rule 2).

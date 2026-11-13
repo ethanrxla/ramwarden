@@ -23,14 +23,14 @@ when passes grow (see "Scaling" below). The behaviour this supports is in
    source `0.0.0.0/0`, TCP, destination port **1514**. Nothing else: the
    manager API, indexer and dashboard stay closed to the internet.
 4. Note the instance's **public IP**. In your DNS, create an **A record**
-   `agents.ramwarden.app` → that IP. Agents connect to this name, so the
+   `agents.ramwarden.com` → that IP. Agents connect to this name, so the
    server can move later without touching any user's computer.
 
 ## 2. Install Wazuh detection components
 
 ```bash
-scp scripts/threatwarden-server/setup.sh ubuntu@agents.ramwarden.app:
-ssh ubuntu@agents.ramwarden.app 'sudo bash setup.sh'
+scp scripts/threatwarden-server/setup.sh ubuntu@agents.ramwarden.com:
+ssh ubuntu@agents.ramwarden.com 'sudo bash setup.sh'
 ```
 
 It enforces IPv4/IPv6 management-port filtering before service startup, adds swap, installs Wazuh's official manager and indexer components, turns off password enrolment (each agent gets its own key from
@@ -50,14 +50,14 @@ variables (never in a file in git):
 | `WAZUH_INDEXER_URL` | `https://127.0.0.1:9200` |
 | `WAZUH_INDEXER_USER` / `WAZUH_INDEXER_PASSWORD` | `admin` and its password |
 | `WAZUH_CA_FILE` | `/etc/wazuh-indexer/certs/root-ca.pem` |
-| `WAZUH_AGENT_HOST` | `agents.ramwarden.app` |
+| `WAZUH_AGENT_HOST` | `agents.ramwarden.com` |
 
 ## 4. Check it
 
 - `sudo systemctl status wazuh-manager wazuh-indexer` are both active.
-- From your computer: `nc -vz agents.ramwarden.app 1514` connects, and
-  `nc -vz agents.ramwarden.app 55000` does **not**.
-- If you separately install the optional dashboard, access it privately: `ssh -L 8443:127.0.0.1:443 ubuntu@agents.ramwarden.app`,
+- From your computer: `nc -vz agents.ramwarden.com 1514` connects, and
+  `nc -vz agents.ramwarden.com 55000` does **not**.
+- If you separately install the optional dashboard, access it privately: `ssh -L 8443:127.0.0.1:443 ubuntu@agents.ramwarden.com`,
   then open `https://localhost:8443` (user `admin`).
 - Buy a ThreatWarden pass on a test account, sign in on a test computer, click
   **Turn on**, approve the prompt, and the agent shows as active in the
@@ -70,7 +70,7 @@ to 100, so this free ARM box is a launch server; benchmark the real workload. Si
 the indexer's disk above 70%, the manager's queue warnings in
 `/var/ossec/logs/ossec.log`, or more than ~25 active agents. Moving is: build
 the new server with the same script, restore the manager's `/var/ossec/etc`
-(agent keys and groups), point the `agents.ramwarden.app` A record at it.
+(agent keys and groups), point the `agents.ramwarden.com` A record at it.
 Agents reconnect on their own.
 
 ## Backups
@@ -83,3 +83,23 @@ The script keeps port 443 private for an optional Wazuh dashboard. Detection set
 RamWarden API needs a separate HTTPS ingress configuration; do not expose the
 dashboard by simply removing that firewall rule. Hosted enroll/status routes are
 still required before the customer one-click flow can work.
+
+## Public web and API cutover
+
+Vercel serves the static website at `https://ramwarden.com`. Oracle serves
+agent traffic at `agents.ramwarden.com:1514`. The agent hostname is not a web
+endpoint. The separate `api.ramwarden.com` hostname needs an HTTPS listener
+forwarding to the RamWarden API on loopback. Keep the Wazuh management API,
+indexer, and Nyquest on their existing private paths.
+
+Build the API from the branch that contains `crates/ramwarden-api`. Configure
+its production profile, durable Mongo database, and model credentials through
+the host secret store. Set `RAMWARDEN_SITE_ORIGIN=https://ramwarden.com`,
+`RAMWARDEN_PUBLIC_URL=https://api.ramwarden.com`, and
+`WAZUH_AGENT_HOST=agents.ramwarden.com`. Provision a certificate for the API
+hostname and keep live payments disabled while verifying the deployment.
+
+Verify a pricing question on each site warden and a support ticket in staging.
+Check that a real browser on the site can reach the API with its production
+CORS settings, then verify device linking, entitlement refresh, and a
+ThreatWarden enrollment on a disposable device before enabling live payments.

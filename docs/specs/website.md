@@ -186,4 +186,4 @@ Checkout:
   their cards carry a Soon tag.
 - The checkout contract is not deployed, so the Base flow is tested only
   against the mock.
-- The domain `ramwarden.app` is a placeholder until one is registered.
+- The public website uses `ramwarden.com`; hosted requests go to `api.ramwarden.com`.

@@ -46,7 +46,7 @@ built on open-source engines starting with [Wazuh](https://wazuh.com)
 
 Paying users never run a Wazuh server, copy a key or pick a certificate.
 RamWarden hosts the Wazuh manager and indexer; the daemon authenticates to the
-hosted API (`ramwarden-api`, `https://api.ramwarden.app`) with the device
+hosted API (`ramwarden-api`, `https://api.ramwarden.com`) with the device
 token written at device sign-in (`<config dir>/ramwarden/device-token`).
 
 - `POST /wardens/threat/setup` (daemon, loopback) installs and enrols this
@@ -61,7 +61,7 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   and `{os, arch, hostname}` returns
 
   ```json
-  {"manager": "agents.ramwarden.app", "agent_name": "acct1a2b-desk",
+  {"manager": "agents.ramwarden.com", "agent_name": "acct1a2b-desk",
    "group": "acct-1a2b", "agent_key": "<base64 of '042 acct1a2b-desk any <64 hex>'>",
    "package": {"url": "https://packages.wazuh.com/…", "sha256": "…", "kind": "msi|pkg|deb|rpm"}}
   ```
