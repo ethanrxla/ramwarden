@@ -45,11 +45,14 @@ pub fn routes()->Router<AppState> {
         .route("/browser/feedback",post(feedback))
 }
 async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
-    if st.cfg.tabs.close!="live" || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
+    if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
     let auto=crate::browser::close_candidates(&rows,&st.cfg.tabs);
-    let uncertain=rows.into_iter().filter(|r|r.closeable && !auto.contains(&r.target)
-        && matches!(r.status,"candidate"|"unloaded"|"retained")).take(10).collect();
+    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| r.closeable
+        && (st.cfg.tabs.close == "review" || !auto.contains(&r.target))
+        && matches!(r.status, "browser page" | "candidate" | "unloaded" | "retained")).collect();
+    uncertain.sort_by(crate::browser::close_priority);
+    uncertain.truncate(10);
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());
     Json(serde_json::json!({"proposal":proposal}))
 }
@@ -71,6 +74,11 @@ async fn respond(State(st):State<AppState>,Json(body):Json<Response>)->Result<Js
     if body.action=="close" {
         if st.on_hold() {return Err(StatusCode::CONFLICT);}
         let result=st.close_safe(&body.tabs,true).await;
+        let closed: Vec<_> = proposal.tabs.iter().filter(|r|result.confirmed.contains(&r.target))
+            .map(|r|(r.target.url.clone(),r.title.clone())).collect();
+        if !closed.is_empty() && let Ok(h)=st.history.lock() {
+            let _=h.save_tabs(&closed,0.0,"warden","review");
+        }
         return Ok(Json(serde_json::json!({"confirmed":result.confirmed,"refused":result.refused})));
     }
     Ok(Json(serde_json::json!({"ok":true})))
@@ -78,7 +86,7 @@ async fn respond(State(st):State<AppState>,Json(body):Json<Response>)->Result<Js
 #[derive(Deserialize)]
 struct Feedback {url:String,kind:String}
 async fn feedback(State(st):State<AppState>,Json(body):Json<Feedback>)->Result<StatusCode,StatusCode> {
-    if body.url.len()>8192 || !matches!(body.kind.as_str(),"reopened"|"manual_close"|"confirmed") {return Err(StatusCode::BAD_REQUEST);}
+    if body.url.len()>8192 || !matches!(body.kind.as_str(),"reopened"|"manual_close"|"browser_removed"|"confirmed") {return Err(StatusCode::BAD_REQUEST);}
     let url=url::Url::parse(&body.url).map_err(|_|StatusCode::BAD_REQUEST)?;
     if !matches!(url.scheme(),"http"|"https") {return Err(StatusCode::BAD_REQUEST);}
     let h=st.history.lock().map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;

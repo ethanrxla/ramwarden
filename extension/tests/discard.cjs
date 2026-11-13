@@ -3,22 +3,23 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function fixture(overrides = {}, fail = false) {
+function fixture(overrides = {}, fail = false, userAgent = "Firefox") {
   const noop = () => {};
   const event = {addListener: noop};
   let discards = [];
+  let activated,removed;
   const now = Date.now();
   const tab = {id: 7, url:'https://example.org/article', active:false, pinned:false, audible:false,
     discarded:false, incognito:false, autoDiscardable:true, status:'complete', lastAccessed:now - 120*60000, ...overrides};
   const chrome = {
     runtime:{}, storage:{local:{get:(k,cb)=>cb({}),set:(v,cb)=>cb?.()},sync:{get:noop}},
     action:{setBadgeText:noop,setBadgeBackgroundColor:noop},
-    tabs:{onActivated:event,onUpdated:event,onRemoved:event,query:noop,
+    tabs:{onActivated:{addListener:f=>activated=f},onUpdated:event,onRemoved:{addListener:f=>removed=f},query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
-  const context = vm.createContext({chrome,navigator:{userAgent:'Firefox'},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
+  const context = vm.createContext({chrome,navigator:{userAgent},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
-  return {context,chrome,tab,discards};
+  return {context,chrome,tab,discards,activate:x=>activated(x),remove:id=>removed(id)};
 }
 const command = {requestId:'r',minInactiveMinutes:45,tabs:[{id:7,url:'https://example.org/article'}]};
 test('confirms successful discards only, keeps tabs open', async()=>{
@@ -78,8 +79,9 @@ test('closing answers every command, skips guarded tabs and saves what closed', 
     assert.equal(saved?.[0]?.url, expected.length ? f.tab.url : undefined);
   }
 });
-test('unloaded tabs are gathered into one collapsed Idle group, leaving user groups and pinned tabs', async()=>{
+test('only Warden-unloaded tabs are grouped visibly, leaving browser-discarded and user groups untouched', async()=>{
   const f=fixture(); const grouped=[]; const updates=[];
+  vm.runInContext('wardenDiscarded.add(1);wardenDiscarded.add(2)',f.context);
   const tabs=[
     {id:1,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
     {id:2,windowId:9,discarded:true,pinned:false,active:false,groupId:-1},
@@ -92,7 +94,7 @@ test('unloaded tabs are gathered into one collapsed Idle group, leaving user gro
   f.chrome.tabs.group=(opts,cb)=>{grouped.push(opts);cb(77);};
   await f.context._tidyIdleGroups(tabs);
   assert.deepEqual(Array.from(grouped[0].tabIds),[1,2]);
-  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,true); assert.equal(updates[0][1].title,'Idle · 2');
+  assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,false); assert.equal(updates[0][1].title,'Idle · 2');
 });
 test('a single unloaded tab does not get a group of its own', async()=>{
   const f=fixture(); let grouped=0;
@@ -159,4 +161,93 @@ test('reopening the same site at a different URL protects it, and every reopen c
   f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:9,url:'https://www.example.org/deals'}]);
   const report=await f.context.buildTabReport({});
   assert.ok(report[0].protectedUntilMs>Date.now(),'a different page on the reopened site is protected');
+});
+
+test('reports the running worker safe-close capability only for socket browsers', async()=>{
+  for (const [agent,supported] of [['Chrome',true],['Firefox',false]]) {
+    const f=fixture({},false,agent); f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+    assert.equal((await f.context.buildTabReport({}))[0].safeCloseSupported,supported);
+  }
+});
+test('safe close sends request-correlated confirmation including explicit refusal',async()=>{
+  for (const active of [false,true]) {
+    const f=fixture({active}); const sent=[];
+    f.chrome.tabs.remove=(id,cb)=>cb(); f.context.sent=sent;
+    vm.runInContext('ws = {readyState:1, send: data => sent.push(JSON.parse(data))}',f.context);
+    await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000});
+    assert.deepEqual(JSON.parse(JSON.stringify(sent)),[{action:'tabs_closed_safe',requestId:'r',tabIds:active?[]:[7]}]);
+  }
+});
+
+test('standalone Lite is opt-in, keeps the recent budget and only unloads eligible tabs',async()=>{
+ const f=fixture();
+ const active={...f.tab,id:1,active:true,lastAccessed:Date.now()};
+ f.chrome.tabs.query=(_,cb)=>cb([active,f.tab]);
+ f.chrome.tabs.get=(id,cb)=>cb(id===1?active:f.tab);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:false,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:true,liteBudget:1});
+ assert.deepEqual(Array.from(await f.context.runStandaloneLite()),[7]);
+ assert.equal(active.discarded,false);
+});
+test('standalone Lite yields to a connected desktop daemon',async()=>{
+ const f=fixture();f.context._badge(true);
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:true,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);assert.equal(f.discards.length,0);
+});
+
+test('standalone Lite rechecks opt-in immediately before unloading',async()=>{
+ const f=fixture();const active={...f.tab,id:1,active:true,lastAccessed:Date.now()};f.chrome.tabs.query=(_,cb)=>cb([active,f.tab]);let reads=0;
+ f.chrome.storage.local.get=(keys,cb)=>cb({liteEnabled:++reads===1,liteBudget:1});
+ assert.equal((await f.context.runStandaloneLite()).length,0);assert.equal(f.discards.length,0);
+});
+
+test('explicit approval closes recent selected tabs but preserves live-work guards',async()=>{
+  const url='chrome://extensions/';
+  for (const extra of [{},{active:true},{pinned:true},{audible:true},{status:'loading'},{url:'https://example.org/navigated'}]) {
+    const f=fixture({url,lastAccessed:Date.now(),...extra});const removed=[];
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    const result=await f.context.closeSafe({requestId:'approved',approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000});
+    assert.equal(result.length,Object.keys(extra).length===0?1:0);
+  }
+  const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
+  vm.runInContext('safety.work[7]={dirty:true}',f.context);
+  assert.equal((await f.context.closeSafe({approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000})).length,0);
+});
+
+test('reading an active tab persists recency after leaving and stale storage cannot rewind it',async()=>{
+  const f=fixture({active:true,windowId:1,lastAccessed:Date.now()-7200000});
+  f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+  const old={7:{url:f.tab.url,lastActiveMs:Date.now()-7200000}};
+  await f.context.buildTabReport(old);
+  f.tab.active=false;
+  const next=await f.context.buildTabReport(old);
+  assert.equal(next[0].inactiveMinutes,0);
+  assert.equal((await f.context.discardTabs(command)).length,0);
+});
+
+test('sleep gap is not counted as idle work and removal attribution is not user intent',async()=>{
+ const f=fixture();
+ vm.runInContext('tabActivity[7]={url:"https://example.org/article",lastActiveMs:Date.now()-7200000};lastActivitySample=Date.now()-7200000;accountForActivityGap(Date.now())',f.context);
+ assert.ok(vm.runInContext('Date.now()-tabActivity[7].lastActiveMs<1000',f.context));
+});
+
+test('switching away stamps the end of a long reading session',async()=>{
+ const f=fixture({active:true,windowId:3});f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+ await f.context.buildTabReport({});
+ vm.runInContext('tabActivity[7].lastActiveMs=Date.now()-7200000',f.context);
+ f.activate({tabId:8,windowId:3});
+ assert.ok(vm.runInContext('Date.now()-tabActivity[7].lastActiveMs<1000',f.context));
+});
+test('unattributed browser removal preserves keep feedback',()=>{
+ const f=fixture();vm.runInContext('tabActivity[7]={url:"https://example.org/article"};safety.pages["https://example.org/article"]={until:Date.now()+600000}',f.context);
+ f.remove(7);
+ assert.ok(vm.runInContext('safety.pages["https://example.org/article"].until>Date.now()',f.context));
+});
+
+test('Chrome-discarded tabs alone never get silently moved into Idle',async()=>{
+ const f=fixture();let grouped=0;
+ f.chrome.tabGroups={query:(_,cb)=>cb([]),update:()=>{}};f.chrome.tabs.group=()=>grouped++;
+ await f.context._tidyIdleGroups([1,2].map(id=>({id,windowId:1,discarded:true,groupId:-1,active:false,pinned:false})));
+ assert.equal(grouped,0);
 });

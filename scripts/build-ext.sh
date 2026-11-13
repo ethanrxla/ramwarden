@@ -19,11 +19,14 @@ DIST="$ROOT/dist"
 
 VERSION=$(python3 -c "import json;print(json.load(open('$SRC/manifest.json'))['version'])")
 
-rm -rf "$BUILD"
+mkdir -p "$BUILD"
+rm -rf "$BUILD/chrome" "$BUILD/firefox"
 mkdir -p "$BUILD/chrome" "$BUILD/firefox" "$DIST"
 
 for target in chrome firefox; do
-    cp "$SRC"/*.js "$SRC"/*.html "$BUILD/$target/"
+    for file in activity.js background.js popup.js warden.js popup.html; do
+        cp "$SRC/$file" "$BUILD/$target/"
+    done
     cp -r "$SRC/icons" "$BUILD/$target/"
 done
 
@@ -39,8 +42,8 @@ icons = {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon1
 # Every permission here has to be one the code actually calls; the Web Store
 # rejects unused permissions under its minimum-permissions policy.
 #   - "notifications" is dropped: chrome.notifications is never called.
-#   - "alarms" is dropped: the alarm path is the Firefox polling fallback, guarded
-#     by IS_FIREFOX. Chrome uses the WebSocket instead.
+#   - "tabGroups" maintains the reversible Idle group.
+#   - "alarms" drives the opted-in standalone Lite browser cleanup.
 #   - ws:// is dropped from host_permissions: it is not a valid match-pattern
 #     scheme, and WebSockets from a service worker are not gated by host
 #     permissions anyway.
@@ -54,7 +57,7 @@ chrome = {
     "minimum_chrome_version": "116",   # WebSockets in service workers
     "icons": icons,
     "content_scripts": base["content_scripts"],
-    "permissions": ["tabs", "storage"],
+    "permissions": ["tabs", "storage", "alarms", "tabGroups"],
     "host_permissions": [
         "http://localhost:7823/*",
         "http://127.0.0.1:7823/*",
@@ -82,7 +85,7 @@ firefox = {
     "optional_host_permissions": ["http://*/*"],
     "background": {"scripts": ["background.js"]},
     "action": base["action"],
-    "browser_specific_settings": base["browser_specific_settings"],
+    "browser_specific_settings": {"gecko":{"id":"ramwarden@local","strict_min_version":"109.0"}},
 }
 
 for name, manifest in (("chrome", chrome), ("firefox", firefox)):
@@ -92,9 +95,18 @@ for name, manifest in (("chrome", chrome), ("firefox", firefox)):
           f"{len(manifest['host_permissions'])} host permissions")
 PY
 
-for target in chrome firefox; do
-    zip_out="$DIST/ramwarden-${target}-${VERSION}.zip"
-    rm -f "$zip_out"
-    ( cd "$BUILD/$target" && zip -qr "$zip_out" . -x '.*' )
-    echo "$zip_out"
-done
+python3 - "$BUILD" "$DIST" "$VERSION" <<'ZIP'
+import pathlib,sys,zipfile,hashlib
+build,dist,version=pathlib.Path(sys.argv[1]),pathlib.Path(sys.argv[2]),sys.argv[3]
+for target in ['chrome','firefox']:
+    output=dist/f'ramwarden-{target}-{version}.zip'
+    with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
+        for file in sorted((build/target).rglob('*')):
+            if file.is_file():
+                info=zipfile.ZipInfo(file.relative_to(build/target).as_posix(),(1980,1,1,0,0,0))
+                info.compress_type=zipfile.ZIP_DEFLATED;info.external_attr=0o100644<<16
+                archive.writestr(info,file.read_bytes())
+    output.with_suffix(output.suffix+'.sha256').write_text(hashlib.sha256(output.read_bytes()).hexdigest()+'  '+output.name+'\n')
+    print(output)
+ZIP
+python3 "$ROOT/scripts/check-store-package.py" "$DIST/ramwarden-chrome-$VERSION.zip"

@@ -2,7 +2,7 @@
 
 Automatic closes require fresh extension activity metadata, at least 24 hours idle, a return estimate below 0.3, and all live safety guards. A tab-count target or same-site page cannot bypass this floor. Exact URLs, including query and fragment, define duplicates.
 
-The updated extension reports timestamps and an unsaved-input bit, never typed text. Reopened and explicitly kept pages receive a 24-hour protection, ending on manual close. Local SQLite feedback and outcomes expire after 30 days. Negative feedback can only raise the return estimate; this is not external model retraining.
+The updated extension reports timestamps and an unsaved-input bit, never typed text. Reopened and explicitly kept pages receive a 24-hour protection, without assuming browser removal was an intentional close. Local SQLite feedback and outcomes expire after 30 days. Negative feedback can only raise the return estimate; this is not external model retraining.
 
 GET /browser/review offers at most ten uncertain tabs, at most once per 30 minutes. POST /browser/review/respond accepts a token, close/keep/later, and browser/id/url targets. Tokens expire after ten minutes and are single-use. Close rechecks current metadata and uses a correlated, URL-scoped close_safe extension command. Older extensions cannot execute it. Polling-browser automatic closes currently fail closed until correlated acknowledgements are supported.
 
@@ -25,3 +25,7 @@ Contract: a work page is never closed automatically, and a browser settings page
 Basis: on 2026-11-02 the old tab budget closed an Oracle Cloud console signed into a database, an Agensi "submit a skill" form and a twice-reopened Namecheap tab, because no protection matched their hosts and the budget never consulted Jev, while `chrome://extensions` stayed because every non-web page was protected forever.
 
 Limitations: the work list is a list. A site not on it is still caught by the extension's unsaved-input bit and by path segments, but a signed-in console on an unknown host with a plain path is an ordinary page until the user reopens it once.
+
+The popup refreshes confirmed close history on local storage changes and polls
+the daemon while open. If both sources report a URL, the newest close wins.
+Review mode proposes low-return tabs first and leaves closure to the user.

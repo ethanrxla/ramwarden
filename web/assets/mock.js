@@ -29,7 +29,7 @@ export class MockApi {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {
         tier: AS === "trial" ? "ram" : "pro", // only Plus has a trial
-        interval: "2mo",
+        interval: "month",
         status: AS,
         device_limit: AS === "trial" ? 3 : 5,
         trial_ends_at: AS === "trial" ? new Date(Date.now() + 14 * DAY).toISOString() : null,
@@ -56,6 +56,11 @@ export class MockApi {
     };
   }
 
+  async approveDevice(userCode) {
+    if (!this.signedIn || !this.pendingCodes.has(userCode)) throw new ApiError(401,"Sign in and check the code.");
+    this.pendingCodes.delete(userCode);return {approved:true};
+  }
+
   async lookupDevice(userCode) {
     const code = normaliseUserCode(userCode);
     const d = code && this.pendingCodes.get(code);
@@ -63,12 +68,12 @@ export class MockApi {
     return { status: "pending", ...d, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() };
   }
 
-  async challenge({ chain, address, userCode }) {
+  async challenge({ chain, address, userCode, link = false }) {
     const lines = [
       "ramwarden.app wants you to sign in with your " + (chain === "evm" ? "Ethereum" : "Solana") + " account:",
       address,
       "",
-      userCode ? `Link the device with code ${userCode} to your RamWarden account.` : "Sign in to your RamWarden account.",
+      link ? "Link this wallet as a sign-in method. No payment." : userCode ? `Link the device with code ${userCode} to your RamWarden account.` : "Sign in to your RamWarden account.",
       "",
       "URI: https://ramwarden.app",
       "Version: 1",
@@ -79,26 +84,34 @@ export class MockApi {
     return { message: lines.join("\n"), expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
   }
 
-  async verify({ chain, address, message }) {
+  async verify({ chain, address, message, link = false }) {
     const linked = message.match(/urn:ramwarden:device:([A-Z]{4}-[A-Z]{4})/)?.[1] || null;
     if (linked) this.pendingCodes.delete(linked);
     this.account_ ??= this.#newAccount(chain, address);
+    if (link) {
+      this.account_.identities ||= [this.account_.identity];
+      this.account_.identities.push({kind:"wallet",chain,address});
+    }
     this.signedIn = true;
-    return { account: this.account_, linked_device: linked ? this.account_.devices[0] : null };
+    return { account: this.account_, linked_identity:link, linked_device: linked ? this.account_.devices[0] : null };
   }
 
   // Email sign-in: the code is always 123456 in preview.
-  async emailStart({ email, userCode }) {
+  async emailStart({ email, userCode, link = false }) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || "")) throw new ApiError(400, "That doesn't look like an email address.");
-    this.emailCodes.set(email.toLowerCase(), { code: "123456", userCode: userCode ?? null });
+    this.emailCodes.set(email.toLowerCase(), { code: "123456", userCode: userCode ?? null, link });
     return { sent: true, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() };
   }
-  async emailVerify({ email, code }) {
+  async emailVerify({ email, code, link = false }) {
     const e = this.emailCodes.get((email || "").toLowerCase());
-    if (!e || e.code !== String(code).trim()) throw new ApiError(400, "That code is wrong or has expired. Check the email, or send a new one.");
+    if (!e || e.link !== link || e.code !== String(code).trim()) throw new ApiError(400, "That code is wrong or has expired. Check the email, or send a new one.");
     this.emailCodes.delete(email.toLowerCase());
     if (e.userCode) this.pendingCodes.delete(e.userCode);
     this.account_ ??= this.#newAccount("email", email);
+    if (link) {
+      this.account_.identities ||= [this.account_.identity];
+      this.account_.identities.push({kind:"email",email});
+    }
     this.signedIn = true;
     return { account: this.account_, linked_device: e.userCode ? this.account_.devices[0] : null };
   }
@@ -130,7 +143,7 @@ export class MockApi {
         windows: `irm https://get.ramwarden.app/i/${token}/ps | iex`,
       },
       installers: {
-        macos: `https://get.ramwarden.app/i/${token}/RamWarden.pkg`,
+        macos: `https://get.ramwarden.app/i/${token}/RamWarden.dmg`,
         windows: `https://get.ramwarden.app/i/${token}/RamWarden.msi`,
         linux: `https://get.ramwarden.app/i/${token}/ramwarden.deb`,
       },
@@ -155,8 +168,8 @@ export class MockApi {
     return {
       // docs/product-spec.md 1.2; the test network sells every plan.
       plans: [
-        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "2mo", days: 60, trial_days: 14, approval_usd: 24, wardens: ["ram"] },
-        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "2mo", days: 60, trial_days: 0, approval_usd: 30, wardens: ["ram", "threat"] },
+        { id: 1, tier: "ram", name: "RamWarden Plus", usd: 4, interval: "month", days: 60, trial_days: 14, approval_usd: 24, wardens: ["ram"] },
+        { id: 2, tier: "pro", name: "RamWarden Pro", usd: 5, interval: "month", days: 60, trial_days: 0, approval_usd: 30, wardens: ["ram", "threat"] },
         { id: 3, tier: "ram", name: "RamWarden Plus", usd: 20, interval: "year", days: 365, trial_days: 14, approval_usd: 20, wardens: ["ram"] },
         { id: 4, tier: "pro", name: "RamWarden Pro", usd: 24, interval: "year", days: 365, trial_days: 0, approval_usd: 24, wardens: ["ram", "threat"] },
       ],
@@ -221,6 +234,61 @@ export class MockApi {
     }
     return p;
   }
+
+  // The support desk, cut down: a few of the server's answers, keyword
+  // routed the way its fallback is, so the chat can be clicked through.
+  supportHistory({ conversation, warden }) {
+    const c = this.#support?.get(conversation);
+    return Promise.resolve({
+      greeting: warden === "threat" ? "I'm ThreatWarden's warden. Ask me about security, plans or setup." : "I'm your warden. Ask me about plans, the free trial, installing, or how I free memory.",
+      chips: [
+        { topic: "plans", label: "Which plan is right for me?" },
+        { topic: "trial", label: "How does the free trial work?" },
+        { topic: "human", label: "Talk to a person" },
+      ],
+      live: Boolean(c),
+      thread: c ? { warden, messages: c.messages, ticket: c.ticket } : null,
+    });
+  }
+
+  supportChat({ conversation, warden, message, topic }) {
+    this.#support ??= new Map();
+    const text = message || { plans: "Which plan is right for me?", trial: "How does the free trial work?", human: "Talk to a person" }[topic] || "";
+    if (!text.trim()) return Promise.reject(new ApiError(422, "Ask me something first."));
+    let fresh = null;
+    if (!this.#support.has(conversation)) {
+      fresh = conversation = "rwsc_mock" + (this.#support.size + 1);
+      this.#support.set(conversation, { messages: [], ticket: null });
+    }
+    const c = this.#support.get(conversation);
+    const q = text.toLowerCase();
+    const pick = topic || (/price|cost|how much/.test(q) ? "pricing" : /trial/.test(q) ? "trial" : /plan|tier/.test(q) ? "plans" : /human|person|broken|not working|refund/.test(q) ? "human" : "unknown");
+    const answers = {
+      plans: "There are three plans. Lite is free on 1 computer, Plus adds the AI warden pet on 3 computers ($4 per month or $20 a year, 14-day trial), and Pro adds ThreatWarden on 5 ($5 per month or $24 a year).",
+      pricing: "Lite is free. Plus is $4 per month or $20 a year. Pro is $5 per month or $24 a year.",
+      trial: "RamWarden Plus is free for 14 days. After that, your selected payment method is charged $4 per month or $20 per year, depending on your plan, until you cancel. Pro is $5 per month or $24 per year, paid from day one.",
+      human: "I'll get a person on it. Open a ticket below, with an email if you'd like a reply there.",
+      unknown: "I don't know that one for sure, and I'd rather not guess. I can open a ticket so a person on the team answers you.",
+    };
+    const at = Math.floor(Date.now() / 1000);
+    c.messages.push({ from: "visitor", text, at }, { from: "warden", text: answers[pick], at });
+    return Promise.resolve({
+      conversation: fresh,
+      reply: { text: answers[pick], topic: pick, chips: pick === "plans" ? [{ topic: "trial", label: "How does the free trial work?" }] : [], offer_ticket: ["human", "unknown"].includes(pick) && !c.ticket },
+      ticket: c.ticket,
+    });
+  }
+
+  supportTicket({ conversation, email }) {
+    const c = this.#support?.get(conversation);
+    if (!c) return Promise.reject(new ApiError(404, "That chat has expired."));
+    c.ticket ??= { reference: "RW-BCD234", status: "open", subject: c.messages.at(-2)?.text || "Question", opened_at: Math.floor(Date.now() / 1000) };
+    const text = email ? `Ticket ${c.ticket.reference} is open. The team will write back to ${email}, and the reply shows here too.` : `Ticket ${c.ticket.reference} is open. Come back to this chat for the team's reply.`;
+    c.messages.push({ from: "warden", text, at: c.ticket.opened_at });
+    return Promise.resolve({ ticket: c.ticket, reply: { text } });
+  }
+
+  #support = null;
 
   // Plus to Pro (or monthly to annual) while a plan is live.
   #upgrading(plan) {

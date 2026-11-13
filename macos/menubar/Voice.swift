@@ -57,7 +57,7 @@ final class VoiceModel: ObservableObject {
             pet = obj["pet"] as? Bool ?? true
             if changed {
                 onChange?()
-                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram") }
+                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram",background:true) }
             }
         }
     }

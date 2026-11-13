@@ -395,12 +395,18 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         && r.inactive_minutes >= min_idle
         && (r.status == "browser page"
             || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
-    // Browser pages first, then exact copies, then the least likely to be wanted.
-    picked.sort_by(|a,b| (b.status == "browser page").cmp(&(a.status == "browser page"))
+    picked.sort_by(|a,b| close_priority(a,b));
+    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+}
+
+pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
+    // Prefer disposable browser pages, exact copies, then the lowest return chance.
+    (b.status == "browser page").cmp(&(a.status == "browser page"))
         .then(b.duplicate.cmp(&a.duplicate))
         .then(a.p_return.total_cmp(&b.p_return))
-        .then(b.inactive_minutes.cmp(&a.inactive_minutes)));
-    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+        .then(b.inactive_minutes.cmp(&a.inactive_minutes))
+        .then(a.target.browser.cmp(&b.target.browser))
+        .then(a.target.id.cmp(&b.target.id))
 }
 
 pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {

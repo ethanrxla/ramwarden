@@ -10,7 +10,8 @@
 export const config = {
   // The hosted API (`ramwarden-api`). Changing it also means changing the
   // `connect-src` in each page's Content-Security-Policy.
-  apiBase: "https://api.ramwarden.app",
+  apiBase: typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)
+    ? location.origin : "https://api.ramwarden.com",
 
   repo: "https://github.com/ethanrxla/ramwarden",
   releases: "https://github.com/ethanrxla/ramwarden/releases/latest",
@@ -27,8 +28,8 @@ export const config = {
   //   plan with a trial.
   // - Pro: adds ThreatWarden, 5 computers. Paid from day one.
   // Upgrades are enforced by the server and the signed entitlement, not by
-  // the page. Every bullet is something the code does, with its number where
-  // it has one (README, docs/specs/browser-memory.md, threatwarden.md).
+  // the page. Bullets describe the shipped behavior in everyday language
+  // (README, docs/specs/browser-memory.md, threatwarden.md).
   // `soon` marks a part that is specified but not shipped yet.
   trialDays: 14,
   lite: {
@@ -36,13 +37,11 @@ export const config = {
     tagline: "Keep it tidy.",
     cta: "Get it free",
     features: [
-      "Memory measured the way your OS charges it: shared browser memory counted once, not per tab",
-      "Acts on memory stalls (time lost waiting on RAM), not on a full meter",
-      "A 4-step reclaim algorithm: compress cold memory, page it out, unload idle tabs, pause idle apps you list",
-      "Every app ranked least recently used first",
-      "Tab budget: your 6 most recent tabs stay, others close after 60 idle minutes, with a reopen list",
-      "Every pause undone the moment memory recovers",
-      "Games, anti-cheat, calls, terminals and VMs are never touched",
+      "An enhanced memory algorithm that tracks which apps are active",
+      "Frees memory in stages, starting with changes that are easy to undo",
+      "A configurable tab budget, with a reopen list for tabs Warden closes",
+      "Protects active work, games, calls, terminals and virtual machines",
+      "Resumes paused apps when memory pressure eases",
       "1 computer, free account, no card",
     ],
   },
@@ -55,10 +54,9 @@ export const config = {
       devices: 3,
       features: [
         "Everything in Lite, plus:",
-        "A customizable AI warden pet that picks what you won't miss",
-        "Scores each idle app: your chance of coming back within the hour",
-        "Pauses an app only when 70% sure you won't return, closes one only at 85%",
-        "Closes tabs you won't return to, each saved to a reopen list",
+        "A customizable AI companion for chat and memory advice",
+        "Ranks idle apps by how likely you are to return, then pauses or closes those you're unlikely to need when your settings allow it",
+        "AI-guided tab cleanup, with a reopen list for tabs it closes",
         "3 computers: Windows, macOS and Linux",
       ],
     },
@@ -69,18 +67,18 @@ export const config = {
       devices: 5,
       features: [
         "Everything in Plus, plus ThreatWarden:",
-        "Sentinel: file integrity, log analysis, rootkit and vulnerable software checks",
-        { text: "Antivirus: malware sweeps when memory is free, plus scan on demand", soon: true },
-        { text: "Network monitor: catches attacks and malware calling home, shows who each app talks to", soon: true },
-        "AI triage: every alert explained, with a quarantine or block button you approve",
-        "The cyborg warden pet",
+        "Security checks for changed files, suspicious activity and vulnerable software",
+        { text: "Malware scans when your computer has room to spare, plus scan on demand", soon: true },
+        { text: "Network alerts and a view of which apps connect to the internet", soon: true },
+        "Explains security findings; quarantine and blocking are planned",
+        "Your cyborg ThreatWarden companion",
         "5 computers",
       ],
     },
   },
   plans: [
-    { id: 1, tier: "ram", interval: "2mo", usd: 4 },
-    { id: 2, tier: "pro", interval: "2mo", usd: 5 },
+    { id: 1, tier: "ram", interval: "month", usd: 4 },
+    { id: 2, tier: "pro", interval: "month", usd: 5 },
     { id: 3, tier: "ram", interval: "year", usd: 20 },
     { id: 4, tier: "pro", interval: "year", usd: 24 },
   ],
@@ -91,15 +89,14 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against six 2-month payments, in whole percent.
+// What a year of the annual plan saves against twelve monthly payments, in whole percent.
 export function annualSaving(plans, tier) {
-  const m = planFor(plans, tier, "2mo");
+  const m = planFor(plans, tier, "month");
   const y = planFor(plans, tier, "year");
   if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * PER_YEAR["2mo"])) * 100);
+  return Math.round((1 - y.usd / (m.usd * PER_YEAR["month"])) * 100);
 }
 
-// Billing periods (owner's decision, 2026-11-02): every 2 months, or yearly.
-// The contract and the card subscription charge on the same 60-day cycle.
-export const PERIOD = { "2mo": "2 months", year: "year" };
-export const PER_YEAR = { "2mo": 6, year: 1 };
+// Monthly and annual pricing (owner decision, 2026-11-02).
+export const PERIOD = { "month": "month", year: "year" };
+export const PER_YEAR = { "month": 12, year: 1 };

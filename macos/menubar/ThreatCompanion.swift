@@ -35,7 +35,7 @@ final class ThreatState: ObservableObject {
         level = status["level"] as? String ?? "off"
         headline = status["headline"] as? String ?? "Setup needed"
         detail = status["detail"] as? String ?? "Check the security agent and connection."
-        if isVisible?() == true && !headline.localizedCaseInsensitiveContains("Pro warden") && headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat") }
+        if isVisible?() == true && !headline.localizedCaseInsensitiveContains("Pro warden") && headline != previousHeadline { CompanionSpeech.shared.say(headline+". "+detail,warden:"threat",background:true) }
         let engineRows = (report["report"] as? [String:Any])?["engines"] as? [[String:Any]] ?? []
         engines = engineRows.map { "\($0["name"] as? String ?? "Engine"): \($0["state"] as? String ?? "unknown")" }
     }

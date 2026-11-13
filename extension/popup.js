@@ -1,15 +1,17 @@
 const DAEMON_HTTP = "http://localhost:7823";
 
 // Load persisted daemon host setting
-chrome.storage.sync.get("daemonHost", (r) => {
+const daemonReady = new Promise(resolve => chrome.storage.sync.get("daemonHost", (r) => {
   if (r.daemonHost) {
     window.DAEMON_HTTP = "http://" + r.daemonHost;
   }
-});
+  resolve();
+}));
 
 async function daemonJSON(path, opts = {}) {
+  await daemonReady;
   const base = window.DAEMON_HTTP || DAEMON_HTTP;
-  const r = await fetch(base + path, opts);
+  const r = await fetch(base + path, {signal:AbortSignal.timeout(8000),...opts});
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
@@ -55,20 +57,6 @@ async function init() {
     });
   }
 
-  // Tabs RamWarden closed, newest first: the extension's own list merged with
-  // the daemon's closed_tabs record, which also covers closes made before the
-  // extension was reloaded.
-  const local = await new Promise(r => chrome.storage.local.get("releasedTabs", r));
-  let daemon = [];
-  try { daemon = (await daemonJSON("/history")).closed_tabs || []; } catch { /* offline */ }
-  const seen = new Set();
-  const merged = [
-    ...(local.releasedTabs || []).map(t => ({ url: t.url, title: t.title, closedMs: t.closedAt })),
-    ...daemon.map(t => ({ url: t.url, title: t.title, closedMs: Date.parse(t.closed_at.endsWith("Z") ? t.closed_at : t.closed_at + "Z") })),
-  ].filter(t => t.url && !seen.has(t.url) && seen.add(t.url))
-   .sort((a, b) => (b.closedMs || 0) - (a.closedMs || 0));
-  renderHistory(merged);
-
   document.getElementById("analyze-btn").addEventListener("click", analyzeNow);
 
   // Daemon host setting
@@ -76,6 +64,49 @@ async function init() {
     document.getElementById("daemon-host-input").value = r.daemonHost || "localhost:7823";
   });
 }
+
+let localHistory = [];
+let daemonHistory = [];
+let receivedLocalUpdate = false;
+let fetchingHistory = false;
+
+function mergeHistory() {
+  const seen = new Set();
+  renderHistory([...localHistory, ...daemonHistory]
+    .filter(t => t.url && Number.isFinite(t.closedMs))
+    .sort((a, b) => b.closedMs - a.closedMs)
+    .filter(t => !seen.has(t.url) && seen.add(t.url)));
+}
+
+function setLocalHistory(rows) {
+  localHistory = (rows || []).map(t => ({url: t.url, title: t.title, closedMs: t.closedAt}));
+  mergeHistory();
+}
+
+async function refreshHistory() {
+  if (fetchingHistory) return;
+  fetchingHistory = true;
+  try {
+    const {closed_tabs} = await daemonJSON("/history", {cache: "no-store"});
+    daemonHistory = (closed_tabs || []).map(t => {
+      const at = t.closed_at || "";
+      return {url: t.url, title: t.title, closedMs: Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/i.test(at) ? at : at + "Z")};
+    });
+    mergeHistory();
+  } catch { /* Keep the last successful history while offline. */ }
+  finally { fetchingHistory = false; }
+}
+
+chrome.storage.onChanged?.addListener((changes, area) => {
+  if (area !== "local" || !changes.releasedTabs) return;
+  receivedLocalUpdate = true;
+  setLocalHistory(changes.releasedTabs.newValue);
+});
+chrome.storage.local.get("releasedTabs", ({releasedTabs}) => {
+  if (!receivedLocalUpdate) setLocalHistory(releasedTabs);
+});
+refreshHistory();
+setInterval(refreshHistory, 5000);
 
 // ── The warden ────────────────────────────────────────────────────────────────
 
@@ -273,3 +304,75 @@ function esc(s) {
 
 init();
 refreshWarden();
+
+
+async function refreshThreat() {
+ const headline=document.getElementById('threat-headline');
+ const detail=document.getElementById('threat-detail');
+ const engines=document.getElementById('threat-engines');
+ const alerts=document.getElementById('threat-alerts');
+ headline.textContent='Checking protection…';engines.replaceChildren();alerts.replaceChildren();
+ try {
+  const data=await daemonJSON('/wardens/threat');
+  headline.textContent=data.status?.headline || 'Protection unverified';detail.textContent=data.status?.detail || '';
+  for(const engine of data.report?.engines || []){const row=document.createElement('p');row.textContent=`${engine.name}: ${engine.state} · ${engine.detail || "No detail supplied"}`;engines.append(row);}
+  for(const alert of (data.report?.alerts || []).slice(0,50)){
+   const card=document.createElement('article');card.className='security-alert';
+   const title=document.createElement('strong');title.textContent=`Level ${alert.level} · Rule ${alert.rule_id}`;
+   const body=document.createElement('p');body.textContent=String(alert.description || 'No description supplied').slice(0,1200);
+   const time=document.createElement('time');time.textContent=alert.timestamp || 'Time unavailable';
+   card.append(title,body,time);
+   for(const evidence of (alert.evidence_objects || []).slice(0,8)) {
+    const row=document.createElement('p');row.textContent=`${evidence.summary || evidence.kind || 'Evidence'} · ${evidence.source || 'Source unavailable'}${evidence.complete===false?' · Partial evidence':''}`;card.append(row);
+   }
+   for(const [name,value] of Object.entries(alert.evidence||{}).slice(0,8)){const row=document.createElement('p');row.textContent=`${name}: ${String(value).slice(0,512)}`;card.append(row);}if(alert.advice){const advice=document.createElement('p');advice.textContent=alert.advice;card.append(advice);}alerts.append(card);
+  }
+  const network=data.report?.sensors?.network;
+  if(network){
+   const section=document.createElement('details');
+   const title=document.createElement('summary');title.textContent=`Network connections · ${network.connections?.length || 0} reported`;
+   const scope=document.createElement('p');scope.textContent=network.problem || network.scope || 'Coverage unverified';section.append(title,scope);
+   for(const connection of (network.connections || []).slice(0,100)){
+    const row=document.createElement('p');row.textContent=`${connection.process} (PID ${connection.pid}) → ${connection.remote}`;section.append(row);
+   }
+   engines.append(section);
+  }
+  if(data.report?.alerts?.length){const note=document.createElement('p');note.textContent='Reported rule alerts are not confirmed malware. Showing at most 50 recent alerts.';alerts.prepend(note);}
+  else if(data.unlocked && data.report){alerts.textContent='No alerts returned in this report. This does not prove the computer is free of threats.';}
+ } catch {headline.textContent='Protection unverified';detail.textContent='Install or reconnect the desktop daemon to read this computer’s security report. An extension or Pro pass alone does not prove protection.';}
+}
+for(const kind of ['ram','threat'])document.getElementById(kind+'-tab').addEventListener('click',()=>{
+ for(const id of ['ram','threat']){document.getElementById(id+'-pane').hidden=id!==kind;document.getElementById(id+'-tab').setAttribute('aria-selected',String(id===kind));}
+ if(kind==='threat')refreshThreat();
+});
+document.getElementById('threat-refresh').addEventListener('click',refreshThreat);
+document.getElementById('save-daemon-host').addEventListener('click',saveDaemonHost);
+
+chrome.storage.local.get(['liteEnabled','liteBudget'],settings=>{document.getElementById('lite-enabled').checked=settings.liteEnabled===true;document.getElementById('lite-budget').value=settings.liteBudget||6;});
+document.getElementById('lite-enabled').addEventListener('change',event=>chrome.storage.local.set({liteEnabled:event.target.checked}));
+document.getElementById('lite-budget').addEventListener('change',event=>{const n=Math.max(1,Math.min(50,Math.floor(Number(event.target.value)||6)));event.target.value=n;chrome.storage.local.set({liteBudget:n});});
+
+async function refreshAccount() {
+ const state=document.getElementById('account-state');
+ const help=document.getElementById('account-help');
+ const link=document.getElementById('account-link');
+ state.textContent='Checking this computer’s plan…';
+ link.textContent='Sign in with email, wallet or GitHub';
+ try {
+  const data=await daemonJSON('/wardens');
+  const paid=Array.isArray(data.paid)?data.paid.length>0:data.paid===true;
+  if(paid && ['ram','pro'].includes(data.tier)) {
+   state.textContent=data.tier==='pro'?'Pro 🐐 · Active on this computer':'Plus ⚡ · Active on this computer';
+   link.textContent='Manage account and connected identities';
+   help.textContent='This extension uses the desktop app’s verified plan. Website sign-in is separate; no extra extension password is needed.';
+  } else {
+   state.textContent='Lite · No active paid pass on this computer';
+   help.textContent='Sign in on the website, then use your account’s install/connect steps to link this computer. Already installed? Run ramwarden login, then check connection here. Signing in to the website alone does not link a device.';
+  }
+ } catch {
+  state.textContent='Lite · Desktop connection unavailable';
+  help.textContent='Free browser cleanup works without signing in. Sign in on the website to manage a plan, then connect the desktop app for RAM and security reports.';
+ }
+}
+document.getElementById('account-refresh').addEventListener('click',refreshAccount);
+refreshAccount();

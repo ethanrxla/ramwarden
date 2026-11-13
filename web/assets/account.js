@@ -7,7 +7,7 @@
 // step up. Starting the Plus trial charges nothing; Pro is charged at once.
 
 import { PER_YEAR, PERIOD, config, planFor } from "./config.js";
-import { chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
+import { publishAccount, chooseSignIn, errorText, formatDate, h, isMock, makeApi, mockBanner, notice, pickWallet, shortAddress, show } from "./common.js";
 import { InstallBox, installState } from "./install.js";
 
 const PLATFORM = { linux: "Linux", windows: "Windows", macos: "macOS" };
@@ -47,7 +47,12 @@ class AccountPage {
         return;
       }
     }
-    if (!this.account) await this.signIn();
+    const emailOnly = new URLSearchParams(location.search).get("signin") === "email";
+    if (!this.account || emailOnly) await this.signIn(emailOnly);
+    if (emailOnly) {
+      const url = new URL(location.href); url.searchParams.delete("signin");
+      history.replaceState(null, "", url);
+    }
     await this.loadCheckout();
     this.render();
     // Back from card checkout: follow the payment until it confirms.
@@ -55,14 +60,15 @@ class AccountPage {
     if (q.get("checkout") === "done" && q.get("payment")) {
       const area = h("div");
       this.flashArea.replaceChildren(area);
-      this.waitForPayment(q.get("payment"), area);
+      this.waitForPayment(q.get("payment"), area, this.extensionPanel());
     }
   }
 
-  async signIn() {
+  async signIn(emailOnly = false) {
     const area = h("div");
-    show(root, h("h1", {}, "Your account"), h("p", {}, "Sign in with your wallet or your email."), area);
-    this.account = (await chooseSignIn(area, api)).account;
+    show(root, h("h1", {}, emailOnly ? "Email sign-in" : "Your account"),
+      h("p", {}, emailOnly ? "Enter your email, then request a code or use one you already received. Signing in switches this browser to the account for that email." : "Sign in with your wallet or your email."), area);
+    this.account = (await chooseSignIn(area, api, { emailOnly })).account;
   }
 
   // The server's plans and enabled methods win over the defaults in config.js.
@@ -83,6 +89,7 @@ class AccountPage {
 
   render() {
     const a = this.account;
+    publishAccount(a);
     const state = installState(a);
     const live = state === "ready" || state === "lite";
     // What the Upgrade button offers: Lite and lapsed go to Plus, Plus to Pro.
@@ -99,19 +106,22 @@ class AccountPage {
             "section",
             { class: "panel" },
             h("h2", {}, a.tier ? config.tiers[a.tier]?.name || "Your plan" : config.lite.name),
-            h("p", {}, a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs on built-in rules, on 1 computer. Plus adds the AI warden."),
-            h("p", { class: "muted" }, "Signed in with ", a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
+            h("p", {}, a.developer_access ? "Developer access · complimentary. No card or wallet will be charged." : a.status ? (STATUS[a.status] || (() => ""))(a) : "Free. Your warden runs our enhanced memory algorithm on 1 computer. Plus adds the AI companion."),
+            h("p", { class: "muted" }, "Account: ", a.identity?.kind === "github" ? `GitHub account ${a.identity.id}` : a.identity?.kind === "email" ? a.identity.email : shortAddress(a.identity?.address) || "a wallet", "."),
             h(
               "div",
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
-              next ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
-              ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
+              h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
+              next && !a.developer_access ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
+              !a.developer_access && ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
           )
         : null,
       live ? h("section", { class: "panel", id: "get" }, h("h2", {}, "Install"), h("p", {}, "Run this on the computer you want to protect."), install) : null,
-      live ? this.extensionPanel() : null,
+      this.extensionPanel(),
+      this.signInMethods(),
+      this.usagePanel(),
       live ? this.devicesPanel() : null,
       state === "ready" && !this.upgrading ? null : this.buyPanel(),
     );
@@ -123,7 +133,10 @@ class AccountPage {
   extensionPanel() {
     const action = config.chromeStore
       ? h("a", { class: "button", href: config.chromeStore, target: "_blank", rel: "noopener" }, "Add to Chrome")
-      : h("p", { class: "muted" }, "Coming to the Chrome Web Store. Until then: open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the ", h("code", {}, "extension"), " folder from the ", h("a", { href: config.repo }, "source"), ". Works in Brave and Edge too.");
+      : h("div", {},
+          h("p", {}, h("a", { href: "downloads/ramwarden-chrome.zip", download: "" }, "Download for Chrome, Brave or Edge"),
+            " · ", h("a", { href: "downloads/ramwarden-chrome.zip.sha256" }, "SHA-256")),
+          h("p", { class: "muted" }, "Unzip the download. In chrome://extensions, turn on Developer mode, select Load unpacked, and choose the folder you unzipped."));
     return h(
       "section",
       { class: "panel", id: "extension" },
@@ -131,6 +144,47 @@ class AccountPage {
       h("p", {}, "Lets your warden unload tabs you aren't using. It pairs with RamWarden on this computer by itself."),
       action,
     );
+  }
+
+  usagePanel() {
+    const status=h("div");
+    const input=h("input",{type:"checkbox","aria-label":"Share usage diagnostics"});
+    input.checked=this.account.prefs?.share_usage === true;
+    input.addEventListener("change",async () => {
+      input.disabled=true;
+      try {
+        const result=await api.savePrefs({...this.account.prefs,share_usage:input.checked});
+        this.account.prefs=result.prefs;
+        show(status,notice("ok",input.checked ? "Sharing starts now on connected devices." : "Usage sharing is off."));
+      } catch(error) {input.checked=!input.checked;show(status,notice("error",errorText(error)));}
+      finally {input.disabled=false;}
+    });
+    return h("section",{class:"panel",id:"usage-sharing"},h("h2",{},"Help improve your warden"),
+      h("label",{},input," Share usage diagnostics"),
+      h("p",{class:"muted"},"Share daily action counts and measured RAM recovery, including close, reopen, pause and resume events. No tab titles, URLs, page contents, app names or file paths. Summaries are kept for 90 days."),
+      h("p",{class:"muted"},"Off by default. Only connected devices can send data, starting when you enable it."),status);
+  }
+
+  signInMethods() {
+    const identities = this.account.identities || [this.account.identity].filter(Boolean);
+    const github = h("span");
+    if (api.githubConfig) api.githubConfig().then(c => {if(c.enabled) github.append(h("button",{class:"button secondary small",onclick:()=>this.linkMethod("github")},"Add GitHub"));}).catch(()=>{});
+    return h("section", {class:"panel",id:"sign-in-methods"},
+      h("h2", {}, "Sign-in methods"),
+      h("p", {}, "Connect sign-in methods to this same account and subscription."),
+      h("ul", {}, identities.map(i => h("li", {}, i.kind === "github" ? `GitHub account ${i.id}` : i.kind === "email" ? i.email : `${i.chain === "solana" ? "Solana" : "Ethereum / Base"}: ${shortAddress(i.address)}`))),
+      h("div", {class:"row-actions"},
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("wallet")}, "Add a wallet"),
+        h("button", {class:"button secondary small",onclick:() => this.linkMethod("email")}, "Add an email"),github));
+  }
+
+  async linkMethod(kind) {
+    const area = h("div");
+    show(root, h("h1", {}, kind === "github" ? "Add GitHub" : kind === "email" ? "Add an email" : "Add a wallet"),
+      h("p", {}, "Verify the new sign-in method to add it to this account. Your plan and devices stay here; this does not start a payment."),
+      area, h("button", {class:"linkish",onclick:() => this.render()}, "Back to account"));
+    this.account = (await chooseSignIn(area, api, {link:true,emailOnly:kind === "email",walletOnly:kind === "wallet",githubOnly:kind === "github",purpose:"Verify this wallet to add it to your account. No payment."})).account;
+    this.render();
   }
 
   devicesPanel() {
@@ -192,7 +246,7 @@ class AccountPage {
     // the server sells; any other value is ignored.
     const wanted = this.plans.find((p) => String(p.id) === new URLSearchParams(location.search).get("plan"));
     let tier = this.upgrading || wanted?.tier || "ram";
-    let interval = wanted?.interval || "2mo";
+    let interval = wanted?.interval || "month";
     const plan = () => planFor(this.plans, tier, interval);
     const terms = h("p", { class: "muted" });
     const refresh = () => {
@@ -216,13 +270,13 @@ class AccountPage {
         h("strong", {}, label),
         sub ? h("span", {}, sub) : null,
       );
-    const m = (t) => planFor(this.plans, t, "2mo");
+    const m = (t) => planFor(this.plans, t, "month");
     const y = (t) => planFor(this.plans, t, "year");
     const picker = h(
       "div",
       {},
-      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / 2 months`))),
-      h("div", { class: "plans" }, choice("interval", "2mo", "Every 2 months"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
+      h("div", { class: "plans" }, Object.entries(config.tiers).filter(([t]) => m(t)).map(([t, info]) => choice("tier", t, info.name, `$${m(t).usd} / month`))),
+      h("div", { class: "plans" }, choice("interval", "month", "Monthly"), y("pro") ? choice("interval", "year", "Annual", `$${y("ram")?.usd ?? ""} or $${y("pro").usd} / year`) : null),
     );
     const method = (key, label, sub, run) =>
       this.methods[key] ? h("button", { class: "wallet", type: "button", onclick: () => run(plan().id, area) }, h("strong", {}, label), h("span", {}, sub)) : null;
