@@ -32,3 +32,5 @@ pub mod workspaces;
 pub mod private;
 #[cfg(target_os = "linux")]
 pub mod terminals;
+
+pub mod usage;
