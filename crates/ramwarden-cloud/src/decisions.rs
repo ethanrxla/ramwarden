@@ -37,7 +37,8 @@ use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel, SearchIndexModel, SearchIndexType};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{Db, Result};
+use crate::mongo::MongoStore as Db;
+use crate::store::Result;
 
 pub const DECISIONS: &str = "decisions";
 pub const FEATURE_INDEX: &str = "decision_features";

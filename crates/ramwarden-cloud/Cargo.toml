@@ -4,7 +4,7 @@ version.workspace    = true
 edition.workspace    = true
 license.workspace    = true
 repository.workspace = true
-description = "RamWarden Cloud: MongoDB Atlas storage for accounts, wallets, devices, passes, payments and usage, and the decision-log sync with vector search."
+description = "Hosted accounts, subscriptions, and opt-in decision-log storage on MongoDB Atlas."
 
 [dependencies]
 # The local decision log (decisions.rs, History) that `decisions sync` reads.
@@ -22,6 +22,8 @@ futures    = { workspace = true }
 sha2       = { workspace = true }
 dotenvy    = { workspace = true }
 rand       = { workspace = true }
+async-trait = "0.1"
+sha3       = "0.10"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -7,10 +7,12 @@ use eframe::egui::{self, Color32, RichText};
 
 use super::poller::{Command, Snapshot};
 use crate::model::{self, Action, Direction, SortKey};
+use crate::wardens::{Level, PaneAction};
 
 /// View state that survives between frames.
 #[derive(Default)]
 pub struct UiState {
+    pub network_filter:String,
     pub filter: String,
     /// A command waiting for the user to confirm it, with the question.
     pub confirm: Option<(Command, String)>,
@@ -359,3 +361,127 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
     });
     out
 }
+/// The ThreatWarden pane. Layout only: the words and the button come from
+/// [`ThreatPane`], shared with the Linux window.
+pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHandle>, view:&mut UiState) -> Option<Command> {
+    let Some(p) = &snap.threat else {
+        ui.label("Loading ThreatWarden…");
+        return None;
+    };
+    let mut out = None;
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if let Some(t) = icon {
+                ui.add(egui::Image::from_texture(egui::load::SizedTexture::from_handle(t)).fit_to_exact_size(egui::vec2(48.0, 48.0)));
+            }
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.heading(&p.name);
+                    ui.colored_label(colour(p.level.colour()), format!("● {}", p.level.label()));
+                });
+                if !p.headline.is_empty() {
+                    ui.label(&p.headline);
+                }
+            });
+        });
+        if !p.detail.is_empty() {
+            ui.weak(&p.detail);
+        }
+        if let Some(s) = &p.summary && s != &p.detail && s != &p.headline {
+            ui.label(RichText::new(s).italics());
+        }
+
+        match &p.action {
+            PaneAction::Upgrade { url, price } => {
+                ui.add_space(4.0);
+                let b = egui::Button::new(RichText::new(crate::wardens::UPGRADE_LABEL).color(Color32::WHITE))
+                    .fill(colour(Level::Locked.colour()));
+                if ui.add(b).on_hover_text(url).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                }
+                ui.weak(price);
+            }
+            PaneAction::TurnOn => {
+                ui.add_space(4.0);
+                if ui
+                    .button("Turn on")
+                    .on_hover_text("Requests engine setup. Installation may require an operating system permission prompt.")
+                    .clicked()
+                {
+                    out = Some(Command::WardenSetup(crate::wardens::THREAT.into()));
+                }
+            }
+            PaneAction::None => {}
+        }
+
+        if !p.engines.is_empty() {
+            ui.separator();
+            ui.strong(if p.action.is_upgrade() { "What Pro turns on" } else { "Engines" });
+            egui::Grid::new("engines").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                for e in &p.engines {
+                    ui.colored_label(colour(e.colour()), format!("● {}", e.name));
+                    ui.weak(&e.detail);
+                    ui.end_row();
+                }
+            });
+        }
+
+        if let Some(network)=&p.network {
+            ui.separator();
+            ui.strong(format!("Network connections ({})",network.connections.len()));
+            ui.label(&network.scope);
+            ui.weak("Local connection snapshot, not HTTP requests or decrypted traffic.");
+            if let Some(problem)=&network.problem {ui.colored_label(colour("#facc15"),problem);}
+            ui.horizontal(|ui|{ui.label("Filter connections");ui.text_edit_singleline(&mut view.network_filter);});
+            let filter=view.network_filter.to_lowercase();
+            egui::ScrollArea::both().id_salt("network-connections").max_height(190.0).show(ui,|ui|{
+                egui::Grid::new("network-rows").striped(true).show(ui,|ui|{
+                    for name in ["Process","PID","Local","Remote"] {ui.strong(name);}ui.end_row();
+                    for row in network.connections.iter().filter(|r|filter.is_empty()||format!("{} {} {} {}",r.process,r.pid,r.local,r.remote).to_lowercase().contains(&filter)) {
+                        ui.label(&row.process);ui.label(row.pid.to_string());ui.label(&row.local);ui.label(&row.remote);ui.end_row();
+                    }
+                });
+            });
+        }
+        if !p.action.is_upgrade() {
+            ui.separator();
+            ui.strong("Recent alerts");
+            if p.alerts.is_empty() {
+                ui.weak("Nothing at or above your alert level.");
+            }
+            for a in &p.alerts {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.colored_label(colour(a.colour), RichText::new(&a.tag).strong());
+                    ui.weak(format!("{} · {}", a.engine, a.when));
+                });
+                ui.label(&a.title);
+                if !a.explanation.is_empty() {
+                    ui.weak(&a.explanation);
+                }
+                if !a.advice.is_empty() {
+                    ui.label(RichText::new(&a.advice).italics());
+                }
+            }
+        }
+
+        if !p.agents.is_empty() {
+            ui.separator();
+            ui.strong("Reporting devices");
+            for a in &p.agents {
+                ui.weak(a);
+            }
+        }
+        for problem in &p.problems {
+            ui.colored_label(colour("#facc15"), format!("⚠ {problem}"));
+        }
+        ui.add_space(6.0);
+        ui.weak("ThreatWarden only watches and explains. It never deletes, quarantines or blocks anything on its own.");
+    });
+    out
+}
+
+pub fn level_colour(l: Level) -> Color32 {
+    colour(l.colour())
+}
+

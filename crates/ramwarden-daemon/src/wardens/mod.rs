@@ -85,6 +85,9 @@ impl Wardens {
 
     /// One warden's current status.
     fn status(&self, st: &AppState, w: &WardenInfo) -> Status {
+        if self.public_key.is_none() {
+            return Status::off("Plan verification unavailable", "This build is missing its pass verification key. Reinstall the signed release; this is not a request to purchase another plan.", 0);
+        }
         if !self.unlocked(w) {
             return Status::locked(w);
         }
@@ -138,6 +141,7 @@ pub async fn list(State(st): State<AppState>) -> Json<Value> {
         "paid": ent.paid_at(wardens::now()),
         "tier": ent.tier,
         "plan_status": ent.status,
+        "pet": ent.shows_pet(wardens::now()),
         "wardens": wardens::CATALOGUE.iter().map(|x| w.entry(&st, x)).collect::<Vec<_>>(),
     }))
 }
@@ -152,8 +156,22 @@ pub async fn one(State(st): State<AppState>, Path(id): Path<String>) -> impl Int
         "threat" if w.unlocked(info) => json!(w.threat.report()),
         _ => Value::Null,
     };
-    entry["report"] = report;
+    entry["report"] = customer_fields(report);
     (StatusCode::OK, Json(entry))
+}
+
+// Keep stable identifiers and raw evidence intact; normalize public prose only.
+fn customer_fields(mut value:Value)->Value {
+    match &mut value {
+        Value::Array(items)=>for item in items {*item=customer_fields(item.take());},
+        Value::Object(fields)=>for (key,item) in fields {
+            if ["description","advice","headline","detail","summary","source"].contains(&key.as_str()) {
+                if let Some(text)=item.as_str(){*item=json!(ramwarden_core::branding::public_text(text));}
+            } else {*item=customer_fields(item.take());}
+        },
+        _=>{}
+    }
+    value
 }
 
 /// "Turn on": install and enrol what the warden needs. Started only by the
@@ -180,6 +198,14 @@ pub async fn icon_svg(Path(id): Path<String>) -> impl IntoResponse {
         Some(svg) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/svg+xml")], svg).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+pub async fn event(State(st):State<AppState>,Path(id):Path<String>)->Result<Json<Value>,StatusCode>{
+    let wardens=Wardens::global(&st.cfg);let info=wardens::find("threat").ok_or(StatusCode::NOT_FOUND)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    let record=wardens.threat.event(&id).await.map_err(|_|StatusCode::BAD_GATEWAY)?;
+    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+    Ok(Json(record))
 }
 
 #[cfg(test)]

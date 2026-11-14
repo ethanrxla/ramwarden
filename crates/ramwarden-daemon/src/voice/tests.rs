@@ -11,6 +11,7 @@ fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
         inactive_minutes: idle,
         eligible: true,
         closeable: true,
+        safe_close_supported: true,
         auto_closeable: true,
         work: false,
         status: "candidate",
@@ -269,4 +270,15 @@ fn no_more_than_three_jokes_a_day_by_default() {
         })
         .count();
     assert_eq!(jokes, 3);
+}
+
+#[test]
+fn a_cached_legacy_worker_is_not_offered_a_close_it_cannot_acknowledge() {
+    let v = Voice::default();
+    let mut r = row(1, 300, 0.3, 600);
+    r.safe_close_supported = false;
+    let target = r.target.clone();
+    let rows = vec![r];
+    let bubble = v.speak(&cfg(), &scene(&rows, &[target], Instant::now(), DAY0));
+    assert!(bubble.is_none_or(|b| b.kind != Kind::CheckIn));
 }

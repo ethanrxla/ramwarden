@@ -28,7 +28,7 @@ use ramwarden_core::decisions::Decision;
 use ramwarden_core::history::{Action, History};
 use serde::{Deserialize, Serialize};
 
-use crate::db::Db;
+use crate::mongo::MongoStore as Db;
 use crate::decisions::{DecisionDoc, Neighbour, TEXT_INDEX, settled_closes, to_document};
 
 /// Rows per round trip.

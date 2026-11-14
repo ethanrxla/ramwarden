@@ -42,3 +42,10 @@ pub mod tabreview;
 
 pub mod decisionlog;
 pub mod recall;
+
+pub mod settings;
+
+pub mod companion_memory;
+
+pub mod workspace_tools;
+pub mod workspace_run;

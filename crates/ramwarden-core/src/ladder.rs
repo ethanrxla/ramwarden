@@ -255,6 +255,10 @@ pub struct Ladder {
     /// largest three meant paging out the same already-cold processes every
     /// tick; going round the circle reaches every idle process in turn.
     pageout_turns: CircularList<i32>,
+    // Report missing capabilities once per unavailable period, while still
+    // rechecking on every tick so newly available routes recover immediately.
+    groups_unavailable_reported: bool,
+    pageout_unavailable_reported: bool,
     last_tabs: Option<Instant>,
     tidy: Option<Tidy>,
     ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
@@ -270,6 +274,8 @@ impl Ladder {
             kill_queue: LinkedQueue::new(),
             undo: LinkedStack::new(),
             pageout_turns: CircularList::new(),
+            groups_unavailable_reported: false,
+            pageout_unavailable_reported: false,
             last_tabs: None,
             tidy: None,
             ranker: None,
@@ -702,9 +708,13 @@ impl Ladder {
 
     fn do_reclaim(&mut self, w: &World<'_>, report: &mut Report) {
         let Some(groups) = w.groups else {
-            report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
+            if !self.groups_unavailable_reported {
+                report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
+                self.groups_unavailable_reported = true;
+            }
             return;
         };
+        self.groups_unavailable_reported = false;
 
         for (group, ask) in self.reclaim_targets(w, groups).into_iter().take(4) {
             let label = group.label();
@@ -726,6 +736,8 @@ impl Ladder {
     /// the rung contributes nothing, which is a normal configuration.
     fn do_page_out(&mut self, w: &World<'_>, report: &mut Report) {
         if !self.act.can_page_out() {
+            if self.pageout_unavailable_reported { return; }
+            self.pageout_unavailable_reported = true;
             let route = self.act.page_out_route();
             report.steps.push((
                 "pageout",
@@ -735,6 +747,7 @@ impl Ladder {
             return;
         }
 
+        self.pageout_unavailable_reported = false;
         let mut idle: Vec<(i32, String, u64)> = w
             .det
             .snapshot()
@@ -1021,6 +1034,41 @@ pub(crate) mod test_support {
 mod rung_tests {
     use super::test_support::*;
     use super::*;
+
+    #[test]
+    fn unavailable_routes_report_once_without_blocking_ladder_escalation() {
+        use std::sync::{Arc, Mutex};
+        let shared = Arc::new(Mutex::new(ramwarden_platform::fake::World::default()));
+        let platform = ramwarden_platform::fake::platform(shared);
+        let detector = Detector::preloaded(true, vec![]);
+        let act = Actuator::new(platform.control.clone(), Arc::new(ramwarden_platform::NoPager), platform.background.clone());
+        let mut ladder = Ladder::new(cfg(), act);
+        let mut world = World { det: &detector, groups: None, psi: psi(6.0,0.0),
+            available_bytes: PLENTY, watchlist: &[], goal: String::new(), tabs: None, judge: None };
+        struct Tabs(usize);
+        impl TabCloser for Tabs {
+            fn close_stale(&mut self, _: &str) -> Outcome { self.0 += 1; Outcome::default() }
+        }
+        let first = ladder.step(&mut world);
+        assert!(first.steps.iter().any(|(action,_,_)| *action == "reclaim"));
+        assert!(first.steps.iter().any(|(action,_,_)| *action == "pageout"));
+        for _ in 0..100 {
+            let repeated = ladder.step(&mut world);
+            assert!(!repeated.steps.iter().any(|(action,_,_)| matches!(*action,"reclaim"|"pageout")));
+        }
+        // Capability recovery resets the diagnostic, rather than disabling
+        // reclaim forever. Empty fake groups are safe and do not actuate.
+        world.groups = Some(platform.groups.as_ref());
+        ladder.step(&mut world);
+        world.groups = None;
+        let missing_again = ladder.step(&mut world);
+        assert!(missing_again.steps.iter().any(|(action,_,_)| *action == "reclaim"));
+        let mut tabs = Tabs(0);
+        world.psi = psi(12.0,0.0);
+        world.tabs = Some(&mut tabs);
+        ladder.step(&mut world);
+        assert_eq!(tabs.0, 1, "missing capabilities must not block higher rungs");
+    }
 
     // ── Rung selection, driven by a synthetic pressure series ───────────────
 
@@ -1801,6 +1849,41 @@ mod tests {
             // it did not have.
             Some(_) => {}
             None => panic!("the pageout rung did not run: {:?}", report.steps),
+        }
+    }
+
+    #[test]
+    fn missing_capabilities_do_not_flood_reports_and_reclaim_recovers() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = f.detector(true);
+        let mut l = ladder(cfg(), &f.root);
+        let mut w = world(&f, &h, &det, 6.0, 0.0, &[]);
+        w.groups = None;
+        let mut first = Report::default();
+        l.do_reclaim(&w, &mut first);
+        assert_eq!(first.steps.len(), 1);
+        for _ in 0..100 {
+            let mut repeated = Report::default();
+            l.do_reclaim(&w, &mut repeated);
+            assert!(repeated.steps.is_empty());
+        }
+        // Capability discovery can recover; do not permanently disable a rung.
+        w.groups = Some(&h);
+        l.do_reclaim(&w, &mut Report::default());
+        w.groups = None;
+        let mut missing_again = Report::default();
+        l.do_reclaim(&w, &mut missing_again);
+        assert_eq!(missing_again.steps.len(), 1);
+        if !l.act.can_page_out() {
+            let mut first = Report::default();
+            l.do_page_out(&w, &mut first);
+            assert_eq!(first.steps.len(), 1);
+            for _ in 0..100 {
+                let mut repeated = Report::default();
+                l.do_page_out(&w, &mut repeated);
+                assert!(repeated.steps.is_empty());
+            }
         }
     }
 

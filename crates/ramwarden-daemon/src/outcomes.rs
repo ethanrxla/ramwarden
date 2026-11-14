@@ -77,6 +77,7 @@ mod tests {
             inactive_minutes: 300,
             eligible: true,
             closeable: true,
+            safe_close_supported: true,
             auto_closeable: true,
             work: false,
             status: "candidate",

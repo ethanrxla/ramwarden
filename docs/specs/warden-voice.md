@@ -167,3 +167,22 @@ chat does, instead of a rule count (`POST /browser/explain`,
   failure, since the same id may then be a different page.
 - Account-synced mute (product spec 4.3) and ThreatWarden lines come later;
   the bubble carries a `warden` field so they slot in without a new route.
+
+## Generated trivia and ram jokes
+The ram uses a small local cache of source-linked animal trivia and absurd
+ram/computer jokes. Existing mute, gaps, daily caps and question/activity
+priority still apply. Render and animation paths never wait for an AI call.
+Factual entries require a source URL present in publisher provider citations;
+jokes have a separate type and do not invent live readings or actions.
+Mac factual bubbles offer a source link. Static quips are the offline fallback.
+
+### Shared public feed
+Clients download /v1/public/fun-facts from their hosted API and never generate
+trivia themselves. One publisher per shared cache file generates a daily batch,
+protected by a cross-process lock; feed reads never invoke an LLM. Responses may
+be CDN cached for an hour. Configure RAMWARDEN_PUBLIC_TRIVIA_FILE on the API
+host. Replicas must mount the same cache and lock path; otherwise use one
+publisher and distribute its JSON to read-only replicas. An abandoned .lock
+after a crashed publisher requires operator inspection and removal. Unavailable
+or expired feeds fall back to static quips, never per-customer paid generation.
+Existing prepared local remarks may finish playing during migration.

@@ -30,6 +30,7 @@ use crate::tabs::{Tab, Transport};
 pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     let router = Router::new()
+        .merge(crate::settings::routes())
         .merge(crate::tabreview::routes())
         .merge(crate::decisionlog::routes())
         // â”€â”€ Contracts the shipped extensions depend on â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -97,10 +98,13 @@ pub fn router(state: AppState) -> Router {
     let router = if policy.loopback {
         router.route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
+            .route("/wardens/threat/events/{id}",get(crate::wardens::event))
             .route("/assistant/action", post(crate::assistant::act))
+            .route("/assistant/action/stream", post(crate::assistant::act_stream))
+            .route("/assistant/workspace",get(crate::assistant::workspace_status).post(crate::assistant::choose_workspace))
             // "Analyze now" in the extension: the warden's read of the tabs.
             .route("/browser/explain", post(crate::tab_analysis::explain))
-            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::new())))
+            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::with_config(&state.cfg))))
     } else { router };
     router.with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses

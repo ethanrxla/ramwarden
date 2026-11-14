@@ -15,7 +15,7 @@
     * a starter config at %APPDATA%\ramwarden\config.toml if none exists.
 
 .EXAMPLE
-  cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat
+  cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat -p ramwarden-cli
   cargo build --release -p ramwarden-ui --features tray --bin ramwarden-tray
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
@@ -74,15 +74,17 @@ if ($Uninstall) {
 }
 
 $Source = (Resolve-Path $Source).Path
-foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-debloat.exe') {
+foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-debloat.exe', 'ramwarden.exe') {
   if (-not (Test-Path (Join-Path $Source $exe))) {
-    throw "$exe not found in $Source. Build first: cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat"
+    throw "$exe not found in $Source. Build first: cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat -p ramwarden-cli"
   }
 }
 
 Remove-RamWarden
 New-Item -ItemType Directory -Force $Dest | Out-Null
 Get-ChildItem $Source -Filter 'ramwarden-*.exe' | Copy-Item -Destination $Dest -Force
+Copy-Item (Join-Path $Source 'ramwarden.exe') (Join-Path $Dest 'ramwarden.exe') -Force
+Copy-Item (Join-Path $Source 'ramwarden.exe') (Join-Path $Dest 'ramwarden-doctor.exe') -Force
 
 # The daemon starts through a launcher that puts the CUDA runtime on PATH: a
 # daemon built with `--features cuda` imports cublas and curand at load time,

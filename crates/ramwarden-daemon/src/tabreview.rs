@@ -47,7 +47,7 @@ pub fn routes()->Router<AppState> {
 async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
     if st.cfg.tabs.close!="live" || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
-    let auto=crate::browser::close_candidates(&rows,&st.cfg.tabs);
+    let auto=crate::browser::close_candidates(&rows,&st.tabs_config());
     let uncertain=rows.into_iter().filter(|r|r.closeable && !auto.contains(&r.target)
         && matches!(r.status,"candidate"|"unloaded"|"retained")).take(10).collect();
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());

@@ -18,7 +18,7 @@ fn main() {
     };
     let args: Vec<String> = std::env::args().collect();
     let result = if args.iter().any(|a| a == "--window") {
-        ramwarden_ui::tray::run_window(client)
+        ramwarden_ui::tray::run_window(client,if args.iter().any(|a|a=="--threat"){ramwarden_ui::tray::Pane::Threat}else{ramwarden_ui::tray::Pane::Ram})
     } else {
         ramwarden_ui::tray::run_tray(client, args.iter().any(|a| a == "--hidden"))
     };

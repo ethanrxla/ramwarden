@@ -16,6 +16,7 @@ struct WardenBubble: Equatable {
     let text: String
     let choices: [WardenChoice]
     let url: String?
+    let source:URL?
     var isQuestion: Bool { !choices.isEmpty }
 
     init?(_ obj: Any?) {
@@ -27,6 +28,7 @@ struct WardenBubble: Equatable {
             guard let id = $0["id"] as? String, let label = $0["label"] as? String else { return nil }
             return WardenChoice(id: id, label: label)
         }
+        source=(b["source_url"] as? String).flatMap(URL.init(string:))
         url = (b["tab"] as? [String: Any])?["url"] as? String
     }
 }
@@ -34,7 +36,7 @@ struct WardenBubble: Equatable {
 /// The same mute choices as the other faces: (label, hours), nil = until unmuted.
 let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet for today", 12), ("Quiet until I unmute", nil)]
 
-final class VoiceModel: ObservableObject {
+@MainActor final class VoiceModel: ObservableObject {
     @Published var bubble: WardenBubble?
     @Published var muted = false
     /// Pets come with Plus and Pro, not Lite.
@@ -123,6 +125,7 @@ struct BubbleView: View {
                     Button { voice.answer("dismiss") } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                         .buttonStyle(.plain).accessibilityLabel("Dismiss")
                 }
+                if let source=b.source,source.scheme == "https" {Link("Fact source",destination:source).font(.caption2)}
                 if b.isQuestion {
                     HStack(spacing: 6) {
                         ForEach(b.choices) { c in
@@ -142,3 +145,24 @@ struct BubbleView: View {
 
 /// A nonactivating panel: clicking a choice never steals focus from your work.
 final class BubblePanel: NSPanel { override var canBecomeKey: Bool { false } }
+
+struct CompanionMuteMenu: View {
+    let warden:String
+    @StateObject private var voice=VoiceModel()
+    @State private var quiet=false
+    var body:some View {
+        Menu {
+            Button("Unmute companion"){set(false,nil)}
+            ForEach(wardenMuteChoices.indices,id:\.self){i in
+                Button(wardenMuteChoices[i].0){set(true,wardenMuteChoices[i].1)}
+            }
+        } label:{Image(systemName:quiet ? "speaker.slash" : "speaker.wave.2").font(.system(size:11))}
+        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Mute or unmute companion")
+        .onAppear{Task{if warden == "ram" {await voice.poll()};quiet=CompanionAudio.isMuted(warden) || (warden == "ram" && voice.muted)}}
+    }
+    private func set(_ muted:Bool,_ hours:Double?){
+        CompanionAudio.setMuted(muted,warden:warden,hours:hours)
+        if warden == "ram" {if muted {voice.mute(hours)} else {voice.unmute()}}
+        quiet=muted
+    }
+}

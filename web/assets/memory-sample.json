@@ -1,0 +1,79 @@
+{
+  "source": "Developer Mac, anonymized daemon measurements",
+  "captured_at": "2026-11-03T14:08:53.054142+00:00",
+  "interval_seconds": 2,
+  "samples": [
+    {
+      "used_mb": 13340.33,
+      "total_mb": 16384.0,
+      "available_mb": 3043.67,
+      "percent": 81.42
+    },
+    {
+      "used_mb": 13366.61,
+      "total_mb": 16384.0,
+      "available_mb": 3017.39,
+      "percent": 81.58
+    },
+    {
+      "used_mb": 13341.66,
+      "total_mb": 16384.0,
+      "available_mb": 3042.34,
+      "percent": 81.43
+    },
+    {
+      "used_mb": 13242.11,
+      "total_mb": 16384.0,
+      "available_mb": 3141.89,
+      "percent": 80.82
+    },
+    {
+      "used_mb": 13330.56,
+      "total_mb": 16384.0,
+      "available_mb": 3053.44,
+      "percent": 81.36
+    },
+    {
+      "used_mb": 13273.7,
+      "total_mb": 16384.0,
+      "available_mb": 3110.3,
+      "percent": 81.02
+    },
+    {
+      "used_mb": 13354.47,
+      "total_mb": 16384.0,
+      "available_mb": 3029.53,
+      "percent": 81.51
+    },
+    {
+      "used_mb": 13218.19,
+      "total_mb": 16384.0,
+      "available_mb": 3165.81,
+      "percent": 80.68
+    },
+    {
+      "used_mb": 13326.16,
+      "total_mb": 16384.0,
+      "available_mb": 3057.84,
+      "percent": 81.34
+    },
+    {
+      "used_mb": 13166.97,
+      "total_mb": 16384.0,
+      "available_mb": 3217.03,
+      "percent": 80.36
+    },
+    {
+      "used_mb": 13210.94,
+      "total_mb": 16384.0,
+      "available_mb": 3173.06,
+      "percent": 80.63
+    },
+    {
+      "used_mb": 13193.44,
+      "total_mb": 16384.0,
+      "available_mb": 3190.56,
+      "percent": 80.53
+    }
+  ]
+}

@@ -20,7 +20,7 @@ export class Pricing {
     this.plans = plans;
     this.tiers = tiers;
     this.lite = lite;
-    this.interval = "2mo";
+    this.interval = "month";
   }
 
   render() {
@@ -28,7 +28,7 @@ export class Pricing {
     const toggle = h(
       "div",
       { class: "interval", role: "group", "aria-label": "Billing" },
-      h("button", { type: "button", "data-interval": "2mo", onclick: () => this.set("2mo") }, "Every 2 months"),
+      h("button", { type: "button", "data-interval": "month", onclick: () => this.set("month") }, "Monthly"),
       h("button", { type: "button", "data-interval": "year", onclick: () => this.set("year") }, "Annual", h("small", {}, `save up to ${best}%`)),
     );
     this.el.replaceChildren(
@@ -57,7 +57,7 @@ export class Pricing {
 
   card(tier) {
     const t = this.tiers[tier];
-    const m = planFor(this.plans, tier, "2mo");
+    const m = planFor(this.plans, tier, "month");
     const y = planFor(this.plans, tier, "year");
     return h(
       "div",
@@ -68,14 +68,14 @@ export class Pricing {
       h(
         "div",
         { class: "amount" },
-        h("span", { "data-price": "2mo" }, `$${m.usd}`, h("small", {}, " / 2 months")),
-        h("span", { "data-price": "year" }, `$${y.usd}`, h("small", {}, " / year")),
+        h("span", { "data-price": "month" }, `$${m.usd}`, h("small", {}, " / month")),
+        h("span", { "data-price": "year" }, h("s", { class: "annual-reference" }, `$${m.usd * 12}`), `$${y.usd}`, h("small", {}, " / year")),
       ),
       h(
         "p",
         { class: "alt" },
-        h("span", { "data-price": "2mo" }, `or $${y.usd} / year`),
-        h("span", { "data-price": "year" }, `instead of $${m.usd * 6} paid every 2 months`),
+        h("span", { "data-price": "month" }, `or $${y.usd} / year`),
+        h("span", { "data-price": "year" }, `${annualSaving(this.plans, tier)}% less than monthly billing`),
       ),
       h("ul", {}, t.features.map((x, i) => bullet(x, i))),
       h("a", { class: "button", "data-buy": tier, href: "#" }, t.trialDays ? `Start ${t.trialDays}-day free trial` : `Get ${t.name.replace(/^RamWarden /, "")}`),

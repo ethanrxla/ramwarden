@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.com; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>ThreatWarden: catch threats, keep your peace</title>
   <meta name="description" content="ThreatWarden watches your computer for threats, removes the real ones, and explains every call in plain words. Included with RamWarden Pro.">
@@ -11,13 +11,16 @@
   <meta property="og:description" content="Catch threats. Keep your peace.">
   <link rel="icon" href="assets/pets/threat.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="assets/support.css">
   <script type="module" src="assets/home.js"></script>
   <script type="module" src="assets/world.js"></script>
+  <script type="module" src="assets/city.js"></script>
+  <script type="module" src="assets/account-header.js"></script>
 </head>
 <body class="landing theme-threat" data-warden="threat">
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
+      <a class="brand" href="./" aria-label="RamWarden home"><img src="assets/warden-wordmark.svg" alt="WARDEN"></a>
       <nav class="warden-tabs" aria-label="Wardens">
         <a href="./"><img src="assets/pets/ram.svg" alt="">RamWarden</a>
         <a href="threat.html" aria-current="page"><img src="assets/pets/threat.svg" alt="">ThreatWarden</a>
@@ -34,7 +37,12 @@
 
   <main>
     <!-- 1. Hero -->
-    <section class="hero" id="top" data-section="hero">
+    <section class="hero city-hero" data-city-scene id="top" data-section="hero">
+      <div class="city-backdrop" aria-hidden="true">
+        <video class="city-film" muted loop playsinline preload="none" poster="assets/city/blue-calm.jpg" data-city-video="assets/city/city.mp4"></video>
+        <div class="city-haze"></div>
+      </div>
+      <button class="city-motion" type="button" aria-pressed="false">Pause background</button>
       <div class="wrap hero-layout">
         <div class="hero-copy">
           <span class="eyebrow">Security companion · Windows · macOS · Linux</span>
@@ -65,6 +73,18 @@
       </div>
     </section>
 
+    <section class="city-interlude city-blue" data-city-scene aria-label="ThreatWarden pixel city">
+      <div class="city-backdrop" aria-hidden="true">
+        <img class="city-still" src="assets/city/blue-walkers.jpg" alt="" loading="lazy" width="2752" height="1536">
+        <img class="city-storm" src="assets/city/blue-storm.jpg" alt="" loading="lazy" width="2752" height="1536">
+        <div class="city-haze"></div>
+      </div>
+      <div class="wrap city-caption"><span class="eyebrow">A quieter kind of protection.</span>
+        <h2>Keep exploring.<br>Your warden keeps watch.</h2>
+        <a class="button secondary" href="#meet">Meet your guardian <span aria-hidden="true">↓</span></a>
+      </div>
+    </section>
+
     <!-- 3. Scroll world -->
     <section class="world world-threat" id="world" data-scrub data-section="world" aria-label="ThreatWarden at work, driven by scrolling">
       <div class="world-sticky">
@@ -76,7 +96,7 @@
             <p class="world-line">Something new just landed<br>in <em>Downloads.</em></p>
           </div>
           <div class="beat" data-from="0.38" data-to="0.72">
-            <p class="world-line">Your warden checks it. If it's real,<br>it's <em>quarantined, and you can undo it.</em></p>
+            <p class="world-line">Your warden checks it.<br>You see <em>what needs a closer look.</em></p>
           </div>
           <div class="beat" data-from="0.72" data-to="1.01">
             <p class="world-line">Catch threats. <em>Keep your peace.</em></p>
@@ -89,7 +109,7 @@
     </section>
 
     <!-- 4. Pet -->
-    <section class="block stage" id="meet" data-stage data-section="pet">
+    <section class="block stage city-content" id="meet" data-stage data-section="pet">
       <div class="wrap stage-layout">
         <div class="stage-pet">
           <p class="stage-say" data-stage-say aria-live="polite"></p>
@@ -104,7 +124,7 @@
     </section>
 
     <!-- 5. How it works -->
-    <section class="block" id="how" data-section="how">
+    <section class="block city-content" id="how" data-section="how">
       <div class="wrap">
         <h2>What it watches</h2>
         <p class="sub">One warden for this computer, its files and its network.</p>
@@ -124,26 +144,26 @@
     </section>
 
     <!-- 6. Pricing -->
-    <section class="block" id="pricing" data-section="pricing">
+    <section class="block city-content" id="pricing" data-section="pricing">
       <div class="wrap">
         <h2>Two intelligent desktop companions.</h2>
-        <p class="sub">Performance and security, starting at $5 every 2 months or $24 a year.</p>
+        <p class="sub">Performance and security, starting at $4 per month or $20 a year.</p>
         <div class="pricing" data-pricing></div>
       </div>
     </section>
 
     <!-- 7. FAQ -->
-    <section class="block faq" id="faq" data-section="faq">
+    <section class="block faq city-content" id="faq" data-section="faq">
       <div class="wrap narrow">
         <h2>Questions</h2>
         <details><summary>Does it replace my antivirus?</summary>
           <p>No. It works alongside it and never turns your existing protection off.</p></details>
         <details><summary>Will it delete my files?</summary>
-          <p>Only confirmed threats are quarantined, and every quarantine can be undone. Anything you allow is left alone.</p></details>
+          <p>No. Current detection is read-only. Quarantine and blocking controls are planned.</p></details>
         <details><summary>Can I allow something it flags?</summary>
-          <p>Yes. One tap on any finding allows that file, folder, app or site.</p></details>
+          <p>You can review findings. Per-finding allow controls are planned.</p></details>
         <details><summary>How do I get it?</summary>
-          <p>It comes with RamWarden Pro, $5 every 2 months or $24 a year, on up to 5 computers.</p></details>
+          <p>It comes with RamWarden Pro on up to 5 computers. Pro is paid from day one; the 14-day trial is for Plus.</p></details>
       </div>
     </section>
 
@@ -157,7 +177,7 @@
 
   <footer>
     <div class="wrap">
-      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $5 every 2 months or $24 a year.</span>
+      <span>RamWarden. Two intelligent desktop companions. Performance and security, starting at $4 per month or $20 a year.</span>
       <span><a href="privacy.html">Privacy</a> · <a href="notices.html">Open-source notices</a> · <a href="account.html">Account</a> · <a href="https://github.com/ethanrxla/ramwarden">GitHub</a></span>
     </div>
   </footer>

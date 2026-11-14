@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Isolated Vercel identity; never inherits another project's deployment token.
+set -euo pipefail
+PROFILE="$HOME/.config/ramwarden/vercel-cli"
+mkdir -p "$PROFILE"
+chmod 700 "$PROFILE"
+unset VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID
+exec vercel --global-config "$PROFILE" "$@"

@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.app; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.ramwarden.com; base-uri 'none'; form-action 'self'; object-src 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex">
   <title>Link a device · RamWarden</title>
-  <link rel="icon" href="assets/ramwarden-mark.png">
+  <link rel="icon" href="assets/ramwarden-mark.png?v=0.3.0">
   <link rel="stylesheet" href="assets/style.css">
   <script type="module" src="assets/link.js"></script>
+  <script type="module" src="assets/account-header.js"></script>
 </head>
 <body>
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="./"><img src="assets/ramwarden-mark.png" alt="">RamWarden</a>
+      <a class="brand" href="./" aria-label="RamWarden home"><img src="assets/warden-wordmark.svg" alt="WARDEN"></a>
       <nav>
         <a class="hide-sm" href="./#pricing">Pricing</a>
         <a class="hide-sm" href="./#get">Install</a>
