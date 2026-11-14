@@ -54,17 +54,24 @@ $Service  = Join-Path $Dest 'ramwarden-service.exe'
 $Shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\RamWarden.lnk'
 
 function Remove-RamWarden {
+  # The service's watchdog restarts a daemon that dies, so it goes first:
+  # killing the daemon while the service still ran let the watchdog relaunch
+  # it, and the copy below then failed on a locked ramwarden-daemon.exe.
+  if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
+    Stop-Service RamWarden -Force -ErrorAction SilentlyContinue
+    if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
+  }
   foreach ($t in @($TaskName, $TrayTask)) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
       Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
       Unregister-ScheduledTask -TaskName $t -Confirm:$false
     }
   }
-  Get-Process ramwarden-daemon, ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-  if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
-    if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
-    Start-Sleep -Seconds 1
-  }
+  # Stop every RamWarden binary in the install folder and wait until each has
+  # exited, so no file is still open when the new copies go in.
+  $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Dest, [StringComparison]::OrdinalIgnoreCase) }
+  $running | Stop-Process -Force -ErrorAction SilentlyContinue
+  $running | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
 }
 
 if ($StopOnly) {
