@@ -26,9 +26,13 @@ fn user_request_too_long(messages: &[Value]) -> bool {
     messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).map(str::len).unwrap_or(0) >= 8000
 }
 pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
-    if !enabled() {
-        return None;
-    }
+    explain_with_settings(work, messages, |name| std::env::var(name).ok()).await
+}
+/// Resolve private settings without requiring a particular daemon launch wrapper.
+pub async fn explain_with_settings(
+    work: Work, messages: &[Value], setting: impl Fn(&str) -> Option<String> + Send + Sync,
+) -> Option<String> {
+    if setting("RAMWARDEN_ROUTED_ASSISTANT").as_deref() != Some("1") { return None; }
     let compress = needs_compression(work, messages);
     tracing::info!(work=?work, compression_required=compress, "warden model route");
     let prepared = if compress { crate::nyquest::compress(messages).await } else { Ok(messages.to_vec()) };
@@ -38,7 +42,7 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
         // send it as it is: a slightly larger request beats the chat saying
         // "AI unavailable" to "which model is running?" (seen 2026-11-14 on
         // Windows, where no compression sidecar is installed).
-        Err(_) if !user_request_too_long(&messages) => {
+        Err(_) if !user_request_too_long(messages) => {
             tracing::info!("compression unavailable; sending the request uncompressed");
             messages.to_vec()
         }
@@ -54,8 +58,8 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
         Work::Conversation|Work::Routine if !research=>("https://api.x.ai","XAI_API_KEY","XAI_CHAT_MODEL_ID",work.model()),
         _=>("https://api.x.ai","XAI_API_KEY","XAI_TASK_MODEL_ID","grok-4.7"),
     };
-    let key=crate::secret::Secret::new(std::env::var(key_name).ok()?);if key.is_empty(){return None}
-    let model=std::env::var(model_name).ok().filter(|s|!s.trim().is_empty()).unwrap_or_else(||default_model.into());
+    let key=crate::secret::Secret::new(setting(key_name)?);if key.is_empty(){return None}
+    let model=setting(model_name).filter(|s|!s.trim().is_empty()).unwrap_or_else(||default_model.into());
     let payload = request_body(work, &model, &messages);
     let r = match http()?
         .post(format!("{origin}/v1/responses"))
@@ -244,7 +248,7 @@ mod compression_routing_tests {
         // The case behind "Conversational AI is unavailable": a short question
         // classified as multi-step, with a large system snapshot.
         let messages=[json!({"role":"system","content":"x".repeat(9000)}),json!({"role":"user","content":"can you find out which ollama model is running?"})];
-        assert!(!user_request_too_long(&messages));
+        assert!(!user_request_too_long(messages));
         assert!(user_request_too_long(&[json!({"role":"user","content":"x".repeat(8000)})]));
     }
     #[test]

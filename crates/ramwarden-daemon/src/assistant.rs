@@ -90,9 +90,10 @@ pub async fn ask_model(st: &AppState, messages: &[Value], cloud_allowed: bool) -
     };
     let cloud = async {
         if !cloud_allowed { return None; }
-        if ramwarden_ai::routed::enabled() {
+        if ramwarden_core::config::integration_secret(&st.cfg, "RAMWARDEN_ROUTED_ASSISTANT").as_deref() == Some("1") {
             let message=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).unwrap_or("");
-            return ramwarden_ai::routed::explain(ramwarden_ai::routing::classify(message), messages).await;
+            return ramwarden_ai::routed::explain_with_settings(ramwarden_ai::routing::classify(message), messages,
+                |name| ramwarden_core::config::integration_secret(&st.cfg, name)).await;
         }
         let p = st.ai.nim.as_ref()?;
         tokio::time::timeout(Duration::from_secs(20), p.explain(messages, st.cfg.assistant.cloud_model.as_deref())).await.ok()?.ok()
@@ -137,10 +138,21 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
         crate::browser::snapshot(&hub.reg, st.cfg.thresholds.inactivity_minutes as i64)
             .iter().filter(|row| row.eligible).count(),
     ));
+    // Query the runtime rather than guessing loaded models from process names.
+    let local_models = if ["ollama", "model", "qwen", "llama", "fine-tun", "finetun"].iter().any(|word| r.message.to_lowercase().contains(word)) {
+        if let Some(runtime) = &st.ai.ollama {
+            let (loaded,installed) = tokio::join!(
+                tokio::time::timeout(Duration::from_secs(2), runtime.loaded()),
+                tokio::time::timeout(Duration::from_secs(2), runtime.models()));
+            json!({"loaded":loaded.ok().and_then(Result::ok),
+                "installed":installed.ok().and_then(Result::ok),
+                "note":"Loaded and installed are different. Null means the query was unavailable, not an empty list."})
+        } else { json!({"unavailable":true}) }
+    } else { Value::Null };
     let direct_release = requests_memory_release(&r.message);
     let recalled=if direct_release {vec![]} else {crate::companion_memory::recall(&st.cfg,&r.message).await};
     let facts = json!({"memory_percent":m.percent(),"used_mb":m.used() / 1048576,
-        "total_mb":m.total / 1048576,"processes":processes,"recent_actions":actions,
+        "total_mb":m.total / 1048576,"processes":processes,"recent_actions":actions,"ollama":local_models,
         "focus_goal":st.voice.focus.goal(crate::voice::unix_now()),"cloud_opt_in":cloud_allowed,"platform":st.platform.name,
         "browser_snapshot_available":browser.is_some(),
         "connected_browsers":browser.map(|b|b.0),"eligible_idle_tabs":browser.map(|b|b.1),
