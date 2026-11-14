@@ -37,7 +37,7 @@ async fn a_visitor_asks_about_price_then_opens_a_ticket_the_team_answers() {
     let secret = v["conversation"].as_str().unwrap().to_string();
     assert!(secret.starts_with("rwsc_"));
     assert_eq!(v["reply"]["topic"], "pricing");
-    assert!(v["reply"]["text"].as_str().unwrap().contains("Pro is $5 per month or $24 a year"));
+    assert!(v["reply"]["text"].as_str().unwrap().contains("Pro is $4.99 every 2 months or $23.99 a year"));
     assert_eq!(v["reply"]["offer_ticket"], false);
 
     // The same conversation continues; no new secret is handed out.

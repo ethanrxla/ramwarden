@@ -30,6 +30,8 @@ pub struct Stripe {
     webhook_secret: Secret,
     api_base: String,
     http: reqwest::Client,
+    /// Plan id to the operator's Stripe price (`STRIPE_PRICE_PLAN_<id>`).
+    prices: std::collections::BTreeMap<u32, String>,
 }
 
 pub struct CheckoutRequest<'a> {
@@ -45,9 +47,11 @@ pub struct CheckoutRequest<'a> {
     pub cancel_url: &'a str,
 }
 
-/// Card subscriptions renew monthly or yearly.
+/// The recurrence of a price checkout builds itself, when the operator set
+/// no Stripe price for the plan: card plans bill every 2 months or yearly
+/// (user decision, 2026-11-14). A configured price carries its own.
 fn stripe_interval(plan: &PlanDef) -> (&'static str, &'static str) {
-    if plan.interval == "year" { ("year", "1") } else { ("month", "1") }
+    if plan.interval == "year" { ("year", "1") } else { ("month", "2") }
 }
 
 impl Stripe {
@@ -58,7 +62,13 @@ impl Stripe {
     /// Tests point this at a fake.
     pub fn with_base(key: Secret, webhook_secret: Secret, api_base: &str) -> Self {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap_or_default();
-        Stripe { key, webhook_secret, api_base: api_base.trim_end_matches('/').to_string(), http }
+        Stripe { key, webhook_secret, api_base: api_base.trim_end_matches('/').to_string(), http, prices: Default::default() }
+    }
+
+    /// Use the operator's own Stripe prices, by plan id.
+    pub fn with_prices(mut self, prices: std::collections::BTreeMap<u32, String>) -> Self {
+        self.prices = prices;
+        self
     }
 
     /// Whether this is a test-mode key (`sk_test_`), shown in config so the
@@ -70,7 +80,7 @@ impl Stripe {
     /// Creates a Checkout Session and returns its URL.
     pub async fn checkout(&self, r: &CheckoutRequest<'_>) -> Result<String, String> {
         let (interval, count) = stripe_interval(r.plan);
-        let cents = (r.plan.usd * 100).to_string();
+        let cents = r.plan.card_cents().to_string();
         let plan_id = r.plan.id.to_string();
         let trial_days = TRIAL_DAYS.to_string();
         let mut form: Vec<(&str, &str)> = vec![
@@ -79,15 +89,22 @@ impl Stripe {
             ("success_url", r.success_url),
             ("cancel_url", r.cancel_url),
             ("line_items[0][quantity]", "1"),
-            ("line_items[0][price_data][currency]", "usd"),
-            ("line_items[0][price_data][unit_amount]", &cents),
-            ("line_items[0][price_data][recurring][interval]", interval),
-            ("line_items[0][price_data][recurring][interval_count]", count),
-            ("line_items[0][price_data][product_data][name]", &r.plan.name),
+        ];
+        match self.prices.get(&r.plan.id) {
+            Some(price) => form.push(("line_items[0][price]", price)),
+            None => form.extend([
+                ("line_items[0][price_data][currency]", "usd"),
+                ("line_items[0][price_data][unit_amount]", cents.as_str()),
+                ("line_items[0][price_data][recurring][interval]", interval),
+                ("line_items[0][price_data][recurring][interval_count]", count),
+                ("line_items[0][price_data][product_data][name]", r.plan.name.as_str()),
+            ]),
+        }
+        form.extend([
             ("subscription_data[metadata][account_id]", r.account_id),
             ("subscription_data[metadata][plan]", &plan_id),
             ("subscription_data[metadata][payment_id]", r.payment_id),
-        ];
+        ]);
         if r.trial {
             form.push(("subscription_data[trial_period_days]", &trial_days));
         }
@@ -127,23 +144,28 @@ impl Stripe {
             .await
             .map_err(|e| format!("stripe: {e}"))?;
         let item = sub["items"]["data"][0]["id"].as_str().ok_or("stripe: subscription has no item")?.to_string();
-        let (interval, count) = stripe_interval(plan);
-        let cents = (plan.usd * 100).to_string();
-        let price: Value = post("/v1/prices".into())
-            .form(&[
-                ("currency", "usd"),
-                ("unit_amount", cents.as_str()),
-                ("recurring[interval]", interval),
-                ("recurring[interval_count]", count),
-                ("product_data[name]", plan.name.as_str()),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("stripe: {e}"))?
-            .json()
-            .await
-            .map_err(|e| format!("stripe: {e}"))?;
-        let price = price["id"].as_str().ok_or("stripe: no price id")?.to_string();
+        let price = match self.prices.get(&plan.id) {
+            Some(p) => p.clone(),
+            None => {
+                let (interval, count) = stripe_interval(plan);
+                let cents = plan.card_cents().to_string();
+                let price: Value = post("/v1/prices".into())
+                    .form(&[
+                        ("currency", "usd"),
+                        ("unit_amount", cents.as_str()),
+                        ("recurring[interval]", interval),
+                        ("recurring[interval_count]", count),
+                        ("product_data[name]", plan.name.as_str()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| format!("stripe: {e}"))?
+                    .json()
+                    .await
+                    .map_err(|e| format!("stripe: {e}"))?;
+                price["id"].as_str().ok_or("stripe: no price id")?.to_string()
+            }
+        };
         let plan_id = plan.id.to_string();
         let resp = post(format!("/v1/subscriptions/{subscription_id}"))
             .form(&[
@@ -272,10 +294,10 @@ pub(crate) mod tests {
     use serde_json::json;
 
     #[test]
-    fn card_recurrence_matches_monthly_and_annual_prices() {
+    fn card_recurrence_is_every_two_months_or_yearly() {
         let plans = crate::checkout::Plans::built_in();
-        assert_eq!(stripe_interval(plans.plan(1).unwrap()), ("month", "1"));
-        assert_eq!(stripe_interval(plans.plan(2).unwrap()), ("month", "1"));
+        assert_eq!(stripe_interval(plans.plan(1).unwrap()), ("month", "2"));
+        assert_eq!(stripe_interval(plans.plan(2).unwrap()), ("month", "2"));
         assert_eq!(stripe_interval(plans.plan(3).unwrap()), ("year", "1"));
     }
 

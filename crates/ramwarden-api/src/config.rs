@@ -79,6 +79,9 @@ pub struct CloudConfig {
 pub struct StripeKeys {
     pub secret_key: Secret,
     pub webhook_secret: Secret,
+    /// `STRIPE_PRICE_PLAN_<id>`: the operator's own Stripe price for a plan.
+    /// Unset, checkout builds the price from `card_cents`.
+    pub prices: std::collections::BTreeMap<u32, String>,
 }
 
 /// How email sign-in codes are sent.
@@ -224,7 +227,16 @@ impl Config {
                 if (k.starts_with("sk_live_") || k.starts_with("rk_live_")) && !live_ok {
                     return Err("STRIPE_SECRET_KEY is a live key; use a test key, or set RAMWARDEN_ALLOW_LIVE_PAYMENTS=1".into());
                 }
-                Some(StripeKeys { secret_key: Secret::new(k), webhook_secret: Secret::new(w) })
+                let mut prices = std::collections::BTreeMap::new();
+                for id in 1..=4u32 {
+                    if let Some(p) = var(&format!("STRIPE_PRICE_PLAN_{id}")) {
+                        if !p.starts_with("price_") {
+                            return Err(format!("STRIPE_PRICE_PLAN_{id} should be a Stripe price id (price_...)"));
+                        }
+                        prices.insert(id, p);
+                    }
+                }
+                Some(StripeKeys { secret_key: Secret::new(k), webhook_secret: Secret::new(w), prices })
             }
             _ => return Err("set both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, or neither".into()),
         };

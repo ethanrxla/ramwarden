@@ -87,15 +87,13 @@ confirmed by the user 2026-11-01):
 | Card | Plan | Tier id | Price | Trial | Wardens | Devices |
 | --- | --- | --- | --- | --- | --- | --- |
 | RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI, no warden pet | 1 |
-| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 3 |
-| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
+| RamWarden Plus | 1, 3 | `ram` | card $3.99 / 2 months, $19.99 / year; USDC $4 / 2 months, $20 / year | 14 days | `ram` | 3 |
+| RamWarden Pro | 2, 4 | `pro` | card $4.99 / 2 months, $23.99 / year; USDC $5 / 2 months, $24 / year | none | `ram`, `threat` | 5 |
 
-Plans 1 and 2 now bill monthly (`interval: "month"`, 30-day crypto periods;
-Stripe calendar-month recurrence), per owner clarification 2026-11-02.
-Existing `2mo` records retain their legacy meaning and must not be silently
-converted. A deployed checkout contract must be configured and verified against
-these new plan definitions before payments are enabled. Device limits remain
-Lite 1, Plus 3, Pro 5.
+Plans 1 and 2 bill every 2 months (`interval: "2mo"`, 60-day periods on
+Base; a 2-month recurrence by card), plans 3 and 4 yearly (user decision,
+2026-11-14). The testnet contract was set to match with `setPlan`. Records
+that say `month` keep their meaning. Device limits are Lite 1, Plus 3, Pro 5. Card prices differ: see **Card** below.
 
 **The warden pet** comes with a paid plan. `pet` in the account says whether
 to show it; on a device, the daemon's `GET /wardens` has `pet`, true while
@@ -219,8 +217,14 @@ reads `TrialStarted`, `Charged` and `Cancelled`
 `RAMWARDEN_BASE_CONFIRMATIONS` blocks behind the head and copies the
 contract's own dates onto the account.
 
-**Card.** Stripe Checkout in subscription mode, prices inline from
-`plans.json`, `trial_period_days=14` unless the trial was used, and
+**Card.** Stripe Checkout in subscription mode. Card prices are $3.99 and
+$4.99 every 2 months, $19.99 and $23.99 a year (`card_cents` in
+`plans.json`, served as `card_usd`); USDC on Base keeps the whole-dollar
+`usd` prices and the deployed contract is left as it is (user decision,
+2026-11-14). With `STRIPE_PRICE_PLAN_<id>` set, checkout and upgrades use
+that Stripe price as is, including its recurrence; otherwise the price is
+built inline from `card_cents`, every 2 months or yearly. Then
+`trial_period_days=14` unless the trial was used, and `trial_period_days=14` unless the trial was used, and
 `metadata: {account_id, plan, payment_id}`. `customer.subscription.*`
 webhooks set tier, interval and cancellation; `paid_until` moves only for a
 `trialing` or `active` subscription.
@@ -267,6 +271,7 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
 | `RAMWARDEN_BASE_RPC_URL` | unset: always `approve`, and nothing is recorded |
 | `RAMWARDEN_BASE_CONFIRMATIONS` / `_FROM_BLOCK` | `5` / 2000 blocks back from the head |
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | unset: card checkout off. Both or neither; `sk_test_` unless live payments are allowed |
+| `STRIPE_PRICE_PLAN_1` … `STRIPE_PRICE_PLAN_4` | unset: the card price is built from `card_cents`. Each is a `price_...` id for that plan |
 | `RESEND_API_KEY` + `RAMWARDEN_MAIL_FROM` | unset: email sign-in off |
 | `RAMWARDEN_DEV_MAIL_LOG` | `1` writes sign-in codes to the log instead of mailing them. Development only |
 | `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |

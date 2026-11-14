@@ -46,7 +46,13 @@ pub struct PlanDef {
     /// `ram` or `pro`.
     pub tier: String,
     pub name: String,
+    /// The USDC price on Base, whole dollars.
     pub usd: u64,
+    /// The card price in cents, when it differs from `usd`: Stripe sells
+    /// $3.99 / $4.99 / $19.99 / $23.99 while USDC stays whole (user
+    /// decision, 2026-11-14).
+    #[serde(default)]
+    pub card_cents: Option<u64>,
     /// `month` or `year`.
     pub interval: String,
     pub days: u64,
@@ -63,12 +69,21 @@ impl PlanDef {
     }
 
     pub fn interval(&self) -> Interval {
-        if self.interval == "year" { Interval::Year } else { Interval::Month }
+        match self.interval.as_str() {
+            "year" => Interval::Year,
+            "2mo" => Interval::TwoMonths,
+            _ => Interval::Month,
+        }
     }
 
     /// Whether this account gets the trial on this plan.
     pub fn trial_for(&self, trial_used: bool) -> bool {
         self.trial && !trial_used
+    }
+
+    /// The card price in cents.
+    pub fn card_cents(&self) -> u64 {
+        self.card_cents.unwrap_or(self.usd * 100)
     }
 
     /// What the wallet is asked to approve: one year of this plan.
@@ -95,7 +110,7 @@ impl Plans {
     pub fn from_json(text: &str) -> Result<Self, String> {
         let p: Plans = serde_json::from_str(text).map_err(|e| format!("plans.json: {e}"))?;
         for plan in &p.plans {
-            if !matches!(plan.tier.as_str(), "ram" | "pro") || !matches!(plan.interval.as_str(), "month" | "year") {
+            if !matches!(plan.tier.as_str(), "ram" | "pro") || !matches!(plan.interval.as_str(), "2mo" | "month" | "year") {
                 return Err(format!("plan {} has an unknown tier or interval", plan.id));
             }
             for w in &plan.wardens {
@@ -125,7 +140,7 @@ impl Plans {
             .plans
             .iter()
             .map(|p| {
-                json!({"id": p.id, "tier": p.tier, "name": p.name, "usd": p.usd, "interval": p.interval,
+                json!({"id": p.id, "tier": p.tier, "name": p.name, "usd": p.usd, "card_usd": p.card_cents() as f64 / 100.0, "interval": p.interval,
                        "days": p.days, "trial_days": if p.trial { 14 } else { 0 }, "approval_usd": p.approval_usd(), "wardens": self.slugs(p)})
             })
             .collect();
@@ -504,7 +519,7 @@ pub(crate) mod tests {
     fn the_built_in_plans_are_the_approved_ones() {
         let p = Plans::built_in();
         let pro = p.plan(2).unwrap();
-        assert_eq!((pro.tier(), pro.interval(), pro.usd, pro.approval_usd()), (Tier::Pro, Interval::Month, 5, 60));
+        assert_eq!((pro.tier(), pro.interval(), pro.usd, pro.approval_usd()), (Tier::Pro, Interval::TwoMonths, 5, 30));
         assert_eq!(p.slugs(pro), vec!["ram", "threat"]);
         assert_eq!(p.plan(3).unwrap().approval_usd(), 20, "annual approves one year, once");
         assert!(p.plan(1).unwrap().trial_for(false) && !p.plan(1).unwrap().trial_for(true));
@@ -531,7 +546,7 @@ pub(crate) mod tests {
         assert_eq!(txs.len(), 2);
         let approve = txs[0]["data"].as_str().unwrap();
         assert!(approve.starts_with("0x095ea7b3"));
-        assert!(approve.ends_with(&format!("{:064x}", 48_000_000)), "12 x $4, one year, never unlimited");
+        assert!(approve.ends_with(&format!("{:064x}", 24_000_000)), "6 x $4, one year, never unlimited");
         assert_eq!(txs[0]["to"], base().usdc_hex());
 
         let start = txs[1]["data"].as_str().unwrap();

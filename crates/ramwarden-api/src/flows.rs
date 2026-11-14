@@ -72,7 +72,11 @@ fn app_with_threat(o:Opts,threat:crate::threat::ThreatDesk)->App {
         site: Site { domain: "ramwarden.app".into(), origin: ORIGIN.into() },
         billing: Billing {
             base: Some(Arc::new(BaseChain::new(base()))),
-            stripe: o.stripe.map(|url| Stripe::with_base(Secret::new("sk_test_123"), Secret::new(WHSEC), &url)),
+            // Plan 1 has an operator price (`STRIPE_PRICE_PLAN_1`); the others are
+            // built from `card_cents`.
+            stripe: o.stripe.map(|url| {
+                Stripe::with_base(Secret::new("sk_test_123"), Secret::new(WHSEC), &url).with_prices([(1, "price_plus_test".to_string())].into())
+            }),
         },
         signer: Some(EntitlementSigner::from_base64(SEED).unwrap()),
         mailer: Some(mailer.clone()),
@@ -399,7 +403,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
 
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 1, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(48)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(true), Some(24)));
     assert_eq!(co["transactions"].as_array().unwrap().len(), 2, "approve one year, then startTrial");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
@@ -413,7 +417,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
     let (_, p) = a.call("GET", &format!("/v1/checkout/payments/{pid}"), Auth::Cookie(&cookie), None).await;
     assert_eq!((p["status"].as_str(), p["account_status"].as_str()), (Some("confirmed"), Some("trial")));
     let (_, acct) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
-    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("month"), Some("trial")));
+    assert_eq!((acct["tier"].as_str(), acct["interval"].as_str(), acct["status"].as_str()), (Some("ram"), Some("2mo"), Some("trial")));
     assert_eq!(acct["trial_ends_at"], iso8601(trial_end));
     assert_eq!(acct["billing"]["method"], "base");
     assert_eq!(acct["trial_available"], false);
@@ -451,7 +455,7 @@ async fn pro_on_base_is_charged_at_once_and_keeps_the_trial_unused() {
     let (device_token, cookie, account_id) = a.sign_in_device(&w).await;
     let (s, co) = a.call("POST", "/v1/checkout/base", Auth::Cookie(&cookie), Some(json!({"plan": 2, "payer": w.address()}))).await;
     assert_eq!(s, StatusCode::OK, "{co}");
-    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(60)));
+    assert_eq!((co["trial"].as_bool(), co["approval_usd"].as_u64()), (Some(false), Some(30)));
     let mut r = [0u8; 32];
     r.copy_from_slice(&hex::decode(co["payment_id"].as_str().unwrap()).unwrap());
 
@@ -562,6 +566,28 @@ async fn fake_stripe() -> (String, Seen, PaymentStoreProbe) {
 }
 
 #[tokio::test]
+async fn card_checkout_uses_the_operators_stripe_price_when_set() {
+    let (url, seen, probe) = fake_stripe().await;
+    let a = app_with(Opts { downloads: None, stripe: Some(url) });
+    *probe.lock().unwrap() = Some(a.store.clone());
+    let (_, _) = a.call("POST", "/v1/auth/email/start", Auth::None, Some(json!({"email": "price@example.com"}))).await;
+    let code = a.mailer.last_code("price@example.com").unwrap();
+    let (_, _, h) = a.raw("POST", "/v1/auth/email/verify", Auth::None, ORIGIN, Some(json!({"email": "price@example.com", "code": code}))).await;
+    let cookie = session_from(&h).unwrap();
+
+    // Card prices end in .99; USDC stays whole (user decision, 2026-11-14).
+    let (_, cfg) = a.call("GET", "/v1/checkout/config", Auth::None, None).await;
+    let prices: Vec<(u64, f64)> = cfg["plans"].as_array().unwrap().iter().map(|p| (p["usd"].as_u64().unwrap(), p["card_usd"].as_f64().unwrap())).collect();
+    assert_eq!(prices, vec![(4, 3.99), (5, 4.99), (20, 19.99), (24, 23.99)]);
+
+    let (s, co) = a.call("POST", "/v1/checkout/stripe", Auth::Cookie(&cookie), Some(json!({"plan": 1}))).await;
+    assert_eq!(s, StatusCode::OK, "{co}");
+    let form = seen.lock().unwrap()[0].1.clone();
+    assert!(form.contains("line_items%5B0%5D%5Bprice%5D=price_plus_test"), "{form}");
+    assert!(!form.contains("price_data"), "a configured price is used as is: {form}");
+}
+
+#[tokio::test]
 async fn a_card_trial_starts_from_a_signed_webhook() {
     let (url, seen, probe) = fake_stripe().await;
     let a = app_with(Opts { downloads: None, stripe: Some(url) });
@@ -581,7 +607,7 @@ async fn a_card_trial_starts_from_a_signed_webhook() {
     assert_eq!(co["url"], "https://checkout.stripe.com/c/pay/cs_test_1");
     let pid = co["payment_id"].as_str().unwrap().to_string();
     let form = seen.lock().unwrap()[0].1.clone();
-    for part in ["mode=subscription", "unit_amount%5D=2000", "interval%5D=year", "interval_count%5D=1", "trial_period_days%5D=14", "customer_email=card%40example.com"] {
+    for part in ["mode=subscription", "unit_amount%5D=1999", "interval%5D=year", "interval_count%5D=1", "trial_period_days%5D=14", "customer_email=card%40example.com"] {
         assert!(form.contains(part), "{part} in {form}");
     }
     assert!(form.contains(&format!("payment_id%5D={pid}")));

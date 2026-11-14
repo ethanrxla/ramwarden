@@ -88,7 +88,7 @@ async fn run() -> Result<(), String> {
                     tracing::warn!("RAMWARDEN_BASE_RPC_URL not set: subscriptions on Base will not be recorded");
                 }
             }
-            let stripe = cc.stripe.as_ref().map(|k| Stripe::new(k.secret_key.clone(), k.webhook_secret.clone()));
+            let stripe = cc.stripe.as_ref().map(|k| Stripe::new(k.secret_key.clone(), k.webhook_secret.clone()).with_prices(k.prices.clone()));
             match &stripe {
                 Some(s) => tracing::info!("card checkout on ({} mode)", if s.test_mode() { "test" } else { "live" }),
                 None => tracing::info!("card checkout off (STRIPE_SECRET_KEY not set)"),

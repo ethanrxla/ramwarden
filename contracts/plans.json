@@ -1,5 +1,5 @@
 {
-  "_comment": "Monthly and annual subscriptions. Plus has a 14-day trial; Pro is paid from day one. Monthly pricing updated by owner 2026-11-02. Existing sixty-day subscriptions must retain their original terms.",
+  "_comment": "Plans 1 and 2 bill every 2 months (60 days), plans 3 and 4 yearly (user decision 2026-11-14; the testnet contract was set to match). Plus has a 14-day trial; Pro is paid from day one. usd is the USDC price on Base; card_cents is the card (Stripe) price.",
   "wardens": {
     "0": {
       "slug": "ram",
@@ -14,27 +14,29 @@
     {
       "id": 1,
       "tier": "ram",
-      "name": "RamWarden Plus, monthly",
+      "name": "RamWarden Plus, every 2 months",
       "usd": 4,
-      "interval": "month",
-      "days": 30,
+      "interval": "2mo",
+      "days": 60,
       "trial": true,
       "wardens": [
         0
-      ]
+      ],
+      "card_cents": 399
     },
     {
       "id": 2,
       "tier": "pro",
-      "name": "RamWarden Pro, monthly",
+      "name": "RamWarden Pro, every 2 months",
       "usd": 5,
-      "interval": "month",
-      "days": 30,
+      "interval": "2mo",
+      "days": 60,
       "trial": false,
       "wardens": [
         0,
         1
-      ]
+      ],
+      "card_cents": 499
     },
     {
       "id": 3,
@@ -46,7 +48,8 @@
       "trial": true,
       "wardens": [
         0
-      ]
+      ],
+      "card_cents": 1999
     },
     {
       "id": 4,
@@ -59,7 +62,8 @@
       "wardens": [
         0,
         1
-      ]
+      ],
+      "card_cents": 2399
     }
   ]
 }

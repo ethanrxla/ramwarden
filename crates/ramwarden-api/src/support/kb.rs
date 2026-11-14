@@ -84,18 +84,19 @@ pub const TOPICS: &[Topic] = &[
         meaning: "comparing the plans or tiers (Lite, Plus, Pro), or which one to choose",
         keywords: &["plan", "plans", "tier", "tiers", "which one", "difference", "compare", "plus", "pro", "lite", "upgrade"],
         answer: "There are three plans. RamWarden Lite is free: our enhanced memory algorithm with no AI, on 1 computer. \
-                 RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $4 per month or $20 a year, with a 14-day free trial. \
-                 RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $5 per month or $24 a year. \
+                 RamWarden Plus adds the AI warden pet that helps choose idle apps and tabs, on 3 computers, for $3.99 every 2 months or $19.99 a year, with a 14-day free trial. \
+                 RamWarden Pro adds ThreatWarden, the security companion, on 5 computers, for $4.99 every 2 months or $23.99 a year. \
                  If you mostly want memory back, start with the Plus trial. If you also want security, Pro.",
         next: &["trial", "lite", "threatwarden"],
         ticket: false,
     },
     Topic {
         id: "pricing",
-        meaning: "how much it costs, prices, billing period, monthly or yearly",
+        meaning: "how much it costs, prices, billing period, every 2 months or yearly",
         keywords: &["price", "prices", "cost", "costs", "how much", "$", "dollar", "cheap", "expensive", "per month", "monthly", "yearly", "annual", "billing"],
-        answer: "Lite is free. Plus is $4 per month or $20 a year. Pro is $5 per month or $24 a year. \
-                 You're charged monthly or once a year, whichever you pick, until you cancel. Annual billing saves about 58% for Plus and 60% for Pro compared with monthly billing.",
+        answer: "Lite is free. Plus is $3.99 every 2 months or $19.99 a year. Pro is $4.99 every 2 months or $23.99 a year. \
+                 Paying in USDC from a wallet, Plus is $4 every 2 months or $20 a year, and Pro is $5 every 2 months or $24 a year. \
+                 You're charged every 2 months or once a year, whichever you pick, until you cancel. Annual billing saves about 16% for Plus and 20% for Pro.",
         next: &["trial", "payment", "cancel"],
         ticket: false,
     },
@@ -103,7 +104,7 @@ pub const TOPICS: &[Topic] = &[
         id: "trial",
         meaning: "the free trial: how long, which plan has it, what happens when it ends",
         keywords: &["trial", "free trial", "try", "try it", "14 day", "14-day", "trial end", "after the trial"],
-        answer: "Plus is free for your first 14 days. After that, your selected card or supported wallet payment is charged $4 per month or $20 per year, depending on the plan you choose, until you cancel. Cancel before the trial ends and you pay nothing. There's one trial per account and per computer. Pro is $5 per month or $24 per year and is paid from day one.",
+        answer: "Plus is free for your first 14 days. After that, your selected card or supported wallet payment is charged $3.99 every 2 months or $19.99 a year by card ($4 or $20 in USDC), depending on the plan you choose, until you cancel. Cancel before the trial ends and you pay nothing. There's one trial per account and per computer. Pro is $4.99 every 2 months or $23.99 a year by card ($5 or $24 in USDC) and is paid from day one.",
         next: &["cancel", "payment", "plans"],
         ticket: false,
     },
@@ -295,13 +296,14 @@ mod tests {
     #[test]
     fn prices_and_limits_match_the_plans_sold() {
         let plans = crate::checkout::Plans::built_in();
-        let usd = |tier: &str, interval: &str| {
-            plans.plans.iter().find(|p| p.tier == tier && p.interval == interval).map(|p| p.usd).unwrap()
-        };
+        let plan = |tier: &str, interval: &str| plans.plans.iter().find(|p| p.tier == tier && p.interval == interval).unwrap();
+        let card = |tier: &str, interval: &str| format!("{:.2}", plan(tier, interval).card_cents() as f64 / 100.0);
         let pricing = topic("pricing").unwrap().answer;
         for (tier, name) in [("ram", "Plus"), ("pro", "Pro")] {
-            let two = format!("{name} is ${} per month or ${} a year", usd(tier, "month"), usd(tier, "year"));
+            let two = format!("{name} is ${} every 2 months or ${} a year", card(tier, "2mo"), card(tier, "year"));
             assert!(pricing.contains(&two), "pricing answer is stale: wanted `{two}`");
+            let usdc = format!("{name} is ${} every 2 months or ${} a year", plan(tier, "2mo").usd, plan(tier, "year").usd);
+            assert!(pricing.contains(&usdc), "USDC prices are stale: wanted `{usdc}`");
         }
         let devices = topic("devices").unwrap().answer;
         let want = format!(
