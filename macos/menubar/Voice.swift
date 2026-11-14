@@ -51,6 +51,7 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
         await MainActor.run {
+            muted = obj["muted"] as? Bool ?? false
             guard Date() >= answerVisibleUntil else { return }
             let next = WardenBubble(obj["bubble"])
             let changed = next != bubble || (obj["pet"] as? Bool ?? true) != pet
@@ -95,16 +96,17 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
     }
 
     func mute(_ hours: Double?) {
+        CompanionAudio.setMuted(true,warden:"ram",hours:hours)
         CompanionSpeech.shared.stop("ram")
         Task {
             var body: [String: Any] = ["muted": true]
             if let h = hours { body["hours"] = h }
-            _ = await post("warden/mute", body)
+            if let response = await post("warden/mute", body), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }
             await poll()
         }
     }
 
-    func unmute() { Task { _ = await post("warden/mute", ["muted": false]); await poll() } }
+    func unmute() { CompanionAudio.setMuted(false,warden:"ram"); Task { if let response = await post("warden/mute", ["muted": false]), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }; await poll() } }
 }
 
 struct BubbleView: View {
@@ -152,13 +154,13 @@ struct CompanionMuteMenu: View {
     @State private var quiet=false
     var body:some View {
         Menu {
-            Button("Unmute companion"){set(false,nil)}
+            if quiet { Button("Unmute companion"){set(false,nil)} }
             ForEach(wardenMuteChoices.indices,id:\.self){i in
                 Button(wardenMuteChoices[i].0){set(true,wardenMuteChoices[i].1)}
             }
         } label:{Image(systemName:quiet ? "speaker.slash" : "speaker.wave.2").font(.system(size:11))}
         .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Mute or unmute companion")
-        .onAppear{Task{if warden == "ram" {await voice.poll()};quiet=CompanionAudio.isMuted(warden) || (warden == "ram" && voice.muted)}}
+        .task { while !Task.isCancelled { if warden == "ram" { await voice.poll() }; quiet=CompanionAudio.isMuted(warden) || (warden == "ram" && voice.muted); try? await Task.sleep(nanoseconds:1_000_000_000) } }
     }
     private func set(_ muted:Bool,_ hours:Double?){
         CompanionAudio.setMuted(muted,warden:warden,hours:hours)

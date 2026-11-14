@@ -309,7 +309,7 @@ impl Desktop {
 pub struct Tabs {
     /// Minutes between sweeps. 0 turns the sweep off.
     pub sweep_minutes: f64,
-    /// `off`, `dry-run` (log what would close) or `live`.
+    /// `off`, `review` (require approval), `dry-run` (log what would close) or `live`.
     pub close: String,
     /// A tab must have been idle at least this long to be closed.
     pub close_after_hours: f64,

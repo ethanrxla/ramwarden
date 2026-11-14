@@ -33,7 +33,10 @@ param(
   # Resolved below: Windows PowerShell 5.1 leaves $PSScriptRoot empty while
   # parameter defaults are evaluated.
   [string]$Source = '',
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [switch]$StopOnly,
+  [switch]$UnregisterOnly,
+  [switch]$NoTrayStart
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -64,6 +67,14 @@ function Remove-RamWarden {
   }
 }
 
+if ($StopOnly) {
+  foreach ($task in @($TaskName,$TrayTask)) { if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue } }
+  Get-Process ramwarden-daemon,ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  if (Get-Service RamWarden -ErrorAction SilentlyContinue) { Stop-Service RamWarden -ErrorAction Stop; (Get-Service RamWarden).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30)) }
+  return
+}
+if ($UnregisterOnly) { Remove-RamWarden; return }
+
 if ($Uninstall) {
   Remove-RamWarden
   if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
@@ -82,9 +93,12 @@ foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-deb
 
 Remove-RamWarden
 New-Item -ItemType Directory -Force $Dest | Out-Null
-Get-ChildItem $Source -Filter 'ramwarden-*.exe' | Copy-Item -Destination $Dest -Force
-Copy-Item (Join-Path $Source 'ramwarden.exe') (Join-Path $Dest 'ramwarden.exe') -Force
-Copy-Item (Join-Path $Source 'ramwarden.exe') (Join-Path $Dest 'ramwarden-doctor.exe') -Force
+if (-not [string]::Equals($Source.TrimEnd('\'), $Dest.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+  foreach ($name in @('ramwarden-daemon.exe','ramwarden-service.exe','ramwarden-debloat.exe','ramwarden.exe','ramwarden-tray.exe','ramwarden-usage-sync.exe','ramwarden-launcher.exe')) {
+    if (Test-Path (Join-Path $Source $name)) { Copy-Item (Join-Path $Source $name) (Join-Path $Dest $name) -Force }
+  }
+}
+Copy-Item (Join-Path $Dest 'ramwarden.exe') (Join-Path $Dest 'ramwarden-doctor.exe') -Force
 
 # The daemon starts through a launcher that puts the CUDA runtime on PATH: a
 # daemon built with `--features cuda` imports cublas and curand at load time,
@@ -127,7 +141,7 @@ $tray = Join-Path $Dest 'ramwarden-tray.exe'
 if (Test-Path $tray) {
   $a = New-ScheduledTaskAction -Execute $tray -Argument '--hidden'
   Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Settings $settings -Principal $task | Out-Null
-  Start-ScheduledTask -TaskName $TrayTask
+  if (-not $NoTrayStart) { Start-ScheduledTask -TaskName $TrayTask }
 
   # Start menu entry. Launching the app while the tray runs opens the window.
   $shell = New-Object -ComObject WScript.Shell
@@ -137,6 +151,7 @@ if (Test-Path $tray) {
     Copy-Item $BrandIcon (Join-Path $Dest 'ramwarden.ico') -Force
     $lnk.IconLocation = (Join-Path $Dest 'ramwarden.ico')
   }
+  if (Test-Path (Join-Path $Dest 'ramwarden.ico')) { $lnk.IconLocation = (Join-Path $Dest 'ramwarden.ico') }
   $lnk.TargetPath = $tray
   $lnk.WorkingDirectory = $Dest
   $lnk.Description = 'RamWarden memory manager'

@@ -75,7 +75,8 @@ struct SetupView: View {
                     if !sharingStatus.isEmpty {Text(sharingStatus).font(.caption)}
                     Text("GitHub sign-in does not grant remote access. Tailscale remains optional and separately authorized.").font(.callout).foregroundStyle(.secondary)
                 case 3:
-                    Text("Everything needed for this Mac is bundled here. Install the daemon, menu bar companion, and browser extension without downloading another installer. Existing settings and account credentials stay in place.")
+                    Text("First drag RamWarden.app into Applications in the disk image window. Then install its bundled background components below. This installer stays separate from your everyday app.")
+                    Button("Show drag-to-Applications window") {NSWorkspace.shared.open(Bundle.main.bundleURL.deletingLastPathComponent())}
                     Button(installing ? "Installing…" : "Install on this Mac") { Task { await install() } }.disabled(installing)
                     Button(modules.busy ? "Installing required modules…" : "Install required security modules (Pro)"){Task{await modules.install()}}.disabled(modules.busy || !installationComplete)
                     Button("Check installed modules"){Task{await modules.check()}}
@@ -89,8 +90,9 @@ struct SetupView: View {
                     HStack { Button(checking ? "Checking…" : "Check this Mac") { Task { await check() } }.disabled(checking); Text(health).accessibilityLabel("Daemon status: \(health)") }
                     Text("Open the companion to verify its connection. In Customize your ram, choose its name, colors, eyes, and size when supported by your installed version.").foregroundStyle(.secondary)
                 default:
-                    Button("Create a ScholarCal A2A pairing invitation") {SetupEvents.record(.pairingOpened,step:step);if let url=URL(string:"https://scholarcal.com/settings?tab=agents"){NSWorkspace.shared.open(url)}}
-                    Text("ScholarCal provides a copyable, expiring pairing invitation after you sign in. Share that invitation, never an account API key. The local Warden A2A connector is not connected yet.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    AgentPairingView()
+                    Button("Connect ScholarCal (optional)") {SetupEvents.record(.pairingOpened,step:step);if let url=URL(string:"https://scholarcal.com/settings?tab=agents"){NSWorkspace.shared.open(url)}}
+                    Text("Connect your ScholarCal account if you want to use its calendar skill. This is separate from RamWarden agent pairing and does not grant remote control of your computer.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     Text("Give your own agent this request. It contains no keys, pass files, or personal install links. Your account’s remaining allowance is always checked by the server.")
                     Picker("Plan guidance", selection: $allowance) { Text("Lite · 1 PC").tag(1); Text("Plus · 3 PCs").tag(3); Text("Pro · 5 PCs").tag(5) }.pickerStyle(.segmented)
                     Text("Choosing a plan here only changes the request. It does not purchase or unlock anything.").font(.caption).foregroundStyle(.secondary)
@@ -168,6 +170,17 @@ struct SetupView: View {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let unified=Bundle.main.bundleIdentifier == "com.ramwarden.menubar"
         if unified && !(Bundle.main.bundlePath.hasPrefix("/Applications/") || Bundle.main.bundlePath.hasPrefix(home.appendingPathComponent("Applications").path+"/")) {installResult="Drag RamWarden into Applications first, then open it there to finish setup.";return}
+        let candidates=[URL(fileURLWithPath:"/Applications/RamWarden.app"),home.appendingPathComponent("Applications/RamWarden.app")]
+        let bundledExecutable=resources.appendingPathComponent("payload/RamWarden.app/Contents/MacOS/RamWarden")
+        let installedApp:URL?
+        if unified {installedApp=Bundle.main.bundleURL} else {
+            let expected=try? Data(contentsOf:bundledExecutable)
+            installedApp=candidates.first {candidate in
+                guard let expected=expected,let actual=try? Data(contentsOf:candidate.appendingPathComponent("Contents/MacOS/RamWarden")) else{return false}
+                return SHA256.hash(data:expected)==SHA256.hash(data:actual)
+            }
+        }
+        guard let installedApp=installedApp else {installResult="Drag this disk image’s RamWarden.app into Applications first. If asked, replace the older app, then click Install again.";return}
         for item in ["ramwarden-daemon", "ramwarden-usage-sync", "ramwarden-launcher", "config.toml", "extension"] {
             guard FileManager.default.fileExists(atPath: resources.appendingPathComponent("payload/" + item).path) else { installResult = "This disk image is incomplete; nothing was installed."; return }
         }
@@ -179,7 +192,7 @@ struct SetupView: View {
             defer {try? FileManager.default.removeItem(at:definitionsDirectory)}
             let definitions: [(String, [String])] = [
                 ("com.ramwarden.daemon", [home.appendingPathComponent(".local/bin/ramwarden-daemon").path]),
-                ("com.ramwarden.menubar", [unified ? Bundle.main.executablePath! : home.appendingPathComponent("Applications/RamWarden.app/Contents/MacOS/RamWarden").path]),
+                ("com.ramwarden.menubar", [installedApp.appendingPathComponent("Contents/MacOS/RamWarden").path]),
                 ("com.ramwarden.usage", [home.appendingPathComponent(".local/bin/ramwarden-usage-sync").path, "--watch"])
             ]
             for (label, args) in definitions {
@@ -196,7 +209,7 @@ struct SetupView: View {
             let script = resources.appendingPathComponent("install-payload.sh").path
             let result: String = await Task.detached {
                 do {
-                    let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = (unified ? [script,"--app",Bundle.main.bundlePath] : [script])+["--definitions",definitionsDirectory.path]
+                    let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = (unified ? [script,"--app",Bundle.main.bundlePath] : [script,"--installed-app",installedApp.path])+["--definitions",definitionsDirectory.path]
                     let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
                     try process.run()
                     let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()

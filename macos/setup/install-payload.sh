@@ -9,6 +9,11 @@ while [ "$#" -gt 0 ]; do
       INSTALLED_APP="${2:?app required}"
       case "$INSTALLED_APP" in /Applications/RamWarden.app|"$HOME/Applications/RamWarden.app") ;; *) echo 'Move RamWarden to Applications first.'; exit 2 ;; esac
       APP_MODE=1; shift 2 ;;
+    --installed-app)
+      INSTALLED_APP="${2:?app required}"
+      case "$INSTALLED_APP" in /Applications/RamWarden.app|"$HOME/Applications/RamWarden.app") ;; *) echo 'Move RamWarden to Applications first.'; exit 2 ;; esac
+      test -x "$INSTALLED_APP/Contents/MacOS/RamWarden"
+      APP_MODE=2; shift 2 ;;
     --test-root)
       BASE="${2:?temporary root required}"
       case "$BASE" in /tmp/*|/private/tmp/*|/var/folders/*) ;; *) echo 'Test root must be temporary.'; exit 2 ;; esac

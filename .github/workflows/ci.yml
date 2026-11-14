@@ -66,6 +66,9 @@ jobs:
       - name: Linux native GTK window
         if: runner.os == 'Linux' && steps.platform.outputs.supported == 'true'
         run: xvfb-run -a cargo test -p ramwarden-ui --features gui --lib -- --test-threads=1
+      - name: Windows offline installer compiler regression
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -File scripts/tests/windows-store-package.ps1
       - name: Windows sensor configuration regression
         if: runner.os == 'Windows'
         run: |
@@ -124,6 +127,9 @@ jobs:
         run: |
           node --test extension/tests/discard.cjs
           node extension/tests/live.cjs
+          bash scripts/build-ext.sh
+          python3 scripts/tests/store-package.py
+          node extension/tests/popup.cjs
 
   # The checkout contract in contracts/. Hardhat compiles with the solc-js build
   # pinned in contracts/package.json and runs the tests on its in-process chain.

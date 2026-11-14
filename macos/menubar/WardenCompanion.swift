@@ -75,8 +75,7 @@ final class GoatAlerts {
               let url=Bundle.main.url(forResource:critical ? "baa-critical" : "baa",withExtension:"wav") else{return}
         sound=NSSound(contentsOf:url,byReference:false);sound?.volume=0.55;sound?.play()
     }
-    func memory(percent:Double,visible:Bool) {
-        guard visible else {criticalSamples=0;return}
+    func memory(percent:Double) {
         if percent < 90 {criticalSamples=0;policy.clear("ram");return}
         criticalSamples += 1
         if criticalSamples == 10 {notify(warden:"ram",event:"critical-memory",critical:percent >= 95)}

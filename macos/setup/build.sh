@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 DEST="${RAMWARDEN_SETUP_DEST:-../../target/RamWarden Installer.app}"
 mkdir -p "$DEST/Contents/MacOS" "$DEST/Contents/Resources"
-swiftc -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" main.swift SetupView.swift SetupEvents.swift RequiredModules.swift -o "$DEST/Contents/MacOS/RamWardenSetup"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" main.swift SetupView.swift SetupEvents.swift RequiredModules.swift AgentPairing.swift -o "$DEST/Contents/MacOS/RamWardenSetup"
 cp ../../LICENSE "$DEST/Contents/Resources/LICENSE.txt"
 cp ../../assets/brand/RamWarden.icns "$DEST/Contents/Resources/"
 ditto ../../scripts/threatwarden-engines "$DEST/Contents/Resources/security-modules"

@@ -90,7 +90,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
             if let s = s { self.snap = s; self.failedRefreshes = 0 }
             else { self.failedRefreshes += 1 }
             if self.failedRefreshes >= 3 { self.snap = nil }
-            if let current=s {GoatAlerts.shared.memory(percent:current.percent,visible:self.companion.model.companionVisible)}
+            if let current=s {GoatAlerts.shared.memory(percent:current.percent)}
             self.updateTitle(); self.companion.model.connected = self.snap != nil
             self.refreshing = false
             Task { @MainActor in

@@ -42,6 +42,17 @@ final class ReviewProtocol: URLProtocol {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         URLProtocol.registerClass(ReviewProtocol.self)
+        let voice = VoiceModel()
+        voice.bubble = WardenBubble(["id":"mute-check","text":"A question","choices":[["id":"keep","label":"Keep"]]])
+        ReviewProtocol.response = "{\"reply\":\"Kept\"}"
+        voice.answer("keep")
+        for _ in 0..<100 where voice.busy { try await Task.sleep(nanoseconds:10_000_000) }
+        ReviewProtocol.response = "{\"muted\":true,\"pet\":true}"
+        await voice.poll()
+        precondition(voice.muted, "Mute status must refresh while an answer remains visible")
+        ReviewProtocol.response = "{\"muted\":false,\"pet\":true}"
+        await voice.poll()
+        precondition(!voice.muted, "Unmute must refresh during the answer hold")
         let model = CompanionModel(persistMemory:false)
         model.companionVisible = true
         let tabs = [

@@ -143,8 +143,30 @@ function _idleMinutes(tab) {
 // ── Tab activity tracking ─────────────────────────────────────────────────────
 
 let tabActivity = {};
+const selectedByWindow = new Map();
+let lastActivitySample=Date.now();
+function accountForActivityGap(now) {
+  const gap=now-lastActivitySample;
+  // A missing heartbeat is unknown time (sleep, browser/worker suspension).
+  // Do not convert that gap into abandonment evidence.
+  if (gap>60000) for (const row of Object.values(tabActivity)) {
+    if (Number.isFinite(row.lastActiveMs)) row.lastActiveMs=Math.min(now,row.lastActiveMs+gap);
+  }
+  lastActivitySample=now;
+}
+function mergeActivity(stored) {
+  for (const [id, row] of Object.entries(stored || {})) {
+    const live=tabActivity[id];
+    if (!live || (row.lastActiveMs || 0) > (live.lastActiveMs || 0)) tabActivity[id]=row;
+  }
+}
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
+
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  // Reading counts until the user leaves, not merely when they first selected it.
+  const previous=selectedByWindow.get(windowId);
+  if (previous && tabActivity[previous]) tabActivity[previous].lastActiveMs=Date.now();
+  selectedByWindow.set(windowId,tabId);
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
     _leaveIdleGroup(tab);
@@ -186,8 +208,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   const url = tabActivity[tabId]?.url;
   if (url && !safetyClosing.has(tabId)) {
-    delete safety.pages[url]; delete safety.closed[url]; delete safety.sites[siteOf(url)];
-    postFeedback(url, "manual_close");
+    delete safety.closed[url];
+    postFeedback(url, "browser_removed");
   }
   safetyClosing.delete(tabId); delete safety.work[tabId]; persistSafety();
   delete tabActivity[tabId];
@@ -195,11 +217,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 function persistActivity() {
-  chrome.storage.local.set({ tabActivity });
+  chrome.storage.local.set({ tabActivity, lastActivitySample });
 }
 
-chrome.storage.local.get("tabActivity", (r) => {
-  if (r.tabActivity) tabActivity = r.tabActivity;
+chrome.storage.local.get(["tabActivity","lastActivitySample"], (r) => {
+  mergeActivity(r.tabActivity);
+  if (Number.isFinite(r.lastActivitySample) && r.lastActivitySample>0) lastActivitySample=Math.min(lastActivitySample,r.lastActivitySample);
 });
 
 // Seed on load using real lastAccessed timestamps from the browser.
@@ -258,13 +281,17 @@ async function buildTabReport(activity) {
       if (pruned) {
         console.log(`[RamWarden] pruned ${pruned} stale tab entr${pruned === 1 ? "y" : "ies"}`);
         chrome.storage.local.set({ tabActivity: activity });
-        tabActivity = activity;
+        for (const id of Object.keys(tabActivity)) if (!liveIds.has(Number(id))) delete tabActivity[id];
       }
 
+      mergeActivity(activity);
+      accountForActivityGap(now);
       const report = [];
       for (const tab of liveTabs) {
-        const known = activity[tab.id];
+        const known = tabActivity[tab.id];
+        if (tab.active) selectedByWindow.set(tab.windowId,tab.id);
         const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
+        tabActivity[tab.id]={...known,url:tab.url || "",title:tab.title || "",lastActiveMs};
         observeReopen(tab);
         const page = safety.pages[tab.url] || {}, site = safety.sites[siteOf(tab.url)] || {};
         const feedback = {until: Math.max(page.until || 0, site.until || 0), negative: Math.max(page.negative || 0, site.negative || 0)};
@@ -292,6 +319,7 @@ async function buildTabReport(activity) {
           negativeFeedback: feedback.negative || 0,
         });
       }
+      persistActivity();
       _unloaded = report.filter(t => t.discarded).length;
       _tidyIdleGroups(liveTabs);
       _badge(_connected);
@@ -350,6 +378,7 @@ function _confirmClosed(ids) {
 // stored state. The user's own groups and pinned tabs are never touched.
 const IDLE_PREFIX = "Idle";
 const NO_GROUP = -1;
+const wardenDiscarded = new Set();
 
 function _idleTitle(n) { return `${IDLE_PREFIX} · ${n}`; }
 
@@ -368,7 +397,7 @@ async function _tidyIdleGroups(liveTabs) {
   for (const [windowId, tabs] of byWindow) {
     const group = await _idleGroupIn(windowId);
     const gid = group?.id ?? NO_GROUP;
-    const loose = tabs.filter(t => t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
+    const loose = tabs.filter(t => wardenDiscarded.has(t.id) && t.discarded && !t.pinned && !t.active && t.groupId === NO_GROUP);
     const members = tabs.filter(t => gid !== NO_GROUP && t.groupId === gid).length;
     // One tab is not worth a group of its own.
     if (!loose.length || (gid === NO_GROUP && loose.length < 2)) {
@@ -379,7 +408,7 @@ async function _tidyIdleGroups(liveTabs) {
     const opts = gid === NO_GROUP ? { tabIds: ids, createProperties: { windowId } } : { tabIds: ids, groupId: gid };
     const newId = await new Promise(r => chrome.tabs.group(opts, id => r(chrome.runtime.lastError ? NO_GROUP : id)));
     if (newId === NO_GROUP) continue;
-    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: true });
+    chrome.tabGroups.update(newId, { title: _idleTitle(members + ids.length), color: "grey", collapsed: group ? group.collapsed : false });
   }
 }
 
@@ -560,7 +589,7 @@ async function discardTabs(command) {
         resolve(!chrome.runtime.lastError && observed?.url === target.url && observed?.discarded === true);
       });
     }));
-    if (ok) confirmed.push(tab.id);
+    if (ok) { confirmed.push(tab.id); wardenDiscarded.add(tab.id); }
   }
   if (!IS_FIREFOX) {
     _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed});
@@ -627,12 +656,13 @@ async function closeSafe(command) {
     if (Date.now()>=command.expiresAt || !Number.isFinite(command.expiresAt)) break;
     const tab=await new Promise(r=>chrome.tabs.get(target.id,t=>r(chrome.runtime.lastError?null:t)));
     const disposable=isDisposableBrowserPage(tab?.url);
-    if (!tab || tab.url!==target.url || isWorkPage(tab.url)
-      || (!disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
+    const approved=command.approved===true;
+    if (!tab || tab.url!==target.url || (!approved && isWorkPage(tab.url))
+      || (!approved && !disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
       || tab.status!=="complete" || tab.autoDiscardable===false
-      || safety.work[tab.id]?.dirty || (safety.pages[tab.url]?.until||0)>Date.now()
-      || _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440)) continue;
+      || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
+      || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))) continue;
     safetyClosing.add(tab.id);
     const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
     if (ok) {

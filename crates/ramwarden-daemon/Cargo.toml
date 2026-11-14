@@ -20,6 +20,7 @@ cap-fs-ext = "4.0.3"
 same-file = "1"
 reqwest = { workspace = true }
 ramwarden-platform = { path = "../ramwarden-platform" }
+ramwarden-agent-network = { path = "../ramwarden-agent-network" }
 ramwarden-core   = { path = "../ramwarden-core" }
 ramwarden-ai     = { path = "../ramwarden-ai" }
 ramwarden-ml     = { path = "../ramwarden-ml" }
