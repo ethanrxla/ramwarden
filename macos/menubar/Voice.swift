@@ -17,6 +17,8 @@ struct WardenBubble: Equatable {
     let choices: [WardenChoice]
     let url: String?
     let source:URL?
+    /// Placeholder for the always-visible answer box (the focus question).
+    let input: String?
     var isQuestion: Bool { !choices.isEmpty }
 
     init?(_ obj: Any?) {
@@ -29,6 +31,7 @@ struct WardenBubble: Equatable {
             return WardenChoice(id: id, label: label)
         }
         source=(b["source_url"] as? String).flatMap(URL.init(string:))
+        input = b["input"] as? String
         url = (b["tab"] as? [String: Any])?["url"] as? String
     }
 }
