@@ -26,6 +26,7 @@ struct CompanionWindow {
     workspace: super::workspace_ui::WorkspaceUi,
     audio_result: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     audio_status: Option<String>,
+    view: super::UiState,
 }
 impl eframe::App for CompanionWindow {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
@@ -136,7 +137,7 @@ impl eframe::App for CompanionWindow {
                         if self.surface == Surface::Thought {
                             if let Some(snap) = &snap {
                                 if bubble.is_some() {
-                                    if let Some(command) = super::views::bubble(ui, snap)
+                                    if let Some(command) = super::views::bubble(ui, snap, &mut self.view)
                                         && let Some(poller) = &self.poller
                                     {
                                         poller.send(command);
@@ -285,6 +286,7 @@ pub fn run(client: Client, pane: Pane) -> Result<(), String> {
                 workspace: super::workspace_ui::WorkspaceUi::default(),
                 audio_result: None,
                 audio_status: None,
+                view: super::UiState::default(),
             }))
         }),
     )
