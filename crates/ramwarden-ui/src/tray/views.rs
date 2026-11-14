@@ -16,6 +16,12 @@ pub struct UiState {
     pub confirm: Option<(Command, String)>,
     /// Profiles whose optional tweaks are included in "Apply".
     pub with_optional: HashSet<String>,
+    /// What is being typed to the warden.
+    pub say: String,
+    /// Why the last message was not sent.
+    pub say_error: Option<String>,
+    /// The focus checklist as the user is ticking it.
+    pub checklist: Option<crate::voice::FocusProposal>,
 }
 
 fn colour(hex: &str) -> Color32 {
@@ -36,53 +42,165 @@ fn waiting(ui: &mut egui::Ui, snap: &Snapshot) {
 
 // ── The warden's speech bubble ──────────────────────────────────────────────
 
-/// The bubble across the top of the window. Returns the user's answer.
-pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
+/// The bubble across the top of the window, laid out like the Mac's: the
+/// line, its buttons, the warden's answer to what you typed, and a text box
+/// that is always there. Enter sends. Returns what the user asked for.
+pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<Command> {
     let speech = snap.speech.as_ref()?;
     if !speech.pet {
         return None; // pets come with Plus and Pro
     }
+    // Keep the checklist's ticks between frames; a new reply replaces them.
+    let incoming = snap.said.as_ref().and_then(|s| s.focus.clone());
+    if incoming.as_ref().map(|p| &p.token) != view.checklist.as_ref().map(|p| &p.token) {
+        view.checklist = incoming;
+    }
     let mut command = None;
     egui::Frame::group(ui.style())
         .stroke(egui::Stroke::new(2.0, colour("#c0392b")))
-        .corner_radius(12.0)
+        .corner_radius(16.0)
+        .inner_margin(10.0)
         .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
+            ui.set_width(ui.available_width());
+            let bubble = speech.bubble.as_ref();
+            ui.horizontal(|ui| {
                 ui.label(RichText::new("🐏").size(20.0));
-                match &speech.bubble {
-                    None if speech.muted => {
-                        ui.label(RichText::new("Your warden is keeping quiet.").weak());
-                        if ui.small_button("Unmute").clicked() {
+                let text = match bubble {
+                    Some(b) => RichText::new(&b.text),
+                    None if speech.muted => RichText::new("Your warden is keeping quiet.").weak(),
+                    None => RichText::new("All quiet.").weak(),
+                };
+                let line = ui.add(egui::Label::new(text).wrap());
+                if let Some(t) = bubble.and_then(|b| b.tab.as_ref()) {
+                    line.on_hover_text(&t.url);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if let Some(b) = bubble
+                        && ui.small_button("🗙").on_hover_text("Dismiss").clicked()
+                    {
+                        command = Some(Command::Answer { id: b.id.clone(), choice: "dismiss".into() });
+                    }
+                    if speech.muted {
+                        if ui.small_button("🔇 Unmute").on_hover_text("Your warden is quiet. Let it talk again.").clicked() {
                             command = Some(Command::Unmute);
                         }
-                    }
-                    None => {
-                        ui.label(RichText::new("All quiet.").weak());
-                    }
-                    Some(b) => {
-                        ui.label(&b.text).on_hover_text(b.tab.as_ref().map(|t| t.url.as_str()).unwrap_or(""));
-                        for c in &b.choices {
-                            if ui.button(&c.label).clicked() {
-                                command = Some(Command::Answer { id: b.id.clone(), choice: c.id.clone() });
+                    } else {
+                        // The speaker shows the state: talking. The menu quiets it.
+                        ui.menu_button("🔊", |ui| {
+                            for (label, hours) in crate::voice::MUTE_CHOICES {
+                                if ui.button(label).clicked() {
+                                    command = Some(Command::Mute(hours));
+                                    ui.close();
+                                }
                             }
-                        }
-                        if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
-                            command = Some(Command::Answer { id: b.id.clone(), choice: "dismiss".into() });
-                        }
+                        })
+                        .response
+                        .on_hover_text("Quiet, please");
                     }
-                }
-                if !speech.muted {
-                    ui.menu_button("🔇", |ui| {
-                        for (label, hours) in crate::voice::MUTE_CHOICES {
-                            if ui.button(label).clicked() {
-                                command = Some(Command::Mute(hours));
-                                ui.close();
+                });
+            });
+            if let Some(b) = bubble {
+                let mut buttons = b.buttons().peekable();
+                if buttons.peek().is_some() {
+                    ui.horizontal_wrapped(|ui| {
+                        for c in buttons {
+                            if ui.add_enabled(!snap.busy, egui::Button::new(&c.label)).clicked() {
+                                command = Some(Command::Answer { id: b.id.clone(), choice: c.id.clone() });
                             }
                         }
                     });
                 }
-            });
+            }
+            if let Some(c) = said(ui, snap, view) {
+                command = Some(c);
+            }
+            if let Some(c) = talk(ui, snap, view, bubble.is_some_and(|b| b.asks_focus()),
+                bubble.map(|b| b.placeholder()).unwrap_or(crate::voice::TALK_PLACEHOLDER))
+            {
+                command = Some(c);
+            }
         });
+    command
+}
+
+/// What you typed and what the warden said back, with the focus checklist or
+/// the proposed change under it.
+fn said(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<Command> {
+    let said = snap.said.as_ref()?;
+    let mut command = None;
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("You: {}", said.you)).weak().small());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            if ui.small_button("🗙").on_hover_text("Put this away").clicked() {
+                command = Some(Command::ForgetSaid);
+            }
+        });
+    });
+    // Long replies scroll inside the bubble instead of pushing the window.
+    egui::ScrollArea::vertical().id_salt("warden-said").max_height(160.0).show(ui, |ui| {
+        ui.add(egui::Label::new(&said.reply).wrap().selectable(true));
+        if let Some(list) = view.checklist.as_mut() {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Relevant to this task").strong().small());
+            for tab in &mut list.tabs {
+                let title = if tab.title.is_empty() { "Web page" } else { tab.title.as_str() };
+                ui.checkbox(&mut tab.selected, title).on_hover_text(&tab.url);
+            }
+        }
+    });
+    if let Some(list) = &view.checklist
+        && ui.add_enabled(!snap.busy, egui::Button::new("Use these preferences")).clicked()
+    {
+        command = Some(Command::FocusKeep { token: list.token.clone(), tabs: list.tabs.clone() });
+    }
+    if let Some(p) = &said.proposed
+        && ui.add_enabled(!snap.busy, egui::Button::new("Review fix…")).on_hover_text(&p.label).clicked()
+    {
+        view.confirm = Some((
+            Command::Act { token: p.token.clone() },
+            format!("{}\n\nApply this change? Nothing else will be changed.", p.label),
+        ));
+    }
+    command
+}
+
+/// The always-visible text box. Enter sends; the arrow does the same.
+fn talk(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState, focus: bool, hint: &str) -> Option<Command> {
+    let mut command = None;
+    ui.horizontal(|ui| {
+        let send_width = 28.0;
+        let edit = ui.add_enabled(
+            !snap.busy,
+            egui::TextEdit::singleline(&mut view.say)
+                .hint_text(hint)
+                .desired_width(ui.available_width() - send_width - ui.spacing().item_spacing.x),
+        );
+        let entered = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let ready = !snap.busy && !view.say.trim().is_empty();
+        let clicked = ui.add_enabled(ready, egui::Button::new("➤")).on_hover_text("Send (Enter)").clicked();
+        if ready && (entered || clicked) {
+            let text = view.say.trim().to_string();
+            match crate::voice::too_long(&text, focus) {
+                Some(why) => view.say_error = Some(why.into()),
+                None => {
+                    view.say_error = None;
+                    view.say.clear();
+                    command = Some(Command::Say { text, focus });
+                }
+            }
+            edit.request_focus(); // keep typing without reaching for the mouse
+        }
+    });
+    if snap.busy && snap.said.is_none() && command.is_none() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Thinking…").weak().small());
+        });
+    }
+    if let Some(e) = &view.say_error {
+        ui.colored_label(colour("#f87171"), e);
+    }
     command
 }
 

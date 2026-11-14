@@ -73,6 +73,9 @@ pub struct Choice {
     pub label: &'static str,
 }
 
+/// The placeholder in the focus question's text box.
+pub const FOCUS_PROMPT: &str = "What are you working on?";
+
 const CHECK_IN_CHOICES: [Choice; 3] = [
     Choice { id: "keep", label: "Yes, keep it" },
     Choice { id: "close", label: "No, close it" },
@@ -95,6 +98,10 @@ pub struct Bubble {
     pub kind: Kind,
     pub text: String,
     pub choices: Vec<Choice>,
+    /// A question answered in words: clients show an always-visible text box
+    /// with this placeholder, and Enter sends it to `POST /warden/focus`.
+    /// A button that only opened a box was one click too many.
+    pub input: Option<&'static str>,
     pub tab: Option<TabRef>,
     /// Seconds until it goes away on its own, as of this reply.
     pub expires_in_s: u64,
@@ -359,7 +366,8 @@ impl Voice {
             warden: "ram",
             kind,
             text,
-            choices: match kind { Kind::CheckIn => CHECK_IN_CHOICES.to_vec(), Kind::Focus => vec![Choice {id:"focus",label:"Tell Warden"}], _ => Vec::new() },
+            choices: if kind == Kind::CheckIn { CHECK_IN_CHOICES.to_vec() } else { Vec::new() },
+            input: (kind == Kind::Focus).then_some(FOCUS_PROMPT),
             tab,
             expires_in_s: life.as_secs(),
         };
@@ -547,6 +555,7 @@ impl Inner {
                 kind: Kind::Reply,
                 text: text.clone(),
                 choices: Vec::new(),
+                input: None,
                 tab: None,
                 expires_in_s: REPLY_LIFE.as_secs(),
             },

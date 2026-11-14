@@ -76,15 +76,21 @@ impl eframe::App for WindowApp {
 
         let mut command: Option<Command> = None;
         egui::Panel::top("warden").show(ui, |ui| {
-            if let Some(c) = views::bubble(ui, &snap) {
+            if let Some(c) = views::bubble(ui, &snap, &mut self.view) {
                 command = Some(c);
             }
         });
         egui::CentralPanel::default().show(ui, |ui| match self.tab {
-            Tab::Overview => views::overview(ui, &snap),
+            // Processes and Debloat scroll their own tables; the others
+            // scroll as a whole so nothing is cut off in a small window.
+            Tab::Overview => {
+                egui::ScrollArea::vertical().id_salt("overview").show(ui, |ui| views::overview(ui, &snap));
+            }
             Tab::Processes => command = views::processes(ui, &snap, &mut self.view),
             Tab::Debloat => command = views::debloat(ui, &snap, &mut self.view),
-            Tab::Gpu => command = views::gpu(ui, &snap),
+            Tab::Gpu => {
+                egui::ScrollArea::vertical().id_salt("gpu").show(ui, |ui| command = views::gpu(ui, &snap));
+            }
         });
 
         if let Some((pending, question)) = self.view.confirm.clone() {
@@ -163,6 +169,9 @@ struct VoiceItems {
     bubble: String,
     line: MenuItem,
     choices: Vec<(MenuItem, Command)>,
+    /// "Type your answer…": a menu can't hold a text box, so this opens the
+    /// window, where the box is always there.
+    type_answer: Option<MenuItem>,
     gap: PredefinedMenuItem,
 }
 
@@ -189,6 +198,11 @@ impl Tray {
         })
     }
 
+    /// Whether a clicked menu item asks to answer the warden in the window.
+    fn wants_window(&self, id: &MenuId) -> bool {
+        self.voice.as_ref().and_then(|v| v.type_answer.as_ref()).is_some_and(|item| item.id() == id)
+    }
+
     /// The command behind a clicked menu item, if it is one of the warden's.
     fn voice_command(&self, id: &MenuId) -> Option<Command> {
         let v = self.voice.as_ref()?;
@@ -212,23 +226,33 @@ impl Tray {
             for (item, _) in &old.choices {
                 let _ = self.menu.remove(item);
             }
+            if let Some(item) = &old.type_answer {
+                let _ = self.menu.remove(item);
+            }
             let _ = self.menu.remove(&old.gap);
             self.shown_fraction = -1.0; // restore the gauge tooltip
         }
         let Some(b) = question else { return };
         let line = MenuItem::new(format!("🐏 {}", b.text), false, None);
-        let choices: Vec<(MenuItem, Command)> = b.choices.iter()
+        let choices: Vec<(MenuItem, Command)> = b.buttons()
             .map(|c| (MenuItem::new(format!("    {}", c.label), true, None),
                 Command::Answer { id: b.id.clone(), choice: c.id.clone() }))
             .collect();
+        let type_answer = b.asks_focus().then(|| MenuItem::new("    Type your answer…", true, None));
         let gap = PredefinedMenuItem::separator();
         let _ = self.menu.insert(&line, 0);
-        for (i, (item, _)) in choices.iter().enumerate() {
-            let _ = self.menu.insert(item, i + 1);
+        let mut at = 1;
+        for (item, _) in &choices {
+            let _ = self.menu.insert(item, at);
+            at += 1;
         }
-        let _ = self.menu.insert(&gap, choices.len() + 1);
+        if let Some(item) = &type_answer {
+            let _ = self.menu.insert(item, at);
+            at += 1;
+        }
+        let _ = self.menu.insert(&gap, at);
         let _ = self.icon.set_tooltip(Some(format!("RamWarden: {}", b.text)));
-        self.voice = Some(VoiceItems { bubble: b.id.clone(), line, choices, gap });
+        self.voice = Some(VoiceItems { bubble: b.id.clone(), line, choices, type_answer, gap });
     }
 
     /// Redraw the gauge when the figure visibly changes.
@@ -309,7 +333,7 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
-            if e.id == tray.open {
+            if e.id == tray.open || tray.wants_window(&e.id) {
                 open_window(&mut window);
             }
             if let Some(c) = tray.voice_command(&e.id) {

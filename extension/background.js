@@ -20,7 +20,7 @@ async function _checkWarden() {
   try {
     const r = await fetch(_httpUrl + "/warden/bubble");
     const s = r.ok ? await r.json() : null;
-    _asking = !!(s && s.pet !== false && s.bubble && (s.bubble.choices || []).length);
+    _asking = !!(s && s.pet !== false && s.bubble && ((s.bubble.choices || []).length || s.bubble.input));
   } catch { _asking = false; }
   if (_connected) _badge(true);
 }

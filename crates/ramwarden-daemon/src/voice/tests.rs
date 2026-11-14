@@ -36,7 +36,9 @@ fn a_focus_check_in_offers_a_way_to_answer_without_closing_any_tab() {
     let bubble = voice.speak(&settings, &scene(&[], &[], Instant::now(), DAY0)).unwrap();
     assert_eq!(bubble.kind, Kind::Focus);
     assert!(bubble.text.contains("What are you working on?"));
-    assert_eq!(bubble.choices[0].id, "focus");
+    // Answered by typing, not through a button that opens a box.
+    assert!(bubble.choices.is_empty());
+    assert_eq!(bubble.input, Some(FOCUS_PROMPT));
     assert!(bubble.tab.is_none());
 }
 

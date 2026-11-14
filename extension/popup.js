@@ -89,6 +89,10 @@ async function wardenPost(path, body, timeout = 40000) {
 
 async function refreshWarden() {
   const el = document.getElementById("warden");
+  // Don't wipe the focus checklist, or a half-typed answer, mid-use.
+  if (lastFocus) return;
+  const typing = el.querySelector("input.warden-input");
+  if (typing && (typing.value || document.activeElement === typing)) return;
   let view = null;
   try { view = wardenView(await daemonJSON("/warden/bubble")); } catch { /* older daemon: no voice */ }
   el.innerHTML = wardenHTML(view);
@@ -117,6 +121,46 @@ document.getElementById("warden").addEventListener("click", async (e) => {
     const r = await wardenPost("/warden/answer", { id: el.dataset.id, choice: b.dataset.choice });
     chrome.runtime.sendMessage?.({ type: "warden-answered" });
     wardenSay(r.body.reply);
+  } catch { wardenSay("I couldn't reach the daemon."); }
+});
+
+// Typing to the warden: Enter (or the arrow) sends the focus.
+let lastFocus = null;
+document.getElementById("warden").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target.closest("form.warden-say");
+  const field = form && form.querySelector("input");
+  const goal = field ? field.value.trim() : "";
+  if (!goal) return;
+  if ([...goal].length > 500) return wardenSay("Keep your focus under 500 characters.");
+  const el = document.getElementById("warden");
+  el.querySelectorAll("input, button, select").forEach(x => { x.disabled = true; });
+  field.placeholder = "Thinking…";
+  field.value = "";
+  try {
+    const r = await wardenPost("/warden/focus", { goal }, 60000);
+    if (r.status !== 200) throw new Error(r.status);
+    lastFocus = r.body;
+    el.innerHTML = focusHTML(goal, r.body);
+    el.hidden = false;
+    el.dataset.id = "";
+  } catch { wardenSay("Your focus wasn't saved. I couldn't reach the daemon."); }
+});
+
+document.getElementById("warden").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "focus-done") { lastFocus = null; return refreshWarden(); }
+  if (b.dataset.act !== "focus-keep" || !lastFocus || !lastFocus.proposal) return;
+  const el = document.getElementById("warden");
+  const ticked = new Set([...el.querySelectorAll("input[data-tab]:checked")].map(x => Number(x.dataset.tab)));
+  const tabs = lastFocus.proposal.tabs;
+  const selected = tabs.filter((_, i) => ticked.has(i)).map(t => ({ browser: t.browser, id: t.id, url: t.url }));
+  b.disabled = true;
+  try {
+    const r = await wardenPost("/warden/focus/feedback", { token: lastFocus.proposal.token, selected });
+    lastFocus = null;
+    wardenSay(r.status === 200 ? `Preferences updated · ${selected.length} tabs marked relevant` : "That tab list expired or changed. Tell me your focus again.");
   } catch { wardenSay("I couldn't reach the daemon."); }
 });
 

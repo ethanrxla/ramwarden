@@ -123,9 +123,24 @@ struct BubbleView: View {
                     Button { voice.answer("dismiss") } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                         .buttonStyle(.plain).accessibilityLabel("Dismiss")
                 }
-                if b.isQuestion {
+                if let hint = b.input {
+                    // The bubble's panel never takes keyboard focus (so it can't
+                    // steal it from your work); clicking the box opens the chat
+                    // with the cursor already in its text field.
+                    Button { voice.answer("focus") } label: {
+                        HStack {
+                            Text(hint).font(.system(size: 12)).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Image(systemName: "arrow.up.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Answer: \(hint)")
+                }
+                if !b.choices.filter({ $0.id != "focus" }).isEmpty {
                     HStack(spacing: 6) {
-                        ForEach(b.choices) { c in
+                        ForEach(b.choices.filter { $0.id != "focus" }) { c in
                             Button(c.label) { voice.answer(c.id) }
                                 .controlSize(.small).disabled(voice.busy)
                         }
