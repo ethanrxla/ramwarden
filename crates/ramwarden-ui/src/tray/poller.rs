@@ -24,6 +24,8 @@ pub struct Snapshot {
     pub debloat: Option<DebloatState>,
     /// What the warden is saying, from `/warden/bubble`.
     pub speech: Option<crate::voice::Speech>,
+    /// The warden's answer to what was last typed in its bubble.
+    pub said: Option<crate::voice::Said>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
     /// What is being done about it: starting the daemon, or where to look.
@@ -50,6 +52,15 @@ pub enum Command {
     /// Quiet the warden for this many hours, or until unmuted with `None`.
     Mute(Option<f64>),
     Unmute,
+    /// Words typed in the bubble: a focus when the warden asked for one,
+    /// otherwise a chat message.
+    Say { text: String, focus: bool },
+    /// Keep the checked tabs of a focus checklist.
+    FocusKeep { token: String, tabs: Vec<crate::voice::FocusTab> },
+    /// Apply a change the chat proposed, after the user approved it.
+    Act { token: String },
+    /// Put the bubble's reply away.
+    ForgetSaid,
 }
 
 pub struct Poller {
@@ -145,12 +156,34 @@ impl Poller {
                 while let Some(cmd) = rx.recv().await {
                     shared.lock().unwrap().busy = true;
                     repaint();
-                    let message = Self::run(&client, cmd).await;
+                    let message = match cmd {
+                        // The bubble's own conversation: its reply is shown
+                        // in the bubble, not the status bar.
+                        Command::Say { text, focus } => {
+                            let said = client.say_to_warden(&text, focus).await;
+                            shared.lock().unwrap().said = Some(said);
+                            None
+                        }
+                        Command::ForgetSaid => {
+                            shared.lock().unwrap().said = None;
+                            None
+                        }
+                        // The checklist or proposal is used up either way;
+                        // what happened goes to the status line.
+                        cmd @ (Command::FocusKeep { .. } | Command::Act { .. }) => {
+                            let message = Self::run(&client, cmd).await;
+                            shared.lock().unwrap().said = None;
+                            Some(message)
+                        }
+                        cmd => Some(Self::run(&client, cmd).await),
+                    };
                     Self::refresh_slow(&client, &shared).await;
                     let speech = client.bubble().await.ok();
                     let mut s = shared.lock().unwrap();
                     s.speech = speech;
-                    s.message = Some(message);
+                    if message.is_some() {
+                        s.message = message;
+                    }
                     s.busy = false;
                     drop(s);
                     repaint();
@@ -231,6 +264,17 @@ impl Poller {
                 Ok(_) => "Your warden can talk again.".into(),
                 Err(e) => format!("unmute: {e}"),
             },
+            Command::FocusKeep { token, tabs } => match client.focus_feedback(&token, &tabs).await {
+                Ok(_) => format!("Preferences updated · {} tabs marked relevant", tabs.iter().filter(|t| t.selected).count()),
+                Err(e) => format!("That tab list expired or changed. Tell me your focus again. ({e})"),
+            },
+            Command::Act { token } => match client.chat_action(&token).await {
+                Ok(r) if r.reply.is_empty() => "The action finished without a report.".into(),
+                Ok(r) => r.reply,
+                Err(e) => format!("That proposal expired or the computer changed; nothing was applied. ({e})"),
+            },
+            // Handled by the command loop before it gets here.
+            Command::Say { .. } | Command::ForgetSaid => String::new(),
         }
     }
 
