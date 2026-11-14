@@ -36,6 +36,26 @@ fn waiting(ui: &mut egui::Ui, snap: &Snapshot) {
 
 // ── The warden's speech bubble ──────────────────────────────────────────────
 
+/// The crimson 8-bit RAM warden, the same sprite the Mac app and the website
+/// draw (`web/assets/pets/ram.svg`, rasterized by `scripts/sprite-rgba.py`).
+/// This used to be the 🐏 emoji, which Windows renders as a grey sheep, so the
+/// window showed a different animal from every other RamWarden surface.
+const WARDEN_RGBA: &[u8] = include_bytes!("../../../../assets/warden/ram48.rgba");
+const WARDEN_CELLS: usize = 48;
+
+fn warden_sprite(ui: &mut egui::Ui, size: f32) {
+    let id = egui::Id::new("ramwarden-warden-sprite");
+    let texture = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(id)).unwrap_or_else(|| {
+        let image = egui::ColorImage::from_rgba_unmultiplied([WARDEN_CELLS, WARDEN_CELLS], WARDEN_RGBA);
+        // Nearest filtering keeps the pixels crisp at any scale.
+        let handle = ui.ctx().load_texture("warden", image, egui::TextureOptions::NEAREST);
+        ui.ctx().data_mut(|d| d.insert_temp(id, handle.clone()));
+        handle
+    });
+    ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(size, size)))
+        .on_hover_text("Your RAM warden");
+}
+
 /// The bubble across the top of the window. Returns the user's answer.
 pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
     let speech = snap.speech.as_ref()?;
@@ -48,7 +68,7 @@ pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
         .corner_radius(12.0)
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("🐏").size(20.0));
+                warden_sprite(ui, 32.0);
                 match &speech.bubble {
                     None if speech.muted => {
                         ui.label(RichText::new("Your warden is keeping quiet.").weak());
@@ -358,4 +378,14 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
         }
     });
     out
+}
+
+#[cfg(test)]
+mod sprite_tests {
+    #[test]
+    fn the_warden_sprite_is_a_full_48_cell_rgba_image() {
+        assert_eq!(super::WARDEN_RGBA.len(), super::WARDEN_CELLS * super::WARDEN_CELLS * 4);
+        // Crimson wool is present: the grey-sheep emoji had none.
+        assert!(super::WARDEN_RGBA.chunks_exact(4).any(|p| p == [0xf2, 0x44, 0x55, 0xff]));
+    }
 }
