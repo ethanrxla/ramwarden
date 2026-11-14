@@ -205,6 +205,30 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
     rows
 }
 
+/// How long a tab must sit untouched before the warden may *suggest* closing it.
+/// An hour matches the floor of the unattended sweep's `can_auto_close_at`.
+pub const OFFER_CLOSE_MIN_IDLE_MINUTES: i64 = 60;
+
+impl Row {
+    /// May the warden put this tab in front of the user as "close this?"
+    ///
+    /// The review card and Analyze Now used `closeable`, which only says a person
+    /// *may* close the tab by hand. That let them offer a Namecheap tab and an
+    /// Agensi submit form (work pages whose 4-hour protection had lifted), and
+    /// "recent"/"retained" tabs used minutes earlier. A batch the user approves
+    /// skips the extension's idle and work-page guards, so the offer itself must
+    /// already be safe: no work page, nothing used in the last hour, and only
+    /// tabs the rules already consider idle.
+    pub fn offerable_for_close(&self) -> bool {
+        if !self.closeable || self.work { return false; }
+        match self.status {
+            "browser page" => true,
+            "candidate" | "unloaded" => self.inactive_minutes >= OFFER_CLOSE_MIN_IDLE_MINUTES,
+            _ => false,
+        }
+    }
+}
+
 pub fn snapshot(reg: &crate::tabs::Registry, threshold: i64) -> Vec<Row> {
     let mut rows = Vec::new();
     for browser in reg.socket_ids().into_iter().chain(reg.poll_ids()) {
@@ -638,6 +662,23 @@ mod safety_regressions {
         let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         assert_eq!(ids.first(), Some(&4), "the browser page goes first: {ids:?}");
         assert!(!ids.iter().any(|id| [1, 2, 3].contains(id)), "work tabs stay: {ids:?}");
+    }
+
+    /// The 2026-11-14 report: Namecheap and the Agensi submit form were still
+    /// being closed. Past the 4-hour protection they ranked as plain candidates,
+    /// and the review card offered them. Recently used tabs were offered too.
+    #[test]
+    fn work_pages_and_recent_tabs_are_never_offered_for_closing() {
+        let rows = rank("b", &[
+            idle(1, "https://agensi.io/creators/submit-a-skill", 600),
+            idle(2, "https://ap.www.namecheap.com/domains/list/", 600),
+            idle(3, "https://example.org/read-me", 20),
+            idle(4, "https://example.org/old-article", 600),
+            idle(5, "chrome://settings/", 1),
+        ], 30);
+        let offered: Vec<i64> = rows.iter().filter(|r| r.offerable_for_close()).map(|r| r.target.id).collect();
+        assert_eq!(offered.len(), 2, "{offered:?}");
+        assert!(offered.contains(&4) && offered.contains(&5), "{offered:?}");
     }
 
     #[test]

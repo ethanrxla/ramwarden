@@ -48,9 +48,8 @@ async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
     if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
     let auto=crate::browser::close_candidates(&rows,&st.cfg.tabs);
-    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| r.closeable
-        && (st.cfg.tabs.close == "review" || !auto.contains(&r.target))
-        && matches!(r.status, "browser page" | "candidate" | "unloaded" | "retained")).collect();
+    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| r.offerable_for_close()
+        && (st.cfg.tabs.close == "review" || !auto.contains(&r.target))).collect();
     uncertain.sort_by(crate::browser::close_priority);
     uncertain.truncate(10);
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());
