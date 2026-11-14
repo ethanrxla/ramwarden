@@ -133,9 +133,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if companion.pet == nil, companion.voice.pet, let b = companion.voice.bubble, b.isQuestion {
             header("YOUR WARDEN ASKS")
             add("🐏 \(b.text)", nil)
-            for c in b.choices {
-                let m = NSMenuItem(title: "    \(c.label)", action: #selector(answerWarden(_:)), keyEquivalent: "")
-                m.target = self; m.representedObject = c.id
+            // A focus question is answered by typing: this opens the chat.
+            let items = b.choices.filter { $0.id != "focus" }.map { ($0.label, $0.id) }
+                + (b.input != nil ? [("Type your answer…", "focus")] : [])
+            for (label, id) in items {
+                let m = NSMenuItem(title: "    \(label)", action: #selector(answerWarden(_:)), keyEquivalent: "")
+                m.target = self; m.representedObject = id
                 menu.addItem(m)
             }
             menu.addItem(.separator())

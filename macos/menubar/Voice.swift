@@ -16,7 +16,9 @@ struct WardenBubble: Equatable {
     let text: String
     let choices: [WardenChoice]
     let url: String?
-    var isQuestion: Bool { !choices.isEmpty }
+    /// Placeholder for a question answered in words (the focus question).
+    let input: String?
+    var isQuestion: Bool { !choices.isEmpty || input != nil }
 
     init?(_ obj: Any?) {
         guard let b = obj as? [String: Any], let id = b["id"] as? String, let text = b["text"] as? String else { return nil }
@@ -28,6 +30,8 @@ struct WardenBubble: Equatable {
             return WardenChoice(id: id, label: label)
         }
         url = (b["tab"] as? [String: Any])?["url"] as? String
+        // An older daemon offered a "Tell Warden" button instead.
+        input = b["input"] as? String ?? (choices.contains { $0.id == "focus" } ? "What are you working on?" : nil)
     }
 }
 
