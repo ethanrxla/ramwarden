@@ -121,7 +121,9 @@ pub fn parse(raw: &str, tabs: &[&Row], max_close: usize) -> Option<Verdict> {
             .map(|r| (r.target.clone(), r.title.clone()))
             .collect()
     };
-    let close = numbered("close", &|r| r.closeable && !matches!(r.status, "protected" | "stale"), max_close);
+    // Only tabs the rules consider safe to offer: the model may not pick a work
+    // page or a tab used in the last hour, whatever it says.
+    let close = numbered("close", &|r| r.offerable_for_close(), max_close);
     let unload = numbered("unload", &|r| r.eligible, crate::browser::BATCH_LIMIT)
         .into_iter().filter(|(t, _)| !close.iter().any(|(c, _)| c == t)).collect();
     Some(Verdict { reply: restore_titles(reply, tabs), unload, close })
@@ -235,7 +237,7 @@ mod tests {
         assert!(v.reply.contains("Private title 2") && v.reply.contains("Private title 1"), "{}", v.reply);
         assert!(!v.reply.contains('#'));
         let ids = |l: &[(Target, String)]| l.iter().map(|(t, _)| t.id).collect::<Vec<_>>();
-        assert_eq!(ids(&v.close), [1, 3], "#1 is the protected tab 2, dropped");
+        assert_eq!(ids(&v.close), [1], "#1 is the protected tab 2 and #3 was used recently: both dropped");
         assert!(ids(&v.unload).is_empty(), "tab 1 is being closed; tab 2 is not eligible");
     }
 

@@ -119,6 +119,7 @@ pub struct Cloud {
     pub public_url: String,
     /// Where release assets are downloaded from.
     pub releases_url: String,
+    pub install_links_enabled: bool,
     /// The site wardens' chat and tickets: limits and the staff token.
     pub support: crate::support::SupportDesk,
 }

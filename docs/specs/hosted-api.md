@@ -345,3 +345,13 @@ No new session cookie is set.
 normalized identity by a deterministic primary key before account creation;
 unique claims serialize simultaneous linking and sign-in. Legacy primary
 identities are respected. Existing accounts are not automatically merged.
+
+### Staged release controls
+
+Install links and their scripts are off by default. Enable them only after
+the advertised platform artifacts and checksums pass the clean-machine gate;
+set `RAMWARDEN_ENABLE_INSTALL_LINKS=1` and point `RAMWARDEN_RELEASES_URL` at
+the verified versioned RamWarden GitHub release. Until all platforms in the
+response are verified, leave this switch off. A disabled link endpoint still
+requires a session and does not issue a device code. The production profile
+refuses development memory storage and sign-in code logging.

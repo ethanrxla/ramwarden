@@ -229,7 +229,7 @@ host-only settings. Production credentials never belong in website assets.
 - ThreatWarden quarantine and blocking remain planned features.
 - The checkout contract is not deployed, so the Base flow is tested only
   against the mock.
-- The domain `ramwarden.app` is a placeholder until one is registered.
+- The public website uses `ramwarden.com`; hosted requests go to `api.ramwarden.com`.
 
 
 ### Additional sign-in methods

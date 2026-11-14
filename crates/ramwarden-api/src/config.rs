@@ -72,6 +72,7 @@ pub struct CloudConfig {
     pub public_url: String,
     /// `RAMWARDEN_RELEASES_URL`: where install scripts fetch release assets.
     pub releases_url: String,
+    pub install_links_enabled: bool,
 }
 
 /// Stripe's two secrets. Both or neither.
@@ -134,6 +135,13 @@ impl Config {
             )),
             Some(_) => return Err("RAMWARDEN_API_PROFILE must be development or production".into()),
         };
+
+        if production_model.is_some()
+            && ["RAMWARDEN_DEV_MEMORY_STORE", "RAMWARDEN_DEV_MAIL_LOG"]
+                .iter().any(|key| var(key).as_deref() == Some("1"))
+        {
+            return Err("development storage and mail logging are forbidden in the production profile".into());
+        }
 
         let cloud = Self::cloud_from(&var)?;
 
@@ -253,7 +261,17 @@ impl Config {
         if !releases_url.starts_with("https://") || releases_url.contains('\'') {
             return Err("RAMWARDEN_RELEASES_URL must be an https:// URL".into());
         }
+        let install_links_enabled = var("RAMWARDEN_ENABLE_INSTALL_LINKS").as_deref() == Some("1");
+        if install_links_enabled && !reqwest::Url::parse(&releases_url).is_ok_and(|url|
+            url.host_str() == Some("github.com")
+                && url.path().starts_with("/ethanrxla/ramwarden/releases/download/")
+                && url.path().trim_end_matches('/').rsplit('/').next().is_some_and(|tag| tag != "download")
+                && url.query().is_none() && url.fragment().is_none())
+        {
+            return Err("install links require a versioned RamWarden GitHub release URL".into());
+        }
         Ok(Some(CloudConfig {
+            install_links_enabled,
             public_url,
             releases_url,
             site_origin: origin,
@@ -289,6 +307,16 @@ mod tests {
         assert_eq!(cfg(&production).unwrap().production_model.unwrap().1, "gpt-6-luna");
         production.retain(|(key, _)| *key != "OPENAI_API_KEY");
         assert!(cfg(&production).unwrap_err().contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn install_links_require_an_explicit_versioned_release() {
+        let mut settings = vec![("JEV_API_KEY", "test"), ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.com")];
+        assert!(!cfg(&settings).unwrap().cloud.unwrap().install_links_enabled);
+        settings.push(("RAMWARDEN_ENABLE_INSTALL_LINKS", "1"));
+        assert!(cfg(&settings).is_err());
+        settings.push(("RAMWARDEN_RELEASES_URL", "https://github.com/ethanrxla/ramwarden/releases/download/v1.0.0"));
+        assert!(cfg(&settings).unwrap().cloud.unwrap().install_links_enabled);
     }
 
     #[test]

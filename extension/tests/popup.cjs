@@ -2,19 +2,26 @@
 const {chromium}=require('playwright');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');const assert=require('node:assert/strict');
 (async()=>{
  const profile=fs.mkdtempSync(path.join(os.tmpdir(),'warden-popup-'));const ext=path.join(profile,'extension');fs.cpSync(path.resolve('build/chrome'),ext,{recursive:true});const bg=path.join(ext,'background.js');fs.writeFileSync(bg,fs.readFileSync(bg,'utf8').replace('const DEFAULT_HOST = "localhost:7823";','const DEFAULT_HOST = "127.0.0.1:1";'));
- const context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chromium',ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging'],viewport:{width:640,height:800}});
+ const context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chromium',executablePath:process.env.CHROME_PATH,ignoreDefaultArgs:['--disable-extensions'],args:['--enable-unsafe-extension-debugging'],viewport:{width:640,height:800}});
  try{
   const cdp=await context.browser().newBrowserCDPSession();const loaded=await cdp.send('Extensions.loadUnpacked',{path:ext});const page=await context.newPage();
-  let offline=false;let paid=true;const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  let offline=false;let paid=true;let closedTabs=[];const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('http://localhost:7823/**',route=>{
    if(offline)return route.abort();const pathname=new URL(route.request().url()).pathname;
    const alert={timestamp:'2026-11-03T13:22:00Z',rule_id:'550',level:7,description:'Demo: a monitored configuration file changed.'};
-   const body=pathname==='/stats'?{percent:67,used_mb:10977,total_mb:16384,browsers_connected:1}:pathname==='/wardens/threat'?{unlocked:true,status:{headline:'Security events to review',detail:'Demonstration report. No real device data.'},report:{engines:[{name:'Sentinel',state:'on'},{name:'Antivirus',state:'on'}],alerts:Array.from({length:60},(_,i)=>({...alert,rule_id:String(550+i)}))}}:pathname==='/history'?{closed_tabs:[]}:pathname==='/wardens'?{paid:paid?['ram','threat']:[],tier:'pro'}:{};
+   const body=pathname==='/stats'?{percent:67,used_mb:10977,total_mb:16384,browsers_connected:1}:pathname==='/wardens/threat'?{unlocked:true,status:{headline:'Security events to review',detail:'Demonstration report. No real device data.'},report:{engines:[{name:'Sentinel',state:'on'},{name:'Antivirus',state:'on'}],alerts:Array.from({length:60},(_,i)=>({...alert,rule_id:String(550+i)}))}}:pathname==='/history'?{closed_tabs:closedTabs}:pathname==='/wardens'?{paid:paid?['ram','threat']:[],tier:'pro'}:{};
    return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body),headers:{'Access-Control-Allow-Origin':'*'}});
   });
   await page.goto(`chrome-extension://${loaded.id}/popup.html`);
   await page.getByText('Pro 🐐 · Active on this computer',{exact:true}).waitFor();
   assert.equal(await page.locator('header img').getAttribute('src'),'icons/icon48.png');
+  const url='https://example.com/confirmed';
+  await page.evaluate(url=>chrome.storage.local.set({releasedTabs:[{url,title:'Local closure',closedAt:Date.parse('2026-11-13T13:00:00Z')}]}),url);
+  await page.getByRole('link',{name:'Local closure'}).waitFor();
+  closedTabs=[{url,title:'Newer daemon closure',closed_at:'2026-11-13T14:00:00+00:00'}];
+  await page.getByRole('link',{name:'Newer daemon closure'}).waitFor({timeout:10000});
+  assert.equal(await page.locator('#history-list a').count(),1);
+
   paid=false;await page.getByRole('button',{name:'Check connection',exact:true}).click();
   await page.getByText('Lite · No active paid pass on this computer',{exact:true}).waitFor();
   assert.match(await page.locator('#account-help').innerText(),/ramwarden login/);

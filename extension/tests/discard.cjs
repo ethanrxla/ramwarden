@@ -106,9 +106,9 @@ test('a single unloaded tab does not get a group of its own', async()=>{
 test('a protected page left alone 4h can close; private hosts and in-tab editors never', async()=>{
   const old = Date.now() - 300*60000;
   for (const [url, lastAccessed, expected] of [
-    ['https://console.tailscale.com/admin', old, [7]],
+    ['https://console.tailscale.com/machines', old, [7]],
     ['https://login.microsoftonline.com/x', old, [7]],
-    ['https://console.tailscale.com/admin', Date.now() - 30*60000, []],
+    ['https://console.tailscale.com/machines', Date.now() - 30*60000, []],
     ['http://10.0.0.1/', old, []],
     ['https://vscode.dev/', old, []],
   ]) {
@@ -250,4 +250,38 @@ test('Chrome-discarded tabs alone never get silently moved into Idle',async()=>{
  f.chrome.tabGroups={query:(_,cb)=>cb([]),update:()=>{}};f.chrome.tabs.group=()=>grouped++;
  await f.context._tidyIdleGroups([1,2].map(id=>({id,windowId:1,discarded:true,groupId:-1,active:false,pinned:false})));
  assert.equal(grouped,0);
+});
+
+// 2026-11-14: Namecheap and an Agensi submit form were closed minutes after use.
+test('bare-ID and approved closes refuse recently used tabs and work pages still mid-task',async()=>{
+  const cases=[
+    ['https://example.org/article', Date.now()-5*60000, []],
+    ['https://example.org/article', Date.now()-120*60000, [7]],
+    ['https://agensi.io/creators/submit-a-skill', Date.now()-30*60000, []],
+    ['https://ap.www.namecheap.com/domains/list/', Date.now()-30*60000, []],
+    ['chrome://extensions/', Date.now(), [7]],
+  ];
+  for (const [url,lastAccessed,expected] of cases) {
+    const f=fixture({url,lastAccessed});const removed=[];
+    f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>cb?.();
+    f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+    const approved=await f.context.closeSafe({requestId:'a',approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000});
+    assert.deepEqual(Array.from(approved),expected,'approved '+url);
+    if (!url.startsWith('chrome://')) {
+      const g=fixture({url,lastAccessed}); g.chrome.storage.local.get=(k,cb)=>cb({}); g.chrome.storage.local.set=(v,cb)=>cb?.();
+      g.chrome.tabs.remove=(id,cb)=>cb();
+      assert.deepEqual(Array.from(await g.context.closeTabs([7])),expected,'bare '+url);
+    }
+  }
+});
+test('unloads are logged as unloaded, closes as closed',async()=>{
+  const f=fixture();let saved=null;
+  f.chrome.storage.local.get=(k,cb)=>cb({}); f.chrome.storage.local.set=(v,cb)=>{if (v.releasedTabs) saved=v.releasedTabs; cb?.();};
+  await f.context.discardTabs(command);
+  assert.equal(saved?.[0]?.kind,'unloaded'); assert.equal(saved?.[0]?.tabId,7);
+  const g=fixture();let closed=null;
+  g.chrome.storage.local.get=(k,cb)=>cb({}); g.chrome.storage.local.set=(v,cb)=>{if (v.releasedTabs) closed=v.releasedTabs; cb?.();};
+  g.chrome.tabs.remove=(id,cb)=>cb();
+  await g.context.closeTabs([7]);
+  assert.equal(closed?.[0]?.kind,'closed');
 });

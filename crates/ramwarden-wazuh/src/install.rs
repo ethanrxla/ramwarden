@@ -357,7 +357,7 @@ mod tests {
 
     fn enrollment() -> Enrollment {
         Enrollment {
-            manager: "agents.ramwarden.app".into(),
+            manager: "agents.ramwarden.com".into(),
             agent_name: "acct1a2b-desk".into(),
             group: "acct-1a2b".into(),
             agent_key: Secret::new(KEY),
@@ -452,7 +452,7 @@ mod tests {
         let inner = decode_utf16le_base64(encoded);
         assert!(inner.starts_with("$ErrorActionPreference = 'Stop';"));
         assert!(
-            inner.contains("'WAZUH_MANAGER=agents.ramwarden.app'"),
+            inner.contains("'WAZUH_MANAGER=agents.ramwarden.com'"),
             "{inner}"
         );
         assert!(
@@ -482,7 +482,7 @@ mod tests {
             s.contains("installer -pkg '/var/folders/x/T/a.pkg' -target /"),
             "{s}"
         );
-        assert!(s.contains("WAZUH_MANAGER='agents.ramwarden.app'"), "{s}");
+        assert!(s.contains("WAZUH_MANAGER='agents.ramwarden.com'"), "{s}");
         assert!(s.contains("> /Library/Ossec/etc/client.keys"), "{s}");
         assert!(s.contains("wazuh-control restart"));
     }
@@ -496,7 +496,7 @@ mod tests {
             assert_eq!(prog, "pkexec");
             assert_eq!(&args[..2], ["sh", "-c"]);
             assert!(
-                args[2].starts_with("WAZUH_MANAGER='agents.ramwarden.app' "),
+                args[2].starts_with("WAZUH_MANAGER='agents.ramwarden.com' "),
                 "{}",
                 args[2]
             );

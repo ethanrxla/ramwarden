@@ -102,7 +102,7 @@ echo
 echo "ramwarden-api needs:"
 echo "  WAZUH_MANAGER_URL=https://127.0.0.1:55000   WAZUH_API_USER=wazuh-wui   WAZUH_API_PASSWORD=<wazuh-wui password>"
 echo "  WAZUH_INDEXER_URL=https://127.0.0.1:9200    WAZUH_INDEXER_USER=admin   WAZUH_INDEXER_PASSWORD=<admin password>"
-echo "  WAZUH_AGENT_HOST=<the DNS name agents connect to, e.g. agents.ramwarden.app>"
+echo "  WAZUH_AGENT_HOST=<the DNS name agents connect to, e.g. agents.ramwarden.com>"
 echo
 echo "Optional dashboard, if installed separately, is private and requires an SSH tunnel:"
 echo "  ssh -L 8443:127.0.0.1:443 ubuntu@<server>   then open https://localhost:8443"

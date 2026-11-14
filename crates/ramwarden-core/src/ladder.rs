@@ -82,8 +82,11 @@ const PAGEOUT_LIMIT: usize = 3;
 const JUDGE_LIMIT: usize = 8;
 
 /// Why the reclaim rungs refuse when the platform offers no group reclaim.
+#[cfg(target_os = "linux")]
 const GROUPS_UNAVAILABLE: &str =
-    "group reclaim unavailable (on Linux: no delegated cgroup memory controller)";
+    "group reclaim unavailable (no delegated cgroup memory controller)";
+#[cfg(not(target_os = "linux"))]
+const GROUPS_UNAVAILABLE: &str = "group reclaim unavailable on this platform";
 
 /// Which rung the current pressure calls for.
 ///
@@ -262,6 +265,10 @@ pub struct Ladder {
     last_tabs: Option<Instant>,
     tidy: Option<Tidy>,
     ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
+    /// The last untargeted refusal written to history, per action. A rung the
+    /// platform cannot run refuses every tick with the same reason; that is
+    /// recorded once, and again only after the action does something else.
+    logged_refusals: HashMap<&'static str, String>,
 }
 
 impl Ladder {
@@ -279,6 +286,7 @@ impl Ladder {
             last_tabs: None,
             tidy: None,
             ranker: None,
+            logged_refusals: HashMap::new(),
         }
     }
 
@@ -970,9 +978,18 @@ impl Ladder {
         }
     }
 
-    fn log(&self, report: &Report, w: &World<'_>, rung: Rung) {
+    fn log(&mut self, report: &Report, w: &World<'_>, rung: Rung) {
         let Some(h) = &self.history else { return };
         for (action, target, outcome) in &report.steps {
+            let notes = outcome.notes.join("; ");
+            if target.is_empty() && outcome.did_nothing() {
+                if self.logged_refusals.get(action) == Some(&notes) {
+                    continue;
+                }
+                self.logged_refusals.insert(action, notes.clone());
+            } else {
+                self.logged_refusals.remove(action);
+            }
             let _ = h.log(&NewAction {
                 rung: rung.index(),
                 trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
@@ -982,7 +999,7 @@ impl Ladder {
                 target: target.clone(),
                 bytes_freed: outcome.bytes_freed as i64,
                 succeeded: !outcome.did_nothing(),
-                notes: outcome.notes.join("; "),
+                notes,
             });
         }
     }
@@ -1545,7 +1562,7 @@ mod tests {
         };
         let report = l.step(&mut w);
         let note = &report.steps[0].2.notes[0];
-        assert!(note.contains("delegated cgroup"), "{note}");
+        assert!(note.contains("group reclaim unavailable"), "{note}");
     }
 
     #[test]

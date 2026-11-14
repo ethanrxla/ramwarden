@@ -10,7 +10,10 @@
 export const config = {
   // The hosted API (`ramwarden-api`). Changing it also means changing the
   // `connect-src` in each page's Content-Security-Policy.
-  apiBase: typeof location !== "undefined" ? location.origin : "https://api.ramwarden.com",
+  apiBase: typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)
+    ? location.origin
+    : typeof location !== "undefined" && location.hostname === "staging.ramwarden.com"
+      ? "https://api-staging.ramwarden.com" : "https://api.ramwarden.com",
 
   repo: "https://github.com/ethanrxla/ramwarden",
   releases: "https://github.com/ethanrxla/ramwarden/releases/latest",

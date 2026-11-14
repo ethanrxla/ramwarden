@@ -300,6 +300,7 @@ impl AppState {
 
     /// Safe, identity-scoped close protocol. Older extensions cannot execute it.
     pub async fn close_safe(&self, requested: &[crate::browser::Target], approved: bool) -> DiscardResult {
+        let requested_at = std::time::Instant::now();
         self.request_all_tabs().await;
         let rows = crate::tabreview::snapshot(self);
         let auto = crate::browser::close_candidates(&rows, &self.tabs_config());
@@ -326,7 +327,9 @@ impl AppState {
             let rx = {
                 let mut hub=self.hub.lock().unwrap();
                 // Polling delivery is deferred until it supports correlated close acknowledgements.
-                if !hub.reg.is_socket(&target.browser) { result.refused.push(target.clone()); continue; }
+                if !hub.reg.is_socket(&target.browser) || !hub.reg.reported_since(&target.browser,requested_at) {
+                    result.refused.push(target.clone()); continue;
+                }
                 let (tx,rx)=oneshot::channel();
                 hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
                 let message=serde_json::json!({"action":"close_safe","requestId":request,

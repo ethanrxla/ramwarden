@@ -335,26 +335,44 @@ async function buildTabReport(activity) {
 // releasedTabs, which the popup lists for one-click reopening.
 const RELEASED_LIMIT = 200;
 
+// A tab touched this recently is what the user is doing right now
+// (browser.rs ACTIVE_WINDOW_MINUTES), and a work page touched within the hour is
+// still mid-task. Neither is closed, however the close was requested: these
+// paths carry bare IDs or a batch approval, not a look at this particular tab.
+const RECENT_USE_MINUTES = 15;
+const WORK_RECENT_MINUTES = 60;
+function _recentlyUsed(tab) {
+  if (isDisposableBrowserPage(tab.url)) return false;
+  const idle = _idleMinutes(tab);
+  return idle < RECENT_USE_MINUTES || (isWorkPage(tab.url) && idle < WORK_RECENT_MINUTES);
+}
+
 async function closeTabs(tabIds) {
+  await safetyReady;
   const tabs = [];
   for (const id of (tabIds || [])) {
     const tab = await new Promise(r => chrome.tabs.get(id, t => r(chrome.runtime.lastError ? null : t)));
-    if (tab && !isProtectedFor(tab.url, _idleMinutes(tab)) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito) tabs.push(tab);
+    if (tab && !isProtectedFor(tab.url, _idleMinutes(tab)) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito
+        && !_recentlyUsed(tab) && !safety.work[tab.id]?.dirty && (safety.pages[tab.url]?.until || 0) <= Date.now()) tabs.push(tab);
   }
   const closed = [];
   for (const tab of tabs) {
     const ok = await new Promise(r => chrome.tabs.remove(tab.id, () => r(!chrome.runtime.lastError)));
     if (ok) closed.push(tab);
   }
-  if (closed.length) await _rememberReleased(closed);
+  if (closed.length) await _rememberReleased(closed, "closed");
   _confirmClosed(closed.map(t => t.id));
   return closed.map(t => t.id);
 }
 
-async function _rememberReleased(tabs) {
+// Everything RamWarden does to a tab goes in one log the popup shows: "closed"
+// (gone; click reopens it) or "unloaded" (still in the tab strip, memory freed;
+// click switches to it). Unloads used to leave no trace but the badge count, so
+// it looked as if nothing, or something unknown, had happened.
+async function _rememberReleased(tabs, kind = "closed") {
   const r = await new Promise(res => chrome.storage.local.get("releasedTabs", res));
   const now = Date.now();
-  const added = tabs.map(t => ({ url: t.url, title: t.title || t.url, closedAt: now }));
+  const added = tabs.map(t => ({ url: t.url, title: t.title || t.url, closedAt: now, kind, tabId: t.id }));
   const releasedTabs = [...added, ...(r?.releasedTabs || [])].slice(0, RELEASED_LIMIT);
   await new Promise(res => chrome.storage.local.set({ releasedTabs }, res));
 }
@@ -589,14 +607,15 @@ async function discardTabs(command) {
         resolve(!chrome.runtime.lastError && observed?.url === target.url && observed?.discarded === true);
       });
     }));
-    if (ok) { confirmed.push(tab.id); wardenDiscarded.add(tab.id); }
+    if (ok) { confirmed.push(tab); wardenDiscarded.add(tab.id); }
   }
+  if (confirmed.length) await _rememberReleased(confirmed, "unloaded");
   if (!IS_FIREFOX) {
-    _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed});
+    _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed.map(t => t.id)});
     await _sendTabReport();
   }
   // Poll transport reports the resulting discarded flags in its next report.
-  return confirmed;
+  return confirmed.map(t => t.id);
 }
 
 // Local feedback survives service-worker and browser restarts. No page text is collected.
@@ -662,7 +681,9 @@ async function closeSafe(command) {
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
       || tab.status!=="complete" || tab.autoDiscardable===false
       || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
-      || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))) continue;
+      || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))
+      // Approval covers a batch the user may not have read tab by tab.
+      || (approved && _recentlyUsed(tab))) continue;
     safetyClosing.add(tab.id);
     const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
     if (ok) {
@@ -672,7 +693,7 @@ async function closeSafe(command) {
     } else safetyClosing.delete(tab.id);
   }
   persistSafety();
-  if (closed.length) await _rememberReleased(closed);
+  if (closed.length) await _rememberReleased(closed, "closed");
   _send({action:"tabs_closed_safe",requestId:command.requestId,tabIds:closed.map(t=>t.id)});
   return closed.map(t=>t.id);
 }

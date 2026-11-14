@@ -60,7 +60,7 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
             pet = obj["pet"] as? Bool ?? true
             if changed {
                 onChange?()
-                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram") }
+                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram",background:true) }
             }
         }
     }

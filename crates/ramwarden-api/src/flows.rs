@@ -79,7 +79,8 @@ fn app_with_threat(o:Opts,threat:crate::threat::ThreatDesk)->App {
         downloads_dir: o.downloads,
         siwe_chain_id: BASE_SEPOLIA,
         public_url: "https://api.ramwarden.app".into(),
-        releases_url: crate::install::DEFAULT_RELEASES_URL.into(),
+        install_links_enabled: true,
+                releases_url: crate::install::DEFAULT_RELEASES_URL.into(),
         support: crate::support::SupportDesk::new(Some(crate::config::hash_token(STAFF))),
     };
     let state = AppState {

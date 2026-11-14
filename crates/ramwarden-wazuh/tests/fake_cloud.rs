@@ -52,7 +52,7 @@ async fn serve(enrollment: Value) -> String {
 }
 
 fn good() -> Value {
-    json!({"manager": "agents.ramwarden.app", "agent_name": "acct1a2b-desk", "group": "acct-1a2b",
+    json!({"manager": "agents.ramwarden.com", "agent_name": "acct1a2b-desk", "group": "acct-1a2b",
            "agent_key": "MDQyIGFjY3QxYTJiLWRlc2sgYW55IDAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
            "package": {"url": "https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.14.0-1_amd64.deb",
                        "sha256": "a".repeat(64), "kind": "deb"}})
@@ -94,6 +94,6 @@ async fn an_unsafe_enrollment_from_the_api_is_refused() {
 
 #[test]
 fn the_hosted_api_must_be_https() {
-    assert!(Cloud::new("http://api.ramwarden.app", Secret::new("t"), Duration::ZERO).is_err());
-    assert!(Cloud::new("https://api.ramwarden.app", Secret::new("t"), Duration::ZERO).is_ok());
+    assert!(Cloud::new("http://api.ramwarden.com", Secret::new("t"), Duration::ZERO).is_err());
+    assert!(Cloud::new("https://api.ramwarden.com", Secret::new("t"), Duration::ZERO).is_ok());
 }

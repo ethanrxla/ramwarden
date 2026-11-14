@@ -82,7 +82,7 @@ pub struct Cloud {
 }
 
 impl Cloud {
-    /// `base` is the hosted API, e.g. `https://api.ramwarden.app`. It must be
+    /// `base` is the hosted API, e.g. `https://api.ramwarden.com`. It must be
     /// https (http only to this computer, for tests and local development).
     pub fn new(base: &str, token: Secret, timeout: Duration) -> Result<Cloud> {
         let base = crate::api::parse_url(base)?.ok_or_else(|| Error::BadUrl(base.into(), "empty".into()))?;

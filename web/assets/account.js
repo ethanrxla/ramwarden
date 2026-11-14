@@ -60,7 +60,7 @@ class AccountPage {
     if (q.get("checkout") === "done" && q.get("payment")) {
       const area = h("div");
       this.flashArea.replaceChildren(area);
-      this.waitForPayment(q.get("payment"), area);
+      this.waitForPayment(q.get("payment"), area, this.extensionPanel());
     }
   }
 
@@ -133,7 +133,10 @@ class AccountPage {
   extensionPanel() {
     const action = config.chromeStore
       ? h("a", { class: "button", href: config.chromeStore, target: "_blank", rel: "noopener" }, "Add to Chrome")
-      : h("p", { class: "muted" }, "Coming to the Chrome Web Store. Until then: open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the ", h("code", {}, "extension"), " folder from the ", h("a", { href: config.repo }, "source"), ". Works in Brave and Edge too.");
+      : h("div", {},
+          h("p", {}, h("a", { href: "downloads/ramwarden-chrome.zip", download: "" }, "Download for Chrome, Brave or Edge"),
+            " · ", h("a", { href: "downloads/ramwarden-chrome.zip.sha256" }, "SHA-256")),
+          h("p", { class: "muted" }, "Unzip the download. In chrome://extensions, turn on Developer mode, select Load unpacked, and choose the folder you unzipped."));
     return h(
       "section",
       { class: "panel", id: "extension" },

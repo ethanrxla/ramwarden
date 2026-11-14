@@ -115,6 +115,7 @@ async fn run() -> Result<(), String> {
                 mailer,
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),
                 public_url: cc.public_url.clone(),
+                install_links_enabled: cc.install_links_enabled,
                 releases_url: cc.releases_url.clone(),
                 support: {
                     if cc.support_token.is_none() {

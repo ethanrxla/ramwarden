@@ -164,7 +164,7 @@ async function run() {
     const p = await page();
     await p.goto(`${base}/index.html?mock=1&as=trial`);
     await p.waitForSelector('[data-install][data-state="ready"]');
-    assert.match(await p.textContent('[data-os-panel="linux"] .cmd'), /^curl -fsSL https:\/\/get\.ramwarden\.app\/i\/\S+ \| sh$/);
+    assert.match(await p.textContent('[data-os-panel="linux"] .cmd'), /^curl -fsSL https:\/\/api\.ramwarden\.com\/i\/\S+ \| sh$/);
     assert.match(await p.textContent('[data-os-panel="windows"] .cmd'), /^irm https:.* \| iex$/);
     assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Download installer'));
     await p.goto(`${base}/index.html?mock=1&as=lapsed`);
@@ -347,6 +347,25 @@ async function run() {
     await p.waitForSelector("text=No devices yet");
   });
 
+  t("chat launchers do not cover either warden on desktop or mobile", async () => {
+    const p = await page();
+    await p.emulateMedia({ reducedMotion: "reduce" });
+    for (const width of [390, 1280]) {
+      await p.setViewportSize({ width, height: 720 });
+      for (const name of ["index", "threat"]) {
+        await p.goto(`${base}/${name}.html?mock=1`);
+        const ask = p.locator(".pet-ask");
+        await ask.waitFor();
+        const sprite = await p.locator("[data-pet] img").boundingBox();
+        assert.ok((await ask.boundingBox()).y >= sprite.y + sprite.height + 6);
+        await ask.click();
+        const chat = await p.locator("#warden-chat").boundingBox();
+        const mute = await p.locator(".pet-mute").boundingBox();
+        assert.ok(chat.y + chat.height < mute.y);
+      }
+    }
+  });
+
   t("the corner pet answers questions and opens a ticket", async () => {
     const p = await page();
     await p.goto(`${base}/index.html?mock=1`);
@@ -376,7 +395,7 @@ async function run() {
     await q.route("**/v1/**", (r) => r.abort());
     await q.goto(`${base}/threat.html`);
     await q.click("[data-pet] img");
-    await q.waitForSelector("#warden-chat >> text=can't reach the RamWarden server");
+    await q.waitForSelector("#warden-chat >> text=Chat is temporarily unavailable");
     assert.deepEqual(p.errors, []);
   });
 

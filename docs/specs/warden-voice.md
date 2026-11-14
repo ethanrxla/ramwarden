@@ -103,6 +103,9 @@ them. `ELEVENLABS_RAM_VOICE_ID` defaults to George and
 `eleven_flash_v2_5`. Speech has separate Mac toggles for each companion. Mute
 and hiding stop playback, identical lines are cached, and provider requests are
 bounded to 800 characters, six requests per minute and 20,000 characters per day.
+The Mac reads long replies in order using chunks of at most 800 Unicode scalars,
+preferably split at sentence or word boundaries. A new reply, mute, or hiding
+cancels the remaining chunks. Background comments do not interrupt a reply.
 Text remains usable if speech is unavailable.
 
 Production website sales chat remains separate from this local focus session.

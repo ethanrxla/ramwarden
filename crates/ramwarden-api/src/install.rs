@@ -52,6 +52,9 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
     let c = cloud(&state)?;
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
+    if !c.install_links_enabled {
+        return Err(error(StatusCode::SERVICE_UNAVAILABLE, "Desktop downloads are not available yet."));
+    }
     // Lite accounts get the line too: RamWarden Lite is the fixed rules on
     // one device, with no hosted AI (product cards, 2026-11-01).
     if at_device_limit(c, &a, now).await? {
@@ -88,7 +91,7 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
 async fn script(State(state): State<Arc<AppState>>, Path((token, kind)): Path<(String, String)>) -> Reply {
     let c = cloud(&state)?;
     let gone = || error(StatusCode::NOT_FOUND, "No such install link.");
-    if !valid_token(&token) {
+    if !c.install_links_enabled || !valid_token(&token) {
         return Err(gone());
     }
     let body = match kind.as_str() {

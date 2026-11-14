@@ -48,8 +48,10 @@ async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
     if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
     let auto=crate::browser::close_candidates(&rows,&st.tabs_config());
-    let uncertain=rows.into_iter().filter(|r|r.closeable && (st.cfg.tabs.close=="review" || !auto.contains(&r.target))
-        && matches!(r.status,"candidate"|"unloaded"|"retained")).take(10).collect();
+    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| r.offerable_for_close()
+        && (st.cfg.tabs.close == "review" || !auto.contains(&r.target))).collect();
+    uncertain.sort_by(crate::browser::close_priority);
+    uncertain.truncate(10);
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());
     Json(serde_json::json!({"proposal":proposal}))
 }
@@ -71,6 +73,11 @@ async fn respond(State(st):State<AppState>,Json(body):Json<Response>)->Result<Js
     if body.action=="close" {
         if st.on_hold() {return Err(StatusCode::CONFLICT);}
         let result=st.close_safe(&body.tabs,true).await;
+        let closed: Vec<_> = proposal.tabs.iter().filter(|r|result.confirmed.contains(&r.target))
+            .map(|r|(r.target.url.clone(),r.title.clone())).collect();
+        if !closed.is_empty() && let Ok(h)=st.history.lock() {
+            let _=h.save_tabs(&closed,0.0,"warden","review");
+        }
         return Ok(Json(serde_json::json!({"confirmed":result.confirmed,"refused":result.refused})));
     }
     Ok(Json(serde_json::json!({"ok":true})))
