@@ -256,22 +256,29 @@ impl Chat {
             self.pending = None;
         }
         let busy = self.result.is_some();
-        let editor = ui.add_enabled(
+        // Enter sends and Shift+Enter starts a new line, as in the main window's
+        // chat (#67). The key is taken before the editor sees it, or the
+        // multiline box would insert the newline first.
+        let editor_id = ui.make_persistent_id("companion-chat-input");
+        let enter = !busy
+            && ui.memory(|m| m.has_focus(editor_id))
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        ui.add_enabled(
             !busy,
             egui::TextEdit::multiline(&mut self.input)
+                .id(editor_id)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY)
-                .hint_text("Talk to your warden…"),
+                .hint_text("Talk to your warden… (Enter sends, Shift+Enter for a new line)"),
         );
         let send = ui
             .add_enabled(
                 !busy && !self.input.trim().is_empty() && self.input.len() <= 4000,
                 egui::Button::new("Send"),
             )
+            .on_hover_text("Send (Enter)")
             .clicked()
-            || (!busy
-                && editor.has_focus()
-                && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)));
+            || enter;
         if busy {
             ui.spinner();
             if let Some(text) = &self.progress_text { ui.label(text); }
