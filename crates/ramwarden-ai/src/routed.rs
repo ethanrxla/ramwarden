@@ -19,8 +19,11 @@ pub fn enabled() -> bool {
 }
 // Short conversation must not acquire a sidecar dependency from system telemetry.
 fn needs_compression(work: Work, messages: &[Value]) -> bool {
-    let request_bytes=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).map(str::len).unwrap_or(0);
-    request_bytes >= 8000 || (work != Work::Conversation && messages.iter().map(|m|m.to_string().len()).sum::<usize>() >= 8000)
+    user_request_too_long(messages) || (work != Work::Conversation && messages.iter().map(|m|m.to_string().len()).sum::<usize>() >= 8000)
+}
+/// Only a request the user wrote this long must be compressed before it is sent.
+fn user_request_too_long(messages: &[Value]) -> bool {
+    messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).map(str::len).unwrap_or(0) >= 8000
 }
 pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     if !enabled() {
@@ -31,6 +34,14 @@ pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     let prepared = if compress { crate::nyquest::compress(messages).await } else { Ok(messages.to_vec()) };
     let messages = match prepared {
         Ok(messages) => messages,
+        // Telemetry made the request big, not the user. Without the sidecar,
+        // send it as it is: a slightly larger request beats the chat saying
+        // "AI unavailable" to "which model is running?" (seen 2026-11-14 on
+        // Windows, where no compression sidecar is installed).
+        Err(_) if !user_request_too_long(&messages) => {
+            tracing::info!("compression unavailable; sending the request uncompressed");
+            messages.to_vec()
+        }
         Err(_) => {
             tracing::warn!("warden model request stopped: required compression unavailable");
             return None;
@@ -227,6 +238,14 @@ mod compression_routing_tests {
         let messages=vec![json!({"role":"system","content":"Security report ".repeat(2000)}),json!({"role":"user","content":"can you shut the fuck up dumbass goat"})];
         assert!(!needs_compression(Work::Conversation,&messages));
         assert!(needs_compression(Work::Complex,&messages));
+    }
+    #[test]
+    fn large_telemetry_alone_can_go_uncompressed() {
+        // The case behind "Conversational AI is unavailable": a short question
+        // classified as multi-step, with a large system snapshot.
+        let messages=[json!({"role":"system","content":"x".repeat(9000)}),json!({"role":"user","content":"can you find out which ollama model is running?"})];
+        assert!(!user_request_too_long(&messages));
+        assert!(user_request_too_long(&[json!({"role":"user","content":"x".repeat(8000)})]));
     }
     #[test]
     fn long_user_requests_still_require_compression() {
