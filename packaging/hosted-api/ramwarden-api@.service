@@ -1,0 +1,22 @@
+[Unit]
+Description=RamWarden hosted API (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=ramwarden-api-%i
+WorkingDirectory=/var/lib/ramwarden-api-%i
+EnvironmentFile=/etc/ramwarden-api/%i.env
+ExecStart=/opt/ramwarden-api/%i/current/ramwarden-api
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

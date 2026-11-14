@@ -57,10 +57,17 @@ pub struct ManagerAgent {
 /// returns, where the triage fields are filled in by its AI tier.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Alert {
+    #[serde(default)]
+    pub id:String,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub evidence_objects:Vec<crate::evidence::Evidence>,
     pub timestamp: String,
     pub rule_id: String,
     pub level: u8,
     pub description: String,
+    /// Bounded event metadata only. Never raw logs, diffs or file contents.
+    #[serde(default, skip_serializing_if="std::collections::BTreeMap::is_empty")]
+    pub evidence: std::collections::BTreeMap<String,String>,
     #[serde(default)]
     pub groups: Vec<String>,
     /// MITRE ATT&CK tactics, when the rule maps to any.
@@ -82,8 +89,8 @@ pub struct Alert {
 
 /// A read-only client for one Wazuh deployment.
 pub struct Client {
-    http: reqwest::Client,
-    manager: Option<Url>,
+    pub(crate) http: reqwest::Client,
+    pub(crate) manager: Option<Url>,
     indexer: Option<Url>,
     ep: Endpoints,
     token: Mutex<Option<(String, Instant)>>,
@@ -98,9 +105,9 @@ impl Client {
         let mut b = reqwest::Client::builder()
             .timeout(if ep.timeout.is_zero() { Duration::from_secs(10) } else { ep.timeout });
         if let Some(pem) = &ep.ca_pem {
-            let cert = reqwest::Certificate::from_pem(pem)
+            let certs = reqwest::Certificate::from_pem_bundle(pem)
                 .map_err(|e| Error::CaFile("ca_file".into(), e.to_string()))?;
-            b = b.add_root_certificate(cert);
+            for cert in certs { b = b.add_root_certificate(cert); }
         }
         let http = b.build().map_err(|e| Error::Unreachable("manager", e.to_string()))?;
         Ok(Client { http, manager, indexer, ep, token: Mutex::new(None) })
@@ -115,7 +122,7 @@ impl Client {
     }
 
     /// A manager token, from the cache or a fresh sign-in.
-    async fn token(&self, fresh: bool) -> Result<String> {
+    pub(crate) async fn token(&self, fresh: bool) -> Result<String> {
         if !fresh
             && let Some((t, at)) = self.token.lock().unwrap().as_ref()
             && at.elapsed() < TOKEN_REUSE
@@ -177,24 +184,55 @@ impl Client {
     /// Alerts for `agent` at or above `min_level` in the last `hours`, newest
     /// first, at most [`MAX_ALERTS`].
     pub async fn alerts(&self, agent: &str, min_level: u8, hours: u32) -> Result<Vec<Alert>> {
-        let base = self.indexer.as_ref().ok_or(Error::Unreachable("indexer", "not configured".into()))?;
-        let url = join(base, "wazuh-alerts-*/_search");
-        let resp = self
-            .http
-            .post(url)
-            .basic_auth(&self.ep.indexer_user, Some(self.ep.indexer_password.expose()))
-            .json(&alert_query(agent, min_level, hours))
-            .send()
-            .await
-            .map_err(|e| Error::Unreachable("indexer", e.without_url().to_string()))?;
-        match resp.status() {
-            s if s.is_success() => {}
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(Error::Auth("indexer")),
-            s => return Err(Error::Status("indexer", s.as_u16())),
-        }
-        let body: Value = resp.json().await.map_err(|e| Error::Parse("indexer", e.to_string()))?;
-        parse_alerts(&body)
+        self.alerts_scoped(agent,None,min_level,hours).await
     }
+    pub async fn alerts_for_agent(&self,agent:&str,agent_id:&str,min_level:u8,hours:u32)->Result<Vec<Alert>> {
+        self.alerts_scoped(agent,Some(agent_id),min_level,hours).await
+    }
+    async fn search(&self,query:&Value,limit:usize)->Result<Value>{
+        let base=self.indexer.as_ref().ok_or(Error::Unreachable("indexer","not configured".into()))?;
+        let mut response=self.http.post(join(base,"wazuh-alerts-*/_search")).basic_auth(&self.ep.indexer_user,Some(self.ep.indexer_password.expose())).json(query).send().await.map_err(|e|Error::Unreachable("indexer",e.without_url().to_string()))?;
+        match response.status(){s if s.is_success()=>{},StatusCode::UNAUTHORIZED|StatusCode::FORBIDDEN=>return Err(Error::Auth("indexer")),s=>return Err(Error::Status("indexer",s.as_u16()))}
+        let mut bytes=vec![];while let Some(chunk)=response.chunk().await.map_err(|e|Error::Parse("indexer",e.without_url().to_string()))? {if bytes.len()+chunk.len()>limit{return Err(Error::Parse("indexer","response limit exceeded".into()));}bytes.extend_from_slice(&chunk);}
+        serde_json::from_slice(&bytes).map_err(|_|Error::Parse("indexer","invalid response".into()))
+    }
+    async fn alerts_scoped(&self,agent:&str,agent_id:Option<&str>,min_level:u8,hours:u32)->Result<Vec<Alert>> {
+        let mut query=alert_query(agent,min_level,hours);
+        if let Some(id)=agent_id {query["query"]["bool"]["filter"].as_array_mut().unwrap().push(json!({"term":{"agent.id":id}}));}
+        let mut body=self.search(&query,2*1024*1024).await?;
+        if let Some(agent_id)=agent_id && let Some(hits)=body["hits"]["hits"].as_array_mut(){hits.retain(|hit|hit["_source"]["agent"]["id"]==agent_id && hit["_source"]["agent"]["name"]==agent);}
+        let mut alerts=parse_alerts(&body)?;
+        let ids=alerts.iter().filter(|a|a.rule_id=="533" && !a.id.is_empty()).take(8).map(|a|a.id.clone()).collect::<Vec<_>>();
+        if !ids.is_empty(){
+            query["size"]=json!(ids.len());query["_source"]=json!(["timestamp","full_log","previous_output"]);
+            query["query"]["bool"]["filter"].as_array_mut().unwrap().extend([json!({"ids":{"values":ids}}),json!({"term":{"rule.id":"533"}})]);
+            if let Ok(body)=self.search(&query,1024*1024).await
+                && let Some(hits)=body["hits"]["hits"].as_array(){for hit in hits {
+                    if let Some(alert)=alerts.iter_mut().find(|a|hit["_id"].as_str()==Some(&a.id)) {alert.evidence_objects.push(crate::evidence::netstat(&alert.id,&hit["_source"]));}
+                }
+            }
+        }
+        Ok(alerts)
+    }
+    pub async fn events(&self,agent:&str,agent_id:&str,rule:Option<&str>,group:Option<&str>,hours:u32,before:Option<&str>)->Result<Vec<Alert>> {
+        let mut query=alert_query(agent,0,hours.clamp(1,720));
+        let filters=query["query"]["bool"]["filter"].as_array_mut().unwrap();filters.push(json!({"term":{"agent.id":agent_id}}));
+        if let Some(rule)=rule{filters.push(json!({"term":{"rule.id":rule}}));}
+        if let Some(group)=group{filters.push(json!({"term":{"rule.groups":group}}));}
+        if let Some(before)=before{filters.push(json!({"range":{"timestamp":{"lt":before}}}));}
+        {
+            let mut body=self.search(&query,2*1024*1024).await?;
+            if let Some(hits)=body["hits"]["hits"].as_array_mut(){hits.retain(|hit|hit["_source"]["agent"]["id"]==agent_id && hit["_source"]["agent"]["name"]==agent);}
+            parse_alerts(&body)
+        }
+    }
+    pub async fn event(&self,agent:&str,agent_id:&str,id:&str)->Result<Option<Value>> {
+        if !crate::evidence::valid_event_id(id){return Err(Error::Parse("event","invalid event id".into()));}
+        let query=json!({"size":1,"query":{"bool":{"filter":[{"term":{"agent.name":agent}},{"term":{"agent.id":agent_id}},{"ids":{"values":[id]}}]}}});
+        let body=self.search(&query,256*1024).await?;
+        Ok(body["hits"]["hits"].as_array().and_then(|hits|hits.first()).filter(|hit|hit["_source"]["agent"]["id"]==agent_id && hit["_source"]["agent"]["name"]==agent).map(|hit|json!({"event_id":hit["_id"],"index":hit["_index"],"source":"Wazuh indexer","read_only":true,"record":hit["_source"]})))
+    }
+
 }
 
 /// `""` is "not configured". Anything else must be https, or http to this
@@ -231,10 +269,12 @@ pub(crate) fn join(base: &Url, path: &str) -> Url {
 
 /// The indexer search for one agent's recent notable alerts.
 pub fn alert_query(agent: &str, min_level: u8, hours: u32) -> Value {
+    let mut source=vec!["agent.id","agent.name","timestamp","rule.id","rule.level","rule.description","rule.groups","rule.mitre.tactic","location","decoder.name"];
+    source.extend_from_slice(crate::evidence::OBSERVATION_FIELDS);
     json!({
         "size": MAX_ALERTS,
         "sort": [{"timestamp": {"order": "desc"}}],
-        "_source": ["timestamp", "rule.id", "rule.level", "rule.description", "rule.groups", "rule.mitre.tactic"],
+        "_source":source,
         "query": {"bool": {"filter": [
             {"term": {"agent.name": agent}},
             {"range": {"rule.level": {"gte": min_level}}},
@@ -278,7 +318,12 @@ pub fn parse_alerts(body: &Value) -> Result<Vec<Alert>> {
         .filter_map(|h| {
             let s = &h["_source"];
             let rule = &s["rule"];
+            let event_id=h["_id"].as_str().or_else(||s["id"].as_str()).unwrap_or("").chars().take(256).collect::<String>();
             Some(Alert {
+                id:event_id.clone(),
+                evidence_objects:vec![crate::evidence::observation(&event_id,s)],
+                evidence: [("file", &s["syscheck"]["path"]),("event", &s["syscheck"]["event"]),("source_ip", &s["data"]["srcip"]),("destination_ip", &s["data"]["dstip"]),("process", &s["data"]["win"]["eventdata"]["image"])]
+                    .into_iter().filter_map(|(k,v)|v.as_str().map(|v|(k.to_string(),v.chars().take(512).collect()))).collect(),
                 timestamp: s["timestamp"].as_str().unwrap_or_default().to_string(),
                 rule_id: match &rule["id"] {
                     Value::String(id) => id.clone(),
@@ -301,6 +346,14 @@ pub fn parse_alerts(body: &Value) -> Result<Vec<Alert>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_evidence_excludes_raw_logs_and_file_contents() {
+        let alerts=parse_alerts(&json!({"hits":{"hits":[{"_source":{"timestamp":"now","rule":{"id":"550","level":7,"description":"File changed"},"syscheck":{"path":"/tmp/example","event":"modified","diff":"SECRET CONTENT"},"full_log":"SECRET RAW LOG"}}]}})).unwrap();
+        assert_eq!(alerts[0].evidence["file"],"/tmp/example");
+        let serialized=serde_json::to_string(&alerts).unwrap();assert!(!serialized.contains("SECRET"));
+        let query=alert_query("agent",7,24);assert!(!query["_source"].as_array().unwrap().iter().any(|s|s=="full_log" || s=="syscheck.diff"));
+    }
 
     #[test]
     fn plain_http_is_refused_off_this_machine() {

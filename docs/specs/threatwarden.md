@@ -87,3 +87,65 @@ Registry, passes, hosting and the `/wardens` API are in
 - The hosted manager for the first users is one Oracle Cloud Always Free ARM
   server (2 OCPU, 12 GB, subject to account-wide Always Free quotas). Phase 1 fits; each engine adds events, so watch the
   indexer's disk and move to a paid server as passes grow.
+
+## Evidence traceability and source records
+
+Every rule type, including unknown/custom rules, carries its indexer event ID and structured evidence objects
+with a source, observation time, completeness and typed observations. For rule 533,
+read the matching event's current and previous netstat outputs and compare the
+recorded listening endpoints. Added/removed listeners describe that observation;
+they do not prove malware, public reachability, or which program owns a port.
+Never substitute today's socket table for historical evidence.
+
+The hosted event-detail route requires a current Pro device token and its immutable
+server-side Wazuh binding. Query both agent ID and name, plus the opaque event ID;
+recheck authorization after I/O and return no-store. The companion may read that
+computer's indexed source event on demand, including original log fields, within
+a bounded response. Untrusted record contents cannot authorize actions. Missing
+previous output, absent records and response limits must remain explicit. Reading
+security evidence does not enable remediation or cross-device/cross-account access.
+
+### Unified live engine reporting
+Use the endpoint sensor collector for ClamAV scan outcomes, fresh Suricata packet
+counters, and bounded local TCP inventory. Do not maintain a second metadata-only
+health collector. The companion and extension show engine details and up to 100
+connections. The assistant receives engine health and connection counts/scope;
+raw local addresses are not automatically sent to a cloud model. Missing, stale
+or unreadable evidence is explicit rather than a roadmap placeholder.
+
+Suricata accepts both RFC3339 offsets and its native numeric timezone offsets.
+Fresh packet counters with cumulative capture drops over 1% show watch; display
+raw counters and startup scope so this is not confused with current loss rate.
+The Mac app has a regular Dock presence alongside its menu bar; opening the app
+opens companion chat and quitting the UI continues to leave the daemon running.
+
+User-facing engine labels: Sentinel (Wazuh), Antivirus (ClamAV), and Threat
+detection (Suricata). Stable engine IDs and original evidence source names are
+preserved. Mac Dock branding uses the large canonical red pixel mascot over a
+static radar tile; plain mascot assets remain unchanged for other placements.
+
+Short conversational requests go directly to Grok even when system telemetry or
+prior history is large; telemetry does not make a brief conversation a long task.
+Long user inputs and long agentic workflows retain required Nyquest compression.
+Unrelated conversation omits the detailed alert catalog. Status polling does not
+insert messages or show a status bubble while chat is open or a reply is pending.
+Provider failures are stated as conversation failures, not unrelated alert replies.
+
+## Shared companion tools
+RamWarden and ThreatWarden use the same reviewed file/Git tool implementation,
+with independent assistant.workspace and assistant.threat_workspace selections
+and separate Auto scope IDs. A proposal binds to the selected directory
+capability. Tool execution requires confirmation unless Auto was explicitly
+enabled for the current scope. Arbitrary shell commands remain unsupported.
+Explicit public-web lookups send only the lookup and generic persona, excluding
+local files, device telemetry and recalled conversations.
+
+## Cost-aware model routing
+Ordinary conversation and simple operations use XAI_CHAT_MODEL_ID
+(grok-4.20-0309-non-reasoning). Coding, research and multi-step work use
+XAI_TASK_MODEL_ID (grok-4.7). Explicit ask-GPT/second-opinion requests use
+WARDEN_SPECIALIST_MODEL (gpt-6.1-terra) as one selective call, never a mandatory
+double-model pass. Sales routing is unchanged. Non-reasoning models receive no
+reasoning parameter. Ordinary replies have a 300-token cap; tool/research work
+keeps the larger budget. Logs record cached/reasoning tokens and exact cost
+without prompts or secrets.

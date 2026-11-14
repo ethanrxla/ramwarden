@@ -11,6 +11,7 @@ fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
         inactive_minutes: idle,
         eligible: true,
         closeable: true,
+        safe_close_supported: true,
         auto_closeable: true,
         work: false,
         status: "candidate",
@@ -36,7 +37,9 @@ fn a_focus_check_in_offers_a_way_to_answer_without_closing_any_tab() {
     let bubble = voice.speak(&settings, &scene(&[], &[], Instant::now(), DAY0)).unwrap();
     assert_eq!(bubble.kind, Kind::Focus);
     assert!(bubble.text.contains("What are you working on?"));
-    assert_eq!(bubble.choices[0].id, "focus");
+    // Answered by typing, not through a button that opens a box.
+    assert!(bubble.choices.is_empty());
+    assert_eq!(bubble.input, Some(FOCUS_PROMPT));
     assert!(bubble.tab.is_none());
 }
 
@@ -269,4 +272,15 @@ fn no_more_than_three_jokes_a_day_by_default() {
         })
         .count();
     assert_eq!(jokes, 3);
+}
+
+#[test]
+fn a_cached_legacy_worker_is_not_offered_a_close_it_cannot_acknowledge() {
+    let v = Voice::default();
+    let mut r = row(1, 300, 0.3, 600);
+    r.safe_close_supported = false;
+    let target = r.target.clone();
+    let rows = vec![r];
+    let bubble = v.speak(&cfg(), &scene(&rows, &[target], Instant::now(), DAY0));
+    assert!(bubble.is_none_or(|b| b.kind != Kind::CheckIn));
 }

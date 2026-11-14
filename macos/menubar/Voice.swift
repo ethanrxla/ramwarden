@@ -16,6 +16,9 @@ struct WardenBubble: Equatable {
     let text: String
     let choices: [WardenChoice]
     let url: String?
+    let source:URL?
+    /// Placeholder for the always-visible answer box (the focus question).
+    let input: String?
     var isQuestion: Bool { !choices.isEmpty }
 
     init?(_ obj: Any?) {
@@ -27,6 +30,8 @@ struct WardenBubble: Equatable {
             guard let id = $0["id"] as? String, let label = $0["label"] as? String else { return nil }
             return WardenChoice(id: id, label: label)
         }
+        source=(b["source_url"] as? String).flatMap(URL.init(string:))
+        input = b["input"] as? String
         url = (b["tab"] as? [String: Any])?["url"] as? String
     }
 }
@@ -34,7 +39,7 @@ struct WardenBubble: Equatable {
 /// The same mute choices as the other faces: (label, hours), nil = until unmuted.
 let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet for today", 12), ("Quiet until I unmute", nil)]
 
-final class VoiceModel: ObservableObject {
+@MainActor final class VoiceModel: ObservableObject {
     @Published var bubble: WardenBubble?
     @Published var muted = false
     /// Pets come with Plus and Pro, not Lite.
@@ -49,6 +54,7 @@ final class VoiceModel: ObservableObject {
     func poll() async {
         guard let obj = await fetchJSON("warden/bubble") as? [String: Any] else { return }
         await MainActor.run {
+            muted = obj["muted"] as? Bool ?? false
             guard Date() >= answerVisibleUntil else { return }
             let next = WardenBubble(obj["bubble"])
             let changed = next != bubble || (obj["pet"] as? Bool ?? true) != pet
@@ -57,7 +63,7 @@ final class VoiceModel: ObservableObject {
             pet = obj["pet"] as? Bool ?? true
             if changed {
                 onChange?()
-                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram") }
+                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram",background:true) }
             }
         }
     }
@@ -93,16 +99,17 @@ final class VoiceModel: ObservableObject {
     }
 
     func mute(_ hours: Double?) {
+        CompanionAudio.setMuted(true,warden:"ram",hours:hours)
         CompanionSpeech.shared.stop("ram")
         Task {
             var body: [String: Any] = ["muted": true]
             if let h = hours { body["hours"] = h }
-            _ = await post("warden/mute", body)
+            if let response = await post("warden/mute", body), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }
             await poll()
         }
     }
 
-    func unmute() { Task { _ = await post("warden/mute", ["muted": false]); await poll() } }
+    func unmute() { CompanionAudio.setMuted(false,warden:"ram"); Task { if let response = await post("warden/mute", ["muted": false]), let state = response["muted"] as? Bool { self.muted = state; self.onChange?() }; await poll() } }
 }
 
 struct BubbleView: View {
@@ -123,9 +130,25 @@ struct BubbleView: View {
                     Button { voice.answer("dismiss") } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                         .buttonStyle(.plain).accessibilityLabel("Dismiss")
                 }
-                if b.isQuestion {
+                if let source=b.source,source.scheme == "https" {Link("Fact source",destination:source).font(.caption2)}
+                if let hint = b.input {
+                    // The bubble's panel never takes keyboard focus (so it can't
+                    // steal it from your work); clicking the box opens the chat
+                    // with the cursor already in its text field.
+                    Button { voice.answer("focus") } label: {
+                        HStack {
+                            Text(hint).font(.system(size: 12)).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Image(systemName: "arrow.up.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Answer: \(hint)")
+                }
+                if !b.choices.filter({ $0.id != "focus" }).isEmpty {
                     HStack(spacing: 6) {
-                        ForEach(b.choices) { c in
+                        ForEach(b.choices.filter { $0.id != "focus" }) { c in
                             Button(c.label) { voice.answer(c.id) }
                                 .controlSize(.small).disabled(voice.busy)
                         }
@@ -142,3 +165,24 @@ struct BubbleView: View {
 
 /// A nonactivating panel: clicking a choice never steals focus from your work.
 final class BubblePanel: NSPanel { override var canBecomeKey: Bool { false } }
+
+struct CompanionMuteMenu: View {
+    let warden:String
+    @StateObject private var voice=VoiceModel()
+    @State private var quiet=false
+    var body:some View {
+        Menu {
+            if quiet { Button("Unmute companion"){set(false,nil)} }
+            ForEach(wardenMuteChoices.indices,id:\.self){i in
+                Button(wardenMuteChoices[i].0){set(true,wardenMuteChoices[i].1)}
+            }
+        } label:{Image(systemName:quiet ? "speaker.slash" : "speaker.wave.2").font(.system(size:11))}
+        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Mute or unmute companion")
+        .task { while !Task.isCancelled { if warden == "ram" { await voice.poll() }; quiet=CompanionAudio.isMuted(warden) || (warden == "ram" && voice.muted); try? await Task.sleep(nanoseconds:1_000_000_000) } }
+    }
+    private func set(_ muted:Bool,_ hours:Double?){
+        CompanionAudio.setMuted(muted,warden:warden,hours:hours)
+        if warden == "ram" {if muted {voice.mute(hours)} else {voice.unmute()}}
+        quiet=muted
+    }
+}

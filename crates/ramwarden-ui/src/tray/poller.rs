@@ -16,12 +16,16 @@ use crate::client::{Client, DebloatState, Error, GpuReport, State, TidyState};
 /// Everything the window shows, as last fetched.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub threat: Option<crate::wardens::ThreatPane>,
+    pub threat_icon: Option<crate::wardens::Sprite>,
     pub state: Option<State>,
     pub tidy: Option<TidyState>,
     pub gpu: Option<GpuReport>,
     pub debloat: Option<DebloatState>,
     /// What the warden is saying, from `/warden/bubble`.
     pub speech: Option<crate::voice::Speech>,
+    /// The warden's answer to what was last typed in its bubble.
+    pub said: Option<crate::voice::Said>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
     /// What is being done about it: starting the daemon, or where to look.
@@ -35,6 +39,7 @@ pub struct Snapshot {
 /// What the user asked for.
 #[derive(Clone, Debug)]
 pub enum Command {
+    WardenSetup(String),
     Suspend { name: String, force: bool },
     Resume(String),
     Kill { name: String, force: bool },
@@ -47,6 +52,15 @@ pub enum Command {
     /// Quiet the warden for this many hours, or until unmuted with `None`.
     Mute(Option<f64>),
     Unmute,
+    /// Words typed in the bubble: a focus when the warden asked for one,
+    /// otherwise a chat message.
+    Say { text: String, focus: bool },
+    /// Keep the checked tabs of a focus checklist.
+    FocusKeep { token: String, tabs: Vec<crate::voice::FocusTab> },
+    /// Apply a change the chat proposed, after the user approved it.
+    Act { token: String },
+    /// Put the bubble's reply away.
+    ForgetSaid,
 }
 
 pub struct Poller {
@@ -125,6 +139,15 @@ impl Poller {
                     tokio::time::sleep(Duration::from_secs(20)).await;
                 }
             });
+        } else {
+            let (shared,client)=(shared.clone(),client.clone());
+            runtime.spawn(async move {
+                loop {
+                    let threat=client.threat_pane().await;
+                    shared.lock().unwrap().threat=Some(threat);
+                    tokio::time::sleep(Duration::from_secs(20)).await;
+                }
+            });
         }
         // Commands, one at a time.
         {
@@ -133,12 +156,34 @@ impl Poller {
                 while let Some(cmd) = rx.recv().await {
                     shared.lock().unwrap().busy = true;
                     repaint();
-                    let message = Self::run(&client, cmd).await;
+                    let message = match cmd {
+                        // The bubble's own conversation: its reply is shown
+                        // in the bubble, not the status bar.
+                        Command::Say { text, focus } => {
+                            let said = client.say_to_warden(&text, focus).await;
+                            shared.lock().unwrap().said = Some(said);
+                            None
+                        }
+                        Command::ForgetSaid => {
+                            shared.lock().unwrap().said = None;
+                            None
+                        }
+                        // The checklist or proposal is used up either way;
+                        // what happened goes to the status line.
+                        cmd @ (Command::FocusKeep { .. } | Command::Act { .. }) => {
+                            let message = Self::run(&client, cmd).await;
+                            shared.lock().unwrap().said = None;
+                            Some(message)
+                        }
+                        cmd => Some(Self::run(&client, cmd).await),
+                    };
                     Self::refresh_slow(&client, &shared).await;
                     let speech = client.bubble().await.ok();
                     let mut s = shared.lock().unwrap();
                     s.speech = speech;
-                    s.message = Some(message);
+                    if message.is_some() {
+                        s.message = message;
+                    }
                     s.busy = false;
                     drop(s);
                     repaint();
@@ -154,8 +199,12 @@ impl Poller {
     }
 
     async fn refresh_slow(client: &Client, shared: &Mutex<Snapshot>) {
-        let (gpu, debloat) = tokio::join!(client.gpu(), client.debloat());
+        let (gpu, debloat, threat) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
+        let need_icon=shared.lock().unwrap().threat_icon.is_none();
+        let icon=match (&threat.icon,need_icon){(Some(path),true)=>client.warden_icon(path).await.ok(),_=>None};
         let mut s = shared.lock().unwrap();
+        s.threat=Some(threat);
+        if icon.is_some(){s.threat_icon=icon;}
         if let Ok(g) = gpu {
             s.gpu = Some(g);
         }
@@ -167,6 +216,11 @@ impl Poller {
     /// Execute one command and describe what happened.
     async fn run(client: &Client, cmd: Command) -> String {
         match cmd {
+            Command::WardenSetup(id) => match client.warden_setup(&id).await {
+                Ok(r) if r.started => "Setup requested. Approve the operating system prompt if one appears; check engine status for the outcome.".into(),
+                Ok(r) => format!("Setup did not start: {}",r.error.unwrap_or_default()),
+                Err(e) => format!("Setup did not start: {e}"),
+            },
             Command::Suspend { name, force } => match client.suspend(&name, force).await {
                 Ok(r) => r.describe("suspend"),
                 Err(e) => format!("suspend {name}: {e}"),
@@ -210,6 +264,17 @@ impl Poller {
                 Ok(_) => "Your warden can talk again.".into(),
                 Err(e) => format!("unmute: {e}"),
             },
+            Command::FocusKeep { token, tabs } => match client.focus_feedback(&token, &tabs).await {
+                Ok(_) => format!("Preferences updated · {} tabs marked relevant", tabs.iter().filter(|t| t.selected).count()),
+                Err(e) => format!("That tab list expired or changed. Tell me your focus again. ({e})"),
+            },
+            Command::Act { token } => match client.chat_action(&token).await {
+                Ok(r) if r.reply.is_empty() => "The action finished without a report.".into(),
+                Ok(r) => r.reply,
+                Err(e) => format!("That proposal expired or the computer changed; nothing was applied. ({e})"),
+            },
+            // Handled by the command loop before it gets here.
+            Command::Say { .. } | Command::ForgetSaid => String::new(),
         }
     }
 

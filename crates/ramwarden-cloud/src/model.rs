@@ -1,98 +1,301 @@
-//! The documents RamWarden Cloud stores, one struct per collection.
+//! The accounts, devices, sign-ins and payments RamWarden's hosted service
+//! keeps, per `docs/product-spec.md` 4.1.
 //!
-//! The shape follows the backend design: an account is not a wallet. One
-//! account links any number of wallets (and later an email or a Stripe
-//! customer), and payments only ever move one field, `entitlement_until`, which
-//! the API checks on every request. How someone paid never reaches the daemon.
+//! # An account has verified sign-in methods and one subscription
 //!
-//! Wallets are embedded in the account because they are few, always read with
-//! it, and looked up by a unique multikey index. Everything that grows without
-//! bound — devices, tokens, payments, daily usage — is its own collection keyed
-//! by `account_id`.
+//! The primary identity stays fixed; verified linked identities can access the
+//! same account. Ownership is claimed atomically in login_identities. The
+//! subscription is a tier (`ram` or `pro`), an interval, and the dates billing
+//! last reported: when the trial ends, and how far service is paid. Billing
+//! (the Base contract's logs, or Stripe's webhooks) only ever moves those
+//! fields; [`Account::status`] derives trial, active, grace, lapsed or
+//! cancelled from them at read time, so a status can never be stale because a
+//! job that was meant to flip it did not run.
+//!
+//! RamWarden and Pro users are told apart by `tier`, which every hosted route
+//! checks. ThreatWarden needs `pro`.
+//!
+//! Times are Unix seconds throughout.
 
-use mongodb::bson::{DateTime, oid::ObjectId};
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 
 pub const ACCOUNTS: &str = "accounts";
 pub const DEVICES: &str = "devices";
 pub const DEVICE_CODES: &str = "device_codes";
-pub const REFRESH_TOKENS: &str = "refresh_tokens";
+pub const SESSIONS: &str = "sessions";
+pub const CHALLENGES: &str = "challenges";
+pub const EMAIL_CODES: &str = "email_codes";
 pub const PAYMENTS: &str = "payments";
 pub const USAGE_DAILY: &str = "usage_daily";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// After a missed renewal, how long service continues while the user is told
+/// to fix their payment (spec 3.3).
+pub const GRACE_SECONDS: u64 = 3 * 86_400;
+/// Devices one subscription covers (spec 7.1).
+pub const DEVICE_LIMIT: u32 = 5;
+
+pub type Id = String;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Chain {
-    /// Any EVM chain; MetaMask, and Phantom on Base. One address works on all.
+    /// Any EVM chain: MetaMask, and Phantom's EVM accounts. One address works
+    /// on all of them.
     Evm,
     Solana,
 }
 
-impl Chain {
-    /// EVM addresses are case-insensitive hex (EIP-55 case is only a
-    /// checksum), so they are stored lowercased or one wallet becomes two
-    /// accounts. Solana addresses are base58 and case-sensitive.
-    pub fn normalise(self, address: &str) -> String {
-        match self {
-            Chain::Evm => address.trim().to_ascii_lowercase(),
-            Chain::Solana => address.trim().to_string(),
-        }
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Identity {
+    /// Stable numeric GitHub user ID; never an email-based automatic merge.
+    Github { id: String },
+    /// The address is normalised: lowercase hex for EVM, base58 as given for
+    /// Solana.
+    Wallet { chain: Chain, address: String },
+    /// Lowercased and trimmed.
+    Email { email: String },
+}
+
+impl Identity {
+    pub fn email(raw: &str) -> Identity {
+        Identity::Email { email: raw.trim().to_ascii_lowercase() }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Wallet {
-    pub chain: Chain,
-    pub address: String,
-    pub linked_at: DateTime,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Account {
-    #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub created_at: DateTime,
-    #[serde(default)]
-    pub wallets: Vec<Wallet>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stripe_customer_id: Option<String>,
-    /// Pro until this instant. `None`, or a time in the past, is the free tier.
-    #[serde(default)]
-    pub entitlement_until: Option<DateTime>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
-    Free,
+    /// RamWarden: the RAM warden's hosted features.
+    Ram,
+    /// RamWarden Pro: everything in RamWarden, plus ThreatWarden.
     Pro,
 }
 
-impl Account {
-    pub fn tier_at(&self, now: DateTime) -> Tier {
-        match self.entitlement_until {
-            Some(t) if t > now => Tier::Pro,
-            _ => Tier::Free,
+impl Tier {
+    /// The warden slugs a tier unlocks.
+    pub fn wardens(self) -> &'static [&'static str] {
+        match self {
+            Tier::Ram => &["ram"],
+            Tier::Pro => &["ram", "threat"],
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Ram => "ram",
+            Tier::Pro => "pro",
         }
     }
 }
 
-/// Limits from the design doc's pricing table. Kept here so the API and the
-/// quota check cannot disagree.
-impl Tier {
-    pub fn daily_cloud_analyses(self) -> i32 {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Interval {
+    /// Legacy sixty-day subscriptions retain their original meaning.
+    #[serde(rename = "2mo")]
+    TwoMonths,
+    Month,
+    Year,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Trial,
+    Active,
+    /// A renewal failed; service continues for [`GRACE_SECONDS`].
+    Grace,
+    /// Paid time and grace are over: the app runs in local mode.
+    Lapsed,
+    /// Will not renew; service runs to `paid_until`.
+    Cancelled,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
         match self {
-            Tier::Free => 5,
-            Tier::Pro => 200,
+            Status::Trial => "trial",
+            Status::Active => "active",
+            Status::Grace => "grace",
+            Status::Lapsed => "lapsed",
+            Status::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingMethod {
+    Base,
+    Solana,
+    Card,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Billing {
+    pub method: BillingMethod,
+    /// Base: the paying wallet. Card: the Stripe subscription id.
+    pub reference: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Account {
+    #[serde(rename = "_id")]
+    pub id: Id,
+    pub created_at: u64,
+    pub identity: Identity,
+    #[serde(default)]
+    pub tier: Option<Tier>,
+    #[serde(default)]
+    pub interval: Option<Interval>,
+    #[serde(default)]
+    pub trial_ends_at: Option<u64>,
+    #[serde(default)]
+    pub paid_until: Option<u64>,
+    /// Set when the subscriber cancels; cleared when they subscribe again.
+    #[serde(default)]
+    pub cancelled: bool,
+    /// One trial per account, ever (spec 4.2).
+    #[serde(default)]
+    pub trial_used: bool,
+    #[serde(default)]
+    pub billing: Option<Billing>,
+    #[serde(default = "default_device_limit")]
+    pub device_limit: u32,
+    /// Operator-managed complimentary developer access. Never accepted from
+    /// account preferences or checkout; paid_until still bounds signed passes.
+    #[serde(default)]
+    pub developer_access: bool,
+    /// What the site and the apps share: warden colors, the pet-comment mute.
+    #[serde(default)]
+    pub prefs: serde_json::Map<String, serde_json::Value>,
+}
+
+fn default_device_limit() -> u32 {
+    DEVICE_LIMIT
+}
+
+impl Account {
+    pub fn new(id: Id, identity: Identity, now: u64) -> Self {
+        Account {
+            id,
+            created_at: now,
+            identity,
+            tier: None,
+            interval: None,
+            trial_ends_at: None,
+            paid_until: None,
+            cancelled: false,
+            trial_used: false,
+            billing: None,
+            device_limit: DEVICE_LIMIT,
+            developer_access: false,
+            prefs: Default::default(),
         }
     }
 
-    pub fn max_devices(self) -> usize {
-        match self {
-            Tier::Free => 1,
-            Tier::Pro => 3,
+    /// The subscription's state at `now`; `None` before anything was bought.
+    pub fn status(&self, now: u64) -> Option<Status> {
+        self.tier?;
+        let until = self.paid_until.unwrap_or(0);
+        Some(if now < until {
+            if self.cancelled {
+                Status::Cancelled
+            } else if self.trial_ends_at.is_some_and(|t| now < t) {
+                Status::Trial
+            } else {
+                Status::Active
+            }
+        } else if !self.cancelled && now < until + GRACE_SECONDS {
+            Status::Grace
+        } else {
+            Status::Lapsed
+        })
+    }
+
+    /// Until when hosted features are served: paid time, plus grace unless
+    /// the subscriber cancelled.
+    pub fn served_until(&self) -> u64 {
+        match (self.tier, self.paid_until) {
+            (Some(_), Some(t)) if self.cancelled => t,
+            (Some(_), Some(t)) => t + GRACE_SECONDS,
+            _ => 0,
+        }
+    }
+
+    /// Each unlocked warden's expiry, for the signed entitlement.
+    pub fn wardens(&self) -> BTreeMap<String, u64> {
+        let until = self.served_until();
+        match self.tier {
+            Some(t) if until > 0 => t.wardens().iter().map(|w| (w.to_string(), until)).collect(),
+            _ => BTreeMap::new(),
+        }
+    }
+
+    /// Plan ceiling and any lower operator cap, also enforced in storage.
+    pub fn effective_device_limit(&self, now: u64) -> u32 {
+        let plan = if self.active("ram", now) {
+            match self.tier { Some(Tier::Pro) => 5, Some(Tier::Ram) => 3, None => 1 }
+        } else { 1 };
+        plan.min(self.device_limit)
+    }
+
+    /// Whether `warden` is served at `now`.
+    pub fn active(&self, warden: &str, now: u64) -> bool {
+        self.wardens().get(warden).is_some_and(|&t| t > now)
+    }
+
+    /// The account as the checkout contract knows it.
+    pub fn chain_key(&self) -> [u8; 32] {
+        chain_key(&self.id)
+    }
+}
+
+/// keccak-256 of the account id: the chain never carries the id or a wallet
+/// that signed in.
+pub fn chain_key(id: &str) -> [u8; 32] {
+    Keccak256::digest(id.as_bytes()).into()
+}
+
+/// What billing reports. `None` fields are left as they are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BillingUpdate {
+    pub tier: Option<Tier>,
+    pub interval: Option<Interval>,
+    pub trial_ends_at: Option<u64>,
+    /// Moves forward only: a replayed event can't shorten service.
+    pub paid_until: Option<u64>,
+    pub cancelled: Option<bool>,
+    pub billing: Option<Billing>,
+    pub trial_used: Option<bool>,
+}
+
+impl BillingUpdate {
+    pub fn apply(&self, a: &mut Account) {
+        if let Some(t) = self.tier {
+            a.tier = Some(t);
+        }
+        if let Some(i) = self.interval {
+            a.interval = Some(i);
+        }
+        if let Some(t) = self.trial_ends_at {
+            a.trial_ends_at = Some(t);
+        }
+        if let Some(t) = self.paid_until {
+            a.paid_until = Some(a.paid_until.unwrap_or(0).max(t));
+        }
+        if let Some(c) = self.cancelled {
+            a.cancelled = c;
+        }
+        if let Some(b) = &self.billing {
+            a.billing = Some(b.clone());
+        }
+        if let Some(u) = self.trial_used {
+            a.trial_used = a.trial_used || u;
         }
     }
 }
@@ -105,209 +308,177 @@ pub enum Platform {
     Macos,
 }
 
-/// A machine running the daemon. Only the daemon talks to the cloud, so a
-/// device is a daemon install, not a browser.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityBinding { pub agent_id: String, pub agent_name: String, pub group: String }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
+    /// Server-only binding. Names supplied by clients never select Wazuh data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<SecurityBinding>,
+    /// Unique seat within the account. Legacy records reserve virtual seats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<u32>,
     #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub account_id: ObjectId,
+    pub id: Id,
+    pub account_id: Id,
     pub name: String,
     pub platform: Platform,
-    pub created_at: DateTime,
-    pub last_seen_at: DateTime,
-    #[serde(default)]
-    pub revoked_at: Option<DateTime>,
+    pub created_at: u64,
+    pub last_seen_at: u64,
+    /// SHA-256 of the device token, hex.
+    pub token_hash: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
 pub enum DeviceCodeStatus {
     Pending,
-    Approved,
-    /// The daemon has exchanged it for tokens; it cannot be used again.
-    Claimed,
+    Approved { account_id: Id },
 }
 
-/// One sign-in attempt in the device flow (RFC 8628). The daemon holds the
-/// device code and polls with it; the person types or follows the user code on
-/// the link page and signs with their wallet. A TTL index deletes it at
-/// `expires_at`, so an abandoned sign-in leaves nothing behind.
+/// One daemon sign-in (RFC 8628).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeviceCode {
+    /// `XXXX-XXXX`.
     #[serde(rename = "_id")]
-    pub id: ObjectId,
-    /// SHA-256 of the device code. The code itself is a bearer secret.
-    pub device_code_hash: String,
-    /// The short `XXXX-XXXX` code shown to the person.
     pub user_code: String,
-    /// Fresh per attempt; the SIWE/SIWS message must quote it.
-    pub nonce: String,
+    pub device_code_hash: String,
     pub device_name: String,
     pub platform: Platform,
     pub status: DeviceCodeStatus,
-    #[serde(default)]
-    pub account_id: Option<ObjectId>,
-    pub created_at: DateTime,
-    pub expires_at: DateTime,
+    pub expires_at: u64,
 }
 
-/// A refresh token, stored only as its hash. Rotated on every use: the old one
-/// is marked `rotated_at` and a new one issued, so a stolen token that is used
-/// after the real daemon has refreshed is visible as reuse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Claim {
+    /// Not approved yet: keep polling.
+    Pending,
+    /// Unknown, expired or already claimed: start again.
+    Gone,
+    Approved { account_id: Id, device_name: String, platform: Platform },
+}
+
+/// A sign-in message the server wrote and is waiting to see signed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RefreshToken {
-    #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub token_hash: String,
-    pub account_id: ObjectId,
-    pub device_id: ObjectId,
-    pub created_at: DateTime,
-    pub expires_at: DateTime,
+pub struct Challenge {
     #[serde(default)]
-    pub rotated_at: Option<DateTime>,
+    pub link_account: Option<Id>,
+    pub chain: Chain,
+    pub address: String,
+    pub message: String,
+    pub user_code: Option<String>,
+    pub expires_at: u64,
+}
+
+/// A one-time code mailed to an address.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EmailCode {
     #[serde(default)]
-    pub revoked_at: Option<DateTime>,
+    pub link_account: Option<Id>,
+    pub code_hash: String,
+    pub user_code: Option<String>,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub attempts: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmailCheck {
+    Ok { user_code: Option<String>, link_account: Option<Id> },
+    Wrong,
+    /// Expired, used, or too many wrong tries: send a new one.
+    Gone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PaymentMethod {
-    /// USDC through the `RamWardenCheckout` contract on Base.
-    BaseUsdc,
-    /// A Solana Pay USDC transfer, matched by its reference key.
-    SolanaPay,
-    Stripe,
+pub enum SessionKind {
+    Web,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Plan {
-    #[serde(rename = "pro_30d")]
-    Pro30d,
-    #[serde(rename = "pro_365d")]
-    Pro365d,
+pub enum PaymentStatus {
+    Pending,
+    Confirmed,
+    Failed,
 }
 
-impl Plan {
-    pub fn days(self) -> i64 {
-        match self {
-            Plan::Pro30d => 30,
-            Plan::Pro365d => 365,
-        }
-    }
-}
-
-/// One confirmed payment. `(method, external_id)` is unique, so a webhook
-/// delivered twice, or a chain watcher that replays a block, cannot extend a
-/// pass twice.
+/// One checkout the website started, matched to what billing later reports.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Payment {
+    /// 32 random bytes as hex. On Base the same bytes are `startTrial`'s
+    /// `ref`, which is how the watcher matches the event to it.
     #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub account_id: ObjectId,
-    pub method: PaymentMethod,
-    /// Base: `<tx hash>:<log index>`. Solana: the reference key. Stripe: the
-    /// invoice id.
-    pub external_id: String,
-    pub plan: Plan,
-    /// In the currency's smallest unit: USDC has 6 decimals, USD cents 2.
-    pub amount_minor: i64,
-    pub currency: String,
-    /// The paying wallet, when there is one. Kept for sanctions screening and
-    /// refunds; it need not be a wallet linked to the account (gifts).
+    pub id: Id,
+    pub account_id: Id,
+    pub plan: u32,
+    pub method: BillingMethod,
+    pub status: PaymentStatus,
+    #[serde(default)]
+    pub reason: Option<String>,
     #[serde(default)]
     pub payer: Option<String>,
-    pub created_at: DateTime,
-}
-
-/// Cloud analyses used by one account on one UTC day.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UsageDay {
-    #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub account_id: ObjectId,
-    /// `YYYY-MM-DD`, UTC.
-    pub day: String,
-    pub cloud_analyses: i32,
+    pub created_at: u64,
+    /// Where it was seen, e.g. `<tx hash>:<log index>`.
     #[serde(default)]
-    pub input_tokens: i64,
-    /// TTL: usage older than this is deleted. Counts and timings only — the
-    /// server never stores request bodies.
-    pub expire_at: DateTime,
+    pub external_id: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mongodb::bson;
 
-    #[test]
-    fn evm_addresses_are_one_wallet_whatever_their_case() {
-        let a = Chain::Evm.normalise("0xAbC0000000000000000000000000000000000dEf");
-        let b = Chain::Evm.normalise(" 0xabc0000000000000000000000000000000000def ");
-        assert_eq!(a, b);
+    const NOW: u64 = 1_793_000_000;
+    const DAY: u64 = 86_400;
+
+    fn account() -> Account {
+        Account::new("a".into(), Identity::email(" Ethan@Example.com "), NOW)
     }
 
     #[test]
-    fn solana_addresses_keep_their_case() {
-        let s = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
-        assert_eq!(Chain::Solana.normalise(s), s);
+    fn emails_are_one_identity_whatever_their_case() {
+        assert_eq!(account().identity, Identity::Email { email: "ethan@example.com".into() });
     }
 
     #[test]
-    fn an_expired_pass_is_the_free_tier() {
-        let now = DateTime::now();
-        let mut a = Account {
-            id: ObjectId::new(),
-            created_at: now,
-            wallets: vec![],
-            email: None,
-            stripe_customer_id: None,
-            entitlement_until: None,
-        };
-        assert_eq!(a.tier_at(now), Tier::Free);
-        a.entitlement_until = Some(DateTime::from_millis(now.timestamp_millis() - 1));
-        assert_eq!(a.tier_at(now), Tier::Free);
-        a.entitlement_until = Some(DateTime::from_millis(now.timestamp_millis() + 1));
-        assert_eq!(a.tier_at(now), Tier::Pro);
+    fn status_follows_the_dates_billing_reported() {
+        let mut a = account();
+        assert_eq!(a.status(NOW), None, "nothing bought");
+        assert!(!a.active("ram", NOW));
+
+        BillingUpdate {
+            tier: Some(Tier::Pro),
+            interval: Some(Interval::TwoMonths),
+            trial_ends_at: Some(NOW + 14 * DAY),
+            paid_until: Some(NOW + 14 * DAY),
+            ..Default::default()
+        }
+        .apply(&mut a);
+        assert_eq!(a.status(NOW), Some(Status::Trial));
+        assert!(a.active("threat", NOW), "Pro unlocks ThreatWarden");
+
+        let end = NOW + 14 * DAY;
+        assert_eq!(a.status(end), Some(Status::Grace), "the first charge has not landed");
+        assert!(a.active("ram", end + GRACE_SECONDS - 1));
+        assert_eq!(a.status(end + GRACE_SECONDS), Some(Status::Lapsed));
+        assert!(!a.active("ram", end + GRACE_SECONDS));
+
+        BillingUpdate { paid_until: Some(end + 30 * DAY), ..Default::default() }.apply(&mut a);
+        assert_eq!(a.status(end + 1), Some(Status::Active));
+        BillingUpdate { cancelled: Some(true), ..Default::default() }.apply(&mut a);
+        assert_eq!(a.status(end + 1), Some(Status::Cancelled));
+        assert!(!a.active("ram", end + 30 * DAY), "no grace after a cancel");
     }
 
     #[test]
-    fn enums_are_stored_as_readable_strings() {
-        let d = bson::to_document(&Payment {
-            id: ObjectId::new(),
-            account_id: ObjectId::new(),
-            method: PaymentMethod::BaseUsdc,
-            external_id: "0xabc:3".into(),
-            plan: Plan::Pro365d,
-            amount_minor: 36_000_000,
-            currency: "USDC".into(),
-            payer: None,
-            created_at: DateTime::now(),
-        })
-        .unwrap();
-        assert_eq!(d.get_str("method").unwrap(), "base_usdc");
-        assert_eq!(d.get_str("plan").unwrap(), "pro_365d");
-    }
-
-    #[test]
-    fn an_account_without_optional_fields_round_trips() {
-        let a = Account {
-            id: ObjectId::new(),
-            created_at: DateTime::now(),
-            wallets: vec![Wallet {
-                chain: Chain::Solana,
-                address: "abc".into(),
-                linked_at: DateTime::now(),
-            }],
-            email: None,
-            stripe_customer_id: None,
-            entitlement_until: None,
-        };
-        let d = bson::to_document(&a).unwrap();
-        assert!(!d.contains_key("email"), "absent, not null, so the sparse unique index ignores it");
-        let back: Account = bson::from_document(d).unwrap();
-        assert_eq!(back.wallets, a.wallets);
+    fn ramwarden_does_not_unlock_threatwarden_and_dates_only_move_forward() {
+        let mut a = account();
+        let u = BillingUpdate { tier: Some(Tier::Ram), paid_until: Some(NOW + 100), ..Default::default() };
+        u.apply(&mut a);
+        assert!(a.active("ram", NOW) && !a.active("threat", NOW));
+        BillingUpdate { paid_until: Some(NOW + 50), ..Default::default() }.apply(&mut a);
+        assert_eq!(a.paid_until, Some(NOW + 100));
     }
 }

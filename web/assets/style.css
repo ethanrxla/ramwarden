@@ -416,7 +416,7 @@ footer a { color: var(--muted); }
 .price.tier-lite { background:var(--panel); }
 .price.tier-lite .button { background:transparent; color:var(--text); border:1px solid var(--line); }
 .price.tier-ram { box-shadow:0 18px 50px #f2445533; }
-.pricing[data-interval="2mo"] [data-price="year"], .pricing[data-interval="year"] [data-price="2mo"] { display:none; }
+.pricing[data-interval="month"] [data-price="year"], .pricing[data-interval="year"] [data-price="month"] { display:none; }
 .price .alt { color:var(--muted); font-size:14px; margin:-8px 0 0; }
 .price.tier-ram { --accent:#f24455; --accent-ink:#fff; --panel:#21181d; --line:#443039; border-color:#f24455; background:#21181d; }
 .price.tier-pro { --accent:#39ff88; --accent-ink:#03140a; --accent-2:#a78bfa; background:linear-gradient(160deg,#1b1030,#07050b); border-color:#8b5cf6; color:#ece8f7; }
@@ -437,3 +437,85 @@ footer a { color: var(--muted); }
 .row-actions { display:flex; gap:10px; flex-wrap:wrap; }
 
 .how-note { color:var(--muted); font-size:14px; margin:18px 0 0; }
+
+.annual-reference { font-size: .5em; opacity: .6; margin-right: .4em; }
+
+/* Shared pixel city: one media plane, a haze plane, and HTML content. */
+.landing .city-hero, .city-interlude {
+  position:relative; isolation:isolate; overflow:hidden; background:#070b1a;
+  --city-shift:0px; --city-storm:0;
+}
+.landing .city-hero { min-height:calc(100svh - 72px); display:grid; align-items:center; padding:80px 0; }
+.city-backdrop { position:absolute; inset:-60px 0; z-index:-1; pointer-events:none; transform:translateY(var(--city-shift)); }
+.city-film,.city-still,.city-storm { position:absolute; width:100%; height:100%; inset:0; object-fit:cover; object-position:center; }
+.city-storm { opacity:var(--city-storm); }
+.city-haze { position:absolute; inset:0; background:linear-gradient(90deg,#070b1ae6,#070b1a99 52%,#070b1a22),linear-gradient(0deg,#070b1a,transparent 30%,#070b1a22 85%); }
+.city-hero .hero-layout { width:min(1180px,calc(100% - 48px)); }
+.city-hero .hero-copy,.city-caption { text-shadow:0 2px 20px #000b; }
+.landing .city-hero .lede { color:#e0e6ff; }
+.city-hero .hero-media { filter:drop-shadow(0 8px 30px #0009); }
+.city-motion { position:absolute; bottom:20px; right:24px; z-index:2; color:#f5f7ff; background:#070b1abf; border:1px solid #b8c6ff66; border-radius:20px; padding:8px 14px; cursor:pointer; font:inherit; font-size:12px; }
+.city-motion:focus-visible { outline:2px solid #52d7ff; outline-offset:4px; }
+.city-interlude { min-height:76svh; display:grid; align-items:center; }
+.city-caption { padding:100px 0; }
+.city-caption h2 { font-size:clamp(34px,5vw,66px); line-height:1.08; letter-spacing:-2px; margin:20px 0 30px; max-width:19ch; color:#f5f7ff; }
+.city-red .eyebrow { color:#ff9b66; }
+.city-blue .eyebrow { color:#52d7ff; }
+.city-red .city-haze { background:linear-gradient(90deg,#170711dc,#17071177 65%,#17071122),linear-gradient(0deg,#070b1a,transparent 30%); }
+@media(max-width:700px) {
+  .landing .city-hero { padding:64px 0 76px; }
+  .city-hero .hero-layout { width:calc(100% - 36px); gap:24px; }
+  .city-hero .hero-media { max-width:180px; }
+  .city-haze { background:linear-gradient(90deg,#070b1ae6,#070b1a99),linear-gradient(0deg,#070b1a,transparent 40%); }
+  .city-interlude { min-height:65svh; }
+  .city-caption h2 { letter-spacing:-1px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .city-backdrop { transform:none; }
+  .city-film { content-visibility:hidden; }
+  .city-hero .city-backdrop { background:url('city/blue-calm.jpg') center/cover; }
+  .city-storm,.city-motion { display:none; }
+}
+.city-motion { right:auto; left:24px; }
+#flow>section { margin:28px 0; padding:24px; border:1px solid #b8c6ff33; border-radius:18px; background:#101b4722; }
+#flow textarea[readonly] { width:100%; box-sizing:border-box; padding:16px; margin-bottom:16px; color:inherit; background:#070b1a; border:1px solid #b8c6ff66; border-radius:10px; font:14px/1.6 var(--mono); }
+.setup-check { display:flex; gap:8px; align-items:center; margin-top:20px; }
+/* The world continues behind the explanation, customization and pricing. */
+.landing main { background:#070b1a url('city/red-walkers.jpg') center/cover fixed; }
+.landing.theme-threat main { background-image:url('city/blue-walkers.jpg'); }
+.landing .city-content { background:linear-gradient(100deg,#070b1ab8,#070b1a7a); position:relative; }
+.landing .city-content .sub { color:#e0e6ff; }
+.landing .city-content .card { background:#0b1020df; }
+.landing .city-content .stage-say { background:#101629e8; }
+.scroll-reveal { opacity:0; transform:translateY(32px); transition:opacity .7s ease,transform .7s cubic-bezier(.2,.65,.2,1); }
+.scroll-reveal.in-view { opacity:1; transform:translateY(0); }
+@media(max-width:700px) { .landing main { background-attachment:scroll; background-size:auto 100vh; background-repeat:repeat-y; } }
+@media(prefers-reduced-motion:reduce) { .scroll-reveal { opacity:1; transform:none; transition:none; } .landing main { background-attachment:scroll; } }
+/* The account is always the last header item; its status comes from the API. */
+.site-header a.account-header { display:inline-flex; align-items:center; gap:9px; min-height:36px; white-space:nowrap; }
+.site-header a.account-connected { padding:4px 12px 4px 5px; border:1px solid #ffffff26; border-radius:24px; background:#101629c9; color:#f5f7ff; }
+.account-avatar { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#92273b,#391933); color:#ffe6ec; flex-shrink:0; }
+.account-avatar svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.account-identity { max-width:160px; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.account-online { width:6px; height:6px; background:#55e59b; border-radius:50%; flex-shrink:0; }
+@media(max-width:700px) { .account-identity { display:none; } .site-header a.account-connected { padding-right:8px; gap:5px; } }
+
+/* Keep the trial CTA on one line as the account badge gains a label. */
+.site-header nav:last-child { position:relative; gap:14px; }
+.site-header nav .button { flex-shrink:0; white-space:nowrap; }
+.site-header a.account-header { flex-shrink:0; }
+.account-details { position:absolute; top:calc(100% + 14px); right:0; z-index:100; width:min(340px,calc(100vw - 32px)); box-sizing:border-box; padding:18px; border:1px solid #ffffff26; border-radius:18px; background:#15121bf2; backdrop-filter:blur(22px); box-shadow:0 16px 48px #0008; display:grid; gap:14px; color:#f5f7ff; }
+.account-method { display:flex; gap:10px; align-items:center; font-size:12px; overflow-wrap:anywhere; }
+.account-method span:last-child { min-width:0; }
+@media(max-width:1150px) { .site-header .account-identity { max-width:100px; } .site-header nav:last-child {gap:10px;} }
+
+.site-header nav a { white-space:nowrap; }
+.site-header .account-identity { max-width:128px; }
+
+.site-header .brand { flex-shrink:0; }
+.site-header .brand img { width:80px; height:56px; object-fit:contain; image-rendering:pixelated; }
+/* Give the landing-page tabs their own row before the wider logo crowds navigation. */
+@media (max-width:1100px) {
+  .landing .site-header .wrap { flex-wrap:wrap; height:auto; padding-top:8px; padding-bottom:8px; row-gap:6px; }
+  .landing .site-header .warden-tabs { order:3; margin:0 auto; }
+}

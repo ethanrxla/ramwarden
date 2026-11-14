@@ -1,36 +1,73 @@
 #!/usr/bin/env python3
-"""Scan-only ClamAV bridge. Scheduled runs fail closed without a clear RAM rung."""
-import argparse, fcntl, json, os, subprocess, urllib.request
-p = argparse.ArgumentParser()
-p.add_argument('--scheduled', action='store_true')
-p.add_argument('paths', nargs='+')
-a = p.parse_args()
-if os.geteuid() != 0:
-    raise SystemExit('Run the scan as root')
-os.makedirs('/run/threatwarden', mode=0o700, exist_ok=True)
-lock = open('/run/threatwarden/clamav.lock', 'w')
-try:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    raise SystemExit(0)
-if a.scheduled:
+"""Scan-only Linux/macOS bridge. No resident scanner or automatic remediation."""
+import argparse
+import fcntl
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def event(log, kind, **fields):
+    log.write(json.dumps(dict(engine='threatwarden_clamav', event=kind,
+                             time=int(time.time()), **fields)) + '\n')
+    log.flush()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--scheduled', action='store_true')
+    parser.add_argument('paths', nargs='+')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        raise SystemExit('Run the scan as root')
+    os.umask(0o027)
+    mac = sys.platform == 'darwin'
+    base = pathlib.Path('/Library/Application Support/ThreatWarden' if mac else '/run/threatwarden')
+    base.mkdir(mode=0o750, parents=True, exist_ok=True)
+    lock = (base / 'clamav.lock').open('w')
     try:
-        with urllib.request.urlopen('http://127.0.0.1:7823/psi', timeout=3) as r:
-            clear = json.load(r).get('rung') == 'release'
-    except Exception:
-        clear = False
-    if not clear:
-        print('Deferred: RamWarden has not reported clear memory pressure.')
-        raise SystemExit(0)
-# No shell, deletion, quarantine, or automatic remediation.
-result = subprocess.run(['clamscan', '--recursive', '--infected', '--', *a.paths],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-with open('/var/log/threatwarden/clamav.json', 'a') as log:
-    for line in result.stdout.splitlines():
-        if line.endswith(' FOUND'):
-            log.write(json.dumps({'engine': 'threatwarden_clamav', 'event': 'malware_found',
-                                  'detail': line[:4096]}) + '\n')
-    log.write(json.dumps({'engine': 'threatwarden_clamav', 'event': 'scan_finished',
-                         'exit_code': result.returncode}) + '\n')
-print(result.stdout)
-raise SystemExit(result.returncode)
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+    logdir = pathlib.Path('/var/log/threatwarden')
+    logdir.mkdir(mode=0o750, parents=True, exist_ok=True)
+    with (logdir / 'clamav.json').open('a') as log:
+        if args.scheduled:
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:7823/psi', timeout=3) as response:
+                    clear = json.load(response).get('rung') == 'release'
+            except Exception:
+                clear = False
+            if not clear:
+                event(log, 'scan_deferred', reason='memory_not_clear')
+                return 0
+        scanner = '/opt/homebrew/bin/clamscan' if mac else 'clamscan'
+        if mac and not pathlib.Path(scanner).exists():
+            scanner = '/usr/local/bin/clamscan'
+        command = [scanner, '--recursive', '--infected']
+        if mac:
+            command += ['--database=' + str(base / 'clamav')]
+        event(log, 'scan_started', scope='selected_paths', path_count=len(args.paths))
+        import tempfile
+        with tempfile.TemporaryFile(mode='w+') as output:
+            try:
+                result = subprocess.run(command + ['--', *args.paths], stdout=output,
+                                        stderr=subprocess.STDOUT, timeout=3 * 3600)
+                code = result.returncode
+            except (OSError, subprocess.TimeoutExpired):
+                event(log, 'scan_finished', exit_code=2)
+                return 2
+            output.seek(0)
+            for line in output:
+                if line.rstrip().endswith(' FOUND'):
+                    event(log, 'malware_found', detail=line.strip()[:4096])
+            event(log, 'scan_finished', exit_code=code)
+        return code
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

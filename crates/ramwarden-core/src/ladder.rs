@@ -82,8 +82,11 @@ const PAGEOUT_LIMIT: usize = 3;
 const JUDGE_LIMIT: usize = 8;
 
 /// Why the reclaim rungs refuse when the platform offers no group reclaim.
+#[cfg(target_os = "linux")]
 const GROUPS_UNAVAILABLE: &str =
-    "group reclaim unavailable (on Linux: no delegated cgroup memory controller)";
+    "group reclaim unavailable (no delegated cgroup memory controller)";
+#[cfg(not(target_os = "linux"))]
+const GROUPS_UNAVAILABLE: &str = "group reclaim unavailable on this platform";
 
 /// Which rung the current pressure calls for.
 ///
@@ -258,6 +261,10 @@ pub struct Ladder {
     last_tabs: Option<Instant>,
     tidy: Option<Tidy>,
     ranker: Option<std::sync::Arc<dyn ReuseRanker>>,
+    /// The last untargeted refusal written to history, per action. A rung the
+    /// platform cannot run refuses every tick with the same reason; that is
+    /// recorded once, and again only after the action does something else.
+    logged_refusals: HashMap<&'static str, String>,
 }
 
 impl Ladder {
@@ -273,6 +280,7 @@ impl Ladder {
             last_tabs: None,
             tidy: None,
             ranker: None,
+            logged_refusals: HashMap::new(),
         }
     }
 
@@ -701,6 +709,8 @@ impl Ladder {
     }
 
     fn do_reclaim(&mut self, w: &World<'_>, report: &mut Report) {
+        // A missing capability is reported on every tick, so the live report
+        // always says why; `log` writes it to history only once per change.
         let Some(groups) = w.groups else {
             report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
             return;
@@ -957,9 +967,18 @@ impl Ladder {
         }
     }
 
-    fn log(&self, report: &Report, w: &World<'_>, rung: Rung) {
+    fn log(&mut self, report: &Report, w: &World<'_>, rung: Rung) {
         let Some(h) = &self.history else { return };
         for (action, target, outcome) in &report.steps {
+            let notes = outcome.notes.join("; ");
+            if target.is_empty() && outcome.did_nothing() {
+                if self.logged_refusals.get(action) == Some(&notes) {
+                    continue;
+                }
+                self.logged_refusals.insert(action, notes.clone());
+            } else {
+                self.logged_refusals.remove(action);
+            }
             let _ = h.log(&NewAction {
                 rung: rung.index(),
                 trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
@@ -969,7 +988,7 @@ impl Ladder {
                 target: target.clone(),
                 bytes_freed: outcome.bytes_freed as i64,
                 succeeded: !outcome.did_nothing(),
-                notes: outcome.notes.join("; "),
+                notes,
             });
         }
     }
@@ -1021,6 +1040,43 @@ pub(crate) mod test_support {
 mod rung_tests {
     use super::test_support::*;
     use super::*;
+
+    #[test]
+    fn unavailable_routes_report_once_without_blocking_ladder_escalation() {
+        use std::sync::{Arc, Mutex};
+        let shared = Arc::new(Mutex::new(ramwarden_platform::fake::World::default()));
+        let platform = ramwarden_platform::fake::platform(shared);
+        let detector = Detector::preloaded(true, vec![]);
+        let act = Actuator::new(platform.control.clone(), Arc::new(ramwarden_platform::NoPager), platform.background.clone());
+        let mut ladder = Ladder::new(cfg(), act);
+        let mut world = World { det: &detector, groups: None, psi: psi(6.0,0.0),
+            available_bytes: PLENTY, watchlist: &[], goal: String::new(), tabs: None, judge: None };
+        struct Tabs(usize);
+        impl TabCloser for Tabs {
+            fn close_stale(&mut self, _: &str) -> Outcome { self.0 += 1; Outcome::default() }
+        }
+        let first = ladder.step(&mut world);
+        assert!(first.steps.iter().any(|(action,_,_)| *action == "reclaim"));
+        assert!(first.steps.iter().any(|(action,_,_)| *action == "pageout"));
+        // The live report keeps saying why on every tick; history records it
+        // once (see `a_rung_the_platform_cannot_run_is_logged_once_not_every_tick`).
+        for _ in 0..100 {
+            let repeated = ladder.step(&mut world);
+            assert!(repeated.steps.iter().all(|(action,_,o)| !matches!(*action,"reclaim"|"pageout") || o.did_nothing()));
+        }
+        // Capability recovery resets the diagnostic, rather than disabling
+        // reclaim forever. Empty fake groups are safe and do not actuate.
+        world.groups = Some(platform.groups.as_ref());
+        ladder.step(&mut world);
+        world.groups = None;
+        let missing_again = ladder.step(&mut world);
+        assert!(missing_again.steps.iter().any(|(action,_,_)| *action == "reclaim"));
+        let mut tabs = Tabs(0);
+        world.psi = psi(12.0,0.0);
+        world.tabs = Some(&mut tabs);
+        ladder.step(&mut world);
+        assert_eq!(tabs.0, 1, "missing capabilities must not block higher rungs");
+    }
 
     // ── Rung selection, driven by a synthetic pressure series ───────────────
 
@@ -1497,7 +1553,7 @@ mod tests {
         };
         let report = l.step(&mut w);
         let note = &report.steps[0].2.notes[0];
-        assert!(note.contains("delegated cgroup"), "{note}");
+        assert!(note.contains("group reclaim unavailable"), "{note}");
     }
 
     #[test]
@@ -1801,6 +1857,41 @@ mod tests {
             // it did not have.
             Some(_) => {}
             None => panic!("the pageout rung did not run: {:?}", report.steps),
+        }
+    }
+
+    #[test]
+    fn missing_capabilities_do_not_block_rungs_and_reclaim_recovers() {
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = f.detector(true);
+        let mut l = ladder(cfg(), &f.root);
+        let mut w = world(&f, &h, &det, 6.0, 0.0, &[]);
+        w.groups = None;
+        let mut first = Report::default();
+        l.do_reclaim(&w, &mut first);
+        assert_eq!(first.steps.len(), 1);
+        for _ in 0..100 {
+            let mut repeated = Report::default();
+            l.do_reclaim(&w, &mut repeated);
+            assert!(repeated.steps.is_empty());
+        }
+        // Capability discovery can recover; do not permanently disable a rung.
+        w.groups = Some(&h);
+        l.do_reclaim(&w, &mut Report::default());
+        w.groups = None;
+        let mut missing_again = Report::default();
+        l.do_reclaim(&w, &mut missing_again);
+        assert_eq!(missing_again.steps.len(), 1);
+        if !l.act.can_page_out() {
+            let mut first = Report::default();
+            l.do_page_out(&w, &mut first);
+            assert_eq!(first.steps.len(), 1);
+            for _ in 0..100 {
+                let mut repeated = Report::default();
+                l.do_page_out(&w, &mut repeated);
+                assert!(repeated.steps.is_empty());
+            }
         }
     }
 

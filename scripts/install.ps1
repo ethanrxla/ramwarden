@@ -15,7 +15,7 @@
     * a starter config at %APPDATA%\ramwarden\config.toml if none exists.
 
 .EXAMPLE
-  cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat
+  cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat -p ramwarden-cli
   cargo build --release -p ramwarden-ui --features tray --bin ramwarden-tray
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
@@ -33,7 +33,10 @@ param(
   # Resolved below: Windows PowerShell 5.1 leaves $PSScriptRoot empty while
   # parameter defaults are evaluated.
   [string]$Source = '',
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [switch]$StopOnly,
+  [switch]$UnregisterOnly,
+  [switch]$NoTrayStart
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -51,18 +54,33 @@ $Service  = Join-Path $Dest 'ramwarden-service.exe'
 $Shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\RamWarden.lnk'
 
 function Remove-RamWarden {
+  # The service's watchdog restarts a daemon that dies, so it goes first:
+  # killing the daemon while the service still ran let the watchdog relaunch
+  # it, and the copy below then failed on a locked ramwarden-daemon.exe.
+  if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
+    Stop-Service RamWarden -Force -ErrorAction SilentlyContinue
+    if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
+  }
   foreach ($t in @($TaskName, $TrayTask)) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
       Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
       Unregister-ScheduledTask -TaskName $t -Confirm:$false
     }
   }
-  Get-Process ramwarden-daemon, ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-  if (Get-Service RamWarden -ErrorAction SilentlyContinue) {
-    if (Test-Path $Service) { & $Service uninstall } else { sc.exe delete RamWarden | Out-Null }
-    Start-Sleep -Seconds 1
-  }
+  # Stop every RamWarden binary in the install folder and wait until each has
+  # exited, so no file is still open when the new copies go in.
+  $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Dest, [StringComparison]::OrdinalIgnoreCase) }
+  $running | Stop-Process -Force -ErrorAction SilentlyContinue
+  $running | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
 }
+
+if ($StopOnly) {
+  foreach ($task in @($TaskName,$TrayTask)) { if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue } }
+  Get-Process ramwarden-daemon,ramwarden-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  if (Get-Service RamWarden -ErrorAction SilentlyContinue) { Stop-Service RamWarden -ErrorAction Stop; (Get-Service RamWarden).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30)) }
+  return
+}
+if ($UnregisterOnly) { Remove-RamWarden; return }
 
 if ($Uninstall) {
   Remove-RamWarden
@@ -74,15 +92,20 @@ if ($Uninstall) {
 }
 
 $Source = (Resolve-Path $Source).Path
-foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-debloat.exe') {
+foreach ($exe in 'ramwarden-daemon.exe', 'ramwarden-service.exe', 'ramwarden-debloat.exe', 'ramwarden.exe') {
   if (-not (Test-Path (Join-Path $Source $exe))) {
-    throw "$exe not found in $Source. Build first: cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat"
+    throw "$exe not found in $Source. Build first: cargo build --release -p ramwarden-daemon -p ramwarden-service -p ramwarden-debloat -p ramwarden-cli"
   }
 }
 
 Remove-RamWarden
 New-Item -ItemType Directory -Force $Dest | Out-Null
-Get-ChildItem $Source -Filter 'ramwarden-*.exe' | Copy-Item -Destination $Dest -Force
+if (-not [string]::Equals($Source.TrimEnd('\'), $Dest.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+  foreach ($name in @('ramwarden-daemon.exe','ramwarden-service.exe','ramwarden-debloat.exe','ramwarden.exe','ramwarden-tray.exe','ramwarden-usage-sync.exe','ramwarden-launcher.exe')) {
+    if (Test-Path (Join-Path $Source $name)) { Copy-Item (Join-Path $Source $name) (Join-Path $Dest $name) -Force }
+  }
+}
+Copy-Item (Join-Path $Dest 'ramwarden.exe') (Join-Path $Dest 'ramwarden-doctor.exe') -Force
 
 # The daemon starts through a launcher that puts the CUDA runtime on PATH: a
 # daemon built with `--features cuda` imports cublas and curand at load time,
@@ -125,7 +148,7 @@ $tray = Join-Path $Dest 'ramwarden-tray.exe'
 if (Test-Path $tray) {
   $a = New-ScheduledTaskAction -Execute $tray -Argument '--hidden'
   Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Settings $settings -Principal $task | Out-Null
-  Start-ScheduledTask -TaskName $TrayTask
+  if (-not $NoTrayStart) { Start-ScheduledTask -TaskName $TrayTask }
 
   # Start menu entry. Launching the app while the tray runs opens the window.
   $shell = New-Object -ComObject WScript.Shell
@@ -135,6 +158,7 @@ if (Test-Path $tray) {
     Copy-Item $BrandIcon (Join-Path $Dest 'ramwarden.ico') -Force
     $lnk.IconLocation = (Join-Path $Dest 'ramwarden.ico')
   }
+  if (Test-Path (Join-Path $Dest 'ramwarden.ico')) { $lnk.IconLocation = (Join-Path $Dest 'ramwarden.ico') }
   $lnk.TargetPath = $tray
   $lnk.WorkingDirectory = $Dest
   $lnk.Description = 'RamWarden memory manager'

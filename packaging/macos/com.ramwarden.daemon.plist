@@ -27,9 +27,7 @@
   </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
-  <!-- Background QoS keeps the daemon on the efficiency cores. -->
-  <key>ProcessType</key>
-  <string>Background</string>
+  <!-- Keep the local API responsive; monitoring already runs on its own paced thread. -->
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/ramwarden.log</string>
   <key>StandardErrorPath</key>

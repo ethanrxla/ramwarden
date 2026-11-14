@@ -1,7 +1,7 @@
 # Website (`web/`)
 
 The public site: the pitch, downloads, pricing, the device sign-in page that
-the app opens, and the account page where people buy passes and revoke
+the app opens, and the account page where people subscribe, cancel and revoke
 devices. Plain HTML, CSS and ES modules with no build step, so it deploys as
 static files to any host.
 
@@ -68,9 +68,11 @@ trial_available, billing: {method}|null, entitlement_until, entitlements,
 used_today, device_limit, devices: [{id, name, platform, last_seen_at}],
 prefs}`.
 
-Plans are the contract's ids: 1 Plus every 2 months ($4), 2 Pro every 2
-months ($5), 3 Plus annual ($20), 4 Pro annual ($24). The 2-month plans
-charge every 60 days (interval `2mo`). Device limits: Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
+Current plan ids: 1 Plus monthly ($4), 2 Pro monthly ($5), 3 Plus annual
+($20), 4 Pro annual ($24). Annual cards show the equivalent twelve-month cost
+crossed out ($48/$60), with 58%/60% savings, labeled against monthly billing.
+Live checkout remains gated until deployed plan terms match. Device limits:
+Lite 1, Plus 3, Pro 5. Plus (tier id `ram`) starts with a
 14-day trial; Pro is charged from day one (`trial_days: 0`). Both renew until
 cancelled. RamWarden Lite has no plan: a signed-in account with nothing
 bought, on 1 device, with no AI.
@@ -100,6 +102,49 @@ Checkout:
   confirmation whether or not the page is open.
 - When `checkout/config` fails or lists no method, the page says checkout
   opens soon and sells nothing.
+
+### Support chat (the corner pet)
+
+Product spec 2.6. The pet at the bottom right of each page opens a chat when
+clicked (or its "Ask me" button). It never opens itself, and its jokes are
+hidden while it is open. Code: `web/assets/support.js` and
+`crates/ramwarden-api/src/support/`.
+
+| Route | Body / auth | Answer |
+|---|---|---|
+| `POST /v1/support/history` | `{conversation?, warden}` | `{greeting, chips:[{topic,label}], live, thread?:{messages:[{from,text,at}], ticket?}}` |
+| `POST /v1/support/chat` | `{conversation?, warden, message? \| topic?}`; session cookie optional | `{conversation?` (only when a new one starts), `reply:{text, topic, chips, offer_ticket}, ticket?}`. 422 empty or over 2000 characters, 429 over 8 a minute or 80 a day per conversation |
+| `POST /v1/support/ticket` | `{conversation, email?}` | `{ticket:{reference, status, subject, opened_at}, reply:{text}}`. Once per conversation; 404 expired, 422 bad email |
+| `GET /v1/support/tickets` | session | the account's tickets |
+| `GET /v1/support/staff/tickets?status=` | `Bearer RAMWARDEN_SUPPORT_TOKEN` | the queue, newest first, with each thread, email and the topics answered |
+| `POST /v1/support/staff/tickets/{ref}/reply` | staff, `{text}` | the thread; the ticket becomes `answered` |
+| `POST /v1/support/staff/tickets/{ref}/status` | staff, `{status}` | `open`, `answered` or `closed` |
+
+- **Answers are curated, not generated.** Jev routes a message to a topic in
+  `support/kb.rs` (and says whether it needs a person); the visitor only ever
+  reads text from that file. Jev unreachable, unsure or over the daily budget:
+  a keyword router. Nothing matched: "I don't know" and a ticket offer.
+- **Signed in**, "what plan am I on" reads the account's own plan, trial or
+  renewal date and device count. Nothing else, and nothing changes.
+- **Storage**: MongoDB `support_conversations`, keyed by the SHA-256 of a
+  `rwsc_` secret the page keeps in `localStorage`. Chats expire after 30 days
+  (TTL index), tickets a year after their last message, 60 messages each.
+- The site never names the model, provider or engines (test in `kb.rs`).
+
+### Production and personal testing models
+
+`RAMWARDEN_API_PROFILE=production` requires the host's `OPENAI_API_KEY` and
+uses `OPENAI_MODEL_ID=gpt-6-luna`. Sales topic routing goes directly to this
+model; the curated answer bank remains the source of product claims.
+Hosted decision analysis keeps its primary typed decision service and uses
+Luna if that service fails. Model outputs must match every requested question,
+valid choice labels and probabilities before the API accepts them.
+
+The default `development` profile does not enable OpenAI just because a key
+exists. Personal desktop chat and analysis retain the existing Nemotron
+configuration. This production setting does not alter local model settings
+or cloud consent. See `packaging/ramwarden-api.production.env.example` for
+host-only settings. Production credentials never belong in website assets.
 
 ## Policy
 
@@ -178,12 +223,29 @@ Checkout:
 
 ## Basis and limitations
 
-- The routes above are not built yet. `ramwarden-api` (phase 1) has only the
-  Jev endpoints; `ramwarden-cloud` has the storage for accounts, device codes
-  and payments. This spec is what phase 2 implements.
-- Email sign-in (product spec 3.1) is not built yet; the account page says so.
-- ThreatWarden's acting steps (quarantine, blocking) are not built yet, so
-  their cards carry a Soon tag.
+- The routes above are built in `ramwarden-api` (PR #5) and tested against
+  its router; the pages and `assets/mock.js` still follow the earlier
+  pass-based shapes until the site's redesign moves to them.
+- ThreatWarden quarantine and blocking remain planned features.
 - The checkout contract is not deployed, so the Base flow is tested only
   against the mock.
-- The domain `ramwarden.app` is a placeholder until one is registered.
+- The public website uses `ramwarden.com`; hosted requests go to `api.ramwarden.com`.
+
+
+### Additional sign-in methods
+
+The account page lists verified sign-in methods and offers Add a wallet / Add an
+email. Adding one requires a fresh proof bound to the current authenticated
+account; it does not create a checkout, change the session, or link a device.
+Existing identities owned by another account return a conflict rather than
+merging subscriptions. Both linked methods subsequently resolve to the same
+account id, plan and devices. Email sign-in also offers an existing-code entry
+path, including when switching from a wallet session.
+
+### Extension account state
+The browser popup reads the desktop daemon’s verified entitlement; it never
+claims a website session proves this device is linked. Plus/Pro show the active
+computer plan. Lite and disconnected states offer website email/wallet/GitHub
+sign-in and explain the existing `ramwarden login` device-link step. No identity
+tokens or payment approvals are copied into extension storage. A refresh control
+rechecks after device linking. Security alerts include source evidence summaries.

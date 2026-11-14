@@ -1,0 +1,10 @@
+# Conservative customer defaults; existing user configuration is never replaced.
+[server]
+host = "127.0.0.1"
+port = 7823
+[processes]
+watchlist = []
+[tabs]
+close = "dry-run"
+keep_tabs = 6
+budget_idle_minutes = 60

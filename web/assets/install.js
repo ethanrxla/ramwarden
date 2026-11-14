@@ -73,6 +73,7 @@ export class InstallBox {
         h("a", { href: config.repo }, "View on GitHub"),
       ),
     );
+    this.el.append(h("a", { class: "button secondary small", href: pageHref("setup.html") }, "Step-by-step setup"));
     this.pick(this.os);
   }
 

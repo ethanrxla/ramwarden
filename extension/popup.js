@@ -1,15 +1,17 @@
 const DAEMON_HTTP = "http://localhost:7823";
 
 // Load persisted daemon host setting
-chrome.storage.sync.get("daemonHost", (r) => {
+const daemonReady = new Promise(resolve => chrome.storage.sync.get("daemonHost", (r) => {
   if (r.daemonHost) {
     window.DAEMON_HTTP = "http://" + r.daemonHost;
   }
-});
+  resolve();
+}));
 
 async function daemonJSON(path, opts = {}) {
+  await daemonReady;
   const base = window.DAEMON_HTTP || DAEMON_HTTP;
-  const r = await fetch(base + path, opts);
+  const r = await fetch(base + path, {signal:AbortSignal.timeout(8000),...opts});
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
@@ -55,20 +57,6 @@ async function init() {
     });
   }
 
-  // Tabs RamWarden closed, newest first: the extension's own list merged with
-  // the daemon's closed_tabs record, which also covers closes made before the
-  // extension was reloaded.
-  const local = await new Promise(r => chrome.storage.local.get("releasedTabs", r));
-  let daemon = [];
-  try { daemon = (await daemonJSON("/history")).closed_tabs || []; } catch { /* offline */ }
-  const seen = new Set();
-  const merged = [
-    ...(local.releasedTabs || []).map(t => ({ url: t.url, title: t.title, closedMs: t.closedAt })),
-    ...daemon.map(t => ({ url: t.url, title: t.title, closedMs: Date.parse(t.closed_at.endsWith("Z") ? t.closed_at : t.closed_at + "Z") })),
-  ].filter(t => t.url && !seen.has(t.url) && seen.add(t.url))
-   .sort((a, b) => (b.closedMs || 0) - (a.closedMs || 0));
-  renderHistory(merged);
-
   document.getElementById("analyze-btn").addEventListener("click", analyzeNow);
 
   // Daemon host setting
@@ -76,6 +64,50 @@ async function init() {
     document.getElementById("daemon-host-input").value = r.daemonHost || "localhost:7823";
   });
 }
+
+let localHistory = [];
+let daemonHistory = [];
+let receivedLocalUpdate = false;
+let fetchingHistory = false;
+
+function mergeHistory() {
+  const seen = new Set();
+  renderHistory([...localHistory, ...daemonHistory]
+    .filter(t => t.url && Number.isFinite(t.closedMs))
+    .sort((a, b) => b.closedMs - a.closedMs)
+    .filter(t => !seen.has(t.url) && seen.add(t.url)));
+}
+
+function setLocalHistory(rows) {
+  localHistory = (rows || []).map(t => ({url: t.url, title: t.title, closedMs: t.closedAt,
+    kind: t.kind === "unloaded" ? "unloaded" : "closed", tabId: t.tabId}));
+  mergeHistory();
+}
+
+async function refreshHistory() {
+  if (fetchingHistory) return;
+  fetchingHistory = true;
+  try {
+    const {closed_tabs} = await daemonJSON("/history", {cache: "no-store"});
+    daemonHistory = (closed_tabs || []).map(t => {
+      const at = t.closed_at || "";
+      return {url: t.url, title: t.title, kind: "closed", closedMs: Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/i.test(at) ? at : at + "Z")};
+    });
+    mergeHistory();
+  } catch { /* Keep the last successful history while offline. */ }
+  finally { fetchingHistory = false; }
+}
+
+chrome.storage.onChanged?.addListener((changes, area) => {
+  if (area !== "local" || !changes.releasedTabs) return;
+  receivedLocalUpdate = true;
+  setLocalHistory(changes.releasedTabs.newValue);
+});
+chrome.storage.local.get("releasedTabs", ({releasedTabs}) => {
+  if (!receivedLocalUpdate) setLocalHistory(releasedTabs);
+});
+refreshHistory();
+setInterval(refreshHistory, 5000);
 
 // ── The warden ────────────────────────────────────────────────────────────────
 
@@ -89,6 +121,10 @@ async function wardenPost(path, body, timeout = 40000) {
 
 async function refreshWarden() {
   const el = document.getElementById("warden");
+  // Don't wipe the focus checklist, or a half-typed answer, mid-use.
+  if (lastFocus) return;
+  const typing = el.querySelector("input.warden-input");
+  if (typing && (typing.value || document.activeElement === typing)) return;
   let view = null;
   try { view = wardenView(await daemonJSON("/warden/bubble")); } catch { /* older daemon: no voice */ }
   el.innerHTML = wardenHTML(view);
@@ -117,6 +153,46 @@ document.getElementById("warden").addEventListener("click", async (e) => {
     const r = await wardenPost("/warden/answer", { id: el.dataset.id, choice: b.dataset.choice });
     chrome.runtime.sendMessage?.({ type: "warden-answered" });
     wardenSay(r.body.reply);
+  } catch { wardenSay("I couldn't reach the daemon."); }
+});
+
+// Typing to the warden: Enter (or the arrow) sends the focus.
+let lastFocus = null;
+document.getElementById("warden").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target.closest("form.warden-say");
+  const field = form && form.querySelector("input");
+  const goal = field ? field.value.trim() : "";
+  if (!goal) return;
+  if ([...goal].length > 500) return wardenSay("Keep your focus under 500 characters.");
+  const el = document.getElementById("warden");
+  el.querySelectorAll("input, button, select").forEach(x => { x.disabled = true; });
+  field.placeholder = "Thinking…";
+  field.value = "";
+  try {
+    const r = await wardenPost("/warden/focus", { goal }, 60000);
+    if (r.status !== 200) throw new Error(r.status);
+    lastFocus = r.body;
+    el.innerHTML = focusHTML(goal, r.body);
+    el.hidden = false;
+    el.dataset.id = "";
+  } catch { wardenSay("Your focus wasn't saved. I couldn't reach the daemon."); }
+});
+
+document.getElementById("warden").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "focus-done") { lastFocus = null; return refreshWarden(); }
+  if (b.dataset.act !== "focus-keep" || !lastFocus || !lastFocus.proposal) return;
+  const el = document.getElementById("warden");
+  const ticked = new Set([...el.querySelectorAll("input[data-tab]:checked")].map(x => Number(x.dataset.tab)));
+  const tabs = lastFocus.proposal.tabs;
+  const selected = tabs.filter((_, i) => ticked.has(i)).map(t => ({ browser: t.browser, id: t.id, url: t.url }));
+  b.disabled = true;
+  try {
+    const r = await wardenPost("/warden/focus/feedback", { token: lastFocus.proposal.token, selected });
+    lastFocus = null;
+    wardenSay(r.status === 200 ? `Preferences updated · ${selected.length} tabs marked relevant` : "That tab list expired or changed. Tell me your focus again.");
   } catch { wardenSay("I couldn't reach the daemon."); }
 });
 
@@ -159,7 +235,8 @@ document.getElementById("analysis-result").addEventListener("click", async (e) =
   if (!b || !lastAnalysis) return;
   const act = b.dataset.act;
   const targets = (lastAnalysis[act] || []).map(({ browser, id, url }) => ({ browser, id, url }));
-  if (act === "close" && !confirm(`Close ${targets.length} tab(s)? They go in the reopen list below.`)) return;
+  const names = (lastAnalysis[act] || []).map(t => `• ${t.title || t.url}`).slice(0, 12).join("\n");
+  if (act === "close" && !confirm(`Close these ${targets.length} tab(s)?\n\n${names}\n\nThey go in the list below so you can reopen them.`)) return;
   b.disabled = true;
   try {
     const r = await wardenPost(act === "close" ? "/browser/close" : "/browser/discard", { targets });
@@ -214,6 +291,17 @@ document.getElementById("history-list").addEventListener("click", (e) => {
   const a = e.target.closest("a[data-url]");
   if (!a) return;
   e.preventDefault();
+  // An unloaded tab is still open: switch to it (it reloads) rather than
+  // opening a second copy. If it has since been closed, reopen the page.
+  const id = Number(a.dataset.tab);
+  if (a.dataset.kind === "unloaded" && Number.isInteger(id)) {
+    chrome.tabs.get(id, tab => {
+      if (chrome.runtime.lastError || !tab || tab.url !== a.dataset.url) { chrome.tabs.create({ url: a.dataset.url }); return; }
+      chrome.tabs.update(id, { active: true });
+      chrome.windows?.update(tab.windowId, { focused: true });
+    });
+    return;
+  }
   chrome.tabs.create({ url: a.dataset.url });
 });
 
@@ -224,15 +312,22 @@ function setConnected(ok) {
 function renderHistory(items) {
   const list = document.getElementById("history-list");
   if (!items.length) {
-    list.innerHTML = '<span style="color:#475569">No tabs closed yet. Unloaded tabs stay in the tab strip and show in the badge count.</span>';
+    list.innerHTML = '<span style="color:#475569">Nothing closed or unloaded yet. Everything RamWarden does to a tab shows here.</span>';
     return;
   }
+  const closed = items.filter(i => i.kind !== "unloaded").length;
+  const summary = document.getElementById("history-summary");
+  if (summary) summary.textContent = `${closed} closed · ${items.length - closed} unloaded`;
   list.innerHTML = items.slice(0, 20).map((item) => {
     const time = new Date(item.closedMs || Date.now()).toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     });
+    const unloaded = item.kind === "unloaded";
+    const label = unloaded ? "Unloaded" : "Closed";
+    const hint = unloaded ? "Still open; memory freed. Click to switch to it" : "Click to reopen";
     return `<div class="history-item">
-      <a href="${esc(item.url)}" data-url="${esc(item.url)}" title="Reopen ${esc(item.title)}">
+      <span class="history-kind ${unloaded ? "unloaded" : "closed"}">${label}</span>
+      <a href="${esc(item.url)}" data-url="${esc(item.url)}" data-kind="${unloaded ? "unloaded" : "closed"}"${Number.isInteger(item.tabId) ? ` data-tab="${item.tabId}"` : ""} title="${hint}: ${esc(item.title)}">
         ${esc(item.title || item.url)}
       </a>
       <span class="history-time">${time}</span>
@@ -273,3 +368,75 @@ function esc(s) {
 
 init();
 refreshWarden();
+
+
+async function refreshThreat() {
+ const headline=document.getElementById('threat-headline');
+ const detail=document.getElementById('threat-detail');
+ const engines=document.getElementById('threat-engines');
+ const alerts=document.getElementById('threat-alerts');
+ headline.textContent='Checking protection…';engines.replaceChildren();alerts.replaceChildren();
+ try {
+  const data=await daemonJSON('/wardens/threat');
+  headline.textContent=data.status?.headline || 'Protection unverified';detail.textContent=data.status?.detail || '';
+  for(const engine of data.report?.engines || []){const row=document.createElement('p');row.textContent=`${engine.name}: ${engine.state} · ${engine.detail || "No detail supplied"}`;engines.append(row);}
+  for(const alert of (data.report?.alerts || []).slice(0,50)){
+   const card=document.createElement('article');card.className='security-alert';
+   const title=document.createElement('strong');title.textContent=`Level ${alert.level} · Rule ${alert.rule_id}`;
+   const body=document.createElement('p');body.textContent=String(alert.description || 'No description supplied').slice(0,1200);
+   const time=document.createElement('time');time.textContent=alert.timestamp || 'Time unavailable';
+   card.append(title,body,time);
+   for(const evidence of (alert.evidence_objects || []).slice(0,8)) {
+    const row=document.createElement('p');row.textContent=`${evidence.summary || evidence.kind || 'Evidence'} · ${evidence.source || 'Source unavailable'}${evidence.complete===false?' · Partial evidence':''}`;card.append(row);
+   }
+   for(const [name,value] of Object.entries(alert.evidence||{}).slice(0,8)){const row=document.createElement('p');row.textContent=`${name}: ${String(value).slice(0,512)}`;card.append(row);}if(alert.advice){const advice=document.createElement('p');advice.textContent=alert.advice;card.append(advice);}alerts.append(card);
+  }
+  const network=data.report?.sensors?.network;
+  if(network){
+   const section=document.createElement('details');
+   const title=document.createElement('summary');title.textContent=`Network connections · ${network.connections?.length || 0} reported`;
+   const scope=document.createElement('p');scope.textContent=network.problem || network.scope || 'Coverage unverified';section.append(title,scope);
+   for(const connection of (network.connections || []).slice(0,100)){
+    const row=document.createElement('p');row.textContent=`${connection.process} (PID ${connection.pid}) → ${connection.remote}`;section.append(row);
+   }
+   engines.append(section);
+  }
+  if(data.report?.alerts?.length){const note=document.createElement('p');note.textContent='Reported rule alerts are not confirmed malware. Showing at most 50 recent alerts.';alerts.prepend(note);}
+  else if(data.unlocked && data.report){alerts.textContent='No alerts returned in this report. This does not prove the computer is free of threats.';}
+ } catch {headline.textContent='Protection unverified';detail.textContent='Install or reconnect the desktop daemon to read this computer’s security report. An extension or Pro pass alone does not prove protection.';}
+}
+for(const kind of ['ram','threat'])document.getElementById(kind+'-tab').addEventListener('click',()=>{
+ for(const id of ['ram','threat']){document.getElementById(id+'-pane').hidden=id!==kind;document.getElementById(id+'-tab').setAttribute('aria-selected',String(id===kind));}
+ if(kind==='threat')refreshThreat();
+});
+document.getElementById('threat-refresh').addEventListener('click',refreshThreat);
+document.getElementById('save-daemon-host').addEventListener('click',saveDaemonHost);
+
+chrome.storage.local.get(['liteEnabled','liteBudget'],settings=>{document.getElementById('lite-enabled').checked=settings.liteEnabled===true;document.getElementById('lite-budget').value=settings.liteBudget||6;});
+document.getElementById('lite-enabled').addEventListener('change',event=>chrome.storage.local.set({liteEnabled:event.target.checked}));
+document.getElementById('lite-budget').addEventListener('change',event=>{const n=Math.max(1,Math.min(50,Math.floor(Number(event.target.value)||6)));event.target.value=n;chrome.storage.local.set({liteBudget:n});});
+
+async function refreshAccount() {
+ const state=document.getElementById('account-state');
+ const help=document.getElementById('account-help');
+ const link=document.getElementById('account-link');
+ state.textContent='Checking this computer’s plan…';
+ link.textContent='Sign in with email, wallet or GitHub';
+ try {
+  const data=await daemonJSON('/wardens');
+  const paid=Array.isArray(data.paid)?data.paid.length>0:data.paid===true;
+  if(paid && ['ram','pro'].includes(data.tier)) {
+   state.textContent=data.tier==='pro'?'Pro 🐐 · Active on this computer':'Plus ⚡ · Active on this computer';
+   link.textContent='Manage account and connected identities';
+   help.textContent='This extension uses the desktop app’s verified plan. Website sign-in is separate; no extra extension password is needed.';
+  } else {
+   state.textContent='Lite · No active paid pass on this computer';
+   help.textContent='Sign in on the website, then use your account’s install/connect steps to link this computer. Already installed? Run ramwarden login, then check connection here. Signing in to the website alone does not link a device.';
+  }
+ } catch {
+  state.textContent='Lite · Desktop connection unavailable';
+  help.textContent='Free browser cleanup works without signing in. Sign in on the website to manage a plan, then connect the desktop app for RAM and security reports.';
+ }
+}
+document.getElementById('account-refresh').addEventListener('click',refreshAccount);
+refreshAccount();

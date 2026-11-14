@@ -118,7 +118,7 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
     let (to_unload, to_close, decided, est_mb) = {
         let rows = crate::tabreview::snapshot(state);
-        let mut close = crate::browser::close_candidates(&rows, &state.cfg.tabs);
+        let mut close = crate::browser::close_candidates(&rows, &state.tabs_config());
         state.voice.hold_back(&state.cfg.voice, &mut close, Instant::now());
         let unload: Vec<_> = rows.iter()
             .filter(|r| r.eligible && !close.contains(&r.target))

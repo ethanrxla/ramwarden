@@ -20,6 +20,8 @@ pub struct Row {
     pub eligible: bool,
     /// The user may close it by hand (manual close, the review checklist).
     pub closeable: bool,
+    /// The live extension can acknowledge identity-scoped closes.
+    pub safe_close_supported: bool,
     /// The sweep may close it unattended: [`can_auto_close_at`]. Stricter than
     /// `closeable`; a legacy extension's tabs are closeable but never this.
     pub auto_closeable: bool,
@@ -181,6 +183,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 inactive_minutes: t.inactive_minutes.max(0),
                 eligible,
                 closeable: can_close(t),
+                safe_close_supported: t.safe_close_supported,
                 auto_closeable: can_auto_close_at(t, now_ms),
                 work,
                 status,
@@ -203,6 +206,30 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             .then(a.target.id.cmp(&b.target.id))
     });
     rows
+}
+
+/// How long a tab must sit untouched before the warden may *suggest* closing it.
+/// An hour matches the floor of the unattended sweep's `can_auto_close_at`.
+pub const OFFER_CLOSE_MIN_IDLE_MINUTES: i64 = 60;
+
+impl Row {
+    /// May the warden put this tab in front of the user as "close this?"
+    ///
+    /// The review card and Analyze Now used `closeable`, which only says a person
+    /// *may* close the tab by hand. That let them offer a Namecheap tab and an
+    /// Agensi submit form (work pages whose 4-hour protection had lifted), and
+    /// "recent"/"retained" tabs used minutes earlier. A batch the user approves
+    /// skips the extension's idle and work-page guards, so the offer itself must
+    /// already be safe: no work page, nothing used in the last hour, and only
+    /// tabs the rules already consider idle.
+    pub fn offerable_for_close(&self) -> bool {
+        if !self.closeable || self.work { return false; }
+        match self.status {
+            "browser page" => true,
+            "candidate" | "unloaded" => self.inactive_minutes >= OFFER_CLOSE_MIN_IDLE_MINUTES,
+            _ => false,
+        }
+    }
 }
 
 pub fn snapshot(reg: &crate::tabs::Registry, threshold: i64) -> Vec<Row> {
@@ -389,18 +416,33 @@ mod selection_tests {
 /// auto-closed, browser settings pages go first, and every pick must clear the
 /// same idle floor and return-chance ceiling.
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
+    // A budget is a keep floor, never permission to close. Preserve the newest
+    // N tabs in each browser even when an old tab passes the normal safety floor.
+    let mut by_browser: std::collections::HashMap<&str, Vec<&Row>> = std::collections::HashMap::new();
+    for row in rows { by_browser.entry(&row.target.browser).or_default().push(row); }
+    let mut kept = std::collections::HashSet::new();
+    for tabs in by_browser.values_mut() {
+        tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
+        kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
+    }
     let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
-    let mut picked: Vec<_> = rows.iter().filter(|r| r.auto_closeable
+    let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
         && r.inactive_minutes >= min_idle
         && (r.status == "browser page"
             || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
-    // Browser pages first, then exact copies, then the least likely to be wanted.
-    picked.sort_by(|a,b| (b.status == "browser page").cmp(&(a.status == "browser page"))
+    picked.sort_by(|a,b| close_priority(a,b));
+    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+}
+
+pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
+    // Prefer disposable browser pages, exact copies, then the lowest return chance.
+    (b.status == "browser page").cmp(&(a.status == "browser page"))
         .then(b.duplicate.cmp(&a.duplicate))
         .then(a.p_return.total_cmp(&b.p_return))
-        .then(b.inactive_minutes.cmp(&a.inactive_minutes)));
-    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+        .then(b.inactive_minutes.cmp(&a.inactive_minutes))
+        .then(a.target.browser.cmp(&b.target.browser))
+        .then(a.target.id.cmp(&b.target.id))
 }
 
 pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
@@ -438,7 +480,7 @@ mod manual_close_tests {
 
     #[test]
     fn the_sweep_closes_long_idle_tabs_and_keeps_recent_or_pinned_ones() {
-        let cfg = ramwarden_core::config::Tabs::default();
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
         let mut pinned = idle(4, "https://example.org/pinned", 10_000, false);
         pinned.pinned = Some(true);
         let tabs = vec![
@@ -510,7 +552,7 @@ mod manual_close_tests {
 
     #[test]
     fn the_sweep_respects_its_per_sweep_cap() {
-        let cfg = ramwarden_core::config::Tabs { max_close_per_sweep: 2, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, max_close_per_sweep: 2, ..Default::default() };
         let tabs: Vec<Tab> = (1..=6).map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false)).collect();
         assert_eq!(close_candidates(&rank("b", &tabs, 30), &cfg).len(), 2);
     }
@@ -616,7 +658,7 @@ mod safety_regressions {
     /// browser page and the forgotten article first and never the work tabs.
     #[test]
     fn work_tabs_are_never_auto_closed_and_browser_pages_go_first() {
-        let cfg = ramwarden_core::config::Tabs::default();
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
         let tabs = vec![
             idle(1, "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase?region=us-ashburn-1", 2880),
             idle(2, "https://agensi.io/creators/submit-a-skill", 2880),
@@ -632,6 +674,23 @@ mod safety_regressions {
         let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         assert_eq!(ids.first(), Some(&4), "the browser page goes first: {ids:?}");
         assert!(!ids.iter().any(|id| [1, 2, 3].contains(id)), "work tabs stay: {ids:?}");
+    }
+
+    /// The 2026-11-14 report: Namecheap and the Agensi submit form were still
+    /// being closed. Past the 4-hour protection they ranked as plain candidates,
+    /// and the review card offered them. Recently used tabs were offered too.
+    #[test]
+    fn work_pages_and_recent_tabs_are_never_offered_for_closing() {
+        let rows = rank("b", &[
+            idle(1, "https://agensi.io/creators/submit-a-skill", 600),
+            idle(2, "https://ap.www.namecheap.com/domains/list/", 600),
+            idle(3, "https://example.org/read-me", 20),
+            idle(4, "https://example.org/old-article", 600),
+            idle(5, "chrome://settings/", 1),
+        ], 30);
+        let offered: Vec<i64> = rows.iter().filter(|r| r.offerable_for_close()).map(|r| r.target.id).collect();
+        assert_eq!(offered.len(), 2, "{offered:?}");
+        assert!(offered.contains(&4) && offered.contains(&5), "{offered:?}");
     }
 
     #[test]

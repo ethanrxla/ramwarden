@@ -25,6 +25,7 @@
 //! jokes can never crowd out a question. See `docs/specs/warden-voice.md`.
 
 pub mod lines;
+pub mod facts;
 pub mod focus;
 pub mod routes;
 pub mod focus_chat;
@@ -73,6 +74,9 @@ pub struct Choice {
     pub label: &'static str,
 }
 
+/// The placeholder in the focus question's text box.
+pub const FOCUS_PROMPT: &str = "What are you working on?";
+
 const CHECK_IN_CHOICES: [Choice; 3] = [
     Choice { id: "keep", label: "Yes, keep it" },
     Choice { id: "close", label: "No, close it" },
@@ -95,9 +99,15 @@ pub struct Bubble {
     pub kind: Kind,
     pub text: String,
     pub choices: Vec<Choice>,
+    /// A question answered in words: clients show an always-visible text box
+    /// with this placeholder, and Enter sends it to `POST /warden/focus`.
+    /// A button that only opened a box was one click too many.
+    pub input: Option<&'static str>,
     pub tab: Option<TabRef>,
     /// Seconds until it goes away on its own, as of this reply.
     pub expires_in_s: u64,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub source_url:Option<String>,
 }
 
 /// What the user picked.
@@ -187,6 +197,7 @@ struct Inner {
 /// The voice. Shared by every route and the monitor; one lock, never held
 /// across an await.
 pub struct Voice {
+    pub facts:facts::Facts,
     inner: Mutex<Inner>,
     pub focus: focus::Focus,
     focus_pending: Mutex<Option<focus_chat::Pending>>,
@@ -250,6 +261,7 @@ impl Voice {
             .and_then(|b| serde_json::from_slice::<Stored>(&b).ok())
             .and_then(|s| s.muted_until);
         Voice {
+            facts:facts::Facts::new(store.as_ref().map(|p|p.with_file_name("fun-facts.json"))),
             focus_pending: Mutex::new(None),
             focus: focus::Focus::new(store.as_ref().map(|p| p.with_file_name("focus.json"))),
             inner: Mutex::new(Inner {
@@ -308,6 +320,7 @@ impl Voice {
         }
 
         let lines = Lines::ram();
+        let mut source_url=None;
         let (kind, text, tab) = if let Some(e) = s.events.dequeue() {
             let (pool, count) = if e.closed > 0 { (&lines.activity.closed, e.closed) } else { (&lines.activity.unloaded, e.unloaded) };
             let line = s.pick(pool);
@@ -336,7 +349,9 @@ impl Voice {
             } else {
                 &q.any
             };
-            let line = s.pick(pool);
+            let dynamic=self.facts.take();
+            source_url=dynamic.as_ref().and_then(|fact|fact.source_url.clone());
+            let line = dynamic.map(|fact|fact.text).unwrap_or_else(||s.pick(pool));
             let text = fill(&line, &[("tabs", &tabs.to_string()), ("percent", &format!("{:.0}", scene.percent))]);
             (Kind::Quip, text, None)
         } else {
@@ -359,9 +374,11 @@ impl Voice {
             warden: "ram",
             kind,
             text,
-            choices: match kind { Kind::CheckIn => CHECK_IN_CHOICES.to_vec(), Kind::Focus => vec![Choice {id:"focus",label:"Tell Warden"}], _ => Vec::new() },
+            choices: if kind == Kind::CheckIn { CHECK_IN_CHOICES.to_vec() } else { Vec::new() },
+            input: (kind == Kind::Focus).then_some(FOCUS_PROMPT),
             tab,
             expires_in_s: life.as_secs(),
+            source_url,
         };
         s.current = Some((bubble.clone(), now + life));
         Some(bubble)
@@ -372,6 +389,7 @@ impl Voice {
     fn ask_about<'a>(s: &Inner, cfg: &config::Voice, scene: &Scene<'a>) -> Option<&'a Row> {
         let askable = |r: &&Row| {
             r.closeable
+                && r.safe_close_supported
                 && r.inactive_minutes as f64 >= cfg.ask_after_minutes
                 && !s.answered(&r.target, cfg, scene.now)
         };
@@ -547,8 +565,10 @@ impl Inner {
                 kind: Kind::Reply,
                 text: text.clone(),
                 choices: Vec::new(),
+                input: None,
                 tab: None,
                 expires_in_s: REPLY_LIFE.as_secs(),
+                source_url:None,
             },
             now + REPLY_LIFE,
         ));

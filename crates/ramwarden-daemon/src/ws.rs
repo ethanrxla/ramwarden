@@ -187,6 +187,28 @@ mod tests {
     }
 
     #[test]
+    fn safe_close_capability_must_come_from_the_running_worker() {
+        for (field, expected) in [("", false), (r#","safeCloseSupported":true"#, true)] {
+            let message = format!(r#"{{"action":"tab_report","tabs":[{{"id":7{field}}}]}}"#);
+            match parse(&message).unwrap() {
+                ClientMessage::TabReport {tabs} => assert_eq!(tabs[0].safe_close_supported, expected),
+                _ => panic!("wrong variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn parses_the_correlated_safe_close_ack() {
+        match parse(r#"{"action":"tabs_closed_safe","requestId":"close-42","tabIds":[7]}"#).unwrap() {
+            ClientMessage::TabsClosedSafe {request_id, tab_ids} => {
+                assert_eq!(request_id, "close-42");
+                assert_eq!(tab_ids, vec![7]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn parses_a_pong() {
         assert!(matches!(
             parse(r#"{"action":"pong"}"#).unwrap(),
