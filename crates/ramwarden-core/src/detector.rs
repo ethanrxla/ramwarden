@@ -82,6 +82,12 @@ pub struct Detector {
     app_busy_since: HashMap<String, Instant>,
     /// Application names, most recently used first. See [`Recency`].
     recency: Lru<String, Recency>,
+    /// When the last table was ingested, and how long before that the one
+    /// before it was. `cpu_seconds_recent` is a difference over that span, and
+    /// the span follows the ladder (1 s busy, 10 s quiet), so a CPU percentage
+    /// can only be stated against it.
+    last_ingest: Option<Instant>,
+    tick_span: Option<Duration>,
 }
 
 /// When the user last used an application, as opposed to when it last ran.
@@ -146,6 +152,8 @@ impl Detector {
             app_active: HashMap::new(),
             app_busy_since: HashMap::new(),
             recency: Lru::new(),
+            last_ingest: None,
+            tick_span: None,
         }
     }
 
@@ -223,6 +231,9 @@ impl Detector {
     /// `degraded` is the source's [`ProcessSource::accounting_degraded`].
     pub fn ingest(&mut self, table: Vec<ProcessSample>, desktop: &Desktop, degraded: bool) {
         self.degraded = degraded;
+        let now = Instant::now();
+        self.tick_span = self.last_ingest.map(|t| now.saturating_duration_since(t));
+        self.last_ingest = Some(now);
         let mut fresh = std::mem::take(&mut self.spare);
         fresh.clear();
         fresh.reserve(table.len());
@@ -396,6 +407,18 @@ impl Detector {
     /// Minutes `app` has been using CPU while nobody is using it, or 0.
     pub fn runaway_minutes(&self, app: &str, now: Instant) -> f64 {
         self.app_busy_since.get(app).map_or(0.0, |t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
+    }
+
+    /// The span `cpu_seconds_recent` was measured over: the time between the
+    /// last two samples. `None` until two samples have been taken.
+    pub fn tick_span(&self) -> Option<Duration> {
+        self.tick_span
+    }
+
+    /// The command line of a live process, as last sampled. Raw: it can hold
+    /// paths, tokens and URLs, so anything shown or sent must redact it first.
+    pub fn cmdline(&self, pid: i32) -> Option<&str> {
+        self.signals.contains_key(&pid).then(|| self.instances.peek(pid)).flatten().map(|i| &*i.cmdline)
     }
 
     pub fn get(&self, pid: i32) -> Option<&Signals> {

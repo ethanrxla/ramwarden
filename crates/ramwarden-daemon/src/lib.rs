@@ -32,6 +32,7 @@ pub mod ws;
 
 pub mod browser;
 
+pub mod ask;
 pub mod assistant;
 
 pub mod companion;

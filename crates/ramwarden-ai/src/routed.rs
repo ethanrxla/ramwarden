@@ -248,7 +248,7 @@ mod compression_routing_tests {
         // The case behind "Conversational AI is unavailable": a short question
         // classified as multi-step, with a large system snapshot.
         let messages=[json!({"role":"system","content":"x".repeat(9000)}),json!({"role":"user","content":"can you find out which ollama model is running?"})];
-        assert!(!user_request_too_long(messages));
+        assert!(!user_request_too_long(&messages));
         assert!(user_request_too_long(&[json!({"role":"user","content":"x".repeat(8000)})]));
     }
     #[test]

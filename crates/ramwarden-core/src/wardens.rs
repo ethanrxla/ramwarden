@@ -199,6 +199,14 @@ impl Entitlement {
             && self.wardens.get("ram").is_some_and(|&until| until > now)
     }
 
+    /// Whether the warden answers in conversation (a model reads the probes
+    /// and writes the reply). The same rule as the pet: Plus and Pro, and the
+    /// self-built signed-out app. RamWarden Lite has no AI, so it gets the
+    /// same probe readings as plain sentences instead.
+    pub fn has_assistant(&self, now: u64) -> bool {
+        self.has_pet(now)
+    }
+
     /// The ids of every paid warden unlocked at `now`.
     pub fn paid_at(&self, now: u64) -> Vec<&str> {
         self.wardens
