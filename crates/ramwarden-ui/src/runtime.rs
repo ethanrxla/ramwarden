@@ -15,19 +15,23 @@ mod tests {
         let runtime = super::network_runtime().unwrap();
         let _entered = runtime.enter();
         let context = gtk4::glib::MainContext::new();
-        context.with_thread_default(|| {
-            context.block_on(async {
-                let timer = async {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    true
-                };
-                let watchdog = async {
-                    gtk4::glib::timeout_future(std::time::Duration::from_millis(300)).await;
-                    false
-                };
-                assert!(tokio::select! { ok = timer => ok, ok = watchdog => ok },
-                    "Tokio's timer driver stalled while GLib owned the thread");
-            });
-        }).unwrap();
+        context
+            .with_thread_default(|| {
+                context.block_on(async {
+                    let timer = async {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        true
+                    };
+                    let watchdog = async {
+                        gtk4::glib::timeout_future(std::time::Duration::from_millis(300)).await;
+                        false
+                    };
+                    assert!(
+                        tokio::select! { ok = timer => ok, ok = watchdog => ok },
+                        "Tokio's timer driver stalled while GLib owned the thread"
+                    );
+                });
+            })
+            .unwrap();
     }
 }

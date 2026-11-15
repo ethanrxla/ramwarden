@@ -50,11 +50,17 @@ pub fn quoted(name: &str) -> Result<String> {
 
 impl Ipc3 {
     pub fn sway(runner: Arc<dyn Runner>) -> Self {
-        Ipc3 { kind: WmKind::Sway, runner }
+        Ipc3 {
+            kind: WmKind::Sway,
+            runner,
+        }
     }
 
     pub fn i3(runner: Arc<dyn Runner>) -> Self {
-        Ipc3 { kind: WmKind::I3, runner }
+        Ipc3 {
+            kind: WmKind::I3,
+            runner,
+        }
     }
 
     fn bin(&self) -> &'static str {
@@ -70,9 +76,10 @@ impl Ipc3 {
 
     /// Parse `get_tree` and `get_workspaces`. Split out for tests.
     pub fn parse(kind: WmKind, tree: &str, workspaces: &str) -> Result<WmState> {
-        let tree: Value = serde_json::from_str(tree).map_err(|e| Error::os(format!("get_tree: {e}")))?;
-        let spaces: Vec<RawWorkspace> =
-            serde_json::from_str(workspaces).map_err(|e| Error::os(format!("get_workspaces: {e}")))?;
+        let tree: Value =
+            serde_json::from_str(tree).map_err(|e| Error::os(format!("get_tree: {e}")))?;
+        let spaces: Vec<RawWorkspace> = serde_json::from_str(workspaces)
+            .map_err(|e| Error::os(format!("get_workspaces: {e}")))?;
 
         let mut state = WmState::empty(kind);
         for output in children(&tree) {
@@ -85,7 +92,11 @@ impl Ipc3 {
         }
         state.workspaces = spaces
             .into_iter()
-            .map(|s| WmWorkspace { name: s.name, monitor: s.output, focused: s.focused })
+            .map(|s| WmWorkspace {
+                name: s.name,
+                monitor: s.output,
+                focused: s.focused,
+            })
             .collect();
         Ok(state)
     }
@@ -95,7 +106,10 @@ impl Ipc3 {
         Ok(match cmd {
             WmCommand::Focus { window } => format!("[con_id={window}] focus"),
             WmCommand::MoveToWorkspace { window, workspace } => {
-                format!("[con_id={window}] move container to workspace {}", quoted(workspace)?)
+                format!(
+                    "[con_id={window}] move container to workspace {}",
+                    quoted(workspace)?
+                )
             }
             WmCommand::SwitchWorkspace { workspace } => format!("workspace {}", quoted(workspace)?),
             WmCommand::MoveWorkspaceToMonitor { workspace, monitor } => format!(
@@ -165,11 +179,15 @@ fn collect_windows(node: &Value, workspace: &str, out: &mut Vec<WmWindow>) {
 fn collect_workspaces(node: &Value, out: &mut Vec<WmWindow>) {
     if node["type"] == "workspace" {
         let name = node["name"].as_str().unwrap_or_default();
-        if !name.starts_with("__") { collect_windows(node, name, out); }
+        if !name.starts_with("__") {
+            collect_windows(node, name, out);
+        }
         return;
     }
     // i3 wraps workspaces in an output's `content` container; sway does not.
-    for child in children(node) { collect_workspaces(child, out); }
+    for child in children(node) {
+        collect_workspaces(child, out);
+    }
 }
 
 impl WindowManager for Ipc3 {
@@ -197,7 +215,11 @@ impl WindowManager for Ipc3 {
         {
             return Some(PathBuf::from(p));
         }
-        let dir = if self.kind == WmKind::I3 { "i3" } else { "sway" };
+        let dir = if self.kind == WmKind::I3 {
+            "i3"
+        } else {
+            "sway"
+        };
         let p = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".config"))
@@ -212,8 +234,14 @@ impl WindowManager for Ipc3 {
         // reload restores the backup.
         let tmp = std::env::temp_dir().join(format!("ramwarden-{}-check.conf", std::process::id()));
         std::fs::write(&tmp, text).map_err(|e| Error::os(format!("writing a check file: {e}")))?;
-        let bin = if self.kind == WmKind::I3 { "i3" } else { "sway" };
-        let res = self.runner.run(bin, &argv(&["-C", "-c", &tmp.to_string_lossy()]));
+        let bin = if self.kind == WmKind::I3 {
+            "i3"
+        } else {
+            "sway"
+        };
+        let res = self
+            .runner
+            .run(bin, &argv(&["-C", "-c", &tmp.to_string_lossy()]));
         let _ = std::fs::remove_file(&tmp);
         match res {
             Err(Error::Unsupported(_)) | Ok(_) => Ok(()),
@@ -283,14 +311,26 @@ mod tests {
         for bad in ["x; exec rm -rf ~", "a,b", "q\"", "[x]", "", "a\nb"] {
             assert!(quoted(bad).is_err(), "{bad:?} should be refused");
         }
-        let c = Ipc3::command(&WmCommand::MoveToWorkspace { window: 14, workspace: "web".into() }).unwrap();
+        let c = Ipc3::command(&WmCommand::MoveToWorkspace {
+            window: 14,
+            workspace: "web".into(),
+        })
+        .unwrap();
         assert_eq!(c, "[con_id=14] move container to workspace \"web\"");
-        assert!(Ipc3::command(&WmCommand::SwitchWorkspace { workspace: "1; exec x".into() }).is_err());
+        assert!(
+            Ipc3::command(&WmCommand::SwitchWorkspace {
+                workspace: "1; exec x".into()
+            })
+            .is_err()
+        );
     }
 
     #[test]
     fn a_reply_marked_unsuccessful_is_an_error_with_swaymsgs_reason() {
-        let r = Arc::new(Scripted::default().reply("swaymsg", r#"[{"success": false, "error": "No matching node"}]"#));
+        let r = Arc::new(Scripted::default().reply(
+            "swaymsg",
+            r#"[{"success": false, "error": "No matching node"}]"#,
+        ));
         let mut w = Ipc3::sway(r);
         let e = w.run(&WmCommand::Focus { window: 99 }).unwrap_err();
         assert!(e.to_string().contains("No matching node"));
@@ -299,7 +339,9 @@ mod tests {
     #[test]
     fn balance_is_unsupported_rather_than_faked() {
         assert!(matches!(
-            Ipc3::command(&WmCommand::Balance { workspace: "1".into() }),
+            Ipc3::command(&WmCommand::Balance {
+                workspace: "1".into()
+            }),
             Err(Error::Unsupported(_))
         ));
     }

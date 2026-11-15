@@ -89,9 +89,21 @@ pub fn describe(f: &Features) -> String {
         class_text(f.class),
         idle_bucket(f.idle_minutes),
         visits_bucket(f.frecency),
-        if f.related { "It is on the same site as a tab the user is working in now." } else { "It is unrelated to the tabs the user is working in now." },
-        if f.duplicate { "A newer copy of the same page is open." } else { "No other copy of the page is open." },
-        if f.work { " The page is a signed-in console, account, checkout or form page where the user was in the middle of something." } else { "" },
+        if f.related {
+            "It is on the same site as a tab the user is working in now."
+        } else {
+            "It is unrelated to the tabs the user is working in now."
+        },
+        if f.duplicate {
+            "A newer copy of the same page is open."
+        } else {
+            "No other copy of the page is open."
+        },
+        if f.work {
+            " The page is a signed-in console, account, checkout or form page where the user was in the middle of something."
+        } else {
+            ""
+        },
     )
 }
 
@@ -100,8 +112,14 @@ pub const Q_UNSAVED: &str = "unsaved";
 
 pub fn questions() -> Vec<Question> {
     vec![
-        Question::new(Q_RETURN, "Will the user come back to this tab within the next 24 hours?"),
-        Question::new(Q_UNSAVED, "Could this tab hold unsaved work, a half-filled form, or an in-progress task that would be lost if the tab were unloaded?"),
+        Question::new(
+            Q_RETURN,
+            "Will the user come back to this tab within the next 24 hours?",
+        ),
+        Question::new(
+            Q_UNSAVED,
+            "Could this tab hold unsaved work, a half-filled form, or an in-progress task that would be lost if the tab were unloaded?",
+        ),
     ]
 }
 
@@ -144,16 +162,28 @@ pub struct Adjusted {
 
 impl Adjusted {
     pub fn none(p: f64) -> Self {
-        Adjusted { p, p_model: None, veto: false }
+        Adjusted {
+            p,
+            p_model: None,
+            veto: false,
+        }
     }
 }
 
 /// Pure: apply a judgement to the closed-form estimate.
 pub fn fuse(p_rules: f64, j: &Judgement, weight: f64, unsaved_veto: f64) -> Adjusted {
     if j.unsaved >= unsaved_veto {
-        return Adjusted { p: p_rules, p_model: Some(j.return_24h), veto: true };
+        return Adjusted {
+            p: p_rules,
+            p_model: Some(j.return_24h),
+            veto: true,
+        };
     }
-    Adjusted { p: blend(p_rules, j.return_24h, weight), p_model: Some(j.return_24h), veto: false }
+    Adjusted {
+        p: blend(p_rules, j.return_24h, weight),
+        p_model: Some(j.return_24h),
+        veto: false,
+    }
 }
 
 // ── The asker, the budget and the breaker ───────────────────────────────────
@@ -226,13 +256,19 @@ impl TabIntel {
     pub fn lookup(&self, state: &str, now: Instant) -> Option<Judgement> {
         let ttl = Duration::from_secs(self.cfg.cache_hours * 3600);
         let cache = self.cache.lock().unwrap();
-        cache.get(state).filter(|(_, at)| now.duration_since(*at) < ttl).map(|(j, _)| j.clone())
+        cache
+            .get(state)
+            .filter(|(_, at)| now.duration_since(*at) < ttl)
+            .map(|(j, _)| j.clone())
     }
 
     fn insert(&self, state: String, j: Judgement, now: Instant) {
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= MAX_CACHE
-            && let Some(oldest) = cache.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone())
+            && let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(k, _)| k.clone())
         {
             cache.remove(&oldest);
         }
@@ -256,11 +292,21 @@ impl TabIntel {
     /// is off or the breaker is open. Shared by the tab and app questions, which
     /// draw on one budget.
     pub(crate) fn call_room(&self, now: Instant) -> usize {
-        if !self.active() || self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t) {
+        if !self.active()
+            || self
+                .breaker
+                .lock()
+                .unwrap()
+                .open_until
+                .is_some_and(|t| now < t)
+        {
             return 0;
         }
         let mut calls = self.calls.lock().unwrap();
-        while calls.front().is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(3600)) {
+        while calls
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(3600))
+        {
             calls.pop_front();
         }
         (self.cfg.max_calls_per_hour as usize).saturating_sub(calls.len())
@@ -272,24 +318,39 @@ impl TabIntel {
 
     pub(crate) fn note_ok(&self, a: &Answers) {
         self.breaker.lock().unwrap().consecutive = 0;
-        self.input_tokens.fetch_add(a.input_tokens, Ordering::Relaxed);
-        self.output_tokens.fetch_add(a.output_tokens, Ordering::Relaxed);
+        self.input_tokens
+            .fetch_add(a.input_tokens, Ordering::Relaxed);
+        self.output_tokens
+            .fetch_add(a.output_tokens, Ordering::Relaxed);
     }
 
     pub(crate) fn breaker_open(&self, now: Instant) -> bool {
-        self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t)
+        self.breaker
+            .lock()
+            .unwrap()
+            .open_until
+            .is_some_and(|t| now < t)
     }
 
     pub(crate) fn record_failure(&self, e: &AiError, now: Instant) {
         let mut b = self.breaker.lock().unwrap();
         b.consecutive += 1;
-        let auth = matches!(e, AiError::Status { status: 401 | 403, .. });
+        let auth = matches!(
+            e,
+            AiError::Status {
+                status: 401 | 403,
+                ..
+            }
+        );
         if auth {
             b.open_until = Some(now + AUTH_BACKOFF);
             tracing::warn!("jev rejected the key ({e}); pausing for an hour");
         } else if b.consecutive >= TRIP_AFTER {
             b.open_until = Some(now + BACKOFF);
-            tracing::warn!("jev failed {} times in a row ({e}); pausing for 10 minutes", b.consecutive);
+            tracing::warn!(
+                "jev failed {} times in a row ({e}); pausing for 10 minutes",
+                b.consecutive
+            );
         }
     }
 
@@ -304,18 +365,34 @@ impl TabIntel {
             match asker.ask(&state, &qs).await {
                 Ok(a) => {
                     self.breaker.lock().unwrap().consecutive = 0;
-                    self.input_tokens.fetch_add(a.input_tokens, Ordering::Relaxed);
-                    self.output_tokens.fetch_add(a.output_tokens, Ordering::Relaxed);
+                    self.input_tokens
+                        .fetch_add(a.input_tokens, Ordering::Relaxed);
+                    self.output_tokens
+                        .fetch_add(a.output_tokens, Ordering::Relaxed);
                     let (Some(&r), Some(&u)) = (a.noul.get(Q_RETURN), a.noul.get(Q_UNSAVED)) else {
                         tracing::warn!("jev reply was missing an expected answer; ignoring it");
                         continue;
                     };
-                    self.insert(state, Judgement { return_24h: r, unsaved: u, model: a.model }, now);
+                    self.insert(
+                        state,
+                        Judgement {
+                            return_24h: r,
+                            unsaved: u,
+                            model: a.model,
+                        },
+                        now,
+                    );
                     answered += 1;
                 }
                 Err(e) => {
                     self.record_failure(&e, now);
-                    if self.breaker.lock().unwrap().open_until.is_some_and(|t| now < t) {
+                    if self
+                        .breaker
+                        .lock()
+                        .unwrap()
+                        .open_until
+                        .is_some_and(|t| now < t)
+                    {
                         break;
                     }
                 }
@@ -333,7 +410,13 @@ impl TabIntel {
             .open_until
             .and_then(|t| t.checked_duration_since(now))
             .map(|d| d.as_secs());
-        let calls = self.calls.lock().unwrap().iter().filter(|t| now.duration_since(**t) < Duration::from_secs(3600)).count();
+        let calls = self
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| now.duration_since(**t) < Duration::from_secs(3600))
+            .count();
         let cache = self.cache.lock().unwrap();
         serde_json::json!({
             "enabled": self.cfg.enabled,
@@ -372,7 +455,9 @@ pub fn global() -> Option<&'static Arc<TabIntel>> {
 /// Pure read: the closed-form estimate, adjusted by a cached model answer when
 /// there is one for these features.
 pub fn adjust(p_rules: f64, f: &Features) -> Adjusted {
-    let Some(intel) = global().filter(|i| i.active()) else { return Adjusted::none(p_rules) };
+    let Some(intel) = global().filter(|i| i.active()) else {
+        return Adjusted::none(p_rules);
+    };
     let cfg = intel.config();
     // Only borderline tabs were asked about, so only they can have an answer.
     if p_rules < cfg.band_low || p_rules > cfg.band_high {
@@ -412,11 +497,23 @@ mod tests {
     use super::*;
 
     fn feat() -> Features {
-        Features { class: "page", idle_minutes: 840, frecency: 0.0, related: false, duplicate: false, work: false }
+        Features {
+            class: "page",
+            idle_minutes: 840,
+            frecency: 0.0,
+            related: false,
+            duplicate: false,
+            work: false,
+        }
     }
 
     fn cfg() -> config::Jev {
-        config::Jev { enabled: true, max_calls_per_hour: 3, cache_hours: 6, ..config::Jev::default() }
+        config::Jev {
+            enabled: true,
+            max_calls_per_hour: 3,
+            cache_hours: 6,
+            ..config::Jev::default()
+        }
     }
 
     struct Fake {
@@ -426,14 +523,24 @@ mod tests {
 
     impl Fake {
         fn ok(r: f64, u: f64) -> Self {
-            Fake { calls: Mutex::new(0), reply: Mutex::new((0..50).map(|_| Ok((r, u))).collect()) }
+            Fake {
+                calls: Mutex::new(0),
+                reply: Mutex::new((0..50).map(|_| Ok((r, u))).collect()),
+            }
         }
         fn failing(status: u16) -> Self {
             let mut v = Vec::new();
             for _ in 0..50 {
-                v.push(Err(AiError::Status { service: "jev", status, body: "x".into() }));
+                v.push(Err(AiError::Status {
+                    service: "jev",
+                    status,
+                    body: "x".into(),
+                }));
             }
-            Fake { calls: Mutex::new(0), reply: Mutex::new(v) }
+            Fake {
+                calls: Mutex::new(0),
+                reply: Mutex::new(v),
+            }
         }
     }
 
@@ -459,8 +566,19 @@ mod tests {
 
     #[test]
     fn the_description_carries_features_and_no_identifying_text() {
-        let text = describe(&Features { class: "feed", idle_minutes: 400, frecency: 2.0, related: true, duplicate: true, work: false });
-        assert!(text.contains("social feed") && text.contains("6 to 12 hours") && text.contains("regularly"));
+        let text = describe(&Features {
+            class: "feed",
+            idle_minutes: 400,
+            frecency: 2.0,
+            related: true,
+            duplicate: true,
+            work: false,
+        });
+        assert!(
+            text.contains("social feed")
+                && text.contains("6 to 12 hours")
+                && text.contains("regularly")
+        );
         assert!(text.contains("same site as a tab") && text.contains("newer copy"));
         for leak in ["http", "www", ".com", "title"] {
             assert!(!text.to_lowercase().contains(leak), "{leak}");
@@ -470,27 +588,55 @@ mod tests {
     #[test]
     fn nearby_tabs_share_one_description() {
         // 14 h and 15 h idle fall in one bucket: one cache entry, one call.
-        let a = Features { idle_minutes: 840, ..feat() };
-        let b = Features { idle_minutes: 900, ..feat() };
+        let a = Features {
+            idle_minutes: 840,
+            ..feat()
+        };
+        let b = Features {
+            idle_minutes: 900,
+            ..feat()
+        };
         assert_eq!(describe(&a), describe(&b));
-        assert_ne!(describe(&a), describe(&Features { idle_minutes: 2000, ..feat() }));
+        assert_ne!(
+            describe(&a),
+            describe(&Features {
+                idle_minutes: 2000,
+                ..feat()
+            })
+        );
     }
 
     #[test]
     fn blending_is_exact_at_the_edges_and_pulls_toward_the_model() {
-        assert!((blend(0.3, 0.9, 0.0) - 0.3).abs() < 1e-12, "weight 0 ignores the model");
-        assert!((blend(0.3, 0.9, 1.0) - 0.9).abs() < 1e-12, "weight 1 is the model");
-        assert!((blend(0.4, 0.4, 0.7) - 0.4).abs() < 1e-12, "agreement is unchanged");
+        assert!(
+            (blend(0.3, 0.9, 0.0) - 0.3).abs() < 1e-12,
+            "weight 0 ignores the model"
+        );
+        assert!(
+            (blend(0.3, 0.9, 1.0) - 0.9).abs() < 1e-12,
+            "weight 1 is the model"
+        );
+        assert!(
+            (blend(0.4, 0.4, 0.7) - 0.4).abs() < 1e-12,
+            "agreement is unchanged"
+        );
         let mid = blend(0.3, 0.9, 0.4);
         assert!(mid > 0.3 && mid < 0.9);
-        assert!(blend(0.3, 0.9, 0.6) > mid, "more weight, closer to the model");
+        assert!(
+            blend(0.3, 0.9, 0.6) > mid,
+            "more weight, closer to the model"
+        );
         // Probabilities of exactly 0 or 1 stay finite.
         assert!(blend(0.0, 1.0, 0.5).is_finite());
     }
 
     #[test]
     fn a_high_unsaved_probability_vetoes_and_a_low_one_blends() {
-        let j = |u| Judgement { return_24h: 0.05, unsaved: u, model: "m".into() };
+        let j = |u| Judgement {
+            return_24h: 0.05,
+            unsaved: u,
+            model: "m".into(),
+        };
         assert!(fuse(0.4, &j(0.8), 0.4, 0.6).veto);
         let a = fuse(0.4, &j(0.1), 0.4, 0.6);
         assert!(!a.veto && a.p < 0.4 && a.p_model == Some(0.05));
@@ -501,11 +647,25 @@ mod tests {
         let fake = Arc::new(Fake::ok(0.2, 0.1));
         let t = intel(&fake);
         let now = Instant::now();
-        let states = vec![describe(&feat()), describe(&feat()), describe(&Features { class: "feed", ..feat() })];
-        assert_eq!(t.refresh(&states, now).await, 2, "duplicates collapse to distinct states");
+        let states = vec![
+            describe(&feat()),
+            describe(&feat()),
+            describe(&Features {
+                class: "feed",
+                ..feat()
+            }),
+        ];
+        assert_eq!(
+            t.refresh(&states, now).await,
+            2,
+            "duplicates collapse to distinct states"
+        );
         assert_eq!(*fake.calls.lock().unwrap(), 2);
         let j = t.lookup(&describe(&feat()), now).unwrap();
-        assert_eq!((j.return_24h, j.unsaved, j.model.as_str()), (0.2, 0.1, "jev-1.13.0"));
+        assert_eq!(
+            (j.return_24h, j.unsaved, j.model.as_str()),
+            (0.2, 0.1, "jev-1.13.0")
+        );
         assert_eq!(t.refresh(&states, now).await, 0);
         assert_eq!(*fake.calls.lock().unwrap(), 2, "answers are reused");
     }
@@ -516,15 +676,27 @@ mod tests {
         let t = intel(&fake);
         let now = Instant::now();
         t.refresh(&[describe(&feat())], now).await;
-        assert!(t.lookup(&describe(&feat()), now + Duration::from_secs(5 * 3600)).is_some());
-        assert!(t.lookup(&describe(&feat()), now + Duration::from_secs(7 * 3600)).is_none());
+        assert!(
+            t.lookup(&describe(&feat()), now + Duration::from_secs(5 * 3600))
+                .is_some()
+        );
+        assert!(
+            t.lookup(&describe(&feat()), now + Duration::from_secs(7 * 3600))
+                .is_none()
+        );
     }
 
     /// `n` distinct descriptions: classes crossed with idle buckets.
     fn many_states(n: usize) -> Vec<String> {
         let classes = ["page", "feed", "app", "reference"];
         (0..n)
-            .map(|i| describe(&Features { class: classes[i % 4], idle_minutes: 100 + 1500 * (i as i64 / 4), ..feat() }))
+            .map(|i| {
+                describe(&Features {
+                    class: classes[i % 4],
+                    idle_minutes: 100 + 1500 * (i as i64 / 4),
+                    ..feat()
+                })
+            })
             .collect()
     }
 
@@ -537,24 +709,50 @@ mod tests {
         assert!(many.iter().collect::<HashSet<_>>().len() >= 8);
         assert_eq!(t.refresh(&many, now).await, 3);
         assert_eq!(t.refresh(&many, now).await, 0, "budget spent");
-        assert_eq!(t.refresh(&many, now + Duration::from_secs(3601)).await, 3, "a new hour");
+        assert_eq!(
+            t.refresh(&many, now + Duration::from_secs(3601)).await,
+            3,
+            "a new hour"
+        );
     }
 
     #[tokio::test]
     async fn repeated_failures_trip_the_breaker_and_a_bad_key_pauses_for_an_hour() {
         let fake = Arc::new(Fake::failing(529));
-        let t = TabIntel::new(config::Jev { max_calls_per_hour: 100, ..cfg() }, Some(Box::new(fake.clone())));
+        let t = TabIntel::new(
+            config::Jev {
+                max_calls_per_hour: 100,
+                ..cfg()
+            },
+            Some(Box::new(fake.clone())),
+        );
         let now = Instant::now();
         let many = many_states(12);
         t.refresh(&many, now).await;
         assert_eq!(*fake.calls.lock().unwrap(), 3, "stops after three in a row");
-        assert!(t.plan(&many, now + Duration::from_secs(60)).is_empty(), "paused");
-        assert!(!t.plan(&many, now + Duration::from_secs(11 * 60)).is_empty(), "resumes after ten minutes");
+        assert!(
+            t.plan(&many, now + Duration::from_secs(60)).is_empty(),
+            "paused"
+        );
+        assert!(
+            !t.plan(&many, now + Duration::from_secs(11 * 60)).is_empty(),
+            "resumes after ten minutes"
+        );
 
         let denied = Arc::new(Fake::failing(401));
-        let t = TabIntel::new(config::Jev { max_calls_per_hour: 100, ..cfg() }, Some(Box::new(denied.clone())));
+        let t = TabIntel::new(
+            config::Jev {
+                max_calls_per_hour: 100,
+                ..cfg()
+            },
+            Some(Box::new(denied.clone())),
+        );
         t.refresh(&many, now).await;
-        assert_eq!(*denied.calls.lock().unwrap(), 1, "a rejected key stops at once");
+        assert_eq!(
+            *denied.calls.lock().unwrap(),
+            1,
+            "a rejected key stops at once"
+        );
         assert!(t.plan(&many, now + Duration::from_secs(30 * 60)).is_empty());
     }
 
@@ -565,14 +763,22 @@ mod tests {
         assert!(off.plan(&[describe(&feat())], Instant::now()).is_empty());
         let no_asker = TabIntel::new(cfg(), None);
         assert!(!no_asker.active());
-        assert_eq!(adjust(0.3, &feat()), Adjusted::none(0.3), "nothing installed: closed form only");
+        assert_eq!(
+            adjust(0.3, &feat()),
+            Adjusted::none(0.3),
+            "nothing installed: closed form only"
+        );
     }
 
     #[test]
     fn only_borderline_tabs_are_selected_and_capped_biggest_first() {
         use crate::browser::{Row, Target};
         let row = |id: i64, p: f64, mb: u32, eligible: bool| Row {
-            target: Target { browser: "b".into(), id, url: format!("https://secret{id}.example.com/private") },
+            target: Target {
+                browser: "b".into(),
+                id,
+                url: format!("https://secret{id}.example.com/private"),
+            },
             title: "private title".into(),
             inactive_minutes: 500 + id * 400,
             eligible,
@@ -592,13 +798,34 @@ mod tests {
             p_rules: p,
             p_model: None,
         };
-        let rows = [row(1, 0.05, 120, true), row(2, 0.3, 120, true), row(3, 0.5, 400, true), row(4, 0.9, 400, true), row(5, 0.3, 120, false)];
-        let c = config::Jev { max_candidates: 1, ..config::Jev::default() };
+        let rows = [
+            row(1, 0.05, 120, true),
+            row(2, 0.3, 120, true),
+            row(3, 0.5, 400, true),
+            row(4, 0.9, 400, true),
+            row(5, 0.3, 120, false),
+        ];
+        let c = config::Jev {
+            max_candidates: 1,
+            ..config::Jev::default()
+        };
         let one = borderline_states(&rows, &c);
         assert_eq!(one.len(), 1);
-        assert!(one[0].contains("1 to 2 days"), "the 400 MB tab (id 3) goes first: {}", one[0]);
+        assert!(
+            one[0].contains("1 to 2 days"),
+            "the 400 MB tab (id 3) goes first: {}",
+            one[0]
+        );
         let all = borderline_states(&rows, &config::Jev::default());
-        assert_eq!(all.len(), 2, "clearly-stale, clearly-active and ineligible tabs are excluded");
-        assert!(all.iter().all(|s| !s.contains("secret") && !s.contains("private")), "no URL or title text");
+        assert_eq!(
+            all.len(),
+            2,
+            "clearly-stale, clearly-active and ineligible tabs are excluded"
+        );
+        assert!(
+            all.iter()
+                .all(|s| !s.contains("secret") && !s.contains("private")),
+            "no URL or title text"
+        );
     }
 }

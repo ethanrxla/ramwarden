@@ -155,11 +155,7 @@ mod tests {
         }
         let o = page_out(std::process::id() as i32, &[vma(0x1000, 0x2000)]);
         assert!(o.did_nothing());
-        assert!(
-            o.notes[0].contains("helper not running"),
-            "{:?}",
-            o.notes
-        );
+        assert!(o.notes[0].contains("helper not running"), "{:?}", o.notes);
         assert!(
             o.notes[0].contains("cgroup reclaim"),
             "the refusal must say what happens instead: {:?}",

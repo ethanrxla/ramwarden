@@ -51,8 +51,18 @@ impl Runner for SystemRunner {
                 String::from_utf8_lossy(&buf).into_owned()
             })
         };
-        let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-        let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+        let out = drain(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let err = drain(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
 
         let deadline = Instant::now() + TIMEOUT;
         let status = loop {
@@ -61,7 +71,9 @@ impl Runner for SystemRunner {
                 Ok(None) if Instant::now() >= deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(Error::os(format!("{program} did not answer within {TIMEOUT:?}")));
+                    return Err(Error::os(format!(
+                        "{program} did not answer within {TIMEOUT:?}"
+                    )));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                 Err(e) => return Err(Error::os(format!("{program}: {e}"))),
@@ -73,7 +85,11 @@ impl Runner for SystemRunner {
         if status.success() {
             Ok(stdout)
         } else {
-            let said = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+            let said = if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            };
             Err(Error::os(format!(
                 "{program} {}: {}",
                 args.first().map(String::as_str).unwrap_or(""),
@@ -111,11 +127,17 @@ pub(crate) mod scripted {
 
     impl Scripted {
         pub fn reply(self, argv_prefix: &str, out: &str) -> Self {
-            self.replies.lock().unwrap().push_back((argv_prefix.into(), Ok(out.into())));
+            self.replies
+                .lock()
+                .unwrap()
+                .push_back((argv_prefix.into(), Ok(out.into())));
             self
         }
         pub fn fail(self, argv_prefix: &str, err: &str) -> Self {
-            self.replies.lock().unwrap().push_back((argv_prefix.into(), Err(Error::os(err))));
+            self.replies
+                .lock()
+                .unwrap()
+                .push_back((argv_prefix.into(), Err(Error::os(err))));
             self
         }
         pub fn calls(&self) -> Vec<String> {
@@ -130,12 +152,10 @@ pub(crate) mod scripted {
                 .collect::<Vec<_>>()
                 .join(" ");
             self.calls.lock().unwrap().push(line.clone());
-            let (want, reply) = self
-                .replies
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| (String::new(), Err(Error::Unsupported("no scripted reply"))));
+            let (want, reply) =
+                self.replies.lock().unwrap().pop_front().unwrap_or_else(|| {
+                    (String::new(), Err(Error::Unsupported("no scripted reply")))
+                });
             assert!(line.starts_with(&want), "expected `{want}…`, ran `{line}`");
             reply
         }

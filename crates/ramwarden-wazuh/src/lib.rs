@@ -29,10 +29,10 @@
 
 pub mod agent;
 pub mod api;
-pub mod evidence;
 pub mod cloud;
 /// Server-only enrollment mechanism; separate from read-only detection.
 pub mod enrollment;
+pub mod evidence;
 pub mod install;
 /// Local, read-only sensor health and connection inventory. Never uploaded.
 pub mod sensors;

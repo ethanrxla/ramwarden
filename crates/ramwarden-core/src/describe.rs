@@ -50,7 +50,10 @@ pub fn part_of(name: &str, cmdline: &str) -> &'static str {
         Some(_) => "helper",
         None => {
             let n = name.to_lowercase();
-            if n.contains("language_server") || n.contains("language-server") || n.contains("tsserver") {
+            if n.contains("language_server")
+                || n.contains("language-server")
+                || n.contains("tsserver")
+            {
                 "language server"
             } else if n.contains("extension-host") || cmdline.contains("chrome-extension://") {
                 "browser extension host"
@@ -86,7 +89,12 @@ pub fn label(s: &Signals, quiet_minutes: Option<f64>) -> String {
     } else if let Some(d) = &s.active_descendant {
         format!("a child process is working ({d})")
     } else if !s.listening_ports.is_empty() {
-        let p: Vec<String> = s.listening_ports.iter().take(3).map(|p| p.to_string()).collect();
+        let p: Vec<String> = s
+            .listening_ports
+            .iter()
+            .take(3)
+            .map(|p| p.to_string())
+            .collect();
         format!("listening on port {}", p.join(", "))
     } else if s.cpu_seconds_recent >= crate::signals::CPU_BUSY_SECONDS {
         "working right now".to_string()
@@ -96,7 +104,11 @@ pub fn label(s: &Signals, quiet_minutes: Option<f64>) -> String {
             None => "no CPU since the last check".to_string(),
         }
     };
-    let window = if s.has_window { "has a window" } else { "no window" };
+    let window = if s.has_window {
+        "has a window"
+    } else {
+        "no window"
+    };
     format!("{} - {}: {:.0} MB, {doing}, {window}", s.app, s.part, mb)
 }
 
@@ -109,22 +121,61 @@ mod tests {
 
     #[test]
     fn the_app_is_the_outermost_bundle_not_the_helper() {
-        assert_eq!(app_of("Google Chrome Helper (Renderer)", CHROME_RENDERER), "Google Chrome");
-        assert_eq!(app_of("ChatGPTHelper", "Contents/Resources/ChatGPTHelper"), "ChatGPTHelper");
+        assert_eq!(
+            app_of("Google Chrome Helper (Renderer)", CHROME_RENDERER),
+            "Google Chrome"
+        );
+        assert_eq!(
+            app_of("ChatGPTHelper", "Contents/Resources/ChatGPTHelper"),
+            "ChatGPTHelper"
+        );
         assert_eq!(app_of("node", "node server.js"), "node");
     }
 
     #[test]
     fn chromium_and_electron_children_are_named_by_what_they_do() {
         assert_eq!(part_of("x", CHROME_RENDERER), "page renderer");
-        assert_eq!(part_of("x", "h --type=renderer --extension-process"), "extension page renderer");
+        assert_eq!(
+            part_of("x", "h --type=renderer --extension-process"),
+            "extension page renderer"
+        );
         assert_eq!(part_of("x", "h --type=gpu-process --x"), "graphics process");
-        assert_eq!(part_of("x", "h --type=utility --utility-sub-type=network.mojom.NetworkService"), "network service");
-        assert_eq!(part_of("x", "h --type=utility --utility-sub-type=node.mojom.NodeService"), "background node service");
-        assert_eq!(part_of("x", "h --type=utility --utility-sub-type=audio.mojom.AudioService"), "audio service");
-        assert_eq!(part_of("Claude", "/Applications/Claude.app/Contents/MacOS/Claude"), "main process");
-        assert_eq!(part_of("language_server_macos_arm", "x --enable_lsp"), "language server");
-        assert_eq!(part_of("ChatGPT for Chrome", "ChatGPT for Chrome chrome-extension://abc/"), "browser extension host");
+        assert_eq!(
+            part_of(
+                "x",
+                "h --type=utility --utility-sub-type=network.mojom.NetworkService"
+            ),
+            "network service"
+        );
+        assert_eq!(
+            part_of(
+                "x",
+                "h --type=utility --utility-sub-type=node.mojom.NodeService"
+            ),
+            "background node service"
+        );
+        assert_eq!(
+            part_of(
+                "x",
+                "h --type=utility --utility-sub-type=audio.mojom.AudioService"
+            ),
+            "audio service"
+        );
+        assert_eq!(
+            part_of("Claude", "/Applications/Claude.app/Contents/MacOS/Claude"),
+            "main process"
+        );
+        assert_eq!(
+            part_of("language_server_macos_arm", "x --enable_lsp"),
+            "language server"
+        );
+        assert_eq!(
+            part_of(
+                "ChatGPT for Chrome",
+                "ChatGPT for Chrome chrome-extension://abc/"
+            ),
+            "browser extension host"
+        );
     }
 
     fn sig(app: &str, part: &'static str) -> Signals {
@@ -138,7 +189,10 @@ mod tests {
     #[test]
     fn a_label_says_who_what_how_big_and_whether_it_is_doing_anything() {
         let s = sig("Claude", "page renderer");
-        assert_eq!(label(&s, Some(40.0)), "Claude - page renderer: 700 MB, no CPU for 40 min, no window");
+        assert_eq!(
+            label(&s, Some(40.0)),
+            "Claude - page renderer: 700 MB, no CPU for 40 min, no window"
+        );
         let mut w = sig("Claude", "main process");
         w.has_window = true;
         w.active_descendant = Some("codex".into());

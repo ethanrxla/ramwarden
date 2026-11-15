@@ -107,12 +107,12 @@ fn parse(text: &str, windows: bool) -> Result<Vec<Connection>, String> {
                 line.strip_prefix('n').and_then(|s| s.split_once("->"))
                 && pid > 0
             {
-                    rows.push(Connection {
-                        pid,
-                        process: process.clone(),
-                        local: local.into(),
-                        remote: remote.into(),
-                    });
+                rows.push(Connection {
+                    pid,
+                    process: process.clone(),
+                    local: local.into(),
+                    remote: remote.into(),
+                });
             }
         }
         rows

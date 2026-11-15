@@ -62,7 +62,9 @@ pub enum Identity {
 
 impl Identity {
     pub fn email(raw: &str) -> Identity {
-        Identity::Email { email: raw.trim().to_ascii_lowercase() }
+        Identity::Email {
+            email: raw.trim().to_ascii_lowercase(),
+        }
     }
 }
 
@@ -239,8 +241,14 @@ impl Account {
     /// Plan ceiling and any lower operator cap, also enforced in storage.
     pub fn effective_device_limit(&self, now: u64) -> u32 {
         let plan = if self.active("ram", now) {
-            match self.tier { Some(Tier::Pro) => 5, Some(Tier::Ram) => 3, None => 1 }
-        } else { 1 };
+            match self.tier {
+                Some(Tier::Pro) => 5,
+                Some(Tier::Ram) => 3,
+                None => 1,
+            }
+        } else {
+            1
+        };
         plan.min(self.device_limit)
     }
 
@@ -309,7 +317,11 @@ pub enum Platform {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecurityBinding { pub agent_id: String, pub agent_name: String, pub group: String }
+pub struct SecurityBinding {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub group: String,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
@@ -356,7 +368,11 @@ pub enum Claim {
     Pending,
     /// Unknown, expired or already claimed: start again.
     Gone,
-    Approved { account_id: Id, device_name: String, platform: Platform },
+    Approved {
+        account_id: Id,
+        device_name: String,
+        platform: Platform,
+    },
 }
 
 /// A sign-in message the server wrote and is waiting to see signed.
@@ -385,7 +401,10 @@ pub struct EmailCode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EmailCheck {
-    Ok { user_code: Option<String>, link_account: Option<Id> },
+    Ok {
+        user_code: Option<String>,
+        link_account: Option<Id>,
+    },
     Wrong,
     /// Expired, used, or too many wrong tries: send a new one.
     Gone,
@@ -439,7 +458,12 @@ mod tests {
 
     #[test]
     fn emails_are_one_identity_whatever_their_case() {
-        assert_eq!(account().identity, Identity::Email { email: "ethan@example.com".into() });
+        assert_eq!(
+            account().identity,
+            Identity::Email {
+                email: "ethan@example.com".into()
+            }
+        );
     }
 
     #[test]
@@ -460,14 +484,26 @@ mod tests {
         assert!(a.active("threat", NOW), "Pro unlocks ThreatWarden");
 
         let end = NOW + 14 * DAY;
-        assert_eq!(a.status(end), Some(Status::Grace), "the first charge has not landed");
+        assert_eq!(
+            a.status(end),
+            Some(Status::Grace),
+            "the first charge has not landed"
+        );
         assert!(a.active("ram", end + GRACE_SECONDS - 1));
         assert_eq!(a.status(end + GRACE_SECONDS), Some(Status::Lapsed));
         assert!(!a.active("ram", end + GRACE_SECONDS));
 
-        BillingUpdate { paid_until: Some(end + 30 * DAY), ..Default::default() }.apply(&mut a);
+        BillingUpdate {
+            paid_until: Some(end + 30 * DAY),
+            ..Default::default()
+        }
+        .apply(&mut a);
         assert_eq!(a.status(end + 1), Some(Status::Active));
-        BillingUpdate { cancelled: Some(true), ..Default::default() }.apply(&mut a);
+        BillingUpdate {
+            cancelled: Some(true),
+            ..Default::default()
+        }
+        .apply(&mut a);
         assert_eq!(a.status(end + 1), Some(Status::Cancelled));
         assert!(!a.active("ram", end + 30 * DAY), "no grace after a cancel");
     }
@@ -475,10 +511,18 @@ mod tests {
     #[test]
     fn ramwarden_does_not_unlock_threatwarden_and_dates_only_move_forward() {
         let mut a = account();
-        let u = BillingUpdate { tier: Some(Tier::Ram), paid_until: Some(NOW + 100), ..Default::default() };
+        let u = BillingUpdate {
+            tier: Some(Tier::Ram),
+            paid_until: Some(NOW + 100),
+            ..Default::default()
+        };
         u.apply(&mut a);
         assert!(a.active("ram", NOW) && !a.active("threat", NOW));
-        BillingUpdate { paid_until: Some(NOW + 50), ..Default::default() }.apply(&mut a);
+        BillingUpdate {
+            paid_until: Some(NOW + 50),
+            ..Default::default()
+        }
+        .apply(&mut a);
         assert_eq!(a.paid_until, Some(NOW + 100));
     }
 }

@@ -32,18 +32,26 @@ pub struct Komorebi {
 
 /// `{"elements": [...], "focused": n}`, komorebi's ring type.
 fn ring(v: &Value) -> (Vec<&Value>, Option<usize>) {
-    let elements = v["elements"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    let elements = v["elements"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
     (elements, v["focused"].as_u64().map(|f| f as usize))
 }
 
 impl Komorebi {
     pub fn new(runner: Arc<dyn Runner>) -> Self {
-        Komorebi { runner, last: None, floating: Vec::new() }
+        Komorebi {
+            runner,
+            last: None,
+            floating: Vec::new(),
+        }
     }
 
     /// Parse `komorebic state`. Returns the state and the floating hwnds.
     pub fn parse(text: &str) -> Result<(WmState, Vec<u64>)> {
-        let v: Value = serde_json::from_str(text).map_err(|e| Error::os(format!("komorebic state: {e}")))?;
+        let v: Value =
+            serde_json::from_str(text).map_err(|e| Error::os(format!("komorebic state: {e}")))?;
         let mut state = WmState::empty(WmKind::Komorebi);
         let mut floating = Vec::new();
         let (monitors, focused_monitor) = ring(&v["monitors"]);
@@ -71,7 +79,8 @@ impl Komorebi {
                 for (c, con) in containers.iter().enumerate() {
                     let (wins, focused_win) = ring(&con["windows"]);
                     for (i, win) in wins.iter().enumerate() {
-                        let focused = ws_focused && focused_container == Some(c) && focused_win == Some(i);
+                        let focused =
+                            ws_focused && focused_container == Some(c) && focused_win == Some(i);
                         if let Some(w) = window(win, &name, focused) {
                             state.windows.push(w);
                         }
@@ -96,7 +105,10 @@ impl Komorebi {
     fn index_of(&self, workspace: &str) -> Option<(usize, usize)> {
         let rest = workspace.strip_prefix('#')?;
         let (m, w) = rest.split_once(':')?;
-        Some((m.parse::<usize>().ok()?.checked_sub(1)?, w.parse::<usize>().ok()?.checked_sub(1)?))
+        Some((
+            m.parse::<usize>().ok()?.checked_sub(1)?,
+            w.parse::<usize>().ok()?.checked_sub(1)?,
+        ))
     }
 
     fn monitor_index(&self, monitor: &str) -> Result<usize> {
@@ -119,8 +131,13 @@ impl Komorebi {
 
     /// Focus one specific window, or refuse if komorebi cannot be told which.
     fn focus_window(&self, id: u64) -> Result<()> {
-        let state = self.last.as_ref().ok_or_else(|| Error::missing("komorebi state"))?;
-        let win = state.window(id).ok_or_else(|| Error::missing(format!("window {id}")))?;
+        let state = self
+            .last
+            .as_ref()
+            .ok_or_else(|| Error::missing("komorebi state"))?;
+        let win = state
+            .window(id)
+            .ok_or_else(|| Error::missing(format!("window {id}")))?;
         if win.focused {
             return Ok(());
         }
@@ -168,7 +185,9 @@ impl WindowManager for Komorebi {
             WmCommand::MoveToWorkspace { window, workspace } => {
                 self.focus_window(*window)?;
                 match self.index_of(workspace) {
-                    Some((m, w)) => self.call(&["move-to-monitor-workspace", &m.to_string(), &w.to_string()]),
+                    Some((m, w)) => {
+                        self.call(&["move-to-monitor-workspace", &m.to_string(), &w.to_string()])
+                    }
                     None => self.call(&["move-to-named-workspace", workspace]),
                 }
             }
@@ -199,7 +218,9 @@ impl WindowManager for Komorebi {
     }
 
     fn config_path(&self) -> Option<PathBuf> {
-        let dir = std::env::var_os("KOMOREBI_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(home);
+        let dir = std::env::var_os("KOMOREBI_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(home);
         let p = dir.join("komorebi.json");
         p.exists().then_some(p)
     }
@@ -261,13 +282,21 @@ mod tests {
                 .reply("komorebic eager-focus Slack.exe", "")
                 .reply("komorebic move-to-named-workspace code", ""),
         );
-        k.run(&WmCommand::MoveToWorkspace { window: 200, workspace: "code".into() }).unwrap();
+        k.run(&WmCommand::MoveToWorkspace {
+            window: 200,
+            workspace: "code".into(),
+        })
+        .unwrap();
         assert_eq!(r.calls().len(), 4);
     }
 
     #[test]
     fn an_exe_with_two_windows_is_refused_rather_than_guessed() {
-        let (_r, mut k) = with_state(Scripted::default().reply("komorebic state", STATE).reply("komorebic state", STATE));
+        let (_r, mut k) = with_state(
+            Scripted::default()
+                .reply("komorebic state", STATE)
+                .reply("komorebic state", STATE),
+        );
         // 301 is not focused and firefox.exe has two windows.
         let e = k.run(&WmCommand::Focus { window: 301 }).unwrap_err();
         assert!(e.to_string().contains("2 windows"));
@@ -282,18 +311,31 @@ mod tests {
                 .reply("komorebic eager-focus Code.exe", "")
                 .reply("komorebic move-to-monitor-workspace 0 1", ""),
         );
-        k.run(&WmCommand::MoveToWorkspace { window: 100, workspace: "#1:2".into() }).unwrap();
+        k.run(&WmCommand::MoveToWorkspace {
+            window: 100,
+            workspace: "#1:2".into(),
+        })
+        .unwrap();
         assert_eq!(r.calls().len(), 4);
     }
 
     #[test]
     fn a_window_that_lost_focus_is_not_treated_as_still_focused() {
         let mut changed: Value = serde_json::from_str(STATE).unwrap();
-        changed["monitors"]["elements"][0]["workspaces"]["elements"][1]["containers"]["focused"] = 0.into();
-        let (r, mut k) = with_state(Scripted::default()
-            .reply("komorebic state", STATE)
-            .reply("komorebic state", &changed.to_string()));
-        assert!(k.run(&WmCommand::MoveToWorkspace { window: 300, workspace: "code".into() }).is_err());
+        changed["monitors"]["elements"][0]["workspaces"]["elements"][1]["containers"]["focused"] =
+            0.into();
+        let (r, mut k) = with_state(
+            Scripted::default()
+                .reply("komorebic state", STATE)
+                .reply("komorebic state", &changed.to_string()),
+        );
+        assert!(
+            k.run(&WmCommand::MoveToWorkspace {
+                window: 300,
+                workspace: "code".into()
+            })
+            .is_err()
+        );
         assert_eq!(r.calls(), vec!["komorebic state", "komorebic state"]);
     }
 
@@ -305,7 +347,11 @@ mod tests {
                 .reply("komorebic state", STATE)
                 .reply("komorebic eager-focus Spotify.exe", ""),
         );
-        k.run(&WmCommand::SetLayout { window: 400, layout: WmLayout::Floating }).unwrap();
+        k.run(&WmCommand::SetLayout {
+            window: 400,
+            layout: WmLayout::Floating,
+        })
+        .unwrap();
         assert_eq!(r.calls().len(), 3);
     }
 }

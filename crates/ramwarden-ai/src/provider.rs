@@ -110,7 +110,11 @@ impl Provider {
                 Some(mut rec) => {
                     let dropped = rec.clamp_all(allowed_processes, allowed_terminals, allowed_tabs);
                     if !dropped.is_empty() {
-                        let line = format!("{} suggested out-of-bounds {}", tier.as_str(), dropped.describe());
+                        let line = format!(
+                            "{} suggested out-of-bounds {}",
+                            tier.as_str(),
+                            dropped.describe()
+                        );
                         tracing::warn!("{line}");
                         notes.push(line);
                     }
@@ -312,7 +316,10 @@ pub fn ensure_summary(rec: &mut Recommendation) {
         parts.push(format!("{} idle app(s)", rec.processes_to_suspend.len()));
     }
     if !rec.idle_terminals_to_close.is_empty() {
-        parts.push(format!("{} idle shell(s)", rec.idle_terminals_to_close.len()));
+        parts.push(format!(
+            "{} idle shell(s)",
+            rec.idle_terminals_to_close.len()
+        ));
     }
     rec.summary = if parts.is_empty() {
         "nothing worth reclaiming right now.".to_string()

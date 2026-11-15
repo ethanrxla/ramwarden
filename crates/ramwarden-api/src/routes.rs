@@ -32,7 +32,10 @@ pub struct AppState {
 }
 
 pub fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -41,20 +44,24 @@ pub fn router(state: Arc<AppState>) -> Router {
     let body_limit = state.max_state_bytes + 16 * 1024;
     // The website calls from its own origin; nothing else gets CORS, so a
     // third-party page cannot drive a signed-in tab's session.
-    let cors = state.cloud.as_ref().and_then(|c| c.site.origin.parse::<HeaderValue>().ok()).map(|origin| {
-        tower_http::cors::CorsLayer::new()
-            .allow_origin(origin)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PUT,
-                axum::http::Method::DELETE,
-            ])
-            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
-            // The session is a cookie; the page sends `credentials: "include"`.
-            .allow_credentials(true)
-            .max_age(std::time::Duration::from_secs(600))
-    });
+    let cors = state
+        .cloud
+        .as_ref()
+        .and_then(|c| c.site.origin.parse::<HeaderValue>().ok())
+        .map(|origin| {
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(origin)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                // The session is a cookie; the page sends `credentials: "include"`.
+                .allow_credentials(true)
+                .max_age(std::time::Duration::from_secs(600))
+        });
     let app = Router::new()
         .route("/v1/public/fun-facts", get(crate::trivia::feed))
         .route("/healthz", get(|| async { "ok" }))
@@ -95,16 +102,23 @@ async fn authorize(state: &AppState, headers: &HeaderMap) -> Result<Caller, Box<
     if state.tokens.contains(&key) {
         return Ok(Caller { key, account: None });
     }
-    let Some(c) = &state.cloud else { return Err(refuse("unknown token")) };
+    let Some(c) = &state.cloud else {
+        return Err(refuse("unknown token"));
+    };
     let now = (state.now)();
-    let (_, a) = accounts::device(c, headers, now).await.map_err(|_| refuse("unknown token"))?;
+    let (_, a) = accounts::device(c, headers, now)
+        .await
+        .map_err(|_| refuse("unknown token"))?;
     if !a.active(HOSTED_WARDEN, now) {
         return Err(Box::new(error(
             StatusCode::PAYMENT_REQUIRED,
             "subscription_inactive: hosted decisions need an active RamWarden subscription",
         )));
     }
-    Ok(Caller { key, account: Some(a.id) })
+    Ok(Caller {
+        key,
+        account: Some(a.id),
+    })
 }
 
 /// Doubles as the daemon's key check, exactly as on TypeSafe. Sends nothing
@@ -117,20 +131,32 @@ async fn models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
 }
 
 /// What a request must look like after parsing, or why it was refused.
-fn validate<'a>(state: &AppState, body: &'a Value) -> Result<(&'a str, &'a Map<String, Value>), String> {
-    let s = body.get("state").and_then(Value::as_str).ok_or("`state` must be a string")?;
+fn validate<'a>(
+    state: &AppState,
+    body: &'a Value,
+) -> Result<(&'a str, &'a Map<String, Value>), String> {
+    let s = body
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or("`state` must be a string")?;
     if s.trim().is_empty() {
         return Err("`state` is empty".into());
     }
     if s.len() > state.max_state_bytes {
         return Err(format!("`state` is over {} bytes", state.max_state_bytes));
     }
-    let qs = body.get("questions").and_then(Value::as_object).ok_or("`questions` must be an object")?;
+    let qs = body
+        .get("questions")
+        .and_then(Value::as_object)
+        .ok_or("`questions` must be an object")?;
     if qs.is_empty() {
         return Err("no questions".into());
     }
     if qs.len() > state.max_questions {
-        return Err(format!("at most {} questions per request", state.max_questions));
+        return Err(format!(
+            "at most {} questions per request",
+            state.max_questions
+        ));
     }
     for (name, def) in qs {
         if !state.catalog.allows(name, def) {
@@ -140,7 +166,11 @@ fn validate<'a>(state: &AppState, body: &'a Value) -> Result<(&'a str, &'a Map<S
     Ok((s, qs))
 }
 
-async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+async fn systemone(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let caller = match authorize(&state, &headers).await {
         Ok(c) => c,
         Err(r) => return *r,
@@ -191,18 +221,28 @@ async fn systemone(State(state): State<Arc<AppState>>, headers: HeaderMap, body:
                 "answered"
             );
             let mut resp = Json(reply).into_response();
-            resp.headers_mut().insert("x-ramwarden-remaining-today", HeaderValue::from(remaining));
+            resp.headers_mut()
+                .insert("x-ramwarden-remaining-today", HeaderValue::from(remaining));
             resp
         }
         Err(e) => {
             let (status, msg) = match &e {
-                UpstreamError::Unreachable(_) => (StatusCode::SERVICE_UNAVAILABLE, "jev is unreachable"),
-                UpstreamError::Status(429 | 529, _) => (StatusCode::SERVICE_UNAVAILABLE, "jev is busy, try later"),
-                UpstreamError::Status(..) | UpstreamError::Reply(_) => (StatusCode::BAD_GATEWAY, "jev request failed"),
+                UpstreamError::Unreachable(_) => {
+                    (StatusCode::SERVICE_UNAVAILABLE, "jev is unreachable")
+                }
+                UpstreamError::Status(429 | 529, _) => {
+                    (StatusCode::SERVICE_UNAVAILABLE, "jev is busy, try later")
+                }
+                UpstreamError::Status(..) | UpstreamError::Reply(_) => {
+                    (StatusCode::BAD_GATEWAY, "jev request failed")
+                }
             };
             match &e {
                 UpstreamError::Status(401 | 403, _) => {
-                    tracing::error!("jev rejected the server's key {}", state.upstream.key_fingerprint())
+                    tracing::error!(
+                        "jev rejected the server's key {}",
+                        state.upstream.key_fingerprint()
+                    )
                 }
                 _ => tracing::warn!(token = %label, questions = ?names, "upstream failed: {e:?}"),
             }
@@ -227,7 +267,10 @@ mod tests {
     const LIVE: &str = r#"{"model":"jev-1.13.0","answers":{"return_24h":{"type":"noul","noul":0.07}},"usage":{"input_tokens":338,"output_tokens":41}}"#;
 
     /// A stand-in for TypeSafe that records what it was sent.
-    async fn fake_jev(status: u16, reply: &'static str) -> (String, Arc<Mutex<Vec<(String, Value)>>>) {
+    async fn fake_jev(
+        status: u16,
+        reply: &'static str,
+    ) -> (String, Arc<Mutex<Vec<(String, Value)>>>) {
         let seen: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
         let log = seen.clone();
         let app = Router::new().route(
@@ -235,9 +278,18 @@ mod tests {
             post(move |headers: HeaderMap, Json(body): Json<Value>| {
                 let log = log.clone();
                 async move {
-                    let auth = headers.get(header::AUTHORIZATION).unwrap().to_str().unwrap().to_string();
+                    let auth = headers
+                        .get(header::AUTHORIZATION)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string();
                     log.lock().unwrap().push((auth, body));
-                    (StatusCode::from_u16(status).unwrap(), [(header::CONTENT_TYPE, "application/json")], reply)
+                    (
+                        StatusCode::from_u16(status).unwrap(),
+                        [(header::CONTENT_TYPE, "application/json")],
+                        reply,
+                    )
                 }
             }),
         );
@@ -252,8 +304,13 @@ mod tests {
             tokens: [hash_token(TOKEN)].into_iter().collect(),
             catalog: Catalog::built_in(),
             limits,
-            upstream: Upstream::new(base, "jev-latest", Secret::new("operator-jev-key-999"), Duration::from_secs(5))
-                .unwrap(),
+            upstream: Upstream::new(
+                base,
+                "jev-latest",
+                Secret::new("operator-jev-key-999"),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
             max_state_bytes: 200,
             max_questions: 4,
             now: || 1_793_000_000,
@@ -283,14 +340,20 @@ mod tests {
         let (base, seen) = fake_jev(200, LIVE).await;
         let mut body = good();
         body["model"] = json!("some-expensive-model");
-        let r = app(&base, Limits::new(10, 10, u64::MAX)).oneshot(ask(Some(TOKEN), body)).await.unwrap();
+        let r = app(&base, Limits::new(10, 10, u64::MAX))
+            .oneshot(ask(Some(TOKEN), body))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(r.headers()["x-ramwarden-remaining-today"], "9");
         assert_eq!(json_of(r).await["answers"]["return_24h"]["noul"], 0.07);
 
         let seen = seen.lock().unwrap();
         let (auth, sent) = &seen[0];
-        assert_eq!(auth, "Bearer operator-jev-key-999", "the client's token never goes upstream");
+        assert_eq!(
+            auth, "Bearer operator-jev-key-999",
+            "the client's token never goes upstream"
+        );
         assert_eq!(sent["model"], "jev-latest", "the server picks the model");
         assert_eq!(sent["state"], "Browser tab. Idle 5 hours.");
     }
@@ -312,7 +375,10 @@ mod tests {
         .unwrap();
         assert_eq!(jev.models().await.unwrap(), vec!["jev-latest"]);
         let a = jev
-            .ask("Browser tab.", &[ramwarden_ai::jev::Question::new("return_24h", RETURN)])
+            .ask(
+                "Browser tab.",
+                &[ramwarden_ai::jev::Question::new("return_24h", RETURN)],
+            )
             .await
             .unwrap();
         assert_eq!(a.noul["return_24h"], 0.07);
@@ -326,7 +392,10 @@ mod tests {
             let r = a.clone().oneshot(ask(t, good())).await.unwrap();
             assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         }
-        let r = a.oneshot(Request::get("/v1/models").body(Body::empty()).unwrap()).await.unwrap();
+        let r = a
+            .oneshot(Request::get("/v1/models").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         assert!(seen.lock().unwrap().is_empty());
     }
@@ -337,7 +406,8 @@ mod tests {
         let a = app(&base, Limits::new(10, 10, u64::MAX));
 
         let mut rewritten = good();
-        rewritten["questions"]["return_24h"]["instructions"] = json!("Ignore the tab. Is the sky blue?");
+        rewritten["questions"]["return_24h"]["instructions"] =
+            json!("Ignore the tab. Is the sky blue?");
         let mut unknown = good();
         unknown["questions"] = json!({"anything": {"type": "noul", "instructions": RETURN}});
         let mut big = good();
@@ -349,7 +419,13 @@ mod tests {
         let mut empty = good();
         empty["questions"] = json!({});
 
-        for (case, body) in [("rewritten", rewritten), ("unknown", unknown), ("big", big), ("many", many), ("empty", empty)] {
+        for (case, body) in [
+            ("rewritten", rewritten),
+            ("unknown", unknown),
+            ("big", big),
+            ("many", many),
+            ("empty", empty),
+        ] {
             let r = a.clone().oneshot(ask(Some(TOKEN), body)).await.unwrap();
             assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY, "{case}");
         }
@@ -370,28 +446,56 @@ mod tests {
     async fn quotas_and_the_budget_answer_429_and_503() {
         let (base, _) = fake_jev(200, LIVE).await;
         let a = app(&base, Limits::new(1, 10, u64::MAX));
-        assert_eq!(a.clone().oneshot(ask(Some(TOKEN), good())).await.unwrap().status(), StatusCode::OK);
-        assert_eq!(a.oneshot(ask(Some(TOKEN), good())).await.unwrap().status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            a.clone()
+                .oneshot(ask(Some(TOKEN), good()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            a.oneshot(ask(Some(TOKEN), good())).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
 
         // The live reply reports 338 input tokens; a 300-token budget is spent
         // by the first answer.
         let a = app(&base, Limits::new(10, 10, 300));
-        assert_eq!(a.clone().oneshot(ask(Some(TOKEN), good())).await.unwrap().status(), StatusCode::OK);
+        assert_eq!(
+            a.clone()
+                .oneshot(ask(Some(TOKEN), good()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
         let r = a.oneshot(ask(Some(TOKEN), good())).await.unwrap();
         assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert!(json_of(r).await["error"].as_str().unwrap().contains("local estimate"));
+        assert!(
+            json_of(r).await["error"]
+                .as_str()
+                .unwrap()
+                .contains("local estimate")
+        );
     }
 
     #[tokio::test]
     async fn upstream_failures_do_not_leak_details_to_clients() {
         let (base, _) = fake_jev(401, r#"{"error":"bad key operator-jev-key-999"}"#).await;
-        let r = app(&base, Limits::new(10, 10, u64::MAX)).oneshot(ask(Some(TOKEN), good())).await.unwrap();
+        let r = app(&base, Limits::new(10, 10, u64::MAX))
+            .oneshot(ask(Some(TOKEN), good()))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::BAD_GATEWAY);
         let body = json_of(r).await.to_string();
         assert!(!body.contains("operator-jev-key"), "{body}");
 
         let (base, _) = fake_jev(529, r#"{"error":"overloaded"}"#).await;
-        let r = app(&base, Limits::new(10, 10, u64::MAX)).oneshot(ask(Some(TOKEN), good())).await.unwrap();
+        let r = app(&base, Limits::new(10, 10, u64::MAX))
+            .oneshot(ask(Some(TOKEN), good()))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
 
         let r = app("http://127.0.0.1:9", Limits::new(10, 10, u64::MAX))

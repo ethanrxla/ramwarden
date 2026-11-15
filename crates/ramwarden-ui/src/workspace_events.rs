@@ -7,7 +7,9 @@ pub(crate) struct Decoder {
 impl Decoder {
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<serde_json::Value>, String> {
         self.total += bytes.len();
-        if self.total > 256 * 1024 { return Err("Workspace stream exceeded limit".into()); }
+        if self.total > 256 * 1024 {
+            return Err("Workspace stream exceeded limit".into());
+        }
         self.pending.extend_from_slice(bytes);
         let mut events = vec![];
         while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
@@ -16,7 +18,9 @@ impl Decoder {
                 events.push(serde_json::from_slice(data).map_err(|_| "Invalid workspace event")?);
             }
         }
-        if self.pending.len() > 64 * 1024 { return Err("Workspace event exceeded limit".into()); }
+        if self.pending.len() > 64 * 1024 {
+            return Err("Workspace event exceeded limit".into());
+        }
         Ok(events)
     }
 }

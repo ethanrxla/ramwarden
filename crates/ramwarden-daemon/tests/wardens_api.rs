@@ -5,29 +5,37 @@ use axum::{
     body::{Body, to_bytes},
     http::Request,
 };
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
+use ed25519_dalek::{Signer, SigningKey};
+use ramwarden_core::wardens::Entitlement;
 use ramwarden_core::{
     actuator::Actuator, config::Config, detector::Detector, history::History, ladder::Ladder,
 };
 use ramwarden_daemon::hub::{AppState, Hub};
 use ramwarden_platform::fake;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
-use ed25519_dalek::{Signer, SigningKey};
-use ramwarden_core::wardens::Entitlement;
 use serde_json::Value;
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 
 fn state(dir: &std::path::Path) -> AppState {
-    let cfg = Config { db_path: dir.join("history.db"), ..Config::default() };
+    let cfg = Config {
+        db_path: dir.join("history.db"),
+        ..Config::default()
+    };
     let platform = Arc::new(fake::platform(Default::default()));
     AppState {
         cfg: Arc::new(cfg.clone()),
         det: Arc::new(RwLock::new(Detector::new(platform.processes()))),
-        ladder: Arc::new(Mutex::new(Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform)))),
+        ladder: Arc::new(Mutex::new(Ladder::new(
+            cfg.ladder.clone(),
+            Actuator::for_platform(&platform),
+        ))),
         platform,
         hub: Arc::new(Mutex::new(Hub::new())),
-        history: Arc::new(Mutex::new(History::open(std::path::Path::new(":memory:")).unwrap())),
+        history: Arc::new(Mutex::new(
+            History::open(std::path::Path::new(":memory:")).unwrap(),
+        )),
         ai: Arc::new(ramwarden_daemon::ai::provider(&cfg)),
         models: Arc::new(Default::default()),
         predictor: Arc::new(ramwarden_daemon::predict::LivePredictor::new(
@@ -52,12 +60,22 @@ async fn get(st: &AppState, path: &str) -> (u16, String, Vec<u8>) {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    (status, ctype, to_bytes(r.into_body(), 1_000_000).await.unwrap().to_vec())
+    (
+        status,
+        ctype,
+        to_bytes(r.into_body(), 1_000_000).await.unwrap().to_vec(),
+    )
 }
 
 async fn post(st: &AppState, path: &str) -> u16 {
     ramwarden_daemon::routes::router(st.clone())
-        .oneshot(Request::builder().method("POST").uri(path).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap()
         .status()
@@ -83,15 +101,22 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
     }
     let st = state(dir.path());
     let key = SigningKey::from_bytes(&[1; 32]);
-    let w = ramwarden_daemon::wardens::Wardens::install(ramwarden_daemon::wardens::Wardens::with_public_key(
-        &st.cfg,
-        Some(B64.encode(key.verifying_key().as_bytes())),
-    ));
+    let w = ramwarden_daemon::wardens::Wardens::install(
+        ramwarden_daemon::wardens::Wardens::with_public_key(
+            &st.cfg,
+            Some(B64.encode(key.verifying_key().as_bytes())),
+        ),
+    );
 
     // Free tier: RAM works, Wazuh is locked and has no report.
     let list = json(&st, "/wardens").await;
     assert_eq!(list["paid"], serde_json::json!([]));
-    let ids: Vec<&str> = list["wardens"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = list["wardens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, ["ram", "threat"]);
     let ram = &list["wardens"][0];
     assert_eq!(ram["access"], "free");
@@ -127,14 +152,21 @@ async fn wardens_are_listed_gated_by_plan_and_drawn_from_their_icons() {
         serde_json::to_string(&e).unwrap()
     };
     // An unsigned pass unlocks nothing.
-    std::fs::write(dir.path().join("entitlement.json"), format!(r#"{{"v":2,"tier":"pro","wardens":{{"threat":{until}}}}}"#)).unwrap();
+    std::fs::write(
+        dir.path().join("entitlement.json"),
+        format!(r#"{{"v":2,"tier":"pro","wardens":{{"threat":{until}}}}}"#),
+    )
+    .unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("ram")).unwrap();
     assert_eq!(json(&st, "/wardens").await["wardens"][1]["unlocked"], false);
     std::fs::write(dir.path().join("entitlement.json"), pass("threat")).unwrap();
     let list = json(&st, "/wardens").await;
     assert_eq!(list["paid"], serde_json::json!(["threat"]));
-    assert_eq!((list["tier"].as_str(), list["plan_status"].as_str()), (Some("pro"), Some("active")));
+    assert_eq!(
+        (list["tier"].as_str(), list["plan_status"].as_str()),
+        (Some("pro"), Some("active"))
+    );
     assert_eq!(list["wardens"][1]["unlocked"], true);
 
     // Unlocked but this computer is signed out: hosted mode says so, never

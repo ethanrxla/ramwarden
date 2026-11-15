@@ -38,7 +38,10 @@ pub struct ResendMailer {
 
 impl ResendMailer {
     pub fn new(key: Secret, from: String) -> Self {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().unwrap_or_default();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
         ResendMailer { key, from, http }
     }
 }
@@ -82,7 +85,10 @@ pub struct MemoryMailer {
 #[async_trait]
 impl Mailer for MemoryMailer {
     async fn send_code(&self, to: &str, code: &str) -> Result<(), String> {
-        self.sent.lock().unwrap_or_else(|p| p.into_inner()).push((to.to_string(), code.to_string()));
+        self.sent
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push((to.to_string(), code.to_string()));
         Ok(())
     }
 }
@@ -90,6 +96,9 @@ impl Mailer for MemoryMailer {
 impl MemoryMailer {
     pub fn last_code(&self, to: &str) -> Option<String> {
         let sent = self.sent.lock().unwrap_or_else(|p| p.into_inner());
-        sent.iter().rev().find(|(t, _)| t == to).map(|(_, c)| c.clone())
+        sent.iter()
+            .rev()
+            .find(|(t, _)| t == to)
+            .map(|(_, c)| c.clone())
     }
 }

@@ -50,14 +50,21 @@ pub struct Candidate {
 
 impl Candidate {
     /// Build from the processes sharing `name`, summing their memory.
-    pub fn from_signals(name: &str, cold_rank: usize, idle_minutes: f64, procs: &[&Signals]) -> Self {
+    pub fn from_signals(
+        name: &str,
+        cold_rank: usize,
+        idle_minutes: f64,
+        procs: &[&Signals],
+    ) -> Self {
         let first = procs.first();
         Candidate {
             name: name.to_string(),
             cold_rank,
             idle_minutes,
             pss: procs.iter().map(|s| s.pss).sum(),
-            role: first.map(|s| s.role.as_str().to_string()).unwrap_or_default(),
+            role: first
+                .map(|s| s.role.as_str().to_string())
+                .unwrap_or_default(),
             has_window: procs.iter().any(|s| s.has_window),
             established: procs.iter().map(|s| s.established).sum(),
             listening: procs.iter().any(|s| !s.listening_ports.is_empty()),
@@ -79,7 +86,8 @@ pub struct Judgement {
 pub trait Judge {
     /// Judge every candidate. An `Err` means the judge could not be reached; the
     /// ladder then falls back to the gate alone, as it did before judges existed.
-    fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String>;
+    fn judge(&mut self, intent: Intent, candidates: &[Candidate])
+    -> Result<Vec<Judgement>, String>;
 }
 
 /// Answers a judge gave earlier, served to the ladder as if it were asking now.
@@ -118,7 +126,11 @@ impl Prejudged {
 }
 
 impl Judge for Prejudged {
-    fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String> {
+    fn judge(
+        &mut self,
+        intent: Intent,
+        candidates: &[Candidate],
+    ) -> Result<Vec<Judgement>, String> {
         match self.answers.iter().find(|(i, _)| *i == intent) {
             Some((_, Ok(all))) => Ok(all
                 .iter()
@@ -140,14 +152,21 @@ mod tests {
     }
 
     fn approve(name: &str) -> Judgement {
-        Judgement { name: name.into(), close: true, confidence: 0.9, reason: "ok".into() }
+        Judgement {
+            name: name.into(),
+            close: true,
+            confidence: 0.9,
+            reason: "ok".into(),
+        }
     }
 
     #[test]
     fn replays_only_answers_for_candidates_still_on_the_list() {
         let mut p = Prejudged::new();
         p.record(Intent::Suspend, Ok(vec![approve("slack"), approve("zoom")]));
-        let got = p.judge(Intent::Suspend, &[cand("slack"), cand("discord")]).unwrap();
+        let got = p
+            .judge(Intent::Suspend, &[cand("slack"), cand("discord")])
+            .unwrap();
         assert_eq!(got, vec![approve("slack")]);
     }
 
@@ -162,6 +181,9 @@ mod tests {
     fn a_failure_is_replayed_as_a_failure() {
         let mut p = Prejudged::new();
         p.record(Intent::Kill, Err("timed out".into()));
-        assert_eq!(p.judge(Intent::Kill, &[cand("slack")]), Err("timed out".into()));
+        assert_eq!(
+            p.judge(Intent::Kill, &[cand("slack")]),
+            Err("timed out".into())
+        );
     }
 }

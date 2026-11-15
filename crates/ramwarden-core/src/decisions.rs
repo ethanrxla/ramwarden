@@ -38,7 +38,6 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-
 use crate::history::{History, Result};
 
 /// How long a closed tab stays a candidate for "the user reopened it".
@@ -140,7 +139,8 @@ impl TabVector {
         let class = |c: &str| if self.class == c { 1.0 } else { 0.0 };
         // A week of idle time spans the whole range; log scale, because the
         // difference between 10 and 70 minutes matters more than 3 vs 4 days.
-        let idle = ((1.0 + self.idle_minutes.max(0) as f64).ln() / (1.0 + 10_080.0f64).ln()).min(1.0);
+        let idle =
+            ((1.0 + self.idle_minutes.max(0) as f64).ln() / (1.0 + 10_080.0f64).ln()).min(1.0);
         let angle = self.hour as f64 / 24.0 * std::f64::consts::TAU;
         let v = [
             class("feed"),
@@ -270,7 +270,10 @@ impl History {
 
     /// Newest first, filtered.
     pub fn recent_decisions(&self, q: &DecisionQuery) -> Result<Vec<Decision>> {
-        let like = q.text.as_ref().map(|t| format!("%{}%", t.replace(['%', '_'], "")));
+        let like = q
+            .text
+            .as_ref()
+            .map(|t| format!("%{}%", t.replace(['%', '_'], "")));
         let mut stmt = self.conn().prepare(&format!(
             "SELECT {COLUMNS} FROM decisions
               WHERE (?1 IS NULL OR kind = ?1)
@@ -284,7 +287,11 @@ impl History {
 
     pub fn decision(&self, id: i64) -> Result<Option<Decision>> {
         self.conn()
-            .query_row(&format!("SELECT {COLUMNS} FROM decisions WHERE id = ?1"), [id], row)
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM decisions WHERE id = ?1"),
+                [id],
+                row,
+            )
             .optional()
     }
 
@@ -346,12 +353,18 @@ impl History {
               ORDER BY id DESC LIMIT 200",
         )?;
         let pending: Vec<(i64, String, String)> = stmt
-            .query_map([now - REOPEN_WINDOW_SECS], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .query_map([now - REOPEN_WINDOW_SECS], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
             .collect::<Result<_>>()?;
         let hit = pending
             .iter()
             .find(|(_, u, _)| canonical_url(u) == page)
-            .or_else(|| pending.iter().find(|(_, _, s)| !subject.is_empty() && s == subject))
+            .or_else(|| {
+                pending
+                    .iter()
+                    .find(|(_, _, s)| !subject.is_empty() && s == subject)
+            })
             .map(|(id, _, _)| *id);
         if let Some(id) = hit {
             self.mark_decision_outcome(id, "reopened", now)?;
@@ -371,11 +384,13 @@ impl History {
     }
 
     pub fn count_decisions(&self) -> Result<i64> {
-        self.conn().query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))
+        self.conn()
+            .query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))
     }
 
     pub fn prune_decisions(&self, days: i64, now: i64) -> Result<usize> {
-        self.conn().execute("DELETE FROM decisions WHERE at < ?1", [now - days * 86_400])
+        self.conn()
+            .execute("DELETE FROM decisions WHERE at < ?1", [now - days * 86_400])
     }
 }
 
@@ -397,7 +412,12 @@ mod tests {
             reason: "idle 30 h, return chance 0.12 < 0.30".into(),
             inputs: serde_json::json!({"idle_minutes": 1800}),
             jev: Some(serde_json::json!({"return_24h": 0.1})),
-            vector: TabVector { class: "page", idle_minutes: 1800, ..Default::default() }.encode(),
+            vector: TabVector {
+                class: "page",
+                idle_minutes: 1800,
+                ..Default::default()
+            }
+            .encode(),
             bytes: 0,
         }
     }
@@ -405,7 +425,9 @@ mod tests {
     #[test]
     fn a_decision_round_trips_with_its_inputs_and_jev_answer() {
         let h = History::in_memory().unwrap();
-        let id = h.record_decision(&close("https://docs.example.com/a#x", "Plan"), 100).unwrap();
+        let id = h
+            .record_decision(&close("https://docs.example.com/a#x", "Plan"), 100)
+            .unwrap();
         let d = h.decision(id).unwrap().unwrap();
         assert_eq!(d.action, "close");
         assert_eq!(d.inputs["idle_minutes"], 1800);
@@ -417,8 +439,12 @@ mod tests {
     #[test]
     fn every_change_moves_rev_forward_so_a_sync_sees_late_outcomes() {
         let h = History::in_memory().unwrap();
-        let a = h.record_decision(&close("https://x.test/a", "A"), 100).unwrap();
-        let _b = h.record_decision(&close("https://x.test/b", "B"), 101).unwrap();
+        let a = h
+            .record_decision(&close("https://x.test/a", "A"), 100)
+            .unwrap();
+        let _b = h
+            .record_decision(&close("https://x.test/b", "B"), 101)
+            .unwrap();
         let synced = h.decisions_since(0, 100).unwrap();
         assert_eq!(synced.len(), 2);
         let last = synced.last().unwrap().rev;
@@ -434,7 +460,9 @@ mod tests {
     #[test]
     fn only_the_first_outcome_counts() {
         let h = History::in_memory().unwrap();
-        let a = h.record_decision(&close("https://x.test/a", "A"), 100).unwrap();
+        let a = h
+            .record_decision(&close("https://x.test/a", "A"), 100)
+            .unwrap();
         assert_eq!(h.mark_decision_outcome(a, "reopened", 200).unwrap(), 1);
         assert_eq!(h.mark_decision_outcome(a, "reopened", 300).unwrap(), 0);
         assert_eq!(h.decision(a).unwrap().unwrap().outcome_at, Some(200));
@@ -444,12 +472,28 @@ mod tests {
     fn a_reopen_matches_the_exact_page_first_then_the_site() {
         let h = History::in_memory().unwrap();
         let now = 10 * 86_400;
-        let a = h.record_decision(&close("https://docs.example.com/a", "A"), now - 120).unwrap();
-        let b = h.record_decision(&close("https://docs.example.com/b", "B"), now - 60).unwrap();
-        assert_eq!(h.mark_close_reopened("https://docs.example.com/a#top", "docs.example.com", now).unwrap(), Some(a));
+        let a = h
+            .record_decision(&close("https://docs.example.com/a", "A"), now - 120)
+            .unwrap();
+        let b = h
+            .record_decision(&close("https://docs.example.com/b", "B"), now - 60)
+            .unwrap();
+        assert_eq!(
+            h.mark_close_reopened("https://docs.example.com/a#top", "docs.example.com", now)
+                .unwrap(),
+            Some(a)
+        );
         // No exact page left for /c: the newest open close on the site takes it.
-        assert_eq!(h.mark_close_reopened("https://docs.example.com/c", "docs.example.com", now).unwrap(), Some(b));
-        assert_eq!(h.mark_close_reopened("https://docs.example.com/c", "docs.example.com", now).unwrap(), None);
+        assert_eq!(
+            h.mark_close_reopened("https://docs.example.com/c", "docs.example.com", now)
+                .unwrap(),
+            Some(b)
+        );
+        assert_eq!(
+            h.mark_close_reopened("https://docs.example.com/c", "docs.example.com", now)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -459,16 +503,30 @@ mod tests {
         let mut dry = close("https://x.test/b", "B");
         dry.result = "dry_run".into();
         h.record_decision(&dry, now - 60).unwrap();
-        h.record_decision(&close("https://x.test/old", "Old"), now - REOPEN_WINDOW_SECS - 1).unwrap();
-        assert_eq!(h.mark_close_reopened("https://x.test/b", "", now).unwrap(), None);
-        assert_eq!(h.mark_close_reopened("https://x.test/old", "", now).unwrap(), None);
+        h.record_decision(
+            &close("https://x.test/old", "Old"),
+            now - REOPEN_WINDOW_SECS - 1,
+        )
+        .unwrap();
+        assert_eq!(
+            h.mark_close_reopened("https://x.test/b", "", now).unwrap(),
+            None
+        );
+        assert_eq!(
+            h.mark_close_reopened("https://x.test/old", "", now)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
     fn reopen_stats_count_live_closes_and_their_reopens() {
         let h = History::in_memory().unwrap();
-        let a = h.record_decision(&close("https://x.test/a", "A"), 100).unwrap();
-        h.record_decision(&close("https://x.test/b", "B"), 100).unwrap();
+        let a = h
+            .record_decision(&close("https://x.test/a", "A"), 100)
+            .unwrap();
+        h.record_decision(&close("https://x.test/b", "B"), 100)
+            .unwrap();
         let mut dry = close("https://x.test/c", "C");
         dry.result = "dry_run".into();
         h.record_decision(&dry, 100).unwrap();
@@ -485,15 +543,23 @@ mod tests {
         let first = h.record_decision(&u, 100).unwrap();
         let second = h.record_decision(&u, 200).unwrap();
         assert_eq!(h.mark_unload_returned("chrome", 7, 300).unwrap(), 1);
-        assert_eq!(h.decision(second).unwrap().unwrap().outcome.as_deref(), Some("returned"));
+        assert_eq!(
+            h.decision(second).unwrap().unwrap().outcome.as_deref(),
+            Some("returned")
+        );
         assert_eq!(h.decision(first).unwrap().unwrap().outcome, None);
     }
 
     #[test]
     fn the_text_filter_matches_host_or_title() {
         let h = History::in_memory().unwrap();
-        h.record_decision(&close("https://x.test/a", "Quarterly plan"), 100).unwrap();
-        let q = |t: &str| DecisionQuery { text: Some(t.into()), limit: 10, ..Default::default() };
+        h.record_decision(&close("https://x.test/a", "Quarterly plan"), 100)
+            .unwrap();
+        let q = |t: &str| DecisionQuery {
+            text: Some(t.into()),
+            limit: 10,
+            ..Default::default()
+        };
         assert_eq!(h.recent_decisions(&q("quarterly")).unwrap().len(), 1);
         assert_eq!(h.recent_decisions(&q("docs.example")).unwrap().len(), 1);
         assert!(h.recent_decisions(&q("nothing")).unwrap().is_empty());

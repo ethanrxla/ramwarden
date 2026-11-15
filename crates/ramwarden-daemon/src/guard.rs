@@ -83,7 +83,10 @@ impl Policy {
             return Err("Host is not a loopback name (possible DNS rebinding)");
         }
         if let Some(origin) = headers.get(header::ORIGIN) {
-            let ok = origin.to_str().map(|o| self.origin_allowed(o)).unwrap_or(false);
+            let ok = origin
+                .to_str()
+                .map(|o| self.origin_allowed(o))
+                .unwrap_or(false);
             if !ok {
                 return Err("requests from web pages are not accepted");
             }
@@ -96,7 +99,10 @@ impl Policy {
         let me = self.clone();
         CorsLayer::new()
             .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
-                origin.to_str().map(|o| me.origin_allowed(o)).unwrap_or(false)
+                origin
+                    .to_str()
+                    .map(|o| me.origin_allowed(o))
+                    .unwrap_or(false)
             }))
             .allow_methods(Any)
             .allow_headers(Any)
@@ -122,7 +128,8 @@ pub async fn enforce(State(policy): State<Policy>, req: Request, next: Next) -> 
 pub fn is_loopback(host: &str) -> bool {
     let h = host.trim_start_matches('[').trim_end_matches(']');
     h.eq_ignore_ascii_case("localhost")
-        || h.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        || h.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Split `host:port`, tolerating bracketed IPv6.
@@ -157,19 +164,46 @@ mod tests {
     #[test]
     fn extensions_and_local_programs_are_accepted() {
         let p = local();
-        assert!(p.check(&headers(&[("host", "127.0.0.1:7823")])).is_ok(), "curl / the window");
-        assert!(p.check(&headers(&[("host", "localhost:7823"), ("origin", "chrome-extension://abcdef")])).is_ok());
-        assert!(p.check(&headers(&[("host", "127.0.0.1:7823"), ("origin", "moz-extension://1234-5678")])).is_ok());
-        assert!(p.check(&headers(&[("host", "[::1]:7823"), ("origin", "http://127.0.0.1:7823")])).is_ok());
+        assert!(
+            p.check(&headers(&[("host", "127.0.0.1:7823")])).is_ok(),
+            "curl / the window"
+        );
+        assert!(
+            p.check(&headers(&[
+                ("host", "localhost:7823"),
+                ("origin", "chrome-extension://abcdef")
+            ]))
+            .is_ok()
+        );
+        assert!(
+            p.check(&headers(&[
+                ("host", "127.0.0.1:7823"),
+                ("origin", "moz-extension://1234-5678")
+            ]))
+            .is_ok()
+        );
+        assert!(
+            p.check(&headers(&[
+                ("host", "[::1]:7823"),
+                ("origin", "http://127.0.0.1:7823")
+            ]))
+            .is_ok()
+        );
     }
 
     /// The attack this module exists for.
     #[test]
     fn a_web_page_cannot_reach_a_destructive_route() {
         let p = local();
-        for origin in ["https://evil.example", "http://localhost:3000", "null", "http://127.0.0.1:9999"] {
+        for origin in [
+            "https://evil.example",
+            "http://localhost:3000",
+            "null",
+            "http://127.0.0.1:9999",
+        ] {
             assert!(
-                p.check(&headers(&[("host", "127.0.0.1:7823"), ("origin", origin)])).is_err(),
+                p.check(&headers(&[("host", "127.0.0.1:7823"), ("origin", origin)]))
+                    .is_err(),
                 "{origin} must be refused"
             );
         }
@@ -178,8 +212,14 @@ mod tests {
     #[test]
     fn dns_rebinding_is_refused_on_a_loopback_bind() {
         let p = local();
-        assert!(p.check(&headers(&[("host", "attacker.example:7823")])).is_err());
-        assert!(p.check(&headers(&[("host", "127.0.0.1.nip.io:7823")])).is_err());
+        assert!(
+            p.check(&headers(&[("host", "attacker.example:7823")]))
+                .is_err()
+        );
+        assert!(
+            p.check(&headers(&[("host", "127.0.0.1.nip.io:7823")]))
+                .is_err()
+        );
     }
 
     #[test]
@@ -187,15 +227,33 @@ mod tests {
         let p = Policy::for_bind("0.0.0.0", 7823);
         assert!(!p.loopback);
         assert!(p.check(&headers(&[("host", "100.64.0.7:7823")])).is_ok());
-        assert!(p.check(&headers(&[("host", "100.64.0.7:7823"), ("origin", "https://evil.example")])).is_err());
+        assert!(
+            p.check(&headers(&[
+                ("host", "100.64.0.7:7823"),
+                ("origin", "https://evil.example")
+            ]))
+            .is_err()
+        );
     }
 
     #[test]
     fn loopback_names_are_recognised() {
-        for h in ["127.0.0.1", "localhost", "LOCALHOST", "::1", "[::1]", "127.4.5.6"] {
+        for h in [
+            "127.0.0.1",
+            "localhost",
+            "LOCALHOST",
+            "::1",
+            "[::1]",
+            "127.4.5.6",
+        ] {
             assert!(is_loopback(h), "{h}");
         }
-        for h in ["0.0.0.0", "192.168.1.5", "example.com", "localhost.example.com"] {
+        for h in [
+            "0.0.0.0",
+            "192.168.1.5",
+            "example.com",
+            "localhost.example.com",
+        ] {
             assert!(!is_loopback(h), "{h}");
         }
     }

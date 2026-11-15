@@ -239,7 +239,10 @@ mod tests {
             !tight.has_room_for(NEMOTRON_4B_BYTES, MODEL_MARGIN),
             "the margin must keep the KV cache out of system RAM"
         );
-        assert!(tight.has_room_for(NEMOTRON_4B_BYTES, 0), "without a margin it fits");
+        assert!(
+            tight.has_room_for(NEMOTRON_4B_BYTES, 0),
+            "without a margin it fits"
+        );
     }
 
     /// Whatever this machine has, probing must be safe and self-consistent.

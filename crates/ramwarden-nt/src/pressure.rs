@@ -68,10 +68,19 @@ fn ramp(x: f64, from: f64, to: f64) -> f64 {
 pub fn instant(i: &Inputs) -> (f64, f64) {
     let scarcity = ramp(SCARCITY_START - i.available_fraction, 0.0, SCARCITY_START) * SOFT_CAP;
     let commit = ramp(i.commit_fraction, COMMIT_START, COMMIT_END) * SOFT_CAP;
-    let gate = ramp(FAULT_GATE_OPEN - i.available_fraction, 0.0, FAULT_GATE_OPEN - FAULT_GATE_FULL);
+    let gate = ramp(
+        FAULT_GATE_OPEN - i.available_fraction,
+        0.0,
+        FAULT_GATE_OPEN - FAULT_GATE_FULL,
+    );
     let faulting = (i.hard_faults_per_sec / FAULTS_AT_FULL_SCALE * 100.0).clamp(0.0, 100.0) * gate;
     let some = scarcity.max(commit).max(faulting);
-    let full = faulting * ramp(STALL_BELOW - i.available_fraction, 0.0, STALL_BELOW - FAULT_GATE_FULL);
+    let full = faulting
+        * ramp(
+            STALL_BELOW - i.available_fraction,
+            0.0,
+            STALL_BELOW - FAULT_GATE_FULL,
+        );
     (some, full)
 }
 
@@ -138,7 +147,10 @@ impl NtPressure {
     }
 
     fn total_hard_faults() -> Result<u64> {
-        Ok(snapshot::processes()?.iter().map(|p| p.hard_faults as u64).sum())
+        Ok(snapshot::processes()?
+            .iter()
+            .map(|p| p.hard_faults as u64)
+            .sum())
     }
 }
 
@@ -162,7 +174,11 @@ impl PressureSource for NtPressure {
         *prev = Some((now, faults));
 
         let inputs = Inputs {
-            available_fraction: if m.total > 0 { m.available as f64 / m.total as f64 } else { 1.0 },
+            available_fraction: if m.total > 0 {
+                m.available as f64 / m.total as f64
+            } else {
+                1.0
+            },
             commit_fraction: if m.commit_limit > 0 {
                 m.commit as f64 / m.commit_limit as f64
             } else {
@@ -243,7 +259,11 @@ mod tests {
     #[test]
     fn a_healthy_machine_reads_as_no_pressure() {
         assert_eq!(at(0.69, 0.45, 50.0), (0.0, 0.0));
-        assert_eq!(at(0.50, 0.60, 800.0), (0.0, 0.0), "faults with RAM free are file I/O");
+        assert_eq!(
+            at(0.50, 0.60, 800.0),
+            (0.0, 0.0),
+            "faults with RAM free are file I/O"
+        );
     }
 
     /// Being low on memory alone justifies reclaim, never a visible action.
@@ -253,7 +273,10 @@ mod tests {
         assert!(some < 10.0 && some > 9.0, "{some}");
         assert_eq!(full, 0.0);
         let (some, _) = at(0.15, 0.5, 0.0);
-        assert!(some >= 2.0, "15% available should reach the reclaim rung: {some}");
+        assert!(
+            some >= 2.0,
+            "15% available should reach the reclaim rung: {some}"
+        );
     }
 
     #[test]
@@ -286,11 +309,18 @@ mod tests {
     fn averages_start_at_the_first_reading_and_then_decay() {
         let mut e = Estimator::default();
         let t0 = Instant::now();
-        let hot = Inputs { available_fraction: 0.03, commit_fraction: 0.9, hard_faults_per_sec: 1500.0 };
+        let hot = Inputs {
+            available_fraction: 0.03,
+            commit_fraction: 0.9,
+            hard_faults_per_sec: 1500.0,
+        };
         let p: Pressure = e.update(t0, &hot);
         assert!(p.some_avg10 > 15.0 && p.estimated);
 
-        let calm = Inputs { available_fraction: 0.6, ..Default::default() };
+        let calm = Inputs {
+            available_fraction: 0.6,
+            ..Default::default()
+        };
         let first = e.current().some_avg10;
         let p = e.update(t0 + Duration::from_secs(30), &calm);
         // Three time constants: e^-3 ≈ 5% of the starting value remains.
@@ -298,7 +328,10 @@ mod tests {
             p.some_avg10 < first * 0.06,
             "10 s average should have mostly decayed: {p:?}"
         );
-        assert!(p.some_avg300 > p.some_avg10, "the long window decays slowest");
+        assert!(
+            p.some_avg300 > p.some_avg10,
+            "the long window decays slowest"
+        );
     }
 
     #[test]

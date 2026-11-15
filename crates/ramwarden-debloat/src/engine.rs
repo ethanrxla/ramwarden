@@ -77,7 +77,11 @@ impl Engine {
             }
             return Err(e);
         }
-        Ok(if recorded { Applied::Reapplied } else { Applied::Changed })
+        Ok(if recorded {
+            Applied::Reapplied
+        } else {
+            Applied::Changed
+        })
     }
 
     pub fn revert(&self, t: &dyn Tweak) -> Result<Reverted> {
@@ -124,7 +128,9 @@ pub struct Debloat {
 }
 
 pub fn user_journal_path() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     base.join("ramwarden").join("debloat.db")
 }
 
@@ -190,38 +196,47 @@ impl Debloat {
     }
 
     fn user_engine(&self) -> Result<&Engine> {
-        self.user
-            .as_ref()
-            .ok_or_else(|| Error::denied("user tweak", "the service cannot reach the user's registry hive"))
+        self.user.as_ref().ok_or_else(|| {
+            Error::denied(
+                "user tweak",
+                "the service cannot reach the user's registry hive",
+            )
+        })
     }
 
     /// A user-policy tweak bound to the user running this process.
     fn for_me(t: &dyn Tweak) -> Result<Box<dyn Tweak>> {
-        let sid = ramwarden_nt::owner::current_user_sid().ok_or_else(|| Error::os("cannot read this user's SID"))?;
-        t.for_user(&sid).ok_or_else(|| Error::os(format!("{} cannot be bound to a user", t.id())))
+        let sid = ramwarden_nt::owner::current_user_sid()
+            .ok_or_else(|| Error::os("cannot read this user's SID"))?;
+        t.for_user(&sid)
+            .ok_or_else(|| Error::os(format!("{} cannot be bound to a user", t.id())))
     }
 
     pub fn apply(&self, t: &dyn Tweak) -> Result<Applied> {
         match (t.scope(), &self.machine) {
             (Scope::UserPolicy, Machine::Local(e)) => e.apply(Self::for_me(t)?.as_ref()),
-            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakApply { id: t.id().to_string() }),
+            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakApply {
+                id: t.id().to_string(),
+            }),
             (Scope::User, _) => self.user_engine()?.apply(t),
             (Scope::Machine, Machine::Local(e)) => e.apply(t),
-            (Scope::Machine, Machine::Service) => {
-                via_service(Request::TweakApply { id: t.id().to_string() })
-            }
+            (Scope::Machine, Machine::Service) => via_service(Request::TweakApply {
+                id: t.id().to_string(),
+            }),
         }
     }
 
     pub fn revert(&self, t: &dyn Tweak) -> Result<Reverted> {
         match (t.scope(), &self.machine) {
             (Scope::UserPolicy, Machine::Local(e)) => e.revert(Self::for_me(t)?.as_ref()),
-            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakRevert { id: t.id().to_string() }),
+            (Scope::UserPolicy, Machine::Service) => via_service(Request::TweakRevert {
+                id: t.id().to_string(),
+            }),
             (Scope::User, _) => self.user_engine()?.revert(t),
             (Scope::Machine, Machine::Local(e)) => e.revert(t),
-            (Scope::Machine, Machine::Service) => {
-                via_service(Request::TweakRevert { id: t.id().to_string() })
-            }
+            (Scope::Machine, Machine::Service) => via_service(Request::TweakRevert {
+                id: t.id().to_string(),
+            }),
         }
     }
 
@@ -264,13 +279,19 @@ impl Debloat {
     /// Apply a whole profile (non-optional tweaks) or one tweak id.
     pub fn apply_named(&self, name: &str, include_optional: bool) -> Result<Vec<Line>> {
         let tweaks = select(name, include_optional)?;
-        Ok(tweaks.iter().map(|t| Line::from(t.id(), self.apply(t.as_ref()))).collect())
+        Ok(tweaks
+            .iter()
+            .map(|t| Line::from(t.id(), self.apply(t.as_ref())))
+            .collect())
     }
 
     /// Revert a profile, one id, or `all`.
     pub fn revert_named(&self, name: &str) -> Result<Vec<Line>> {
         let tweaks = select(name, true)?;
-        Ok(tweaks.iter().map(|t| Line::from(t.id(), self.revert(t.as_ref()))).collect())
+        Ok(tweaks
+            .iter()
+            .map(|t| Line::from(t.id(), self.revert(t.as_ref())))
+            .collect())
     }
 }
 
@@ -281,7 +302,11 @@ fn select(name: &str, include_optional: bool) -> Result<Vec<Box<dyn Tweak>>> {
         return Ok(profiles.into_iter().flat_map(|p| p.tweaks).collect());
     }
     if let Some(p) = profiles.into_iter().find(|p| p.name == name) {
-        return Ok(p.tweaks.into_iter().filter(|t| include_optional || !t.optional()).collect());
+        return Ok(p
+            .tweaks
+            .into_iter()
+            .filter(|t| include_optional || !t.optional())
+            .collect());
     }
     Ok(vec![catalog::tweak(name)?])
 }
@@ -307,7 +332,10 @@ mod tests {
             key: KeyPath::parse(&format!(
                 r"HKCU\Software\RamWardenTest\engine-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
             ))
             .unwrap(),
             value: "V".into(),
@@ -317,7 +345,9 @@ mod tests {
 
     #[test]
     fn apply_snapshots_first_and_revert_restores() {
-        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::REGISTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         assert_eq!(e.apply(&t).unwrap(), Applied::Changed);
@@ -332,7 +362,9 @@ mod tests {
     /// keeps the *original* snapshot so revert still goes all the way back.
     #[test]
     fn drift_is_reported_and_reapplied_against_the_original_snapshot() {
-        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::REGISTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         e.apply(&t).unwrap();
@@ -349,14 +381,21 @@ mod tests {
     /// recorded — so revert can never undo a choice the user made themselves.
     #[test]
     fn a_setting_already_in_place_is_not_claimed() {
-        let _guard = crate::REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::REGISTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let e = Engine::new(Journal::in_memory().unwrap());
         let t = scratch_tweak();
         t.apply().unwrap();
         assert_eq!(e.apply(&t).unwrap(), Applied::AlreadySet);
         assert_eq!(e.revert(&t).unwrap(), Reverted::NotApplied);
-        assert_eq!(t.detect().unwrap(), State::Applied, "the user's own setting survives");
-        let _ = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).delete_subkey_all(&t.key.subkey);
+        assert_eq!(
+            t.detect().unwrap(),
+            State::Applied,
+            "the user's own setting survives"
+        );
+        let _ = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+            .delete_subkey_all(&t.key.subkey);
     }
 
     #[test]

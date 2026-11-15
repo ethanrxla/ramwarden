@@ -45,7 +45,12 @@ impl Descriptor {
         let mut sd = PSECURITY_DESCRIPTOR::default();
         // SAFETY: `sd` receives a LocalAlloc'd descriptor we free on drop.
         unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(SDDL), SDDL_REVISION_1, &mut sd, None)
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                &HSTRING::from(SDDL),
+                SDDL_REVISION_1,
+                &mut sd,
+                None,
+            )
         }
         .map_err(std::io::Error::other)?;
         Ok(Descriptor(sd))
@@ -112,7 +117,9 @@ async fn serve_one(pipe: NamedPipeServer) -> std::io::Result<()> {
     let pid = client_pid(&pipe);
     let (read, mut write) = tokio::io::split(pipe);
     let mut line = String::new();
-    BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line).await?;
+    BufReader::new(read.take(MAX_REQUEST))
+        .read_line(&mut line)
+        .await?;
 
     let response = match serde_json::from_str::<Request>(line.trim()) {
         Ok(req) => {
@@ -124,7 +131,8 @@ async fn serve_one(pipe: NamedPipeServer) -> std::io::Result<()> {
         }
         Err(e) => Response::error(format!("not a request this service understands: {e}")),
     };
-    let mut out = serde_json::to_string(&response).unwrap_or_else(|_| r#"{"status":"error","message":"encode"}"#.into());
+    let mut out = serde_json::to_string(&response)
+        .unwrap_or_else(|_| r#"{"status":"error","message":"encode"}"#.into());
     out.push('\n');
     write.write_all(out.as_bytes()).await?;
     write.flush().await

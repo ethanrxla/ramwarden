@@ -174,8 +174,11 @@ pub struct Reply {
 }
 
 /// The mute choices every face offers, as (label, hours). `None`: until unmuted.
-pub const MUTE_CHOICES: [(&str, Option<f64>); 3] =
-    [("Quiet for an hour", Some(1.0)), ("Quiet for today", Some(12.0)), ("Quiet until I unmute", None)];
+pub const MUTE_CHOICES: [(&str, Option<f64>); 3] = [
+    ("Quiet for an hour", Some(1.0)),
+    ("Quiet for today", Some(12.0)),
+    ("Quiet until I unmute", None),
+];
 
 fn yes() -> bool {
     true
@@ -188,38 +191,72 @@ impl Client {
 
     pub async fn answer(&self, bubble: &str, choice: &str) -> Result<Reply> {
         // Closing waits on the browser's confirmation.
-        self.post("/warden/answer", serde_json::json!({"id": bubble, "choice": choice}), std::time::Duration::from_secs(40)).await
+        self.post(
+            "/warden/answer",
+            serde_json::json!({"id": bubble, "choice": choice}),
+            std::time::Duration::from_secs(40),
+        )
+        .await
     }
 
     pub async fn mute(&self, muted: bool, hours: Option<f64>) -> Result<Reply> {
-        self.post("/warden/mute", serde_json::json!({"muted": muted, "hours": hours}), TIMEOUT).await
+        self.post(
+            "/warden/mute",
+            serde_json::json!({"muted": muted, "hours": hours}),
+            TIMEOUT,
+        )
+        .await
     }
 
     /// Tell the warden what you are working on. The model's pick of tabs
     /// can take a while, so this waits as long as the chat does.
     pub async fn focus(&self, goal: &str) -> Result<FocusReply> {
-        self.post("/warden/focus", serde_json::json!({"goal": goal}), CHAT_TIMEOUT).await
+        self.post(
+            "/warden/focus",
+            serde_json::json!({"goal": goal}),
+            CHAT_TIMEOUT,
+        )
+        .await
     }
 
     /// Keep the checked tabs of a focus checklist. Unchecked tabs get no
     /// negative feedback.
-    pub async fn focus_feedback(&self, token: &str, tabs: &[FocusTab]) -> Result<serde_json::Value> {
+    pub async fn focus_feedback(
+        &self,
+        token: &str,
+        tabs: &[FocusTab],
+    ) -> Result<serde_json::Value> {
         let selected: Vec<_> = tabs
             .iter()
             .filter(|t| t.selected)
             .map(|t| serde_json::json!({"browser": t.browser, "id": t.id, "url": t.url}))
             .collect();
-        self.post("/warden/focus/feedback", serde_json::json!({"token": token, "selected": selected}), TIMEOUT).await
+        self.post(
+            "/warden/focus/feedback",
+            serde_json::json!({"token": token, "selected": selected}),
+            TIMEOUT,
+        )
+        .await
     }
 
     /// One read-only chat turn. Changes come back as a proposal.
     pub async fn chat(&self, message: &str) -> Result<ChatReply> {
-        self.post("/assistant/chat", serde_json::json!({"message": message, "history": []}), CHAT_TIMEOUT).await
+        self.post(
+            "/assistant/chat",
+            serde_json::json!({"message": message, "history": []}),
+            CHAT_TIMEOUT,
+        )
+        .await
     }
 
     /// Apply a proposal the user approved.
     pub async fn chat_action(&self, token: &str) -> Result<ChatReply> {
-        self.post("/assistant/action", serde_json::json!({"token": token}), CHAT_TIMEOUT).await
+        self.post(
+            "/assistant/action",
+            serde_json::json!({"token": token}),
+            CHAT_TIMEOUT,
+        )
+        .await
     }
 
     /// Send what was typed in the bubble: a focus when the warden asked for
@@ -229,16 +266,36 @@ impl Client {
         let you = text.to_string();
         if focus {
             match self.focus(text).await {
-                Ok(r) => Said { you, reply: r.reply, focus: r.proposal.filter(|p| !p.tabs.is_empty()), proposed: None },
-                Err(e) => Said { you, reply: format!("Your focus wasn't saved: {e}"), ..Said::default() },
+                Ok(r) => Said {
+                    you,
+                    reply: r.reply,
+                    focus: r.proposal.filter(|p| !p.tabs.is_empty()),
+                    proposed: None,
+                },
+                Err(e) => Said {
+                    you,
+                    reply: format!("Your focus wasn't saved: {e}"),
+                    ..Said::default()
+                },
             }
         } else {
             match self.chat(text).await {
-                Ok(r) => Said { you, reply: r.reply, focus: None, proposed: r.proposed_action },
-                Err(crate::client::Error::Status { status: 429, .. }) => {
-                    Said { you, reply: "I'm still answering your last message. Try again in a moment.".into(), ..Said::default() }
-                }
-                Err(e) => Said { you, reply: format!("I couldn't reach the assistant: {e}"), ..Said::default() },
+                Ok(r) => Said {
+                    you,
+                    reply: r.reply,
+                    focus: None,
+                    proposed: r.proposed_action,
+                },
+                Err(crate::client::Error::Status { status: 429, .. }) => Said {
+                    you,
+                    reply: "I'm still answering your last message. Try again in a moment.".into(),
+                    ..Said::default()
+                },
+                Err(e) => Said {
+                    you,
+                    reply: format!("I couldn't reach the assistant: {e}"),
+                    ..Said::default()
+                },
             }
         }
     }
@@ -253,10 +310,13 @@ mod tests {
 
     #[test]
     fn a_check_in_parses_with_its_tab_and_choices() {
-        let s: Speech = serde_json::from_str(r#"{"bubble":{"id":"a","warden":"ram","kind":"check_in",
+        let s: Speech = serde_json::from_str(
+            r#"{"bubble":{"id":"a","warden":"ram","kind":"check_in",
             "text":"Coming back?","choices":[{"id":"keep","label":"Yes, keep it"}],
             "tab":{"browser":"b","id":3,"url":"https://x/","title":"X"},"expires_in_s":600},
-            "muted":false,"muted_until":null}"#).unwrap();
+            "muted":false,"muted_until":null}"#,
+        )
+        .unwrap();
         let b = s.bubble.unwrap();
         assert!(b.is_question());
         assert_eq!(b.tab.unwrap().id, 3);
@@ -273,14 +333,20 @@ mod tests {
     #[test]
     fn the_focus_question_is_typed_not_clicked() {
         // Today's daemon: no buttons, a placeholder.
-        let b: Bubble = serde_json::from_str(r#"{"id":"f","kind":"focus","text":"What are you working on?",
-            "choices":[],"input":"What are you working on?"}"#).unwrap();
+        let b: Bubble = serde_json::from_str(
+            r#"{"id":"f","kind":"focus","text":"What are you working on?",
+            "choices":[],"input":"What are you working on?"}"#,
+        )
+        .unwrap();
         assert!(b.is_question() && b.asks_focus());
         assert_eq!(b.buttons().count(), 0);
         assert_eq!(b.placeholder(), "What are you working on?");
         // An older daemon's "Tell Warden" button is not drawn.
-        let old: Bubble = serde_json::from_str(r#"{"id":"f","kind":"focus","text":"?",
-            "choices":[{"id":"focus","label":"Tell Warden"}]}"#).unwrap();
+        let old: Bubble = serde_json::from_str(
+            r#"{"id":"f","kind":"focus","text":"?",
+            "choices":[{"id":"focus","label":"Tell Warden"}]}"#,
+        )
+        .unwrap();
         assert!(old.asks_focus());
         assert_eq!(old.buttons().count(), 0);
         // A remark invites chat instead.

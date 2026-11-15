@@ -52,16 +52,26 @@ async fn run(cmd: &str, rest: &[String]) -> Result<(), Box<dyn std::error::Error
         "ping" => println!("ok: connected to database {:?}", cfg.database),
         "init" => {
             db.ensure_indexes().await?;
-            db.ensure_decision_indexes(decisions::DEFAULT_TEXT_DIMS).await?;
+            db.ensure_decision_indexes(decisions::DEFAULT_TEXT_DIMS)
+                .await?;
             println!("ok: indexes ready in {:?}", cfg.database);
         }
         "support-indexes" => {
             db.ensure_support_indexes().await?;
             use futures::TryStreamExt;
-            let indexes: Vec<_> = db.database().collection::<mongodb::bson::Document>(
-                ramwarden_cloud::support::SUPPORT_CONVERSATIONS).list_indexes().await?.try_collect().await?;
-            for index in indexes { println!("{:?}: {:?}",index.options,index.keys); }
-            println!("ok: support indexes verified in {:?}",cfg.database);
+            let indexes: Vec<_> = db
+                .database()
+                .collection::<mongodb::bson::Document>(
+                    ramwarden_cloud::support::SUPPORT_CONVERSATIONS,
+                )
+                .list_indexes()
+                .await?
+                .try_collect()
+                .await?;
+            for index in indexes {
+                println!("{:?}: {:?}", index.options, index.keys);
+            }
+            println!("ok: support indexes verified in {:?}", cfg.database);
         }
         "stats" => {
             for name in [
@@ -85,7 +95,11 @@ async fn run(cmd: &str, rest: &[String]) -> Result<(), Box<dyn std::error::Error
             }
         }
         "decisions" => decisions_cmd(&db, rest).await?,
-        other => return Err(format!("unknown command {other:?}; use ping, init, stats or decisions").into()),
+        other => {
+            return Err(
+                format!("unknown command {other:?}; use ping, init, stats or decisions").into(),
+            );
+        }
     }
     Ok(())
 }
@@ -97,7 +111,10 @@ fn flag(rest: &[String], name: &str) -> bool {
 }
 
 fn value(rest: &[String], name: &str) -> Option<String> {
-    rest.iter().position(|a| a == name).and_then(|i| rest.get(i + 1)).cloned()
+    rest.iter()
+        .position(|a| a == name)
+        .and_then(|i| rest.get(i + 1))
+        .cloned()
 }
 
 /// Words that are not flags or flag values.
@@ -118,24 +135,41 @@ fn words(rest: &[String]) -> Vec<String> {
 
 async fn decisions_cmd(db: &MongoStore, rest: &[String]) -> Result<(), BoxError> {
     let local = ramwarden_core::config::load().unwrap_or_default();
-    let history = value(rest, "--history").map(Into::into).unwrap_or(local.db_path.clone());
-    let embedder = (!flag(rest, "--no-embed")).then(|| Embedder::new(&local.ollama.host, &local.ollama.embed_model));
+    let history = value(rest, "--history")
+        .map(Into::into)
+        .unwrap_or(local.db_path.clone());
+    let embedder = (!flag(rest, "--no-embed"))
+        .then(|| Embedder::new(&local.ollama.host, &local.ollama.embed_model));
     let daemon = format!("http://{}:{}", local.server.host, local.server.port);
     let sub = rest.first().map(String::as_str).unwrap_or("sync");
     match sub {
         "sync" => {
-            db.ensure_decision_indexes(decisions::DEFAULT_TEXT_DIMS).await?;
+            db.ensure_decision_indexes(decisions::DEFAULT_TEXT_DIMS)
+                .await?;
             let watch = value(rest, "--watch").and_then(|m| m.parse::<f64>().ok());
             let recall = !flag(rest, "--no-recall");
-            let syncer = Syncer { db, history_path: history.clone(), device: device_name(), titles: !flag(rest, "--no-titles"), embedder };
+            let syncer = Syncer {
+                db,
+                history_path: history.clone(),
+                device: device_name(),
+                titles: !flag(rest, "--no-titles"),
+                embedder,
+            };
             loop {
                 let r = syncer.sync().await?;
                 println!(
                     "synced {} decision(s) and {} ladder action(s) from {} as {:?}; {} embedded",
-                    r.decisions, r.actions, history.display(), syncer.device, r.embedded
+                    r.decisions,
+                    r.actions,
+                    history.display(),
+                    syncer.device,
+                    r.embedded
                 );
                 if let Some(e) = &r.embed_error {
-                    eprintln!("no title embeddings this run (is Ollama running with {}?): {e}", local.ollama.embed_model);
+                    eprintln!(
+                        "no title embeddings this run (is Ollama running with {}?): {e}",
+                        local.ollama.embed_model
+                    );
                 }
                 if recall && let Some(e) = &syncer.embedder {
                     match write_recall(db, e, &daemon, &history).await {
@@ -144,7 +178,8 @@ async fn decisions_cmd(db: &MongoStore, rest: &[String]) -> Result<(), BoxError>
                     }
                 }
                 let Some(minutes) = watch else { break };
-                tokio::time::sleep(std::time::Duration::from_secs_f64(minutes.max(1.0) * 60.0)).await;
+                tokio::time::sleep(std::time::Duration::from_secs_f64(minutes.max(1.0) * 60.0))
+                    .await;
             }
         }
         "recent" => {
@@ -160,26 +195,45 @@ async fn decisions_cmd(db: &MongoStore, rest: &[String]) -> Result<(), BoxError>
             }
             let e = embedder.ok_or("`why` needs the embedder; drop --no-embed")?;
             let v = e.embed(&[text]).await?.remove(0);
-            for n in db.similar_decisions(TEXT_INDEX, &v, 10, Default::default()).await? {
+            for n in db
+                .similar_decisions(TEXT_INDEX, &v, 10, Default::default())
+                .await?
+            {
                 print_doc(&n.doc, Some(n.score));
             }
         }
         "similar" => {
-            let id = words(rest).get(1).cloned().ok_or("usage: decisions similar ID")?;
-            let d = db.decision(&id).await?.ok_or_else(|| format!("no decision {id}"))?;
+            let id = words(rest)
+                .get(1)
+                .cloned()
+                .ok_or("usage: decisions similar ID")?;
+            let d = db
+                .decision(&id)
+                .await?
+                .ok_or_else(|| format!("no decision {id}"))?;
             if d.vector.is_empty() {
-                return Err(format!("{id} has no decision vector (apps and ladder rows do not)").into());
+                return Err(
+                    format!("{id} has no decision vector (apps and ladder rows do not)").into(),
+                );
             }
             print_doc(&d, None);
             println!("--- decided for the same reasons:");
             let filter = mongodb::bson::doc! { "kind": &d.kind };
-            for n in db.similar_decisions(FEATURE_INDEX, &d.vector, 11, filter).await? {
+            for n in db
+                .similar_decisions(FEATURE_INDEX, &d.vector, 11, filter)
+                .await?
+            {
                 if n.doc.id != d.id {
                     print_doc(&n.doc, Some(n.score));
                 }
             }
         }
-        other => return Err(format!("unknown decisions command {other:?}; use sync, recent, why or similar").into()),
+        other => {
+            return Err(format!(
+                "unknown decisions command {other:?}; use sync, recent, why or similar"
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -187,8 +241,15 @@ async fn decisions_cmd(db: &MongoStore, rest: &[String]) -> Result<(), BoxError>
 fn print_doc(d: &DecisionDoc, score: Option<f64>) {
     let at = d.at.try_to_rfc3339_string().unwrap_or_default();
     let score = score.map(|s| format!(" [{s:.2}]")).unwrap_or_default();
-    let outcome = d.outcome.as_deref().map(|o| format!(" -> {o}")).unwrap_or_default();
-    println!("{}{score} {at} {} {} {} ({}){outcome}", d.id, d.kind, d.action, d.subject, d.result);
+    let outcome = d
+        .outcome
+        .as_deref()
+        .map(|o| format!(" -> {o}"))
+        .unwrap_or_default();
+    println!(
+        "{}{score} {at} {} {} {} ({}){outcome}",
+        d.id, d.kind, d.action, d.subject, d.result
+    );
     if let Some(t) = &d.title {
         println!("    {t}");
     }

@@ -35,6 +35,8 @@ pub fn purge_low_priority() -> Result<()> {
             "low-priority standby purge",
             "needs SeProfileSingleProcessPrivilege (ramwarden-service)",
         )),
-        s => Err(Error::os(format!("NtSetSystemInformation(MemoryListInformation): {s:#x}"))),
+        s => Err(Error::os(format!(
+            "NtSetSystemInformation(MemoryListInformation): {s:#x}"
+        ))),
     }
 }

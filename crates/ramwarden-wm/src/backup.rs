@@ -30,7 +30,8 @@ impl ConfigBackups {
     /// A config that does not exist yet is backed up as an empty file, so
     /// restoring it means "back to no settings".
     pub fn write(&self, kind: WmKind, path: &Path, text: &str) -> Result<PathBuf> {
-        fs::create_dir_all(&self.dir).map_err(|e| Error::os(format!("{}: {e}", self.dir.display())))?;
+        fs::create_dir_all(&self.dir)
+            .map_err(|e| Error::os(format!("{}: {e}", self.dir.display())))?;
         let old = match fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -47,7 +48,8 @@ impl ConfigBackups {
 
     /// Put a backup back over `path`.
     pub fn restore(&self, backup: &Path, path: &Path) -> Result<()> {
-        let text = fs::read_to_string(backup).map_err(|e| Error::os(format!("{}: {e}", backup.display())))?;
+        let text = fs::read_to_string(backup)
+            .map_err(|e| Error::os(format!("{}: {e}", backup.display())))?;
         fs::write(path, text).map_err(|e| Error::os(format!("{}: {e}", path.display())))
     }
 
@@ -75,7 +77,10 @@ impl ConfigBackups {
     }
 
     fn next_name(&self, kind: WmKind) -> PathBuf {
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         (0u32..)
             .map(|n| self.dir.join(format!("{}-{secs}-{n}.bak", kind.as_str())))
             .find(|p| !p.exists())
@@ -94,14 +99,21 @@ mod tests {
         fs::write(&cfg, "gaps.inner.horizontal = 4\n").unwrap();
         let b = ConfigBackups::new(tmp.path().join("backups"));
 
-        let first = b.write(WmKind::AeroSpace, &cfg, "gaps.inner.horizontal = 8\n").unwrap();
-        let second = b.write(WmKind::AeroSpace, &cfg, "gaps.inner.horizontal = 12\n").unwrap();
+        let first = b
+            .write(WmKind::AeroSpace, &cfg, "gaps.inner.horizontal = 8\n")
+            .unwrap();
+        let second = b
+            .write(WmKind::AeroSpace, &cfg, "gaps.inner.horizontal = 12\n")
+            .unwrap();
         assert_ne!(first, second);
         assert_eq!(b.latest(WmKind::AeroSpace), Some(second.clone()));
         assert_eq!(b.latest(WmKind::Sway), None);
 
         b.restore(&first, &cfg).unwrap();
-        assert_eq!(fs::read_to_string(&cfg).unwrap(), "gaps.inner.horizontal = 4\n");
+        assert_eq!(
+            fs::read_to_string(&cfg).unwrap(),
+            "gaps.inner.horizontal = 4\n"
+        );
     }
 
     #[test]

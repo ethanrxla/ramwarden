@@ -55,14 +55,23 @@ pub fn render(request: &str, state: &Value, config: Option<&str>) -> String {
     s.push_str(state["kind"].as_str().unwrap_or("unknown"));
     s.push_str("\n\nWindows (id | app | title | workspace):\n");
     for w in state["windows"].as_array().into_iter().flatten().take(120) {
-        let title: String = w["title"].as_str().unwrap_or_default().chars().take(80).collect();
+        let title: String = w["title"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .take(80)
+            .collect();
         s.push_str(&format!(
             "{} | {} | {} | {}{}\n",
             w["id"],
             w["app"].as_str().unwrap_or_default(),
             title,
             w["workspace"].as_str().unwrap_or_default(),
-            if w["focused"] == true { " (focused)" } else { "" },
+            if w["focused"] == true {
+                " (focused)"
+            } else {
+                ""
+            },
         ));
     }
     s.push_str("\nWorkspaces (name | monitor):\n");
@@ -71,11 +80,20 @@ pub fn render(request: &str, state: &Value, config: Option<&str>) -> String {
             "{} | {}{}\n",
             ws["name"].as_str().unwrap_or_default(),
             ws["monitor"].as_str().unwrap_or("-"),
-            if ws["focused"] == true { " (focused)" } else { "" },
+            if ws["focused"] == true {
+                " (focused)"
+            } else {
+                ""
+            },
         ));
     }
     s.push_str("\nMonitors: ");
-    let mons: Vec<&str> = state["monitors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let mons: Vec<&str> = state["monitors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
     s.push_str(&mons.join(", "));
     s.push('\n');
     if let Some(c) = config {
@@ -102,6 +120,9 @@ mod tests {
         assert!(m.contains("4242 | Slack | general | 1 (focused)"));
         assert!(m.contains("Monitors: Built-in"));
         assert!(!m.contains("config file"));
-        assert!(render("gaps", &state, Some("gaps.inner.horizontal = 4")).contains("gaps.inner.horizontal = 4"));
+        assert!(
+            render("gaps", &state, Some("gaps.inner.horizontal = 4"))
+                .contains("gaps.inner.horizontal = 4")
+        );
     }
 }

@@ -44,10 +44,12 @@ impl Handler {
             },
             Request::Trim { pid } => self.trim(pid),
             Request::TweakApply { id } => self.tweak(&id, |d, t| {
-                d.apply(t).map(|r| serde_json::to_value(r).unwrap_or_default())
+                d.apply(t)
+                    .map(|r| serde_json::to_value(r).unwrap_or_default())
             }),
             Request::TweakRevert { id } => self.tweak(&id, |d, t| {
-                d.revert(t).map(|r| serde_json::to_value(r).unwrap_or_default())
+                d.revert(t)
+                    .map(|r| serde_json::to_value(r).unwrap_or_default())
             }),
             Request::TweakStatus => match Debloat::for_service().and_then(|d| {
                 Ok(d.status_all()?
@@ -86,7 +88,11 @@ impl Handler {
         }
         let role = classify(&p.name, "", None);
         if role.is_structural() {
-            return Response::error(format!("{} (pid {pid}): {}", p.name, role.protection_reason()));
+            return Response::error(format!(
+                "{} (pid {pid}): {}",
+                p.name,
+                role.protection_reason()
+            ));
         }
         match workingset::trim(pid) {
             Ok(bytes) => Response::Ok {
@@ -104,7 +110,10 @@ impl Handler {
     fn tweak(
         &self,
         id: &str,
-        f: impl FnOnce(&Debloat, &dyn ramwarden_debloat::Tweak) -> ramwarden_platform::Result<serde_json::Value>,
+        f: impl FnOnce(
+            &Debloat,
+            &dyn ramwarden_debloat::Tweak,
+        ) -> ramwarden_platform::Result<serde_json::Value>,
     ) -> Response {
         let tweak = match ramwarden_debloat::catalog::tweak(id) {
             Ok(t) => t,
@@ -112,11 +121,19 @@ impl Handler {
         };
         let tweak = match tweak.scope() {
             Scope::Machine => tweak,
-            Scope::UserPolicy => match self.client_sid.as_deref().and_then(|sid| tweak.for_user(sid)) {
+            Scope::UserPolicy => match self
+                .client_sid
+                .as_deref()
+                .and_then(|sid| tweak.for_user(sid))
+            {
                 Some(t) => t,
-                None => return Response::error(format!("{id}: cannot identify the connecting user")),
+                None => {
+                    return Response::error(format!("{id}: cannot identify the connecting user"));
+                }
             },
-            Scope::User => return Response::error(format!("{id} is a per-user tweak; apply it as the user")),
+            Scope::User => {
+                return Response::error(format!("{id} is a per-user tweak; apply it as the user"));
+            }
         };
         run_tweak(id, tweak.as_ref(), f)
     }
@@ -125,7 +142,10 @@ impl Handler {
 fn run_tweak(
     id: &str,
     tweak: &dyn ramwarden_debloat::Tweak,
-    f: impl FnOnce(&Debloat, &dyn ramwarden_debloat::Tweak) -> ramwarden_platform::Result<serde_json::Value>,
+    f: impl FnOnce(
+        &Debloat,
+        &dyn ramwarden_debloat::Tweak,
+    ) -> ramwarden_platform::Result<serde_json::Value>,
 ) -> Response {
     match Debloat::for_service().and_then(|d| f(&d, tweak)) {
         Ok(detail) => {
@@ -151,14 +171,21 @@ mod tests {
     fn the_kernel_and_services_are_refused() {
         let h = Handler::new(Some(std::process::id()));
         assert!(err(h.handle(Request::Trim { pid: 4 })).contains("kernel"));
-        let svc = snapshot::processes().unwrap().into_iter().find(|p| p.session == 0 && p.pid > 4).unwrap();
+        let svc = snapshot::processes()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.session == 0 && p.pid > 4)
+            .unwrap();
         assert!(err(h.handle(Request::Trim { pid: svc.pid })).contains("service"));
     }
 
     #[test]
     fn structural_processes_are_refused_even_in_the_users_session() {
         let h = Handler::new(Some(std::process::id()));
-        let explorer = snapshot::processes().unwrap().into_iter().find(|p| p.name.eq_ignore_ascii_case("explorer"));
+        let explorer = snapshot::processes()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case("explorer"));
         if let Some(e) = explorer {
             assert!(err(h.handle(Request::Trim { pid: e.pid })).contains("compositor"));
         }
@@ -174,10 +201,25 @@ mod tests {
     #[test]
     fn tweaks_outside_the_catalog_or_in_user_scope_are_refused() {
         let h = Handler::new(None);
-        assert!(err(h.handle(Request::TweakApply { id: "privacy.disable-defender".into() })).contains("not in any shipped profile"));
-        assert!(err(h.handle(Request::TweakApply { id: "privacy.advertising-id".into() })).contains("per-user"));
+        assert!(
+            err(h.handle(Request::TweakApply {
+                id: "privacy.disable-defender".into()
+            }))
+            .contains("not in any shipped profile")
+        );
+        assert!(
+            err(h.handle(Request::TweakApply {
+                id: "privacy.advertising-id".into()
+            }))
+            .contains("per-user")
+        );
         // A user-policy tweak with no identifiable client is refused rather
         // than written anywhere.
-        assert!(err(h.handle(Request::TweakApply { id: "privacy.copilot".into() })).contains("connecting user"));
+        assert!(
+            err(h.handle(Request::TweakApply {
+                id: "privacy.copilot".into()
+            }))
+            .contains("connecting user")
+        );
     }
 }

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use axum::Json;
 use axum::Router;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
-use axum::Json;
 use ramwarden_platform::Secret;
 use ramwarden_wazuh::{Client, Endpoints, Error};
 use serde_json::{Value, json};
@@ -94,7 +94,11 @@ async fn signs_in_once_reuses_the_token_and_reads_agent_and_alerts() {
     let a = c.agent("desk").await.unwrap().unwrap();
     assert_eq!(a.status, "active");
     assert!(c.agent("someone-else").await.unwrap().is_none());
-    assert_eq!(counts.signins.load(Ordering::SeqCst), 1, "the token is reused");
+    assert_eq!(
+        counts.signins.load(Ordering::SeqCst),
+        1,
+        "the token is reused"
+    );
 
     let alerts = c.alerts("desk", 7, 24).await.unwrap();
     assert_eq!(alerts.len(), 1);
@@ -122,5 +126,8 @@ async fn wrong_credentials_are_an_auth_error() {
 #[tokio::test]
 async fn a_manager_that_is_down_is_unreachable_not_a_panic() {
     let c = Client::new(endpoints("http://127.0.0.1:1", "pw")).unwrap();
-    assert!(matches!(c.agent("desk").await, Err(Error::Unreachable("manager", _))));
+    assert!(matches!(
+        c.agent("desk").await,
+        Err(Error::Unreachable("manager", _))
+    ));
 }

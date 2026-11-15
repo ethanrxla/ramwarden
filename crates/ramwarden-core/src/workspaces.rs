@@ -132,9 +132,11 @@ pub fn layout() -> Option<Layout> {
 
     let display = exec::display();
     for w in &mut windows {
-        if let Some(out) =
-            exec::run_with_env("xprop", &["-id", &w.xid, "WM_CLASS"], &[("DISPLAY", &display)])
-        {
+        if let Some(out) = exec::run_with_env(
+            "xprop",
+            &["-id", &w.xid, "WM_CLASS"],
+            &[("DISPLAY", &display)],
+        ) {
             let (instance, app) = parse_wm_class(&out);
             w.wm_class = instance;
             w.wm_class_app = app;
@@ -304,12 +306,18 @@ mod tests {
     #[test]
     fn wm_class_with_only_one_value_reuses_it_for_both() {
         let out = "WM_CLASS(STRING) = \"alacritty\"\n";
-        assert_eq!(parse_wm_class(out), ("alacritty".into(), "alacritty".into()));
+        assert_eq!(
+            parse_wm_class(out),
+            ("alacritty".into(), "alacritty".into())
+        );
     }
 
     #[test]
     fn a_missing_wm_class_yields_empty_strings() {
-        assert_eq!(parse_wm_class("WM_CLASS:  not found.\n"), (String::new(), String::new()));
+        assert_eq!(
+            parse_wm_class("WM_CLASS:  not found.\n"),
+            (String::new(), String::new())
+        );
     }
 
     #[test]

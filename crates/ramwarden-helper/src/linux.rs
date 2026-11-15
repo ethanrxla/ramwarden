@@ -1,4 +1,4 @@
-﻿//! The Linux helper itself; see `main.rs` for why it exists.
+//! The Linux helper itself; see `main.rs` for why it exists.
 
 #[path = "protocol.rs"]
 mod protocol;
@@ -96,7 +96,8 @@ fn serve(stream: UnixStream) -> std::io::Result<()> {
 }
 
 fn json(r: &Response) -> String {
-    serde_json::to_string(r).unwrap_or_else(|_| r#"{"status":"error","message":"unserialisable"}"#.into())
+    serde_json::to_string(r)
+        .unwrap_or_else(|_| r#"{"status":"error","message":"unserialisable"}"#.into())
 }
 
 /// Only this user may talk to the helper.
@@ -110,10 +111,7 @@ fn check_peer(stream: &UnixStream) -> Result<(), String> {
         .map_err(|e| format!("cannot read peer credentials: {e}"))?;
     let ours = unsafe { getuid() };
     if creds.uid() != ours {
-        return Err(format!(
-            "peer uid {} is not {ours}",
-            creds.uid()
-        ));
+        return Err(format!("peer uid {} is not {ours}", creds.uid()));
     }
     Ok(())
 }
@@ -174,7 +172,9 @@ fn handle(req: Request) -> Response {
 /// Owning uid of a process, from the `/proc/<pid>` directory.
 fn owner_uid(pid: i32) -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(format!("/proc/{pid}")).ok().map(|m| m.uid())
+    std::fs::metadata(format!("/proc/{pid}"))
+        .ok()
+        .map(|m| m.uid())
 }
 
 unsafe extern "C" {
@@ -184,8 +184,8 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use self::protocol::Advice;
+    use super::*;
 
     #[test]
     fn the_socket_lives_under_the_per_user_runtime_directory() {
@@ -236,7 +236,10 @@ mod tests {
         });
         match r {
             Response::Error { message } => {
-                assert!(message.contains("uid") || message.contains("does not exist"), "{message}")
+                assert!(
+                    message.contains("uid") || message.contains("does not exist"),
+                    "{message}"
+                )
             }
             Response::Ok { .. } => panic!("another user's process must be refused"),
         }

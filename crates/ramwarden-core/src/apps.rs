@@ -94,7 +94,12 @@ pub fn summarise<'a>(
         {
             a.reasons.push(r.clone());
         }
-        let p = parts.entry((s.app.clone(), s.part)).or_insert(PartStat { part: s.part, procs: 0, mb: 0.0, idle_mb: 0.0 });
+        let p = parts.entry((s.app.clone(), s.part)).or_insert(PartStat {
+            part: s.part,
+            procs: 0,
+            mb: 0.0,
+            idle_mb: 0.0,
+        });
         p.procs += 1;
         p.mb += mb;
         if s.verdict == Verdict::Idle {
@@ -159,7 +164,10 @@ mod tests {
             sig(3, "Claude", "page renderer", 300, Verdict::InUse),
         ];
         let p = &summarise(&sigs, |_| None)[0].parts;
-        assert_eq!((p[0].part, p[0].procs, p[0].mb, p[0].idle_mb), ("page renderer", 2, 1000.0, 700.0));
+        assert_eq!(
+            (p[0].part, p[0].procs, p[0].mb, p[0].idle_mb),
+            ("page renderer", 2, 1000.0, 700.0)
+        );
         assert_eq!(p[1].part, "main process");
     }
 

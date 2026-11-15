@@ -100,9 +100,9 @@ pub fn parse(text: &str, path: &Path) -> Result<Psi> {
             };
             match key {
                 "avg10" | "avg60" | "avg300" => {
-                    let v: f64 = value
-                        .parse()
-                        .map_err(|_| Error::parse(path, format!("{key}={value:?} is not a float")))?;
+                    let v: f64 = value.parse().map_err(|_| {
+                        Error::parse(path, format!("{key}={value:?} is not a float"))
+                    })?;
                     match key {
                         "avg10" => target.avg10 = v,
                         "avg60" => target.avg60 = v,
@@ -110,9 +110,9 @@ pub fn parse(text: &str, path: &Path) -> Result<Psi> {
                     }
                 }
                 "total" => {
-                    target.total_us = value
-                        .parse()
-                        .map_err(|_| Error::parse(path, format!("total={value:?} is not an integer")))?;
+                    target.total_us = value.parse().map_err(|_| {
+                        Error::parse(path, format!("total={value:?} is not an integer"))
+                    })?;
                 }
                 _ => continue,
             }
@@ -339,7 +339,8 @@ full avg10=11.02 avg60=4.87 avg300=1.20 total=44001234
         let too_long = Trigger::memory(&root, Duration::from_secs(1), Duration::from_secs(60));
         assert!(matches!(too_long, Err(Error::Parse { .. })));
 
-        let too_short = Trigger::memory(&root, Duration::from_millis(1), Duration::from_millis(100));
+        let too_short =
+            Trigger::memory(&root, Duration::from_millis(1), Duration::from_millis(100));
         assert!(matches!(too_short, Err(Error::Parse { .. })));
     }
 

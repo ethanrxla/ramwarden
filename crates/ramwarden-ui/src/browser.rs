@@ -253,7 +253,11 @@ fn controls(ui: &Rc<Ui>) {
         ui.summary.set_text(&format!(
             "{} tabs · {} selectable · {} selected",
             state.tabs.len(),
-            state.tabs.iter().filter(|r| r.eligible || r.closeable).count(),
+            state
+                .tabs
+                .iter()
+                .filter(|r| r.eligible || r.closeable)
+                .count(),
             ui.selected.borrow().len()
         ));
         ui.summary.set_tooltip_text(Some(&format!(

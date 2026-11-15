@@ -230,20 +230,31 @@ pub struct ThreatReport {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub struct Sensors { #[serde(default)] pub network: Option<NetworkSnapshot> }
+pub struct Sensors {
+    #[serde(default)]
+    pub network: Option<NetworkSnapshot>,
+}
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct NetworkSnapshot {
-    #[serde(default)] pub checked_at:u64,
-    #[serde(default)] pub connections:Vec<Connection>,
-    #[serde(default)] pub problem:Option<String>,
-    #[serde(default)] pub scope:String,
+    #[serde(default)]
+    pub checked_at: u64,
+    #[serde(default)]
+    pub connections: Vec<Connection>,
+    #[serde(default)]
+    pub problem: Option<String>,
+    #[serde(default)]
+    pub scope: String,
 }
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct Connection {
-    #[serde(default)] pub pid:u32,
-    #[serde(default)] pub process:String,
-    #[serde(default)] pub local:String,
-    #[serde(default)] pub remote:String,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub process: String,
+    #[serde(default)]
+    pub local: String,
+    #[serde(default)]
+    pub remote: String,
 }
 
 /// The answer to "Turn on".
@@ -383,7 +394,7 @@ impl ThreatPane {
 
     pub fn unavailable(headline: &str, detail: &str) -> ThreatPane {
         ThreatPane {
-            network:None,
+            network: None,
             unlocked: false,
             name: "ThreatWarden".into(),
             level: Level::Off,
@@ -420,7 +431,7 @@ impl ThreatPane {
             PaneAction::None
         };
         let mut pane = ThreatPane {
-            network:None,
+            network: None,
             unlocked: w.unlocked,
             name: if w.name.is_empty() {
                 "ThreatWarden".into()
@@ -458,8 +469,10 @@ impl ThreatPane {
             return pane;
         };
         pane.summary = r.summary.clone().filter(|s| !s.is_empty());
-        pane.network=r.sensors.network.clone();
-        if let Some(network)=&mut pane.network {network.connections.truncate(512);}
+        pane.network = r.sensors.network.clone();
+        if let Some(network) = &mut pane.network {
+            network.connections.truncate(512);
+        }
         pane.engines = Self::engines(&r);
         pane.alerts = r
             .alerts
@@ -718,17 +731,17 @@ mod tests {
 
     #[test]
     fn network_details_require_the_unlocked_report_and_are_bounded() {
-        let mut value:serde_json::Value=serde_json::from_str(LOCKED).unwrap();
-        value["report"]=serde_json::json!({"sensors":{"network":{"checked_at":123,"scope":"Local TCP only","connections":(0..520).map(|pid|serde_json::json!({"pid":pid,"process":"fixture","local":"127.0.0.1:12","remote":"192.0.2.1:443"})).collect::<Vec<_>>()}}});
-        let locked:Warden=serde_json::from_value(value.clone()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(LOCKED).unwrap();
+        value["report"] = serde_json::json!({"sensors":{"network":{"checked_at":123,"scope":"Local TCP only","connections":(0..520).map(|pid|serde_json::json!({"pid":pid,"process":"fixture","local":"127.0.0.1:12","remote":"192.0.2.1:443"})).collect::<Vec<_>>()}}});
+        let locked: Warden = serde_json::from_value(value.clone()).unwrap();
         assert!(ThreatPane::from_warden(&locked).network.is_none());
-        value["unlocked"]=serde_json::json!(true);
-        let unlocked:Warden=serde_json::from_value(value).unwrap();
-        let pane=ThreatPane::from_warden(&unlocked);
-        let network=pane.network.unwrap();
-        assert_eq!(network.connections.len(),512);
-        assert_eq!(network.connections[0].remote,"192.0.2.1:443");
-        assert_eq!(network.checked_at,123);
+        value["unlocked"] = serde_json::json!(true);
+        let unlocked: Warden = serde_json::from_value(value).unwrap();
+        let pane = ThreatPane::from_warden(&unlocked);
+        let network = pane.network.unwrap();
+        assert_eq!(network.connections.len(), 512);
+        assert_eq!(network.connections[0].remote, "192.0.2.1:443");
+        assert_eq!(network.checked_at, 123);
     }
 
     const LOCKED: &str = r#"{"id":"threat","name":"ThreatWarden","role":"Watches for attacks.","icon":"/wardens/threat/icon.svg",

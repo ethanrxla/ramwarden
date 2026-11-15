@@ -369,7 +369,11 @@ mod tests {
             fs::create_dir_all(&d).unwrap();
             fs::write(d.join("stat"), body).unwrap();
             fs::write(d.join("status"), "Name:\tx\nUid:\t1000\t1000\t1000\t1000\n").unwrap();
-            fs::write(d.join("cmdline"), b"/usr/bin/thing\0--flag\0value\0".as_slice()).unwrap();
+            fs::write(
+                d.join("cmdline"),
+                b"/usr/bin/thing\0--flag\0value\0".as_slice(),
+            )
+            .unwrap();
         }
 
         // Non-numeric entries in /proc must be ignored.
@@ -382,7 +386,12 @@ mod tests {
     fn walks_the_table_and_ignores_non_pid_entries() {
         let (_d, root) = fixture();
         let t = table(&root).unwrap();
-        assert_eq!(t.len(), 3, "{:?}", t.iter().map(|p| p.pid).collect::<Vec<_>>());
+        assert_eq!(
+            t.len(),
+            3,
+            "{:?}",
+            t.iter().map(|p| p.pid).collect::<Vec<_>>()
+        );
         assert_eq!(t[0].pid, 1243, "sorted by pid");
         assert_eq!(t[2].pid, 6669);
     }
@@ -395,7 +404,11 @@ mod tests {
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("stat"), "").unwrap();
         let t = table(&root).unwrap();
-        assert_eq!(t.len(), 3, "the unreadable row is dropped, the sweep continues");
+        assert_eq!(
+            t.len(),
+            3,
+            "the unreadable row is dropped, the sweep continues"
+        );
     }
 
     #[test]

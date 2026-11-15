@@ -262,7 +262,11 @@ Locked:                0 kB
     #[test]
     fn sharing_factor_reports_the_overcount() {
         let r = parse_rollup(BRAVE_RENDERER, &p()).unwrap();
-        assert!((r.sharing_factor() - 1.299).abs() < 0.01, "{}", r.sharing_factor());
+        assert!(
+            (r.sharing_factor() - 1.299).abs() < 0.01,
+            "{}",
+            r.sharing_factor()
+        );
     }
 
     #[test]
@@ -344,12 +348,7 @@ impl Vma {
 /// reasonable default); `min_bytes` drops mappings too small to be worth a
 /// syscall. Returns an empty vector rather than an error if the process exits
 /// mid-walk, which for a browser renderer is routine.
-pub fn cold_vmas(
-    root: &Root,
-    pid: i32,
-    referenced_ratio: f64,
-    min_bytes: u64,
-) -> Result<Vec<Vma>> {
+pub fn cold_vmas(root: &Root, pid: i32, referenced_ratio: f64, min_bytes: u64) -> Result<Vec<Vma>> {
     let path = root.proc_pid(pid, "smaps");
     let text = match fs::read_to_string(&path) {
         Ok(t) => t,
@@ -537,7 +536,11 @@ VmFlags: rd wr sh mr mw me
         assert_eq!(picked[0].rss, 40960 * KIB);
 
         // A floor above the heap's 64 MB excludes everything.
-        assert!(cold_vmas(&root, 5, 0.2, 128 * 1024 * 1024).unwrap().is_empty());
+        assert!(
+            cold_vmas(&root, 5, 0.2, 128 * 1024 * 1024)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -549,7 +552,8 @@ VmFlags: rd wr sh mr mw me
 
     #[test]
     fn a_pathname_containing_a_dash_does_not_confuse_the_header_parser() {
-        let line = "7f2000000000-7f2000800000 r--p 00000000 fd:01 1 /usr/lib/x86-64-gnu/libfoo-1.so";
+        let line =
+            "7f2000000000-7f2000800000 r--p 00000000 fd:01 1 /usr/lib/x86-64-gnu/libfoo-1.so";
         let v = parse_vma_header(line).unwrap();
         assert_eq!(v.start, 0x7f2000000000);
         assert_eq!(v.end, 0x7f2000800000);

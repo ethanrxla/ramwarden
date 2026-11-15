@@ -57,7 +57,10 @@ static GLOBAL: Counting = Counting;
 fn read_syscalls() -> u64 {
     std::fs::read_to_string("/proc/self/io")
         .ok()
-        .and_then(|t| t.lines().find_map(|l| l.strip_prefix("syscr: ")?.trim().parse().ok()))
+        .and_then(|t| {
+            t.lines()
+                .find_map(|l| l.strip_prefix("syscr: ")?.trim().parse().ok())
+        })
         .unwrap_or(0)
 }
 
@@ -65,7 +68,10 @@ fn read_syscalls() -> u64 {
 fn measure(label: &str, n: u32, mut f: impl FnMut()) {
     f(); // warm caches and the first-sample path
     f();
-    let (a0, b0) = (ALLOCS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
+    let (a0, b0) = (
+        ALLOCS.load(Ordering::Relaxed),
+        BYTES.load(Ordering::Relaxed),
+    );
     let r0 = read_syscalls();
     let t = Instant::now();
     for _ in 0..n {
@@ -88,7 +94,12 @@ impl Judge for KeepAll {
     fn judge(&mut self, _: Intent, c: &[Candidate]) -> Result<Vec<Judgement>, String> {
         self.0 += 1;
         Ok(c.iter()
-            .map(|c| Judgement { name: c.name.clone(), close: false, confidence: 0.0, reason: "bench".into() })
+            .map(|c| Judgement {
+                name: c.name.clone(),
+                close: false,
+                confidence: 0.0,
+                reason: "bench".into(),
+            })
             .collect())
     }
 }
@@ -112,7 +123,11 @@ fn ladder_cost() {
         let mut w = World {
             det: &det,
             groups: None,
-            psi: Pressure { some_avg10: 90.0, full_avg10: 90.0, ..Default::default() },
+            psi: Pressure {
+                some_avg10: 90.0,
+                full_avg10: 90.0,
+                ..Default::default()
+            },
             available_bytes: u64::MAX,
             watchlist: &watchlist,
             goal: String::new(),
@@ -133,22 +148,33 @@ fn sample_cost() {
     fs::create_dir_all(p.join("proc/net")).unwrap();
     fs::write(p.join("proc/stat"), "cpu 0 0 0 0\nbtime 1700000000\n").unwrap();
 
-    let mut tcp = String::from("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n");
+    let mut tcp = String::from(
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n",
+    );
     let mut inode = 50_000u64;
-    let chromium_args = "--type=renderer --enable-features=".to_string() + &"SomeFeature,".repeat(100);
+    let chromium_args =
+        "--type=renderer --enable-features=".to_string() + &"SomeFeature,".repeat(100);
     for i in 0..400i32 {
         let pid = 2000 + i;
         let d = p.join(format!("proc/{pid}"));
         fs::create_dir_all(d.join("fd")).unwrap();
         let big = i < 60;
         let rss_pages = if big { 60_000 } else { 1_000 };
-        let comm = if big { "chrome".to_string() } else { format!("svc{}", i % 50) };
+        let comm = if big {
+            "chrome".to_string()
+        } else {
+            format!("svc{}", i % 50)
+        };
         fs::write(
             d.join("stat"),
             format!("{pid} ({comm}) S 1 {pid} {pid} 0 -1 4194560 0 0 0 0 {} 10 0 0 20 0 1 0 5000 1000000 {rss_pages} 0\n", 100 + i),
         )
         .unwrap();
-        let cmd = if big { format!("/opt/google/chrome/chrome\0{chromium_args}") } else { format!("/usr/bin/{comm}\0--daemon") };
+        let cmd = if big {
+            format!("/opt/google/chrome/chrome\0{chromium_args}")
+        } else {
+            format!("/usr/bin/{comm}\0--daemon")
+        };
         fs::write(d.join("cmdline"), cmd).unwrap();
         fs::write(d.join("status"), "Name:\tx\nUid:\t1000\t1000\t1000\t1000\n").unwrap();
         if big {
@@ -178,7 +204,9 @@ fn sample_cost() {
     let root = ramwarden_kernel::Root::at(p);
     let mut det = Detector::linux(root.clone());
     let desktop = Default::default();
-    measure("process sample, 400 processes", 200, || det.sample(&desktop).unwrap());
+    measure("process sample, 400 processes", 200, || {
+        det.sample(&desktop).unwrap()
+    });
     // What the sample used to pay every tick and now pays once per
     // `sampler::TABLES_EVERY`: tracing socket owners through every descriptor.
     measure("socket table read", 200, || {

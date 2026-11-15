@@ -28,13 +28,18 @@ const IDLE: Duration = Duration::from_secs(600);
 const EPOCHS: usize = 600;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn train(args: &[String]) -> Result<(), String> {
     let db = PathBuf::from(arg(args, "--db").ok_or("--db is required")?);
     let out = PathBuf::from(arg(args, "--out").ok_or("--out is required")?);
-    let horizon: i64 = arg(args, "--horizon").and_then(|h| h.parse().ok()).unwrap_or(1800);
+    let horizon: i64 = arg(args, "--horizon")
+        .and_then(|h| h.parse().ok())
+        .unwrap_or(1800);
 
     let history = History::open(&db).map_err(|e| e.to_string())?;
     let rows = history
@@ -42,11 +47,18 @@ fn train(args: &[String]) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let ex = examples(&rows);
     if ex.len() < jepa::MIN_TRAIN {
-        return Err(format!("{} usable examples; training needs {}", ex.len(), jepa::MIN_TRAIN));
+        return Err(format!(
+            "{} usable examples; training needs {}",
+            ex.len(),
+            jepa::MIN_TRAIN
+        ));
     }
     let model = Jepa::train(&ex, EPOCHS, &jepa::device()).map_err(|e| e.to_string())?;
     model.save(&out)?;
-    println!("{}", serde_json::to_string(&model.metrics).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string(&model.metrics).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -91,7 +103,9 @@ fn main() {
     let result = match args.get(1).map(String::as_str) {
         Some("train") => train(&args),
         Some("embed") => embed(),
-        _ => Err("usage: ramwarden-gpu train --db <path> --out <path> [--horizon secs] | embed".into()),
+        _ => Err(
+            "usage: ramwarden-gpu train --db <path> --out <path> [--horizon secs] | embed".into(),
+        ),
     };
     if let Err(e) = result {
         eprintln!("{e}");

@@ -159,8 +159,21 @@ mod tests {
     /// The allocation-free ASCII path must answer exactly as the general one.
     #[test]
     fn the_ascii_fast_path_agrees_with_the_general_matcher() {
-        let pats = ["Discord", "burp*", "*Suite*", "b?rp", "[bc]urp*", "[!a]*", "[a-c]*", "*a*a*a*", "[", "", "*"];
-        let texts = ["discord", "BurpSuiteCommunity", "burp", "curpx", "aaa", "", "Zoom", "[", "Ünïcode"];
+        let pats = [
+            "Discord", "burp*", "*Suite*", "b?rp", "[bc]urp*", "[!a]*", "[a-c]*", "*a*a*a*", "[",
+            "", "*",
+        ];
+        let texts = [
+            "discord",
+            "BurpSuiteCommunity",
+            "burp",
+            "curpx",
+            "aaa",
+            "",
+            "Zoom",
+            "[",
+            "Ünïcode",
+        ];
         for p in pats {
             for t in texts {
                 let general = matches(&p.to_lowercase(), &t.to_lowercase());
@@ -168,7 +181,10 @@ mod tests {
             }
         }
         let long = "x".repeat(STACK + 1);
-        assert!(matches_ci("X*", &long), "longer than the stack buffer takes the general path");
+        assert!(
+            matches_ci("X*", &long),
+            "longer than the stack buffer takes the general path"
+        );
     }
 
     #[test]

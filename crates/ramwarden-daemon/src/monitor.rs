@@ -25,13 +25,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use ramwarden_core::actuator::Outcome;
-use ramwarden_core::history::{SampleContext, SignalSample};
-use ramwarden_core::signals::Signals;
 use ramwarden_ai::jev::Jev;
 use ramwarden_ai::secret::Secret;
+use ramwarden_core::actuator::Outcome;
+use ramwarden_core::history::{SampleContext, SignalSample};
 use ramwarden_core::judge::{Candidate, Intent, Judge, Judgement, Prejudged};
 use ramwarden_core::ladder::{self, TabCloser, World};
+use ramwarden_core::signals::Signals;
 
 use crate::hub::AppState;
 
@@ -119,15 +119,24 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     let (to_unload, to_close, decided, est_mb) = {
         let rows = crate::tabreview::snapshot(state);
         let mut close = crate::browser::close_candidates(&rows, &state.tabs_config());
-        state.voice.hold_back(&state.cfg.voice, &mut close, Instant::now());
-        let unload: Vec<_> = rows.iter()
+        state
+            .voice
+            .hold_back(&state.cfg.voice, &mut close, Instant::now());
+        let unload: Vec<_> = rows
+            .iter()
             .filter(|r| r.eligible && !close.contains(&r.target))
-            .take(crate::browser::BATCH_LIMIT).map(|r| r.target.clone()).collect();
-        let est_mb: std::collections::HashMap<_, _> = rows.iter()
-            .map(|r| (r.target.clone(), r.est_mb as u64)).collect();
-        let decided: std::collections::HashMap<_, _> = rows.into_iter()
+            .take(crate::browser::BATCH_LIMIT)
+            .map(|r| r.target.clone())
+            .collect();
+        let est_mb: std::collections::HashMap<_, _> = rows
+            .iter()
+            .map(|r| (r.target.clone(), r.est_mb as u64))
+            .collect();
+        let decided: std::collections::HashMap<_, _> = rows
+            .into_iter()
             .filter(|r| close.contains(&r.target) || unload.contains(&r.target))
-            .map(|r| (r.target.clone(), r)).collect();
+            .map(|r| (r.target.clone(), r))
+            .collect();
         (unload, close, decided, est_mb)
     };
     let (to_close, recalled) = crate::recall::Recall::load(&state.cfg.db_path).hold_back(to_close);
@@ -136,48 +145,79 @@ async fn release_tabs(state: &AppState, trigger: &str) {
     let mut closed = crate::hub::DiscardResult::default();
     match state.cfg.tabs.close.as_str() {
         "live" if !to_close.is_empty() => closed = state.close_safe(&to_close, false).await,
-        "dry-run" => for t in &to_close {
-            tracing::info!("tabs: would close {} (dry-run)", t.url);
-        },
+        "dry-run" => {
+            for t in &to_close {
+                tracing::info!("tabs: would close {} (dry-run)", t.url);
+            }
+        }
         _ => {}
     }
     if let Ok(h) = state.history.lock() {
         let cfg = &state.cfg.tabs;
-        crate::decisionlog::record_batch(&h, &decided, &unloaded, "unload", trigger, |r| r.unload_reason());
-        crate::decisionlog::record_batch(&h, &decided, &closed, "close", trigger, |r| r.close_reason(cfg));
+        crate::decisionlog::record_batch(&h, &decided, &unloaded, "unload", trigger, |r| {
+            r.unload_reason()
+        });
+        crate::decisionlog::record_batch(&h, &decided, &closed, "close", trigger, |r| {
+            r.close_reason(cfg)
+        });
         if cfg.close == "dry-run" {
             crate::decisionlog::record_dry_run(&h, &decided, &to_close, trigger, cfg);
         }
         crate::recall::record_kept(&h, &decided, &recalled, trigger);
     }
-    let titles: std::collections::HashMap<_, _> =
-        decided.iter().map(|(t, r)| (t.clone(), r.title.clone())).collect();
+    let titles: std::collections::HashMap<_, _> = decided
+        .iter()
+        .map(|(t, r)| (t.clone(), r.title.clone()))
+        .collect();
 
-    let notes = format!("{} unloaded, {} closed, {} queued, {} refused",
-        unloaded.confirmed.len(), closed.confirmed.len(),
-        unloaded.queued.len() + closed.queued.len(), unloaded.refused.len() + closed.refused.len());
+    let notes = format!(
+        "{} unloaded, {} closed, {} queued, {} refused",
+        unloaded.confirmed.len(),
+        closed.confirmed.len(),
+        unloaded.queued.len() + closed.queued.len(),
+        unloaded.refused.len() + closed.refused.len()
+    );
     tracing::info!("tabs ({trigger}): {notes}");
     // Closed tabs also go in the daemon's own closed_tabs table, so the popup
     // can list them for reopening even before the extension is reloaded.
-    let closed_rows: Vec<(String, String)> = closed.confirmed.iter()
-        .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default())).collect();
+    let closed_rows: Vec<(String, String)> = closed
+        .confirmed
+        .iter()
+        .map(|t| (t.url.clone(), titles.get(t).cloned().unwrap_or_default()))
+        .collect();
     for (url, _) in &closed_rows {
         tracing::info!("tabs: confirmed closed {url}");
     }
-    if !closed_rows.is_empty() && let Ok(h) = state.history.lock() {
+    if !closed_rows.is_empty()
+        && let Ok(h) = state.history.lock()
+    {
         let _ = h.save_tabs(&closed_rows, 0.0, "auto", trigger);
     }
     // Only what a browser confirmed is worth telling the user about.
-    let freed: u64 = unloaded.confirmed.iter().chain(&closed.confirmed)
-        .map(|t| est_mb.get(t).copied().unwrap_or(0)).sum();
-    state.voice.note_release(unloaded.confirmed.len(), closed.confirmed.len(), freed, Instant::now());
+    let freed: u64 = unloaded
+        .confirmed
+        .iter()
+        .chain(&closed.confirmed)
+        .map(|t| est_mb.get(t).copied().unwrap_or(0))
+        .sum();
+    state.voice.note_release(
+        unloaded.confirmed.len(),
+        closed.confirmed.len(),
+        freed,
+        Instant::now(),
+    );
     if unloaded.confirmed.is_empty() && closed.confirmed.is_empty() && closed.queued.is_empty() {
         return;
     }
     if let Ok(h) = state.history.lock() {
         let _ = h.log(&ramwarden_core::history::NewAction {
-            rung: -1, trigger: trigger.into(), action: "release_tabs".into(),
-            target: "idle browser tabs".into(), succeeded: true, notes, ..Default::default()
+            rung: -1,
+            trigger: trigger.into(),
+            action: "release_tabs".into(),
+            target: "idle browser tabs".into(),
+            succeeded: true,
+            notes,
+            ..Default::default()
         });
     }
 }
@@ -219,7 +259,11 @@ struct JevJudge {
 }
 
 impl Judge for JevJudge {
-    fn judge(&mut self, intent: Intent, candidates: &[Candidate]) -> Result<Vec<Judgement>, String> {
+    fn judge(
+        &mut self,
+        intent: Intent,
+        candidates: &[Candidate],
+    ) -> Result<Vec<Judgement>, String> {
         let started = Instant::now();
         let threshold = match intent {
             Intent::Suspend => self.suspend_threshold,
@@ -227,7 +271,9 @@ impl Judge for JevJudge {
         };
         let out = self
             .handle
-            .block_on(crate::ladderjudge::judge(&self.jev, intent, candidates, threshold))
+            .block_on(crate::ladderjudge::judge(
+                &self.jev, intent, candidates, threshold,
+            ))
             .map_err(|e| e.to_string())?;
         for j in &out {
             tracing::info!(
@@ -246,7 +292,10 @@ impl Judge for JevJudge {
 ///
 /// Its own client rather than the tab tier's: the ladder cannot wait 15
 /// seconds mid-pressure, so it gets `ladder_timeout_ms`.
-fn jev_judge(cfg: &ramwarden_core::config::Config, handle: &tokio::runtime::Handle) -> Option<JevJudge> {
+fn jev_judge(
+    cfg: &ramwarden_core::config::Config,
+    handle: &tokio::runtime::Handle,
+) -> Option<JevJudge> {
     let j = &cfg.jev;
     if !j.enabled {
         return None;
@@ -370,15 +419,24 @@ const SLEEP_GAP: Duration = Duration::from_secs(90);
 fn relaunch() {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
     let launcher = exe.with_file_name("ramwarden-daemon.cmd");
     let target = if launcher.exists() { launcher } else { exe };
     match replacement(&target, std::env::args_os().skip(1))
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
     {
-        Ok(child) => tracing::info!("replacement daemon started (pid {}) from {}", child.id(), target.display()),
-        Err(e) => tracing::error!("could not start a replacement daemon from {}: {e}", target.display()),
+        Ok(child) => tracing::info!(
+            "replacement daemon started (pid {}) from {}",
+            child.id(),
+            target.display()
+        ),
+        Err(e) => tracing::error!(
+            "could not start a replacement daemon from {}: {e}",
+            target.display()
+        ),
     }
 }
 
@@ -457,7 +515,9 @@ pub fn spawn(state: AppState, handle: tokio::runtime::Handle) -> std::thread::Jo
 /// never waits on it: answers land in a cache that ranking reads.
 fn refresh_intel(state: &AppState, handle: &tokio::runtime::Handle, last: &mut Instant) {
     static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
-    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else { return };
+    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else {
+        return;
+    };
     if last.elapsed() < Duration::from_secs(30) || IN_FLIGHT.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -545,7 +605,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
     let mut last_intel = Instant::now() - Duration::from_secs(60);
     // First sweep a minute after start, once the browsers have checked in.
     let mut last_sweep = Instant::now()
-        .checked_sub(Duration::from_secs_f64((cfg.tabs.sweep_minutes * 60.0 - 60.0).max(0.0)))
+        .checked_sub(Duration::from_secs_f64(
+            (cfg.tabs.sweep_minutes * 60.0 - 60.0).max(0.0),
+        ))
         .unwrap_or_else(Instant::now);
     let mut quitter = crate::appquit::Quitter::new();
     let mut held = false;
@@ -660,7 +722,11 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         drop(det);
 
         // Keep the on-disk record of frozen apps current, so a crash cannot strand them.
-        if report.steps.iter().any(|(a, _, _)| matches!(*a, "suspend" | "resume")) {
+        if report
+            .steps
+            .iter()
+            .any(|(a, _, _)| matches!(*a, "suspend" | "resume"))
+        {
             let frozen: Vec<crate::freeze_journal::Frozen> = state
                 .ladder
                 .lock()
@@ -668,7 +734,14 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 .actuator()
                 .suspended()
                 .iter()
-                .flat_map(|e| e.live_pids().into_iter().map(|pid| crate::freeze_journal::Frozen { name: e.name.clone(), pid }))
+                .flat_map(|e| {
+                    e.live_pids()
+                        .into_iter()
+                        .map(|pid| crate::freeze_journal::Frozen {
+                            name: e.name.clone(),
+                            pid,
+                        })
+                })
                 .collect();
             crate::freeze_journal::write(&cfg.db_path.with_file_name("suspended.json"), &frozen);
         }
@@ -748,7 +821,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            state.predictor.observe(&samples, epoch, pressure.some_avg10);
+            state
+                .predictor
+                .observe(&samples, epoch, pressure.some_avg10);
             if let Ok(h) = state.history.lock()
                 && let Err(e) = h.log_signals(&samples, ctx)
             {
@@ -759,7 +834,9 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         // Retrain the reuse predictor daily, off this thread: it reads the
         // whole behaviour log and takes seconds to minutes.
         Phase::Upkeep.enter();
-        if cfg.logging.enabled && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400)) {
+        if cfg.logging.enabled
+            && last_train.is_none_or(|t| t.elapsed() >= Duration::from_secs(86_400))
+        {
             last_train = Some(Instant::now());
             crate::predict::train_in_background(&state);
         }
@@ -771,13 +848,22 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
                 && let Ok(n) = h.prune_signals(cfg.logging.keep_days)
                 && n > 0
             {
-                tracing::info!("pruned {n} behaviour sample(s) older than {} days", cfg.logging.keep_days);
+                tracing::info!(
+                    "pruned {n} behaviour sample(s) older than {} days",
+                    cfg.logging.keep_days
+                );
             }
             if let Ok(h) = state.history.lock()
-                && let Ok(n) = h.prune_decisions(crate::decisionlog::KEEP_DAYS, ramwarden_core::history::unix_now() as i64)
+                && let Ok(n) = h.prune_decisions(
+                    crate::decisionlog::KEEP_DAYS,
+                    ramwarden_core::history::unix_now() as i64,
+                )
                 && n > 0
             {
-                tracing::info!("pruned {n} decision(s) older than {} days", crate::decisionlog::KEEP_DAYS);
+                tracing::info!(
+                    "pruned {n} decision(s) older than {} days",
+                    crate::decisionlog::KEEP_DAYS
+                );
             }
         }
 
@@ -844,9 +930,12 @@ mod tests {
         std::fs::write(&launcher, format!("@echo %* > \"{}\"\r\n", out.display())).unwrap();
 
         let log = dir.path().join("log dir").join("daemon.log");
-        let status = replacement(&launcher, ["--log-file".into(), log.clone().into_os_string()])
-            .status()
-            .unwrap();
+        let status = replacement(
+            &launcher,
+            ["--log-file".into(), log.clone().into_os_string()],
+        )
+        .status()
+        .unwrap();
         assert!(status.success());
         let args = std::fs::read_to_string(&out).unwrap();
         assert!(args.contains("--log-file"), "{args}");
@@ -869,7 +958,13 @@ mod tests {
         assert_eq!(next_interval(None), IDLE_INTERVAL);
         assert_eq!(next_interval(Some(Rung::Release)), IDLE_INTERVAL);
         assert_eq!(next_interval(Some(Rung::Hold)), WATCHFUL_INTERVAL);
-        for r in [Rung::Reclaim, Rung::PageOut, Rung::Tabs, Rung::Suspend, Rung::Kill] {
+        for r in [
+            Rung::Reclaim,
+            Rung::PageOut,
+            Rung::Tabs,
+            Rung::Suspend,
+            Rung::Kill,
+        ] {
             assert_eq!(next_interval(Some(r)), BUSY_INTERVAL, "{r:?}");
         }
     }

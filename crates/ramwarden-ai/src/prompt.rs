@@ -95,7 +95,11 @@ pub struct Recommendation {
     pub processes_to_suspend: Vec<String>,
     /// `terminals_to_close` is accepted as an alias: the model used that name
     /// unprompted, and refusing it loses a correct answer over a label.
-    #[serde(default, alias = "terminals_to_close", deserialize_with = "lenient_ids_i32")]
+    #[serde(
+        default,
+        alias = "terminals_to_close",
+        deserialize_with = "lenient_ids_i32"
+    )]
     pub idle_terminals_to_close: Vec<i32>,
     #[serde(default)]
     pub workspaces_to_sort: bool,
@@ -143,7 +147,11 @@ impl Recommendation {
     /// Returns the names that were dropped, so the caller can log that the model
     /// suggested something out of bounds — useful signal about prompt drift, and
     /// the reason v1 logged it too.
-    pub fn clamp(&mut self, allowed_processes: &HashSet<String>, allowed_terminals: &[i32]) -> Vec<String> {
+    pub fn clamp(
+        &mut self,
+        allowed_processes: &HashSet<String>,
+        allowed_terminals: &[i32],
+    ) -> Vec<String> {
         let (keep, drop): (Vec<String>, Vec<String>) = self
             .processes_to_suspend
             .drain(..)
@@ -196,7 +204,10 @@ fn one_id(v: &serde_json::Value) -> Option<i64> {
     match v {
         serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
         serde_json::Value::String(s) => {
-            let digits: String = s.chars().filter(|c| c.is_ascii_digit() || *c == '-').collect();
+            let digits: String = s
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '-')
+                .collect();
             digits.parse().ok()
         }
         _ => None,
@@ -393,7 +404,9 @@ mod tests {
 
     #[test]
     fn parses_a_reply_with_a_sentence_of_preamble() {
-        let raw = format!("Sure! Here is the recommendation you asked for:\n\n{GOOD}\n\nHope that helps.");
+        let raw = format!(
+            "Sure! Here is the recommendation you asked for:\n\n{GOOD}\n\nHope that helps."
+        );
         assert_eq!(extract_json(&raw).unwrap().tabs_to_close, vec![1, 2]);
     }
 
@@ -426,7 +439,10 @@ mod tests {
     fn a_prose_only_reply_is_an_error_with_the_text_quoted() {
         let err = extract_json("I think you should close some tabs.").unwrap_err();
         assert!(err.contains("no JSON object"), "{err}");
-        assert!(err.contains("close some tabs"), "the reply must be quoted: {err}");
+        assert!(
+            err.contains("close some tabs"),
+            "the reply must be quoted: {err}"
+        );
     }
 
     #[test]
@@ -488,7 +504,11 @@ mod tests {
         assert_eq!(r.tabs_to_close, vec![1, 5]);
         assert_eq!(dropped.tabs, vec![2, 3]);
         assert!(dropped.processes.is_empty());
-        assert!(dropped.describe().contains("protected tabs"), "{}", dropped.describe());
+        assert!(
+            dropped.describe().contains("protected tabs"),
+            "{}",
+            dropped.describe()
+        );
     }
 
     #[test]
@@ -546,7 +566,10 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(GOOD).unwrap();
         for f in reply_schema()["required"].as_array().unwrap() {
             let name = f.as_str().unwrap();
-            assert!(value.get(name).is_some(), "schema requires {name}, reply lacks it");
+            assert!(
+                value.get(name).is_some(),
+                "schema requires {name}, reply lacks it"
+            );
         }
     }
 
@@ -589,10 +612,18 @@ mod tests {
 
     #[test]
     fn tabs_are_rendered_with_their_ids_and_ages() {
-        let tabs = vec![(7i64, 6087i64, "https://x.test/".to_string(), "X".to_string())];
+        let tabs = vec![(
+            7i64,
+            6087i64,
+            "https://x.test/".to_string(),
+            "X".to_string(),
+        )];
         let p = ctx("", &tabs).render();
         assert!(p.contains("7. inactive 6087min"), "{p}");
-        assert!(p.contains("bare integers"), "the id type must be stated: {p}");
+        assert!(
+            p.contains("bare integers"),
+            "the id type must be stated: {p}"
+        );
     }
 
     /// What nemotron-3-nano:4b actually returned when the prompt rendered ids as
@@ -607,13 +638,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.tabs_to_close, vec![1, 5, 3]);
-        assert_eq!(r.idle_terminals_to_close, vec![226631], "alias field accepted");
+        assert_eq!(
+            r.idle_terminals_to_close,
+            vec![226631],
+            "alias field accepted"
+        );
     }
 
     #[test]
     fn ids_given_as_floats_or_mixed_types_are_understood() {
         let r = extract_json(r#"{"tabs_to_close":[1,2.0,"3",null,{"a":1}]}"#).unwrap();
-        assert_eq!(r.tabs_to_close, vec![1, 2, 3], "unusable entries are dropped");
+        assert_eq!(
+            r.tabs_to_close,
+            vec![1, 2, 3],
+            "unusable entries are dropped"
+        );
     }
 
     /// A prompt is a cost. 120 tabs is already a lot of context for a 4B model,
@@ -625,7 +664,10 @@ mod tests {
             .collect();
         let p = ctx("", &tabs).render();
         assert!(p.contains("119. inactive"), "the cap should be 120");
-        assert!(!p.contains("150. inactive"), "beyond the cap must be omitted");
+        assert!(
+            !p.contains("150. inactive"),
+            "beyond the cap must be omitted"
+        );
     }
 
     #[test]

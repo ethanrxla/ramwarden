@@ -152,7 +152,9 @@ impl Detector {
     /// A detector over a real or synthetic `/proc` tree.
     #[cfg(target_os = "linux")]
     pub fn linux(root: ramwarden_kernel::Root) -> Self {
-        Detector::new(Box::new(ramwarden_kernel::platform::LinuxProcesses::new(root)))
+        Detector::new(Box::new(ramwarden_kernel::platform::LinuxProcesses::new(
+            root,
+        )))
     }
 
     /// Whether proportional accounting (PSS, private working set) is working.
@@ -241,11 +243,16 @@ impl Detector {
                 owner: p.owner,
                 cmdline: std::sync::Arc::clone(&p.cmdline),
             });
-            let cpu_delta = if new { 0.0 } else { (p.cpu_seconds - inst.cpu_total).max(0.0) };
+            let cpu_delta = if new {
+                0.0
+            } else {
+                (p.cpu_seconds - inst.cpu_total).max(0.0)
+            };
             inst.cpu_total = p.cpu_seconds;
             let same_image = !new
                 && inst.owner == p.owner
-                && (std::sync::Arc::ptr_eq(&inst.cmdline, &p.cmdline) || *inst.cmdline == *p.cmdline);
+                && (std::sync::Arc::ptr_eq(&inst.cmdline, &p.cmdline)
+                    || *inst.cmdline == *p.cmdline);
             if !same_image {
                 inst.owner = p.owner;
                 inst.cmdline = std::sync::Arc::clone(&p.cmdline);
@@ -319,8 +326,10 @@ impl Detector {
                 self.app_busy_since.remove(*app);
             }
         }
-        self.app_active.retain(|app, _| apps.contains_key(app.as_str()));
-        self.app_busy_since.retain(|app, _| apps.contains_key(app.as_str()));
+        self.app_active
+            .retain(|app, _| apps.contains_key(app.as_str()));
+        self.app_busy_since
+            .retain(|app, _| apps.contains_key(app.as_str()));
         drop(apps);
 
         self.signals = fresh;
@@ -340,9 +349,13 @@ impl Detector {
         for s in self.signals.values() {
             *used.entry(s.name.as_str()).or_default() |= s.recently_used();
         }
-        self.recency.retain(|name, _| used.contains_key(name.as_str()));
+        self.recency
+            .retain(|name, _| used.contains_key(name.as_str()));
         for (name, was_used) in used {
-            let fresh = Recency { since: now, touched: true };
+            let fresh = Recency {
+                since: now,
+                touched: true,
+            };
             if was_used {
                 // Move an existing entry without allocating its key again.
                 match self.recency.touch(name) {
@@ -350,7 +363,13 @@ impl Detector {
                     None => self.recency.put_hot(name.to_string(), fresh),
                 }
             } else if !self.recency.contains(name) {
-                self.recency.put_cold(name.to_string(), Recency { since: now, touched: false });
+                self.recency.put_cold(
+                    name.to_string(),
+                    Recency {
+                        since: now,
+                        touched: false,
+                    },
+                );
             }
         }
     }
@@ -372,7 +391,9 @@ impl Detector {
     /// ancestor chain, which is a handful of steps; the `seen` guard stops a
     /// malformed parent map from looping.
     pub fn in_focused_app(&self, pid: i32) -> bool {
-        let Some(focused) = self.focused else { return false };
+        let Some(focused) = self.focused else {
+            return false;
+        };
         let mut seen: HashSet<i32> = HashSet::new();
         let mut cur = pid;
         while cur > 1 && seen.insert(cur) {
@@ -390,12 +411,16 @@ impl Detector {
 
     /// Minutes since any process of `app` last did anything, as of `now`.
     pub fn quiet_minutes(&self, app: &str, now: Instant) -> Option<f64> {
-        self.app_active.get(app).map(|t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
+        self.app_active
+            .get(app)
+            .map(|t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
     }
 
     /// Minutes `app` has been using CPU while nobody is using it, or 0.
     pub fn runaway_minutes(&self, app: &str, now: Instant) -> f64 {
-        self.app_busy_since.get(app).map_or(0.0, |t| now.saturating_duration_since(*t).as_secs_f64() / 60.0)
+        self.app_busy_since.get(app).map_or(0.0, |t| {
+            now.saturating_duration_since(*t).as_secs_f64() / 60.0
+        })
     }
 
     pub fn get(&self, pid: i32) -> Option<&Signals> {
@@ -425,7 +450,11 @@ impl Detector {
     pub fn verdict_for_name(&self, name_pattern: &str) -> (Verdict, Vec<String>, Vec<i32>) {
         let matched = self.matching(name_pattern);
         if matched.is_empty() {
-            return (Verdict::Idle, vec!["no such process running".into()], vec![]);
+            return (
+                Verdict::Idle,
+                vec!["no such process running".into()],
+                vec![],
+            );
         }
         let pids: Vec<i32> = matched.iter().map(|s| s.pid).collect();
 
@@ -457,7 +486,10 @@ impl Detector {
 
         // Structural protection outranks everything, including an explicit
         // watchlist entry — report it first because it is the real reason.
-        if let Some(s) = matched.iter().find(|s| s.protection == Protection::Structural) {
+        if let Some(s) = matched
+            .iter()
+            .find(|s| s.protection == Protection::Structural)
+        {
             return Decision::Refuse(format!("{name_pattern}: {}", s.reasons[0]));
         }
 
@@ -488,11 +520,11 @@ impl Detector {
         if matched.is_empty() {
             return Decision::Refuse(format!("no running process matches {name_pattern:?}"));
         }
-        if let Some(s) = matched.iter().find(|s| s.protection == Protection::Structural) {
-            return Decision::Refuse(format!(
-                "{name_pattern}: {} (not forceable)",
-                s.reasons[0]
-            ));
+        if let Some(s) = matched
+            .iter()
+            .find(|s| s.protection == Protection::Structural)
+        {
+            return Decision::Refuse(format!("{name_pattern}: {} (not forceable)", s.reasons[0]));
         }
         Decision::Allow(format!("forced by user for {name_pattern}"))
     }
@@ -510,7 +542,11 @@ impl Detector {
         let mut matched: Vec<&Signals> = Vec::new();
         for pat in watchlist {
             matched.clear();
-            matched.extend(self.signals.values().filter(|s| pattern::matches_ci(pat, &s.name)));
+            matched.extend(
+                self.signals
+                    .values()
+                    .filter(|s| pattern::matches_ci(pat, &s.name)),
+            );
             // The gate reports the first offending process; pid order keeps
             // that the same one every time.
             matched.sort_unstable_by_key(|s| s.pid);
@@ -555,7 +591,11 @@ fn propagate(sigs: &mut HashMap<i32, Signals>, parents: &HashMap<i32, i32>) {
         // reused while we were reading). Floyd's check costs no allocation, so
         // the visited set is only built for the rare chain that needs it.
         let cyclic = has_cycle(pid, parent);
-        let mut seen: HashSet<i32> = if cyclic { HashSet::from([pid]) } else { HashSet::new() };
+        let mut seen: HashSet<i32> = if cyclic {
+            HashSet::from([pid])
+        } else {
+            HashSet::new()
+        };
         let mut cur = parents.get(&pid).copied().unwrap_or(0);
         while cur != 0 && !seen.contains(&cur) && sigs.contains_key(&cur) {
             if cyclic {
@@ -609,7 +649,9 @@ mod tests {
     // ── Reuse between ticks ─────────────────────────────────────────────────
 
     fn fake_detector(procs: Vec<ProcessSample>) -> (Detector, ramwarden_platform::fake::Shared) {
-        let world = std::sync::Arc::new(std::sync::Mutex::new(ramwarden_platform::fake::World::default()));
+        let world = std::sync::Arc::new(std::sync::Mutex::new(
+            ramwarden_platform::fake::World::default(),
+        ));
         world.lock().unwrap().processes = procs;
         let platform = ramwarden_platform::fake::platform(world.clone());
         (Detector::new(platform.processes()), world)
@@ -635,7 +677,10 @@ mod tests {
         let s = d.get(50).unwrap();
         assert_eq!(s.name, "Discord");
         assert_eq!(s.protection, Protection::None);
-        assert_eq!(s.cpu_seconds_recent, 0.0, "no delta across two different processes");
+        assert_eq!(
+            s.cpu_seconds_recent, 0.0,
+            "no delta across two different processes"
+        );
     }
 
     /// The same process keeps its entry, and per-tick facts are overwritten,
@@ -652,7 +697,10 @@ mod tests {
         let (mut d, world) = fake_detector(vec![shell, child]);
         d.sample(&Desktop::default()).unwrap();
         world.lock().unwrap().processes[1].cpu_seconds = 5.0;
-        let focused = Desktop { focused_pid: Some(60), ..Default::default() };
+        let focused = Desktop {
+            focused_pid: Some(60),
+            ..Default::default()
+        };
         d.sample(&focused).unwrap();
         assert!(d.get(60).unwrap().active_descendant.is_some());
         assert!(d.get(60).unwrap().is_focused);
@@ -682,7 +730,10 @@ mod tests {
         assert_eq!(d.get(10).unwrap().verdict, Verdict::Protected);
         let decision = d.may_suspend("qemu-system-x86_64", &["qemu-system-x86_64".into()]);
         assert!(!decision.is_allowed());
-        assert!(decision.reason().contains("virtual machine"), "{decision:?}");
+        assert!(
+            decision.reason().contains("virtual machine"),
+            "{decision:?}"
+        );
     }
 
     /// v1's `test_structural_protection_cannot_be_forced`.
@@ -710,7 +761,10 @@ mod tests {
     fn structural_refusal_outranks_the_watchlist_refusal() {
         let d = detector(true, vec![sig(13, "qemu-system-x86_64")]);
         let decision = d.may_suspend("qemu-system-x86_64", &watchlist());
-        assert!(decision.reason().contains("virtual machine"), "{decision:?}");
+        assert!(
+            decision.reason().contains("virtual machine"),
+            "{decision:?}"
+        );
         assert!(!decision.reason().contains("watchlist"), "{decision:?}");
     }
 
@@ -726,7 +780,10 @@ mod tests {
         assert_eq!(d.get(20).unwrap().protection, Protection::Serving);
         let decision = d.may_suspend("my-api", &watchlist());
         assert!(!decision.is_allowed());
-        assert!(decision.reason().contains("not on the watchlist"), "{decision:?}");
+        assert!(
+            decision.reason().contains("not on the watchlist"),
+            "{decision:?}"
+        );
     }
 
     /// v1's `test_watchlist_overrides_soft_serving_protection_with_a_warning`.
@@ -762,7 +819,10 @@ mod tests {
         assert_eq!(d.get(31).unwrap().verdict, Verdict::Idle);
         assert!(d.may_suspend("Discord", &watchlist()).is_allowed());
         assert_eq!(
-            d.reclaimable(&watchlist()).iter().map(|s| s.pid).collect::<Vec<_>>(),
+            d.reclaimable(&watchlist())
+                .iter()
+                .map(|s| s.pid)
+                .collect::<Vec<_>>(),
             vec![31]
         );
     }
@@ -784,7 +844,10 @@ mod tests {
         let d = detector(true, vec![sig(41, "Discord")]);
         let decision = d.may_suspend("not-running", &watchlist());
         assert!(!decision.is_allowed());
-        assert!(decision.reason().contains("no running process"), "{decision:?}");
+        assert!(
+            decision.reason().contains("no running process"),
+            "{decision:?}"
+        );
     }
 
     // ── Watchlist is a ceiling ──────────────────────────────────────────────
@@ -796,8 +859,16 @@ mod tests {
         other.pss = 900 * 1024 * 1024;
         let d = detector(true, vec![sig(50, "Discord"), other]);
 
-        assert_eq!(d.get(51).unwrap().verdict, Verdict::Idle, "idle, but off the list");
-        let names: Vec<&str> = d.reclaimable(&watchlist()).iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            d.get(51).unwrap().verdict,
+            Verdict::Idle,
+            "idle, but off the list"
+        );
+        let names: Vec<&str> = d
+            .reclaimable(&watchlist())
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
         assert_eq!(names, vec!["Discord"]);
     }
 
@@ -809,7 +880,10 @@ mod tests {
 
     #[test]
     fn a_glob_watchlist_entry_matches_what_it_did_in_v1() {
-        let d = detector(true, vec![sig(53, "burpsuite"), sig(54, "BurpSuiteCommunity")]);
+        let d = detector(
+            true,
+            vec![sig(53, "burpsuite"), sig(54, "BurpSuiteCommunity")],
+        );
         let wl = vec!["burp*".to_string()];
         let pids: Vec<i32> = d.reclaimable(&wl).iter().map(|s| s.pid).collect();
         assert_eq!(pids.len(), 2, "{pids:?}");
@@ -847,7 +921,11 @@ mod tests {
     #[test]
     fn overlapping_watchlist_patterns_do_not_duplicate_a_process() {
         let d = detector(true, vec![sig(64, "Discord")]);
-        let wl = vec!["Discord".to_string(), "Disc*".to_string(), "*cord".to_string()];
+        let wl = vec![
+            "Discord".to_string(),
+            "Disc*".to_string(),
+            "*cord".to_string(),
+        ];
         assert_eq!(d.reclaimable(&wl).len(), 1);
     }
 
@@ -902,7 +980,11 @@ mod tests {
 
         let parent = &sigs[&80];
         assert!(
-            parent.active_descendant.as_deref().unwrap_or("").contains("cargo"),
+            parent
+                .active_descendant
+                .as_deref()
+                .unwrap_or("")
+                .contains("cargo"),
             "{:?}",
             parent.active_descendant
         );
@@ -981,7 +1063,13 @@ mod tests {
     }
 
     fn proc(pid: i32, ppid: i32, name: &str) -> ProcessSample {
-        ProcessSample { pid, ppid, name: name.into(), proportional: 1 << 20, ..Default::default() }
+        ProcessSample {
+            pid,
+            ppid,
+            name: name.into(),
+            proportional: 1 << 20,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -993,21 +1081,37 @@ mod tests {
             proc(200, 1, "Arabesque"),
         ];
         let mut d = Detector::new(Box::new(Table(table)));
-        d.sample(&Desktop { focused_pid: Some(100), ..Default::default() }).unwrap();
+        d.sample(&Desktop {
+            focused_pid: Some(100),
+            ..Default::default()
+        })
+        .unwrap();
         for pid in [100, 101, 102] {
             assert!(d.in_focused_app(pid), "{pid}");
         }
         assert!(!d.in_focused_app(200));
 
-        d.sample(&Desktop { focused_pid: None, ..Default::default() }).unwrap();
+        d.sample(&Desktop {
+            focused_pid: None,
+            ..Default::default()
+        })
+        .unwrap();
         assert!(!d.in_focused_app(101), "no focus known: nothing is thawed");
     }
 
     #[test]
     fn a_cyclic_parent_map_terminates() {
-        let table = vec![proc(300, 301, "a"), proc(301, 300, "b"), proc(400, 1, "focused")];
+        let table = vec![
+            proc(300, 301, "a"),
+            proc(301, 300, "b"),
+            proc(400, 1, "focused"),
+        ];
         let mut d = Detector::new(Box::new(Table(table)));
-        d.sample(&Desktop { focused_pid: Some(400), ..Default::default() }).unwrap();
+        d.sample(&Desktop {
+            focused_pid: Some(400),
+            ..Default::default()
+        })
+        .unwrap();
         assert!(!d.in_focused_app(300));
     }
 }

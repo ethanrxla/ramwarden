@@ -87,13 +87,18 @@ pub struct Example {
 pub fn examples(rows: &[LabelledSample]) -> Vec<Example> {
     let mut by_proc: HashMap<(i32, &str), Vec<&LabelledSample>> = HashMap::new();
     for r in rows {
-        by_proc.entry((r.sample.pid, r.sample.name.as_str())).or_default().push(r);
+        by_proc
+            .entry((r.sample.pid, r.sample.name.as_str()))
+            .or_default()
+            .push(r);
     }
     let mut out = Vec::new();
     for (_, mut seq) in by_proc {
         seq.sort_by_key(|r| r.epoch);
-        let enc: Vec<[f32; FEATURES]> =
-            seq.iter().map(|r| encode(&r.sample, r.epoch, r.context.psi_some)).collect();
+        let enc: Vec<[f32; FEATURES]> = seq
+            .iter()
+            .map(|r| encode(&r.sample, r.epoch, r.context.psi_some))
+            .collect();
         for i in 0..seq.len().saturating_sub(WINDOW) {
             let ctx = &enc[i..i + WINDOW];
             let tgt = &enc[i + 1..i + 1 + WINDOW];
@@ -160,7 +165,11 @@ mod tests {
                 pss: 300 * 1_048_576,
                 age_minutes: 120.0,
                 focused,
-                verdict: if focused { "IN_USE".into() } else { "IDLE".into() },
+                verdict: if focused {
+                    "IN_USE".into()
+                } else {
+                    "IDLE".into()
+                },
                 ..Default::default()
             },
             context: SampleContext::default(),

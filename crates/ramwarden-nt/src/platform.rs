@@ -66,7 +66,10 @@ impl Pager for NtPager {
         let pid_u = pid as u32;
         match workingset::private_working_set_of(pid_u) {
             Ok(ws) if ws < min_bytes => {
-                return Outcome::refused(format!("pid {pid}: {} MB is too small to trim", ws / 1_000_000));
+                return Outcome::refused(format!(
+                    "pid {pid}: {} MB is too small to trim",
+                    ws / 1_000_000
+                ));
             }
             Err(e) => return Outcome::refused(format!("pid {pid}: {e}")),
             Ok(_) => {}
@@ -76,12 +79,20 @@ impl Pager for NtPager {
             Ok(bytes) => Outcome::freed(vec![pid], bytes),
             // An elevated app in the user's session: ask the service, which
             // applies its own checks before touching anything.
-            Err(e) if e.is_denied() => match crate::pipe::call(&crate::pipe::Request::Trim { pid: pid_u }) {
-                Ok(crate::pipe::Response::Ok { bytes, .. }) if bytes > 0 => Outcome::freed(vec![pid], bytes),
-                Ok(crate::pipe::Response::Ok { .. }) => Outcome::refused(format!("pid {pid}: nothing was trimmed")),
-                Ok(crate::pipe::Response::Error { message }) => Outcome::refused(format!("pid {pid}: {message}")),
-                Err(_) => Outcome::refused(format!("pid {pid}: {e}")),
-            },
+            Err(e) if e.is_denied() => {
+                match crate::pipe::call(&crate::pipe::Request::Trim { pid: pid_u }) {
+                    Ok(crate::pipe::Response::Ok { bytes, .. }) if bytes > 0 => {
+                        Outcome::freed(vec![pid], bytes)
+                    }
+                    Ok(crate::pipe::Response::Ok { .. }) => {
+                        Outcome::refused(format!("pid {pid}: nothing was trimmed"))
+                    }
+                    Ok(crate::pipe::Response::Error { message }) => {
+                        Outcome::refused(format!("pid {pid}: {message}"))
+                    }
+                    Err(_) => Outcome::refused(format!("pid {pid}: {e}")),
+                }
+            }
             Err(e) => Outcome::refused(format!("pid {pid}: {e}")),
         }
     }
@@ -97,7 +108,11 @@ impl Background for NtBackground {
 
     fn set(&self, pid: i32, background: bool) -> Result<()> {
         let pid = pid as u32;
-        let level = if background { MemoryPriority::Low } else { MemoryPriority::Normal };
+        let level = if background {
+            MemoryPriority::Low
+        } else {
+            MemoryPriority::Normal
+        };
         priority::set_memory_priority(pid, level)?;
         // EcoQoS is best-effort: some processes (games, elevated apps) refuse
         // it, and the memory priority alone is what matters for memory.

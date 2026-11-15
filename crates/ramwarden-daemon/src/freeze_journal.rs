@@ -25,7 +25,9 @@ pub fn write(path: &Path, frozen: &[Frozen]) {
             _ => Ok(()),
         }
     } else {
-        serde_json::to_vec(frozen).map_err(std::io::Error::other).and_then(|b| std::fs::write(path, b))
+        serde_json::to_vec(frozen)
+            .map_err(std::io::Error::other)
+            .and_then(|b| std::fs::write(path, b))
     };
     if let Err(e) = result {
         tracing::warn!("could not update {}: {e}", path.display());
@@ -37,11 +39,15 @@ pub fn write(path: &Path, frozen: &[Frozen]) {
 /// A listed pid is woken only if it still has the recorded name and is stopped:
 /// a recycled pid, or a process the user has since continued, is left alone.
 pub fn thaw_leftovers(path: &Path, det: &Detector, control: &dyn ProcessControl) -> Vec<String> {
-    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
     let listed: Vec<Frozen> = serde_json::from_slice(&bytes).unwrap_or_default();
     let mut woke = Vec::new();
     for f in &listed {
-        let still_ours = det.get(f.pid).is_some_and(|s| s.name == f.name && s.state == 'T');
+        let still_ours = det
+            .get(f.pid)
+            .is_some_and(|s| s.name == f.name && s.state == 'T');
         if still_ours && control.open(f.pid).and_then(|h| h.resume()).is_ok() {
             woke.push(format!("{} (pid {})", f.name, f.pid));
         }
@@ -67,9 +73,21 @@ mod tests {
     fn write_then_read_round_trips_and_an_empty_set_removes_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("suspended.json");
-        write(&path, &[Frozen { name: "node".into(), pid: 7 }]);
+        write(
+            &path,
+            &[Frozen {
+                name: "node".into(),
+                pid: 7,
+            }],
+        );
         let back: Vec<Frozen> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(back, vec![Frozen { name: "node".into(), pid: 7 }]);
+        assert_eq!(
+            back,
+            vec![Frozen {
+                name: "node".into(),
+                pid: 7
+            }]
+        );
         write(&path, &[]);
         assert!(!path.exists());
     }
@@ -80,10 +98,17 @@ mod tests {
         let path = dir.path().join("suspended.json");
         let w = fake::World::default();
         let platform = fake::platform(std::sync::Arc::new(std::sync::Mutex::new(w)));
-        assert!(thaw_leftovers(&path, &detector(1, "x", 'T'), platform.control.as_ref()).is_empty());
+        assert!(
+            thaw_leftovers(&path, &detector(1, "x", 'T'), platform.control.as_ref()).is_empty()
+        );
         std::fs::write(&path, b"not json").unwrap();
-        assert!(thaw_leftovers(&path, &detector(1, "x", 'T'), platform.control.as_ref()).is_empty());
-        assert!(!path.exists(), "a corrupt journal is discarded, not retried forever");
+        assert!(
+            thaw_leftovers(&path, &detector(1, "x", 'T'), platform.control.as_ref()).is_empty()
+        );
+        assert!(
+            !path.exists(),
+            "a corrupt journal is discarded, not retried forever"
+        );
     }
 
     #[test]
@@ -97,18 +122,51 @@ mod tests {
         }));
         let platform = fake::platform(world.clone());
 
-        let journal = [Frozen { name: "node".into(), pid: 10 }, Frozen { name: "node".into(), pid: 11 }];
+        let journal = [
+            Frozen {
+                name: "node".into(),
+                pid: 10,
+            },
+            Frozen {
+                name: "node".into(),
+                pid: 11,
+            },
+        ];
         write(&path, &journal);
         // pid 10: stopped, same name. pid 11: not running at all.
         let woke = thaw_leftovers(&path, &detector(10, "node", 'T'), platform.control.as_ref());
         assert_eq!(woke, vec!["node (pid 10)".to_string()]);
-        assert!(world.lock().unwrap().suspended.is_empty(), "SIGCONT delivered");
+        assert!(
+            world.lock().unwrap().suspended.is_empty(),
+            "SIGCONT delivered"
+        );
         assert!(!path.exists());
 
         // A recycled pid (different name) or an already-running process is left alone.
-        write(&path, &[Frozen { name: "node".into(), pid: 10 }]);
-        assert!(thaw_leftovers(&path, &detector(10, "something-else", 'T'), platform.control.as_ref()).is_empty());
-        write(&path, &[Frozen { name: "node".into(), pid: 10 }]);
-        assert!(thaw_leftovers(&path, &detector(10, "node", 'S'), platform.control.as_ref()).is_empty());
+        write(
+            &path,
+            &[Frozen {
+                name: "node".into(),
+                pid: 10,
+            }],
+        );
+        assert!(
+            thaw_leftovers(
+                &path,
+                &detector(10, "something-else", 'T'),
+                platform.control.as_ref()
+            )
+            .is_empty()
+        );
+        write(
+            &path,
+            &[Frozen {
+                name: "node".into(),
+                pid: 10,
+            }],
+        );
+        assert!(
+            thaw_leftovers(&path, &detector(10, "node", 'S'), platform.control.as_ref()).is_empty()
+        );
     }
 }

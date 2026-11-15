@@ -88,7 +88,11 @@ impl p::PressureSource for LinuxPressure {
     }
 
     fn waker(&self) -> p::Result<Box<dyn p::PressureWaker>> {
-        Ok(Box::new(Trigger::memory(&self.root, STALL_BUDGET, STALL_WINDOW)?))
+        Ok(Box::new(Trigger::memory(
+            &self.root,
+            STALL_BUDGET,
+            STALL_WINDOW,
+        )?))
     }
 }
 
@@ -348,7 +352,9 @@ mod tests {
     /// capability error it can recognise, not an arbitrary failure.
     #[test]
     fn a_missing_trigger_is_a_capability_error() {
-        let pressure = LinuxPressure { root: Root::system() };
+        let pressure = LinuxPressure {
+            root: Root::system(),
+        };
         if let Err(e) = pressure.waker() {
             assert!(
                 matches!(e, p::Error::Unsupported(_) | p::Error::Denied { .. }),

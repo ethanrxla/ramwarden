@@ -53,17 +53,36 @@ mod linux {
 
         println!("target        {label}  ({})", scope.name());
         println!("charged       {}", mb(before));
-        println!("reclaimable   {}  (inactive_anon + inactive_file)", mb(stat.reclaimable()));
-        println!("zram stored   {}  in {} of RAM ({:.2}x)", mb(z0.orig_data_size), mb(z0.mem_used_total), z0.ratio());
-        println!("\nasking the kernel to reclaim {} ...", mb(ask_mb * 1_000_000));
+        println!(
+            "reclaimable   {}  (inactive_anon + inactive_file)",
+            mb(stat.reclaimable())
+        );
+        println!(
+            "zram stored   {}  in {} of RAM ({:.2}x)",
+            mb(z0.orig_data_size),
+            mb(z0.mem_used_total),
+            z0.ratio()
+        );
+        println!(
+            "\nasking the kernel to reclaim {} ...",
+            mb(ask_mb * 1_000_000)
+        );
 
         let freed = scope.reclaim(ask_mb * 1_000_000)?;
         let after = scope.current()?;
         let z1 = zram::total(&root)?;
 
         println!("\ncharged now   {}   (dropped {})", mb(after), mb(freed));
-        println!("zram stored   {}   (grew {})", mb(z1.orig_data_size), mb(z1.orig_data_size.saturating_sub(z0.orig_data_size)));
-        println!("zram RAM      {}   (grew {})", mb(z1.mem_used_total), mb(z1.mem_used_total.saturating_sub(z0.mem_used_total)));
+        println!(
+            "zram stored   {}   (grew {})",
+            mb(z1.orig_data_size),
+            mb(z1.orig_data_size.saturating_sub(z0.orig_data_size))
+        );
+        println!(
+            "zram RAM      {}   (grew {})",
+            mb(z1.mem_used_total),
+            mb(z1.mem_used_total.saturating_sub(z0.mem_used_total))
+        );
 
         let net = freed.saturating_sub(z1.mem_used_total.saturating_sub(z0.mem_used_total));
         println!("\nnet RAM returned to the system: {}", mb(net));

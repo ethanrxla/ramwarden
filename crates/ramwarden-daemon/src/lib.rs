@@ -6,6 +6,8 @@
 //! run the real router rather than poking at internals.
 
 pub mod ai;
+pub mod appintel;
+pub mod appquit;
 pub mod desktop;
 pub mod embedder;
 pub mod extras;
@@ -18,11 +20,9 @@ pub mod monitor;
 pub mod outcomes;
 pub mod predict;
 pub mod routes;
-pub mod tabpolicy;
-pub mod appintel;
-pub mod appquit;
 pub mod tab_analysis;
 pub mod tabintel;
+pub mod tabpolicy;
 pub mod tabrank;
 pub mod tabs;
 pub mod voice;
@@ -47,7 +47,7 @@ pub mod settings;
 
 pub mod companion_memory;
 
-pub mod workspace_tools;
 pub mod workspace_run;
+pub mod workspace_tools;
 
 pub mod agent_network;

@@ -29,7 +29,10 @@ pub fn run(cmd: &str, args: &[&str]) -> Option<String> {
 /// XWayland server is running.
 pub fn run_with_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Option<String> {
     let mut command = Command::new(cmd);
-    command.args(args).stdout(Stdio::piped()).stderr(Stdio::null());
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     for (k, v) in env {
         command.env(k, v);
     }
@@ -98,7 +101,11 @@ mod tests {
 
     #[test]
     fn extra_environment_reaches_the_child() {
-        let out = run_with_env("sh", &["-c", "printf %s \"$RW_TEST\""], &[("RW_TEST", "set")]);
+        let out = run_with_env(
+            "sh",
+            &["-c", "printf %s \"$RW_TEST\""],
+            &[("RW_TEST", "set")],
+        );
         assert_eq!(out.as_deref(), Some("set"));
     }
 

@@ -12,7 +12,11 @@ use std::path::PathBuf;
 /// The GPU check is NVML, which the daemon already uses for VRAM accounting
 /// and which creates no CUDA context.
 pub fn gpu_worker() -> Option<PathBuf> {
-    let exe = if cfg!(windows) { "ramwarden-gpu.exe" } else { "ramwarden-gpu" };
+    let exe = if cfg!(windows) {
+        "ramwarden-gpu.exe"
+    } else {
+        "ramwarden-gpu"
+    };
     let path = std::env::current_exe().ok()?.with_file_name(exe);
     (path.exists() && ramwarden_ai::vram::available()).then_some(path)
 }

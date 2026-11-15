@@ -149,7 +149,10 @@ impl LinuxProcesses {
     /// Refresh one instance's command line and owner if they may be stale.
     fn refresh_details(root: &Root, me: u32, pid: i32, comm: &str, k: &mut Known, now: Instant) {
         let execed = k.comm != comm;
-        if !execed && k.detail_reads >= 2 && now.saturating_duration_since(k.details_at) < DETAIL_TTL {
+        if !execed
+            && k.detail_reads >= 2
+            && now.saturating_duration_since(k.details_at) < DETAIL_TTL
+        {
             return;
         }
         let cmdline = process::cmdline(root, pid).unwrap_or_default();
@@ -242,8 +245,14 @@ impl p::ProcessSource for LinuxProcesses {
             });
             appeared += new as usize;
             Self::refresh_details(root, me, e.pid, &e.comm, k, now);
-            let (pss, read) =
-                Self::proportional(root, &mut self.pss_unavailable, e.pid, e.rss_bytes(), &mut k.pss, now);
+            let (pss, read) = Self::proportional(
+                root,
+                &mut self.pss_unavailable,
+                e.pid,
+                e.rss_bytes(),
+                &mut k.pss,
+                now,
+            );
             measured_pss |= read;
             let (cmdline, owner) = (Arc::clone(&k.cmdline), k.owner);
             details.push((cmdline, owner, pss));
@@ -312,7 +321,15 @@ mod tests {
         }
 
         /// One process. `rss_pages` large enough puts it over the PSS floor.
-        fn put(&self, pid: i32, comm: &str, start: u64, rss_pages: u64, cmdline: &str, pss_kb: u64) {
+        fn put(
+            &self,
+            pid: i32,
+            comm: &str,
+            start: u64,
+            rss_pages: u64,
+            cmdline: &str,
+            pss_kb: u64,
+        ) {
             let d = self.0.path().join(format!("proc/{pid}"));
             fs::create_dir_all(&d).unwrap();
             fs::write(
@@ -322,11 +339,19 @@ mod tests {
             .unwrap();
             fs::write(d.join("cmdline"), cmdline.replace(' ', "\0")).unwrap();
             fs::write(d.join("status"), "Uid:\t1000\t1000\t1000\t1000\n").unwrap();
-            fs::write(d.join("smaps_rollup"), format!("[rollup]\nRss: 1 kB\nPss: {pss_kb} kB\n")).unwrap();
+            fs::write(
+                d.join("smaps_rollup"),
+                format!("[rollup]\nRss: 1 kB\nPss: {pss_kb} kB\n"),
+            )
+            .unwrap();
         }
 
         fn cmdline(&self, pid: i32, cmdline: &str) {
-            fs::write(self.0.path().join(format!("proc/{pid}/cmdline")), cmdline.replace(' ', "\0")).unwrap();
+            fs::write(
+                self.0.path().join(format!("proc/{pid}/cmdline")),
+                cmdline.replace(' ', "\0"),
+            )
+            .unwrap();
         }
 
         fn pss(&self, pid: i32, pss_kb: u64) {
@@ -336,7 +361,11 @@ mod tests {
     }
 
     fn one(src: &mut LinuxProcesses, pid: i32) -> ProcessSample {
-        src.sample().unwrap().into_iter().find(|s| s.pid == pid).unwrap()
+        src.sample()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.pid == pid)
+            .unwrap()
     }
 
     /// 100,000 pages is ~400 MB: over the PSS floor.
@@ -369,7 +398,14 @@ mod tests {
     #[test]
     fn a_recycled_pid_is_read_afresh() {
         let p = Proc::new();
-        p.put(20, "qemu-system-x86", 100, 10, "qemu-system-x86_64 -m 4G", 0);
+        p.put(
+            20,
+            "qemu-system-x86",
+            100,
+            10,
+            "qemu-system-x86_64 -m 4G",
+            0,
+        );
         let mut src = LinuxProcesses::new(p.root());
         one(&mut src, 20);
         one(&mut src, 20);

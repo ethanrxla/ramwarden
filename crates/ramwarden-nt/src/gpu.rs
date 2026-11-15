@@ -53,7 +53,9 @@ pub fn dedicated_by_pid() -> Result<HashMap<u32, u64>> {
         let mut counter = PDH_HCOUNTER::default();
         let rc = PdhAddEnglishCounterW(query.0, PCWSTR(wide.as_ptr()), 0, &mut counter);
         if rc != 0 {
-            return Err(Error::Unsupported("GPU Process Memory counters (no WDDM GPU?)"));
+            return Err(Error::Unsupported(
+                "GPU Process Memory counters (no WDDM GPU?)",
+            ));
         }
         let rc = PdhCollectQueryData(query.0);
         if rc != 0 {
@@ -67,7 +69,13 @@ pub fn dedicated_by_pid() -> Result<HashMap<u32, u64>> {
         }
         let mut buf = vec![0u64; (bytes as usize).div_ceil(8)];
         let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
-        let rc = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &mut bytes, &mut count, Some(items));
+        let rc = PdhGetFormattedCounterArrayW(
+            counter,
+            PDH_FMT_LARGE,
+            &mut bytes,
+            &mut count,
+            Some(items),
+        );
         if rc != 0 {
             return Err(Error::os(format!("PdhGetFormattedCounterArray: {rc:#x}")));
         }
@@ -75,8 +83,12 @@ pub fn dedicated_by_pid() -> Result<HashMap<u32, u64>> {
         let mut out: HashMap<u32, u64> = HashMap::new();
         for i in 0..count as usize {
             let item = &*items.add(i);
-            let Ok(name) = item.szName.to_string() else { continue };
-            let Some(pid) = instance_pid(&name) else { continue };
+            let Ok(name) = item.szName.to_string() else {
+                continue;
+            };
+            let Some(pid) = instance_pid(&name) else {
+                continue;
+            };
             let value = item.FmtValue.Anonymous.largeValue.max(0) as u64;
             *out.entry(pid).or_default() += value;
         }
@@ -91,7 +103,10 @@ mod tests {
 
     #[test]
     fn instance_names_yield_pids() {
-        assert_eq!(instance_pid("pid_19956_luid_0x00000000_0x0000D3F5_phys_0"), Some(19956));
+        assert_eq!(
+            instance_pid("pid_19956_luid_0x00000000_0x0000D3F5_phys_0"),
+            Some(19956)
+        );
         assert_eq!(instance_pid("_Total"), None);
         assert_eq!(instance_pid("pid_x_luid"), None);
     }
@@ -99,7 +114,9 @@ mod tests {
     /// The desktop compositor always holds VRAM on a machine with a GPU.
     #[test]
     fn the_live_counters_attribute_vram_to_the_compositor() {
-        let Ok(by_pid) = dedicated_by_pid() else { return };
+        let Ok(by_pid) = dedicated_by_pid() else {
+            return;
+        };
         if by_pid.is_empty() {
             return;
         }
@@ -109,7 +126,10 @@ mod tests {
             .find(|p| p.name.eq_ignore_ascii_case("dwm"))
             .map(|p| p.pid);
         if let Some(pid) = dwm {
-            assert!(by_pid.get(&pid).copied().unwrap_or(0) > 0, "dwm holds no VRAM? {by_pid:?}");
+            assert!(
+                by_pid.get(&pid).copied().unwrap_or(0) > 0,
+                "dwm holds no VRAM? {by_pid:?}"
+            );
         }
     }
 }

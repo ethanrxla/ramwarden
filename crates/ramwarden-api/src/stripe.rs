@@ -47,7 +47,11 @@ pub struct CheckoutRequest<'a> {
 
 /// Card subscriptions renew monthly or yearly.
 fn stripe_interval(plan: &PlanDef) -> (&'static str, &'static str) {
-    if plan.interval == "year" { ("year", "1") } else { ("month", "1") }
+    if plan.interval == "year" {
+        ("year", "1")
+    } else {
+        ("month", "1")
+    }
 }
 
 impl Stripe {
@@ -57,8 +61,16 @@ impl Stripe {
 
     /// Tests point this at a fake.
     pub fn with_base(key: Secret, webhook_secret: Secret, api_base: &str) -> Self {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap_or_default();
-        Stripe { key, webhook_secret, api_base: api_base.trim_end_matches('/').to_string(), http }
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+        Stripe {
+            key,
+            webhook_secret,
+            api_base: api_base.trim_end_matches('/').to_string(),
+            http,
+        }
     }
 
     /// Whether this is a test-mode key (`sk_test_`), shown in config so the
@@ -82,8 +94,14 @@ impl Stripe {
             ("line_items[0][price_data][currency]", "usd"),
             ("line_items[0][price_data][unit_amount]", &cents),
             ("line_items[0][price_data][recurring][interval]", interval),
-            ("line_items[0][price_data][recurring][interval_count]", count),
-            ("line_items[0][price_data][product_data][name]", &r.plan.name),
+            (
+                "line_items[0][price_data][recurring][interval_count]",
+                count,
+            ),
+            (
+                "line_items[0][price_data][product_data][name]",
+                &r.plan.name,
+            ),
             ("subscription_data[metadata][account_id]", r.account_id),
             ("subscription_data[metadata][plan]", &plan_id),
             ("subscription_data[metadata][payment_id]", r.payment_id),
@@ -105,20 +123,44 @@ impl Stripe {
         let status = resp.status();
         let v: Value = resp.json().await.map_err(|e| format!("stripe: {e}"))?;
         if !status.is_success() {
-            return Err(format!("stripe answered {status}: {}", v["error"]["message"]));
+            return Err(format!(
+                "stripe answered {status}: {}",
+                v["error"]["message"]
+            ));
         }
-        v["url"].as_str().map(str::to_string).ok_or_else(|| "stripe returned no url".into())
+        v["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "stripe returned no url".into())
     }
 
     /// Moves a live subscription to `plan`: a new price on its one item, any
     /// trial ended, and the prorated difference invoiced now. The webhook
     /// that follows moves the tier.
-    pub async fn change_plan(&self, subscription_id: &str, plan: &PlanDef, account_id: &str, payment_id: &str) -> Result<(), String> {
-        if !subscription_id.starts_with("sub_") || !subscription_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+    pub async fn change_plan(
+        &self,
+        subscription_id: &str,
+        plan: &PlanDef,
+        account_id: &str,
+        payment_id: &str,
+    ) -> Result<(), String> {
+        if !subscription_id.starts_with("sub_")
+            || !subscription_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
             return Err("not a subscription id".into());
         }
-        let get = |path: String| self.http.get(format!("{}{path}", self.api_base)).basic_auth(self.key.expose(), Some(""));
-        let post = |path: String| self.http.post(format!("{}{path}", self.api_base)).basic_auth(self.key.expose(), Some(""));
+        let get = |path: String| {
+            self.http
+                .get(format!("{}{path}", self.api_base))
+                .basic_auth(self.key.expose(), Some(""))
+        };
+        let post = |path: String| {
+            self.http
+                .post(format!("{}{path}", self.api_base))
+                .basic_auth(self.key.expose(), Some(""))
+        };
         let sub: Value = get(format!("/v1/subscriptions/{subscription_id}"))
             .send()
             .await
@@ -126,7 +168,10 @@ impl Stripe {
             .json()
             .await
             .map_err(|e| format!("stripe: {e}"))?;
-        let item = sub["items"]["data"][0]["id"].as_str().ok_or("stripe: subscription has no item")?.to_string();
+        let item = sub["items"]["data"][0]["id"]
+            .as_str()
+            .ok_or("stripe: subscription has no item")?
+            .to_string();
         let (interval, count) = stripe_interval(plan);
         let cents = (plan.usd * 100).to_string();
         let price: Value = post("/v1/prices".into())
@@ -143,7 +188,10 @@ impl Stripe {
             .json()
             .await
             .map_err(|e| format!("stripe: {e}"))?;
-        let price = price["id"].as_str().ok_or("stripe: no price id")?.to_string();
+        let price = price["id"]
+            .as_str()
+            .ok_or("stripe: no price id")?
+            .to_string();
         let plan_id = plan.id.to_string();
         let resp = post(format!("/v1/subscriptions/{subscription_id}"))
             .form(&[
@@ -159,18 +207,29 @@ impl Stripe {
             .send()
             .await
             .map_err(|e| format!("stripe: {e}"))?;
-        if resp.status().is_success() { Ok(()) } else { Err(format!("stripe answered {}", resp.status())) }
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("stripe answered {}", resp.status()))
+        }
     }
 
     /// Stops renewal; the subscription runs to the end of the period it is
     /// in, as on Base (spec 3.3 step 4).
     pub async fn cancel_at_period_end(&self, subscription_id: &str) -> Result<(), String> {
-        if !subscription_id.starts_with("sub_") || !subscription_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        if !subscription_id.starts_with("sub_")
+            || !subscription_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
             return Err("not a subscription id".into());
         }
         let resp = self
             .http
-            .post(format!("{}/v1/subscriptions/{subscription_id}", self.api_base))
+            .post(format!(
+                "{}/v1/subscriptions/{subscription_id}",
+                self.api_base
+            ))
             .basic_auth(self.key.expose(), Some(""))
             .form(&[("cancel_at_period_end", "true")])
             .send()
@@ -204,7 +263,9 @@ pub fn verify_signature(secret: &str, header: &str, body: &[u8], now: u64) -> bo
         return false;
     }
     sigs.iter().any(|sig| {
-        let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else { return false };
+        let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
+            return false;
+        };
         mac.update(t.to_string().as_bytes());
         mac.update(b".");
         mac.update(body);
@@ -216,7 +277,9 @@ pub fn verify_signature(secret: &str, header: &str, body: &[u8], now: u64) -> bo
 /// that names the payment the checkout created.
 pub fn confirmed_payment(event: &Value) -> Option<(&str, &str)> {
     let sub = &event["data"]["object"];
-    if !event["type"].as_str()?.starts_with("customer.subscription.")
+    if !event["type"]
+        .as_str()?
+        .starts_with("customer.subscription.")
         || !matches!(sub["status"].as_str()?, "trialing" | "active")
     {
         return None;
@@ -243,9 +306,14 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     let mut u = BillingUpdate {
         tier: None,
         interval: None,
-        billing: Some(Billing { method: BillingMethod::Card, reference: sub["id"].as_str().unwrap_or("").to_string() }),
+        billing: Some(Billing {
+            method: BillingMethod::Card,
+            reference: sub["id"].as_str().unwrap_or("").to_string(),
+        }),
         trial_used: trial_end.map(|_| true),
-        cancelled: Some(status == "canceled" || sub["cancel_at_period_end"].as_bool() == Some(true)),
+        cancelled: Some(
+            status == "canceled" || sub["cancel_at_period_end"].as_bool() == Some(true),
+        ),
         ..Default::default()
     };
     // Paid time moves only for a subscription that is in good standing: a
@@ -253,8 +321,16 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
     // nobody has paid for. Grace covers past-due.
     if matches!(status, "trialing" | "active") {
         // A failed upgrade must preserve the previously paid tier.
-        u.tier = Some(if plan.tier == "pro" { Tier::Pro } else { Tier::Ram });
-        u.interval = Some(if plan.interval == "year" { Interval::Year } else { Interval::Month });
+        u.tier = Some(if plan.tier == "pro" {
+            Tier::Pro
+        } else {
+            Tier::Ram
+        });
+        u.interval = Some(if plan.interval == "year" {
+            Interval::Year
+        } else {
+            Interval::Month
+        });
         u.paid_until = period_end.max(trial_end);
     }
     if status == "trialing" {
@@ -291,13 +367,32 @@ pub(crate) mod tests {
         let body = br#"{"type":"x"}"#;
         let h = sign("whsec_1", body, 1000);
         assert!(verify_signature("whsec_1", &h, body, 1100));
-        assert!(!verify_signature("whsec_2", &h, body, 1100), "another secret");
-        assert!(!verify_signature("whsec_1", &h, br#"{"type":"y"}"#, 1100), "another body");
-        assert!(!verify_signature("whsec_1", &h, body, 1000 + WEBHOOK_TOLERANCE + 1), "replayed late");
-        assert!(!verify_signature("whsec_1", "v1=00", body, 1000), "no timestamp");
+        assert!(
+            !verify_signature("whsec_2", &h, body, 1100),
+            "another secret"
+        );
+        assert!(
+            !verify_signature("whsec_1", &h, br#"{"type":"y"}"#, 1100),
+            "another body"
+        );
+        assert!(
+            !verify_signature("whsec_1", &h, body, 1000 + WEBHOOK_TOLERANCE + 1),
+            "replayed late"
+        );
+        assert!(
+            !verify_signature("whsec_1", "v1=00", body, 1000),
+            "no timestamp"
+        );
     }
 
-    pub fn subscription_event(kind: &str, account: &str, plan: u32, status: &str, period_end: u64, trial_end: Option<u64>) -> Value {
+    pub fn subscription_event(
+        kind: &str,
+        account: &str,
+        plan: u32,
+        status: &str,
+        period_end: u64,
+        trial_end: Option<u64>,
+    ) -> Value {
         json!({"type": kind, "data": {"object": {
             "id": "sub_123", "status": status, "cancel_at_period_end": false,
             "trial_end": trial_end,
@@ -309,27 +404,71 @@ pub(crate) mod tests {
     #[test]
     fn subscription_events_map_to_tier_dates_and_cancellation() {
         let plans = Plans::built_in();
-        let e = subscription_event("customer.subscription.created", "a1", 2, "trialing", 2000, Some(2000));
+        let e = subscription_event(
+            "customer.subscription.created",
+            "a1",
+            2,
+            "trialing",
+            2000,
+            Some(2000),
+        );
         let (id, u) = update_from_event(&e, &plans).unwrap();
         assert_eq!(id, "a1");
-        assert_eq!((u.tier, u.interval), (Some(Tier::Pro), Some(Interval::Month)));
-        assert_eq!((u.paid_until, u.trial_ends_at, u.cancelled), (Some(2000), Some(2000), Some(false)));
+        assert_eq!(
+            (u.tier, u.interval),
+            (Some(Tier::Pro), Some(Interval::Month))
+        );
+        assert_eq!(
+            (u.paid_until, u.trial_ends_at, u.cancelled),
+            (Some(2000), Some(2000), Some(false))
+        );
 
         assert_eq!(confirmed_payment(&e), Some(("pay1", "sub_123")));
 
-        let e = subscription_event("customer.subscription.updated", "a1", 3, "past_due", 9000, None);
+        let e = subscription_event(
+            "customer.subscription.updated",
+            "a1",
+            3,
+            "past_due",
+            9000,
+            None,
+        );
         assert_eq!(confirmed_payment(&e), None, "not in good standing");
         let (_, u) = update_from_event(&e, &plans).unwrap();
         assert_eq!(u.paid_until, None, "an unpaid period is not service");
-        assert_eq!(u.tier, None, "an unpaid plan change must preserve the paid tier");
+        assert_eq!(
+            u.tier, None,
+            "an unpaid plan change must preserve the paid tier"
+        );
         for status in ["incomplete", "past_due", "unpaid"] {
-            let e = subscription_event("customer.subscription.updated", "a1", 2, status, 9000, None);
+            let e =
+                subscription_event("customer.subscription.updated", "a1", 2, status, 9000, None);
             let (_, u) = update_from_event(&e, &plans).unwrap();
-            assert_eq!((u.tier, u.interval, u.paid_until), (None, None, None), "{status} must not unlock Pro");
+            assert_eq!(
+                (u.tier, u.interval, u.paid_until),
+                (None, None, None),
+                "{status} must not unlock Pro"
+            );
         }
 
-        let e = subscription_event("customer.subscription.deleted", "a1", 1, "canceled", 9000, None);
-        assert_eq!(update_from_event(&e, &plans).unwrap().1.cancelled, Some(true));
-        assert!(update_from_event(&json!({"type": "invoice.paid", "data": {"object": {}}}), &plans).is_none());
+        let e = subscription_event(
+            "customer.subscription.deleted",
+            "a1",
+            1,
+            "canceled",
+            9000,
+            None,
+        );
+        assert_eq!(
+            update_from_event(&e, &plans).unwrap().1.cancelled,
+            Some(true)
+        );
+        assert!(
+            update_from_event(
+                &json!({"type": "invoice.paid", "data": {"object": {}}}),
+                &plans
+            )
+            .is_none()
+        );
     }
 }

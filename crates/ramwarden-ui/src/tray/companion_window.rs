@@ -37,15 +37,32 @@ impl eframe::App for CompanionWindow {
         // Apply to chat, settings and the independent upper thought window.
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let saved = Options::load();
-        let hidden = if self.pane == Pane::Threat { saved.threat.capture_hidden } else { saved.ram.capture_hidden };
+        let hidden = if self.pane == Pane::Threat {
+            saved.threat.capture_hidden
+        } else {
+            saved.ram.capture_hidden
+        };
         if let Some(window) = frame.winit_window()
             && let Ok(handle) = window.window_handle()
             && let RawWindowHandle::Win32(handle) = handle.as_raw()
         {
             use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::*};
             // SAFETY: winit owns this live HWND on the current UI thread.
-            if unsafe { SetWindowDisplayAffinity(HWND(handle.hwnd.get() as *mut _), if hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) }.is_err() && hidden {
-                self.error = Some("Windows could not exclude this speech box from screen capture.".into());
+            if unsafe {
+                SetWindowDisplayAffinity(
+                    HWND(handle.hwnd.get() as *mut _),
+                    if hidden {
+                        WDA_EXCLUDEFROMCAPTURE
+                    } else {
+                        WDA_NONE
+                    },
+                )
+            }
+            .is_err()
+                && hidden
+            {
+                self.error =
+                    Some("Windows could not exclude this speech box from screen capture.".into());
             }
         }
         if let Some(result) = self.audio_result.as_ref().and_then(|rx| rx.try_recv().ok()) {

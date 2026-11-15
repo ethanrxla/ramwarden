@@ -20,7 +20,12 @@ use serde_json::{Value, json};
 pub const COOLDOWN: Duration = Duration::from_secs(300);
 
 /// Whether the situation calls for unloading models. Pure.
-pub fn should_unload(game_running: bool, vram_percent: f64, threshold: f64, models_loaded: usize) -> bool {
+pub fn should_unload(
+    game_running: bool,
+    vram_percent: f64,
+    threshold: f64,
+    models_loaded: usize,
+) -> bool {
     game_running && models_loaded > 0 && vram_percent >= threshold
 }
 
@@ -43,12 +48,19 @@ pub struct GpuPolicy {
 impl GpuPolicy {
     /// One check. Cheap unless a game is running and VRAM is tight; only then
     /// does it ask the runtimes what they have loaded.
-    pub async fn tick(&mut self, game: Option<String>, threshold: f64, hosts: &ModelHosts) -> Vec<String> {
+    pub async fn tick(
+        &mut self,
+        game: Option<String>,
+        threshold: f64,
+        hosts: &ModelHosts,
+    ) -> Vec<String> {
         let Some(game) = game else { return Vec::new() };
         if self.last.is_some_and(|t| t.elapsed() < COOLDOWN) {
             return Vec::new();
         }
-        let Some(gpu) = vram::primary() else { return Vec::new() };
+        let Some(gpu) = vram::primary() else {
+            return Vec::new();
+        };
         if gpu.percent_used() < threshold {
             return Vec::new();
         }
@@ -111,7 +123,10 @@ mod tests {
     #[test]
     fn models_are_unloaded_only_for_a_game_on_a_full_card() {
         assert!(should_unload(true, 92.0, 85.0, 1));
-        assert!(!should_unload(false, 99.0, 85.0, 1), "no game: the model is the user's work");
+        assert!(
+            !should_unload(false, 99.0, 85.0, 1),
+            "no game: the model is the user's work"
+        );
         assert!(!should_unload(true, 60.0, 85.0, 1), "room to spare");
         assert!(!should_unload(true, 99.0, 85.0, 0), "nothing loaded");
     }
@@ -129,7 +144,10 @@ mod tests {
             ],
         );
         assert_eq!(game_running(&det).as_deref(), Some(game));
-        let det = Detector::preloaded(true, vec![Signals::new(2, "brave", classify("brave", "", None))]);
+        let det = Detector::preloaded(
+            true,
+            vec![Signals::new(2, "brave", classify("brave", "", None))],
+        );
         assert!(game_running(&det).is_none());
     }
 }

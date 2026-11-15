@@ -7,22 +7,22 @@
 #[cfg(feature = "gui")]
 pub mod app;
 pub mod client;
-pub mod model;
-pub mod wardens;
 pub mod companions;
-#[cfg(feature = "gui")]
-pub mod threat;
+pub mod model;
 #[cfg(feature = "gui")]
 pub mod row_object;
-
-pub mod runtime;
-pub mod voice;
 #[cfg(feature = "gui")]
-pub mod bubble;
-#[cfg(feature = "tray")]
-pub mod tray;
+pub mod threat;
+pub mod wardens;
+
 #[cfg(feature = "gui")]
 pub mod browser;
+#[cfg(feature = "gui")]
+pub mod bubble;
+pub mod runtime;
+#[cfg(feature = "tray")]
+pub mod tray;
+pub mod voice;
 
 #[cfg(feature = "tray")]
 mod workspace_events;

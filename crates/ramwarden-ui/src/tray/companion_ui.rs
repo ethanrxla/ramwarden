@@ -64,8 +64,16 @@ impl Chat {
         Self {
             turns: bounded_turns(turns),
             path: Some(path),
-            input: String::new(), pending: None, approval: false, result: None, error: None,
-            audio_result: None, progress: None, progress_text: None, cancellation: None, generating: false,
+            input: String::new(),
+            pending: None,
+            approval: false,
+            result: None,
+            error: None,
+            audio_result: None,
+            progress: None,
+            progress_text: None,
+            cancellation: None,
+            generating: false,
         }
     }
     pub fn forget(&mut self) {
@@ -79,7 +87,9 @@ impl Chat {
         self.save();
     }
     fn stop_plan(&mut self) {
-        if let Some(cancel) = &self.cancellation { cancel.store(true, std::sync::atomic::Ordering::Relaxed); }
+        if let Some(cancel) = &self.cancellation {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
     fn stop_response(&mut self) {
         self.stop_plan();
@@ -129,7 +139,8 @@ impl Chat {
         self.progress_text = None;
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.generating = path == "/assistant/chat";
-        self.cancellation = (self.generating || path == "/assistant/action/stream").then(|| cancel.clone());
+        self.cancellation =
+            (self.generating || path == "/assistant/action/stream").then(|| cancel.clone());
         std::thread::spawn(move || {
             let result = crate::runtime::network_runtime()
                 .map_err(|e| e.to_string())
@@ -156,7 +167,9 @@ impl Chat {
     }
     pub fn show(&mut self, ui: &mut egui::Ui, client: &Client, threat: bool) {
         if let Some(progress) = &self.progress {
-            while let Ok(text) = progress.try_recv() { self.progress_text = Some(text); }
+            while let Ok(text) = progress.try_recv() {
+                self.progress_text = Some(text);
+            }
         }
         if let Some(rx) = &self.audio_result
             && let Ok(result) = rx.try_recv()
@@ -216,7 +229,11 @@ impl Chat {
             && auto_allowed(proposal, auto_scope.as_deref())
         {
             let token = proposal.token.clone();
-            let path = if proposal.scope_id.is_some() { "/assistant/action/stream" } else { "/assistant/action" };
+            let path = if proposal.scope_id.is_some() {
+                "/assistant/action/stream"
+            } else {
+                "/assistant/action"
+            };
             self.pending = None;
             self.approval = false;
             self.begin(
@@ -300,10 +317,16 @@ impl Chat {
             || enter;
         if busy {
             ui.spinner();
-            if let Some(text) = &self.progress_text { ui.label(text); }
+            if let Some(text) = &self.progress_text {
+                ui.label(text);
+            }
             if self.generating {
-                if ui.button("■").on_hover_text("Stop generating").clicked() { self.stop_response(); }
-            } else if self.cancellation.is_some() && ui.button("Stop plan").clicked() { self.stop_plan(); }
+                if ui.button("■").on_hover_text("Stop generating").clicked() {
+                    self.stop_response();
+                }
+            } else if self.cancellation.is_some() && ui.button("Stop plan").clicked() {
+                self.stop_plan();
+            }
         }
         if send && !self.input.trim().is_empty() && self.input.len() <= 4000 {
             let message = self.input.trim().to_owned();
@@ -321,7 +344,11 @@ impl Chat {
             && let Some(p) = &self.pending
         {
             let token = p.token.clone();
-            let path = if p.scope_id.is_some() { "/assistant/action/stream" } else { "/assistant/action" };
+            let path = if p.scope_id.is_some() {
+                "/assistant/action/stream"
+            } else {
+                "/assistant/action"
+            };
             let label = p.label.clone();
             let preview = p.preview.clone();
             let mut confirm = false;
@@ -476,31 +503,39 @@ pub fn settings(
     ui.label("Changes save on this device and apply to the floating companion within two seconds.");
 }
 impl Drop for Chat {
-    fn drop(&mut self) { self.stop_plan(); }
+    fn drop(&mut self) {
+        self.stop_plan();
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn enter_sends_but_shift_enter_stays_with_the_editor() {
-        let key = |modifiers| egui::Event::Key {key:egui::Key::Enter, physical_key:None, pressed:true, repeat:false, modifiers};
+        let key = |modifiers| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
         let mut shifted = vec![key(egui::Modifiers::SHIFT)];
         assert!(!consume_send_enter(&mut shifted));
-        assert_eq!(shifted.len(),1);
+        assert_eq!(shifted.len(), 1);
         let mut plain = vec![key(egui::Modifiers::NONE)];
         assert!(consume_send_enter(&mut plain));
         assert!(plain.is_empty());
         for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::ALT] {
             let mut events = vec![key(modifiers)];
             assert!(!consume_send_enter(&mut events));
-            assert_eq!(events.len(),1);
+            assert_eq!(events.len(), 1);
         }
     }
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn stop_response_cancels_and_discards_late_replies() {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (tx,rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let mut chat = Chat::default();
         chat.generating = true;
         chat.cancellation = Some(cancel.clone());
@@ -509,7 +544,13 @@ mod tests {
         assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
         assert!(chat.result.is_none());
         assert!(!chat.generating);
-        assert!(tx.send(Ok(Reply {reply:"Late reply".into(),proposed_action:None})).is_err());
+        assert!(
+            tx.send(Ok(Reply {
+                reply: "Late reply".into(),
+                proposed_action: None
+            }))
+            .is_err()
+        );
         assert!(chat.turns.is_empty());
     }
     #[test]

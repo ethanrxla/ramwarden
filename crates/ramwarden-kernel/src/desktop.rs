@@ -53,7 +53,6 @@ impl DesktopProbe {
             windows_at: None,
         }
     }
-
 }
 
 impl DesktopSource for DesktopProbe {
@@ -241,7 +240,10 @@ Sink Input #1235
     #[test]
     fn parses_wmctrl_window_and_pid_pairs() {
         let w = parse_wmctrl(WMCTRL);
-        assert_eq!(w, vec![(0x01000003, 1234), (0x01200005, 5678), (0x01600009, 91011)]);
+        assert_eq!(
+            w,
+            vec![(0x01000003, 1234), (0x01200005, 5678), (0x01600009, 91011)]
+        );
     }
 
     #[test]
@@ -276,7 +278,8 @@ Sink Input #1235
     #[test]
     fn focus_resolves_through_the_window_list() {
         let windows = parse_wmctrl(WMCTRL);
-        let id = parse_active_window("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x1200005\n").unwrap();
+        let id =
+            parse_active_window("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x1200005\n").unwrap();
         let pid = windows.iter().find(|(w, _)| *w == id).map(|(_, p)| *p);
         assert_eq!(pid, Some(5678));
     }

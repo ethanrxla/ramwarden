@@ -15,7 +15,8 @@ use crate::registry::{KeyPath, io, restore_value, snapshot_value};
 use crate::tweak::{Scope, State, Tweak};
 
 const RUN: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-const APPROVED: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+const APPROVED: &str =
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
 /// Disabled marker: `03` followed by the FILETIME of the change.
 fn disabled_bytes() -> Vec<u8> {
@@ -81,7 +82,11 @@ impl Tweak for StartupTweak {
         }
         let snap = snapshot_value(&Self::approved(), &self.run);
         let bytes: Vec<u8> = serde_json::from_value(snap["bytes"].clone()).unwrap_or_default();
-        Ok(if is_disabled(&bytes) { State::Applied } else { State::Default })
+        Ok(if is_disabled(&bytes) {
+            State::Applied
+        } else {
+            State::Default
+        })
     }
 
     fn snapshot(&self) -> Result<Value> {

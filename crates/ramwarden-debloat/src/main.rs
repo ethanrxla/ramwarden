@@ -24,7 +24,12 @@ fn main() {
         let mut failed = false;
         for l in lines {
             failed |= !l.ok;
-            println!("  {:<38} {}{}", l.id, if l.ok { "" } else { "FAILED: " }, l.result);
+            println!(
+                "  {:<38} {}{}",
+                l.id,
+                if l.ok { "" } else { "FAILED: " },
+                l.result
+            );
         }
         if failed {
             eprintln!(
@@ -81,7 +86,9 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: ramwarden-debloat status | apply <profile|id> [--with-optional] | revert <profile|id|all>");
+            eprintln!(
+                "usage: ramwarden-debloat status | apply <profile|id> [--with-optional] | revert <profile|id|all>"
+            );
             std::process::exit(2);
         }
     }

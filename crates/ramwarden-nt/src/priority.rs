@@ -63,8 +63,16 @@ pub fn set_eco_qos(pid: u32, on: bool) -> Result<()> {
     let h = open(pid, PRIORITY_ACCESS)?;
     let state = PROCESS_POWER_THROTTLING_STATE {
         Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-        ControlMask: if on { PROCESS_POWER_THROTTLING_EXECUTION_SPEED } else { 0 },
-        StateMask: if on { PROCESS_POWER_THROTTLING_EXECUTION_SPEED } else { 0 },
+        ControlMask: if on {
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        } else {
+            0
+        },
+        StateMask: if on {
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        } else {
+            0
+        },
     };
     // SAFETY: `state` is the struct this information class expects.
     unsafe {
@@ -100,6 +108,10 @@ mod tests {
 
     #[test]
     fn the_kernel_is_refused() {
-        assert!(set_memory_priority(4, MemoryPriority::Low).unwrap_err().is_denied());
+        assert!(
+            set_memory_priority(4, MemoryPriority::Low)
+                .unwrap_err()
+                .is_denied()
+        );
     }
 }

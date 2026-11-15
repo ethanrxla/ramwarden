@@ -29,7 +29,8 @@ fn db_err(e: rusqlite::Error) -> Error {
 impl Journal {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| Error::os(format!("{}: {e}", dir.display())))?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| Error::os(format!("{}: {e}", dir.display())))?;
         }
         Self::init(Connection::open(path).map_err(db_err)?)
     }
@@ -92,7 +93,10 @@ impl Journal {
     }
 
     pub fn ids(&self) -> Result<Vec<String>> {
-        let mut stmt = self.db.prepare("SELECT id FROM snapshots ORDER BY id").map_err(db_err)?;
+        let mut stmt = self
+            .db
+            .prepare("SELECT id FROM snapshots ORDER BY id")
+            .map_err(db_err)?;
         let rows = stmt.query_map([], |r| r.get(0)).map_err(db_err)?;
         rows.collect::<std::result::Result<_, _>>().map_err(db_err)
     }
@@ -118,7 +122,10 @@ mod tests {
     fn a_journal_on_disk_survives_reopening() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("sub").join("debloat.db");
-        Journal::open(&p).unwrap().record("x", &json!({"exists": false})).unwrap();
+        Journal::open(&p)
+            .unwrap()
+            .record("x", &json!({"exists": false}))
+            .unwrap();
         assert!(Journal::open(&p).unwrap().get("x").unwrap().is_some());
     }
 }

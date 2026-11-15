@@ -25,7 +25,14 @@ impl Secret {
         if s.len() < 8 {
             return "***".into();
         }
-        let tail: String = s.chars().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
+        let tail: String = s
+            .chars()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         format!("***{tail}")
     }
 }

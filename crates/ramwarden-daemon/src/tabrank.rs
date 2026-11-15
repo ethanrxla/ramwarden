@@ -41,16 +41,43 @@ pub enum Class {
 }
 
 const FEED: &[&str] = &[
-    "youtube.com", "reddit.com", "twitter.com", "x.com", "instagram.com", "tiktok.com", "facebook.com",
-    "twitch.tv", "netflix.com", "news.ycombinator.com", "medium.com", "substack.com",
+    "youtube.com",
+    "reddit.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "tiktok.com",
+    "facebook.com",
+    "twitch.tv",
+    "netflix.com",
+    "news.ycombinator.com",
+    "medium.com",
+    "substack.com",
 ];
 const APP: &[&str] = &[
-    "mail.google.com", "outlook.live.com", "outlook.office.com", "calendar.google.com", "teams.microsoft.com",
-    "meet.google.com", "slack.com", "discord.com", "web.whatsapp.com", "maps.google.com", "open.spotify.com",
+    "mail.google.com",
+    "outlook.live.com",
+    "outlook.office.com",
+    "calendar.google.com",
+    "teams.microsoft.com",
+    "meet.google.com",
+    "slack.com",
+    "discord.com",
+    "web.whatsapp.com",
+    "maps.google.com",
+    "open.spotify.com",
 ];
 const REFERENCE: &[&str] = &[
-    "github.com", "gitlab.com", "stackoverflow.com", "developer.mozilla.org", "wikipedia.org", "arxiv.org",
-    "docs.rs", "crates.io", "pypi.org", "npmjs.com",
+    "github.com",
+    "gitlab.com",
+    "stackoverflow.com",
+    "developer.mozilla.org",
+    "wikipedia.org",
+    "arxiv.org",
+    "docs.rs",
+    "crates.io",
+    "pypi.org",
+    "npmjs.com",
 ];
 
 fn host_matches(host: &str, domain: &str) -> bool {
@@ -67,7 +94,10 @@ pub fn class_name(c: Class) -> &'static str {
 }
 
 pub fn classify(url: &str) -> Class {
-    let Some(host) = Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
+    let Some(host) = Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    else {
         return Class::Page;
     };
     let any = |list: &[&str]| list.iter().any(|d| host_matches(&host, d));
@@ -124,7 +154,10 @@ const RELATED_FACTOR: f64 = 2.0;
 /// A tab opened once a minute ago scores about 1; one visited daily for a week
 /// scores about 4. Timestamps ahead of `now` (clock skew) count as just now.
 pub fn frecency(activations: &[f64], now_ms: f64) -> f64 {
-    activations.iter().map(|&t| (-((now_ms - t).max(0.0)) / FRECENCY_TAU_MS).exp()).sum()
+    activations
+        .iter()
+        .map(|&t| (-((now_ms - t).max(0.0)) / FRECENCY_TAU_MS).exp())
+        .sum()
 }
 
 /// How much longer than the site-class default this tab's return chance lasts:
@@ -147,7 +180,10 @@ pub fn site_key(url: &str) -> Option<String> {
     if n <= 2 {
         return Some(host.to_string());
     }
-    let second_level = matches!(labels[n - 2], "co" | "com" | "org" | "net" | "ac" | "gov" | "edu") && labels[n - 1].len() == 2;
+    let second_level = matches!(
+        labels[n - 2],
+        "co" | "com" | "org" | "net" | "ac" | "gov" | "edu"
+    ) && labels[n - 1].len() == 2;
     let keep = if second_level { 3 } else { 2 };
     Some(labels[n - keep..].join("."))
 }
@@ -156,9 +192,14 @@ pub fn site_key(url: &str) -> Option<String> {
 /// stretched by `half_life_mult` (see [`half_life_multiplier`]; pass 1.0 for none).
 pub fn p_return(idle_minutes: i64, c: Class, older_duplicate: bool, half_life_mult: f64) -> f64 {
     let t = idle_minutes.max(0) as f64;
-    let lambda = half_life_minutes(c) * half_life_mult.max(1.0) / std::f64::consts::LN_2.powf(1.0 / SHAPE);
+    let lambda =
+        half_life_minutes(c) * half_life_mult.max(1.0) / std::f64::consts::LN_2.powf(1.0 / SHAPE);
     let p = (-(t / lambda).powf(SHAPE)).exp();
-    if older_duplicate { p * DUPLICATE_FACTOR } else { p }
+    if older_duplicate {
+        p * DUPLICATE_FACTOR
+    } else {
+        p
+    }
 }
 
 /// MB released per unit of expected regret. Higher means release sooner.
@@ -187,7 +228,11 @@ mod tests {
             last = p;
         }
         assert_eq!(p_return(0, Class::Page, false, 1.0), 1.0);
-        assert_eq!(p_return(-5, Class::Page, false, 1.0), 1.0, "clock skew cannot raise it above 1");
+        assert_eq!(
+            p_return(-5, Class::Page, false, 1.0),
+            1.0,
+            "clock skew cannot raise it above 1"
+        );
     }
 
     #[test]
@@ -210,15 +255,25 @@ mod tests {
         assert_eq!(classify("https://www.youtube.com/watch?v=1"), Class::Feed);
         assert_eq!(classify("https://old.reddit.com/r/rust"), Class::Feed);
         assert_eq!(classify("https://mail.google.com/mail/u/0"), Class::App);
-        assert_eq!(classify("https://en.wikipedia.org/wiki/Rust"), Class::Reference);
-        assert_eq!(classify("https://notyoutube.com/"), Class::Page, "suffix must be a whole label");
+        assert_eq!(
+            classify("https://en.wikipedia.org/wiki/Rust"),
+            Class::Reference
+        );
+        assert_eq!(
+            classify("https://notyoutube.com/"),
+            Class::Page,
+            "suffix must be a whole label"
+        );
         assert_eq!(classify("not a url"), Class::Page);
     }
 
     #[test]
     fn heavy_and_forgotten_beats_light_and_recent() {
         let forgotten_video = score(est_mb(Class::Feed), p_return(600, Class::Feed, false, 1.0));
-        let recent_reference = score(est_mb(Class::Reference), p_return(60, Class::Reference, false, 1.0));
+        let recent_reference = score(
+            est_mb(Class::Reference),
+            p_return(60, Class::Reference, false, 1.0),
+        );
         assert!(forgotten_video > recent_reference * 10.0);
     }
 
@@ -270,11 +325,26 @@ mod tests {
 
     #[test]
     fn site_key_groups_a_registered_domain() {
-        assert_eq!(site_key("https://www.github.com/a/b").as_deref(), Some("github.com"));
-        assert_eq!(site_key("https://gist.github.com/x").as_deref(), Some("github.com"));
-        assert_eq!(site_key("https://docs.google.com/d/1").as_deref(), Some("google.com"));
-        assert_eq!(site_key("https://news.bbc.co.uk/x").as_deref(), Some("bbc.co.uk"));
-        assert_eq!(site_key("http://127.0.0.1:8765/x").as_deref(), Some("127.0.0.1"));
+        assert_eq!(
+            site_key("https://www.github.com/a/b").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            site_key("https://gist.github.com/x").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            site_key("https://docs.google.com/d/1").as_deref(),
+            Some("google.com")
+        );
+        assert_eq!(
+            site_key("https://news.bbc.co.uk/x").as_deref(),
+            Some("bbc.co.uk")
+        );
+        assert_eq!(
+            site_key("http://127.0.0.1:8765/x").as_deref(),
+            Some("127.0.0.1")
+        );
         assert_eq!(site_key("not a url"), None);
     }
 }

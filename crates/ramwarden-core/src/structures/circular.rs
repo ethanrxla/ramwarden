@@ -144,7 +144,10 @@ impl<T> CircularList<T> {
         }
         self.size -= 1;
         self.free.push(cur);
-        self.slots[cur].take().expect("linked slot is occupied").element
+        self.slots[cur]
+            .take()
+            .expect("linked slot is occupied")
+            .element
     }
 
     fn node(&self, i: usize) -> &Node<T> {
@@ -277,8 +280,15 @@ mod tests {
     #[test]
     fn floyd_finds_a_cycle_and_a_clean_chain() {
         // 5 -> 4 -> 3 -> 1 (init), and a cycle 10 -> 11 -> 12 -> 10.
-        let parents: HashMap<i32, i32> =
-            HashMap::from([(5, 4), (4, 3), (3, 1), (10, 11), (11, 12), (12, 10), (20, 10)]);
+        let parents: HashMap<i32, i32> = HashMap::from([
+            (5, 4),
+            (4, 3),
+            (3, 1),
+            (10, 11),
+            (11, 12),
+            (12, 10),
+            (20, 10),
+        ]);
         let next = |p: i32| parents.get(&p).copied();
         assert!(!has_cycle(5, next));
         assert!(has_cycle(10, next));

@@ -30,7 +30,10 @@ pub fn status() -> Result<MemoryStatus> {
 
     // "Swap" on Windows is the page file: the commit limit beyond physical RAM.
     let swap_total = m.ullTotalPageFile.saturating_sub(m.ullTotalPhys);
-    let swap_free = m.ullAvailPageFile.saturating_sub(m.ullAvailPhys).min(swap_total);
+    let swap_free = m
+        .ullAvailPageFile
+        .saturating_sub(m.ullAvailPhys)
+        .min(swap_total);
 
     Ok(MemoryStatus {
         total: m.ullTotalPhys,

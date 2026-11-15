@@ -87,19 +87,27 @@ impl MongoStore {
         match collection.create_index(model.clone()).await {
             Ok(_) => Ok(()),
             Err(error) => {
-                let indexes: Vec<IndexModel> = collection.list_indexes().await?.try_collect().await?;
+                let indexes: Vec<IndexModel> =
+                    collection.list_indexes().await?.try_collect().await?;
                 let expected = model.options.as_ref().expect("index options");
                 let equivalent = indexes.iter().any(|existing| {
-                    let Some(options) = existing.options.as_ref() else { return false };
+                    let Some(options) = existing.options.as_ref() else {
+                        return false;
+                    };
                     existing.keys == model.keys
                         && options.unique.unwrap_or(false) == expected.unique.unwrap_or(false)
                         && options.sparse.unwrap_or(false) == expected.sparse.unwrap_or(false)
                         && options.expire_after == expected.expire_after
                         && options.partial_filter_expression == expected.partial_filter_expression
-                        && options.collation.is_none() && expected.collation.is_none()
+                        && options.collation.is_none()
+                        && expected.collation.is_none()
                         && !options.hidden.unwrap_or(false)
                 });
-                if equivalent { Ok(()) } else { Err(error.into()) }
+                if equivalent {
+                    Ok(())
+                } else {
+                    Err(error.into())
+                }
             }
         }
     }
@@ -107,14 +115,24 @@ impl MongoStore {
     async fn claim_login_identity(&self, identity: &Identity, owner: &str) -> Result<Document> {
         let key = hash(&serde_json::to_string(identity).expect("identity serializes"));
         let collection = self.raw("login_identities");
-        match collection.find_one_and_update(doc! {"_id": &key},
-            doc! {"$setOnInsert":{"account_id":owner,"identity":to_bson(identity)}})
-            .upsert(true).return_document(ReturnDocument::After).await {
+        match collection
+            .find_one_and_update(
+                doc! {"_id": &key},
+                doc! {"$setOnInsert":{"account_id":owner,"identity":to_bson(identity)}},
+            )
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .await
+        {
             Ok(Some(value)) => Ok(value),
-            Err(error) if is_duplicate_key(&error) => collection.find_one(doc! {"_id":key}).await?
+            Err(error) if is_duplicate_key(&error) => collection
+                .find_one(doc! {"_id":key})
+                .await?
                 .ok_or_else(|| StoreError::Unavailable("identity claim disappeared".into())),
             Err(error) => Err(error.into()),
-            Ok(None) => Err(StoreError::Unavailable("identity claim returned nothing".into())),
+            Ok(None) => Err(StoreError::Unavailable(
+                "identity claim returned nothing".into(),
+            )),
         }
     }
 
@@ -122,31 +140,103 @@ impl MongoStore {
     /// `ramwarden-cloud-db init`.
     pub async fn ensure_indexes(&self) -> Result<()> {
         let named = |name: &str| IndexOptions::builder().name(name.to_string()).build();
-        let unique = |name: &str| IndexOptions::builder().unique(true).name(name.to_string()).build();
-        let ttl = || IndexOptions::builder().expire_after(Duration::ZERO).name("expire_at_ttl".to_string()).build();
-        let index = |keys: Document, opts: IndexOptions| IndexModel::builder().keys(keys).options(opts).build();
+        let unique = |name: &str| {
+            IndexOptions::builder()
+                .unique(true)
+                .name(name.to_string())
+                .build()
+        };
+        let ttl = || {
+            IndexOptions::builder()
+                .expire_after(Duration::ZERO)
+                .name("expire_at_ttl".to_string())
+                .build()
+        };
+        let index = |keys: Document, opts: IndexOptions| {
+            IndexModel::builder().keys(keys).options(opts).build()
+        };
 
         for (collection, indexes) in [
-            (ACCOUNTS, vec![index(doc! { "identity": 1 }, unique("identity_unique")),
-                index(doc! { "chain_key": 1 }, unique("chain_key_unique")),
-                index(doc! { "tier": 1 }, named("by_tier"))]),
-            (DEVICES, vec![index(doc! { "token_hash": 1 }, unique("token_unique")),
-                index(doc! { "account_id": 1, "created_at": 1 }, named("account_created"))]),
-            (DEVICE_CODES, vec![index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
-                index(doc! { "expire_at": 1 }, ttl())]),
-            (SESSIONS, vec![index(doc! { "account_id": 1 }, named("by_account"))]),
-            (PAYMENTS, vec![index(doc! { "account_id": 1, "created_at": -1 }, named("by_account"))]),
+            (
+                ACCOUNTS,
+                vec![
+                    index(doc! { "identity": 1 }, unique("identity_unique")),
+                    index(doc! { "chain_key": 1 }, unique("chain_key_unique")),
+                    index(doc! { "tier": 1 }, named("by_tier")),
+                ],
+            ),
+            (
+                DEVICES,
+                vec![
+                    index(doc! { "token_hash": 1 }, unique("token_unique")),
+                    index(
+                        doc! { "account_id": 1, "created_at": 1 },
+                        named("account_created"),
+                    ),
+                ],
+            ),
+            (
+                DEVICE_CODES,
+                vec![
+                    index(doc! { "device_code_hash": 1 }, unique("device_code_unique")),
+                    index(doc! { "expire_at": 1 }, ttl()),
+                ],
+            ),
+            (
+                SESSIONS,
+                vec![index(doc! { "account_id": 1 }, named("by_account"))],
+            ),
+            (
+                PAYMENTS,
+                vec![index(
+                    doc! { "account_id": 1, "created_at": -1 },
+                    named("by_account"),
+                )],
+            ),
         ] {
-            for model in indexes { self.ensure_named_index(collection, model).await?; }
+            for model in indexes {
+                self.ensure_named_index(collection, model).await?;
+            }
         }
-        for name in [SESSIONS, CHALLENGES, EMAIL_CODES, USAGE_DAILY, "oauth_attempts"] {
-            self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl())).await?;
+        for name in [
+            SESSIONS,
+            CHALLENGES,
+            EMAIL_CODES,
+            USAGE_DAILY,
+            "oauth_attempts",
+        ] {
+            self.ensure_named_index(name, index(doc! { "expire_at": 1 }, ttl()))
+                .await?;
         }
-        self.ensure_named_index("login_identities", index(doc! {"account_id":1}, named("by_account"))).await?;
-        self.ensure_named_index(DEVICES, index(doc!{"account_id":1,"slot":1}, IndexOptions::builder()
-            .name("account_slot_unique".to_string()).unique(true)
-            .partial_filter_expression(doc!{"slot":{"$type":"number"}}).build())).await?;
-        self.ensure_named_index(DEVICES,index(doc!{"security.agent_id":1},IndexOptions::builder().name("security_agent_unique".to_string()).unique(true).partial_filter_expression(doc!{"security.agent_id":{"$type":"string"}}).build())).await?;
+        self.ensure_named_index(
+            "login_identities",
+            index(doc! {"account_id":1}, named("by_account")),
+        )
+        .await?;
+        self.ensure_named_index(
+            DEVICES,
+            index(
+                doc! {"account_id":1,"slot":1},
+                IndexOptions::builder()
+                    .name("account_slot_unique".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! {"slot":{"$type":"number"}})
+                    .build(),
+            ),
+        )
+        .await?;
+        self.ensure_named_index(
+            DEVICES,
+            index(
+                doc! {"security.agent_id":1},
+                IndexOptions::builder()
+                    .name("security_agent_unique".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! {"security.agent_id":{"$type":"string"}})
+                    .build(),
+            ),
+        )
+        .await?;
         self.ensure_support_indexes().await?;
         self.ensure_usage_indexes().await?;
         Ok(())
@@ -155,27 +245,74 @@ impl MongoStore {
 
 #[async_trait]
 impl Store for MongoStore {
-    async fn put_oauth(&self,ticket:&str,state:OAuthState,now:u64)->Result<()> {
-        if self.raw("oauth_attempts").count_documents(doc!{"expires_at":{"$gt":now as i64}}).await? >=128 {return Err(StoreError::Unavailable("OAuth capacity reached".into()))}
-        let mut d=bson::to_document(&state).expect("serializes");d.insert("_id",hash(ticket));d.insert("expire_at",date(state.expires_at));
-        self.raw("oauth_attempts").insert_one(d).await?;Ok(())
+    async fn put_oauth(&self, ticket: &str, state: OAuthState, now: u64) -> Result<()> {
+        if self
+            .raw("oauth_attempts")
+            .count_documents(doc! {"expires_at":{"$gt":now as i64}})
+            .await?
+            >= 128
+        {
+            return Err(StoreError::Unavailable("OAuth capacity reached".into()));
+        }
+        let mut d = bson::to_document(&state).expect("serializes");
+        d.insert("_id", hash(ticket));
+        d.insert("expire_at", date(state.expires_at));
+        self.raw("oauth_attempts").insert_one(d).await?;
+        Ok(())
     }
-    async fn claim_oauth(&self,ticket:&str,now:u64,lease:&str)->Result<OAuthClaim> {
-        let collection=self.raw("oauth_attempts");let key=hash(ticket);
-        let claimed=collection.find_one_and_update(doc!{"_id":&key,"expires_at":{"$gt":now as i64},"next_poll":{"$lte":now as i64}},doc!{"$set":{"lease":lease,"next_poll":(now+90) as i64}}).return_document(ReturnDocument::After).await?;
-        if let Some(d)=claimed {return Ok(OAuthClaim::Ready(bson::from_document(d).map_err(|_|StoreError::Unavailable("Invalid OAuth record".into()))?))}
-        let state=collection.find_one(doc!{"_id":key,"expires_at":{"$gt":now as i64}}).await?;
-        Ok(match state {Some(d)=>OAuthClaim::Wait(d.get_i64("next_poll").unwrap_or(now as i64+5).saturating_sub(now as i64).max(1) as u64),None=>OAuthClaim::Gone})
+    async fn claim_oauth(&self, ticket: &str, now: u64, lease: &str) -> Result<OAuthClaim> {
+        let collection = self.raw("oauth_attempts");
+        let key = hash(ticket);
+        let claimed = collection
+            .find_one_and_update(
+                doc! {"_id":&key,"expires_at":{"$gt":now as i64},"next_poll":{"$lte":now as i64}},
+                doc! {"$set":{"lease":lease,"next_poll":(now+90) as i64}},
+            )
+            .return_document(ReturnDocument::After)
+            .await?;
+        if let Some(d) = claimed {
+            return Ok(OAuthClaim::Ready(bson::from_document(d).map_err(|_| {
+                StoreError::Unavailable("Invalid OAuth record".into())
+            })?));
+        }
+        let state = collection
+            .find_one(doc! {"_id":key,"expires_at":{"$gt":now as i64}})
+            .await?;
+        Ok(match state {
+            Some(d) => OAuthClaim::Wait(
+                d.get_i64("next_poll")
+                    .unwrap_or(now as i64 + 5)
+                    .saturating_sub(now as i64)
+                    .max(1) as u64,
+            ),
+            None => OAuthClaim::Gone,
+        })
     }
-    async fn finish_oauth(&self,ticket:&str,lease:&str,state:Option<OAuthState>)->Result<bool> {
-        let query=doc!{"_id":hash(ticket),"lease":lease};let collection=self.raw("oauth_attempts");
-        if let Some(state)=state {
-            let mut d=bson::to_document(&state).expect("serializes");d.insert("_id",hash(ticket));d.insert("expire_at",date(state.expires_at));
-            Ok(collection.replace_one(query,d).await?.matched_count==1)
-        } else {Ok(collection.delete_one(query).await?.deleted_count==1)}
+    async fn finish_oauth(
+        &self,
+        ticket: &str,
+        lease: &str,
+        state: Option<OAuthState>,
+    ) -> Result<bool> {
+        let query = doc! {"_id":hash(ticket),"lease":lease};
+        let collection = self.raw("oauth_attempts");
+        if let Some(state) = state {
+            let mut d = bson::to_document(&state).expect("serializes");
+            d.insert("_id", hash(ticket));
+            d.insert("expire_at", date(state.expires_at));
+            Ok(collection.replace_one(query, d).await?.matched_count == 1)
+        } else {
+            Ok(collection.delete_one(query).await?.deleted_count == 1)
+        }
     }
 
-    async fn start_device_code(&self, name: &str, platform: Platform, now: u64, ttl: u64) -> Result<(String, DeviceCode)> {
+    async fn start_device_code(
+        &self,
+        name: &str,
+        platform: Platform,
+        now: u64,
+        ttl: u64,
+    ) -> Result<(String, DeviceCode)> {
         for _ in 0..5 {
             let raw = random_token("rwdc_");
             let dc = DeviceCode {
@@ -198,7 +335,9 @@ impl Store for MongoStore {
                 Err(e) => return Err(e.into()),
             }
         }
-        Err(StoreError::Unavailable("could not allocate a user code".into()))
+        Err(StoreError::Unavailable(
+            "could not allocate a user code".into(),
+        ))
     }
 
     async fn pending_device_code(&self, user_code: &str, now: u64) -> Result<Option<DeviceCode>> {
@@ -209,7 +348,12 @@ impl Store for MongoStore {
         Ok(d.and_then(|d| bson::from_document(d).ok()))
     }
 
-    async fn approve_device_code(&self, user_code: &str, account_id: &str, now: u64) -> Result<bool> {
+    async fn approve_device_code(
+        &self,
+        user_code: &str,
+        account_id: &str,
+        now: u64,
+    ) -> Result<bool> {
         let r = self
             .raw(DEVICE_CODES)
             .update_one(
@@ -227,16 +371,25 @@ impl Store for MongoStore {
             .find_one_and_delete(doc! { "device_code_hash": &h, "status.state": "approved", "expires_at": { "$gt": now as i64 } })
             .await?;
         if let Some(d) = taken {
-            let dc: DeviceCode = bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))?;
+            let dc: DeviceCode =
+                bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))?;
             if let DeviceCodeStatus::Approved { account_id } = dc.status {
-                return Ok(Claim::Approved { account_id, device_name: dc.device_name, platform: dc.platform });
+                return Ok(Claim::Approved {
+                    account_id,
+                    device_name: dc.device_name,
+                    platform: dc.platform,
+                });
             }
         }
         let pending = self
             .raw(DEVICE_CODES)
             .find_one(doc! { "device_code_hash": &h, "status.state": "pending", "expires_at": { "$gt": now as i64 } })
             .await?;
-        Ok(if pending.is_some() { Claim::Pending } else { Claim::Gone })
+        Ok(if pending.is_some() {
+            Claim::Pending
+        } else {
+            Claim::Gone
+        })
     }
 
     async fn put_challenge(&self, nonce: &str, c: Challenge, _now: u64) -> Result<()> {
@@ -248,11 +401,23 @@ impl Store for MongoStore {
     }
 
     async fn take_challenge(&self, nonce: &str, now: u64) -> Result<Option<Challenge>> {
-        let d = self.raw(CHALLENGES).find_one_and_delete(doc! { "_id": nonce }).await?;
-        Ok(d.and_then(|d| bson::from_document::<Challenge>(d).ok()).filter(|c| c.expires_at > now))
+        let d = self
+            .raw(CHALLENGES)
+            .find_one_and_delete(doc! { "_id": nonce })
+            .await?;
+        Ok(d.and_then(|d| bson::from_document::<Challenge>(d).ok())
+            .filter(|c| c.expires_at > now))
     }
 
-    async fn start_email_code_for(&self, email: &str, code: &str, user_code: Option<&str>, link_account: Option<&str>, now: u64, ttl: u64) -> Result<bool> {
+    async fn start_email_code_for(
+        &self,
+        email: &str,
+        code: &str,
+        user_code: Option<&str>,
+        link_account: Option<&str>,
+        now: u64,
+        ttl: u64,
+    ) -> Result<bool> {
         let c = EmailCode {
             link_account: link_account.map(str::to_string),
             code_hash: hash(code),
@@ -290,43 +455,79 @@ impl Store for MongoStore {
         let mut right = live.clone();
         right.insert("code_hash", hash(code));
         if let Some(d) = self.raw(EMAIL_CODES).find_one_and_delete(right).await? {
-            let c: EmailCode = bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))?;
-            return Ok(EmailCheck::Ok { user_code: c.user_code, link_account: c.link_account });
+            let c: EmailCode =
+                bson::from_document(d).map_err(|e| StoreError::Unavailable(e.to_string()))?;
+            return Ok(EmailCheck::Ok {
+                user_code: c.user_code,
+                link_account: c.link_account,
+            });
         }
-        let r = self.raw(EMAIL_CODES).update_one(live, doc! { "$inc": { "attempts": 1 } }).await?;
+        let r = self
+            .raw(EMAIL_CODES)
+            .update_one(live, doc! { "$inc": { "attempts": 1 } })
+            .await?;
         if r.matched_count == 1 {
             Ok(EmailCheck::Wrong)
         } else {
-            self.raw(EMAIL_CODES).delete_one(doc! { "_id": email }).await?;
+            self.raw(EMAIL_CODES)
+                .delete_one(doc! { "_id": email })
+                .await?;
             Ok(EmailCheck::Gone)
         }
     }
 
     async fn account_for_identity(&self, identity: &Identity, now: u64) -> Result<(Account, bool)> {
-        let legacy = self.accounts().find_one(doc! { "identity": to_bson(identity) }).await?;
+        let legacy = self
+            .accounts()
+            .find_one(doc! { "identity": to_bson(identity) })
+            .await?;
         let fresh = Account::new(new_id(), identity.clone(), now);
         let proposed = legacy.as_ref().map_or(fresh.id.as_str(), |a| a.id.as_str());
         let alias = self.claim_login_identity(identity, proposed).await?;
-        let owner = alias.get_str("account_id").map_err(|e| StoreError::Unavailable(e.to_string()))?;
-        if let Some(account) = self.accounts().find_one(doc! {"_id":owner}).await? { return Ok((account,owner == fresh.id)); }
+        let owner = alias
+            .get_str("account_id")
+            .map_err(|e| StoreError::Unavailable(e.to_string()))?;
+        if let Some(account) = self.accounts().find_one(doc! {"_id":owner}).await? {
+            return Ok((account, owner == fresh.id));
+        }
         // All simultaneous first sign-ins use the id of the single identity
         // claim, so neither an account nor its linked methods can split.
         let account = Account::new(owner.to_string(), identity.clone(), now);
         let mut insert = bson::to_document(&account).expect("account serializes");
         insert.insert("chain_key", hex(&account.chain_key()));
-        let saved = self.accounts().find_one_and_update(doc! {"_id":owner},doc! {"$setOnInsert":insert})
-            .upsert(true).return_document(ReturnDocument::After).await?
+        let saved = self
+            .accounts()
+            .find_one_and_update(doc! {"_id":owner}, doc! {"$setOnInsert":insert})
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .await?
             .ok_or_else(|| StoreError::Unavailable("account creation returned nothing".into()))?;
         Ok((saved, owner == fresh.id))
     }
 
     async fn link_identity(&self, account_id: &str, identity: &Identity) -> Result<bool> {
-        if self.accounts().find_one(doc! {"_id":account_id}).await?.is_none() { return Ok(false); }
+        if self
+            .accounts()
+            .find_one(doc! {"_id":account_id})
+            .await?
+            .is_none()
+        {
+            return Ok(false);
+        }
         let key = hash(&serde_json::to_string(identity).expect("identity serializes"));
-        if let Some(alias) = self.raw("login_identities").find_one(doc! {"_id":key}).await? {
+        if let Some(alias) = self
+            .raw("login_identities")
+            .find_one(doc! {"_id":key})
+            .await?
+        {
             return Ok(alias.get_str("account_id").ok() == Some(account_id));
         }
-        if self.accounts().find_one(doc! {"identity":to_bson(identity),"_id":{"$ne":account_id}}).await?.is_some() {
+        if self
+            .accounts()
+            .find_one(doc! {"identity":to_bson(identity),"_id":{"$ne":account_id}})
+            .await?
+            .is_some()
+        {
             return Ok(false);
         }
         let alias = self.claim_login_identity(identity, account_id).await?;
@@ -335,13 +536,23 @@ impl Store for MongoStore {
 
     async fn identities(&self, account_id: &str) -> Result<Vec<Identity>> {
         use futures::TryStreamExt;
-        let rows: Vec<Document> = self.raw("login_identities").find(doc! {"account_id":account_id}).await?.try_collect().await?;
+        let rows: Vec<Document> = self
+            .raw("login_identities")
+            .find(doc! {"account_id":account_id})
+            .await?
+            .try_collect()
+            .await?;
         let mut identities = Vec::new();
-        if let Some(account) = self.accounts().find_one(doc! {"_id":account_id}).await? { identities.push(account.identity); }
+        if let Some(account) = self.accounts().find_one(doc! {"_id":account_id}).await? {
+            identities.push(account.identity);
+        }
         for row in rows {
             if let Ok(value) = row.get_document("identity") {
-                let identity: Identity = bson::from_document(value.clone()).map_err(|e| StoreError::Unavailable(e.to_string()))?;
-                if !identities.contains(&identity) { identities.push(identity); }
+                let identity: Identity = bson::from_document(value.clone())
+                    .map_err(|e| StoreError::Unavailable(e.to_string()))?;
+                if !identities.contains(&identity) {
+                    identities.push(identity);
+                }
             }
         }
         Ok(identities)
@@ -352,7 +563,10 @@ impl Store for MongoStore {
     }
 
     async fn account_by_chain_key(&self, key: &[u8; 32]) -> Result<Option<Account>> {
-        Ok(self.accounts().find_one(doc! { "chain_key": hex(key) }).await?)
+        Ok(self
+            .accounts()
+            .find_one(doc! { "chain_key": hex(key) })
+            .await?)
     }
 
     async fn update_billing(&self, account_id: &str, u: &BillingUpdate) -> Result<Option<Account>> {
@@ -392,10 +606,17 @@ impl Store for MongoStore {
             .await?)
     }
 
-    async fn set_prefs(&self, account_id: &str, prefs: serde_json::Map<String, serde_json::Value>) -> Result<Option<Account>> {
+    async fn set_prefs(
+        &self,
+        account_id: &str,
+        prefs: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Option<Account>> {
         Ok(self
             .accounts()
-            .find_one_and_update(doc! { "_id": account_id }, doc! { "$set": { "prefs": to_bson(&prefs) } })
+            .find_one_and_update(
+                doc! { "_id": account_id },
+                doc! { "$set": { "prefs": to_bson(&prefs) } },
+            )
             .return_document(ReturnDocument::After)
             .await?)
     }
@@ -424,29 +645,55 @@ impl Store for MongoStore {
     }
 
     async fn end_session(&self, raw: &str) -> Result<()> {
-        self.raw(SESSIONS).delete_one(doc! { "_id": hash(raw) }).await?;
+        self.raw(SESSIONS)
+            .delete_one(doc! { "_id": hash(raw) })
+            .await?;
         Ok(())
     }
 
-    async fn register_device(&self, account_id: &str, name: &str, platform: Platform, now: u64) -> Result<Option<(Device, String)>> {
-        let Some(account) = self.account(account_id).await? else { return Ok(None) };
+    async fn register_device(
+        &self,
+        account_id: &str,
+        name: &str,
+        platform: Platform,
+        now: u64,
+    ) -> Result<Option<(Device, String)>> {
+        let Some(account) = self.account(account_id).await? else {
+            return Ok(None);
+        };
         let limit = account.effective_device_limit(now);
         // A unique account/seat index arbitrates simultaneous registrations.
         for _ in 0..=DEVICE_LIMIT {
             let current = Store::devices(self, account_id).await?;
-            if current.len() >= limit as usize { return Ok(None); }
-            let mut occupied: std::collections::HashSet<u32> = current.iter().filter_map(|d|d.slot).collect();
-            for _ in current.iter().filter(|d|d.slot.is_none()) {
+            if current.len() >= limit as usize {
+                return Ok(None);
+            }
+            let mut occupied: std::collections::HashSet<u32> =
+                current.iter().filter_map(|d| d.slot).collect();
+            for _ in current.iter().filter(|d| d.slot.is_none()) {
                 let mut slot = 0;
-                while occupied.contains(&slot) { slot += 1; }
+                while occupied.contains(&slot) {
+                    slot += 1;
+                }
                 occupied.insert(slot);
             }
-            let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else { return Ok(None) };
+            let Some(slot) = (0..limit).find(|slot| !occupied.contains(slot)) else {
+                return Ok(None);
+            };
             let raw = random_token("rwdt_");
-            let d = Device { security:None, slot:Some(slot), id:new_id(), account_id:account_id.to_string(),
-                name:name.to_string(), platform, created_at:now, last_seen_at:now, token_hash:hash(&raw) };
+            let d = Device {
+                security: None,
+                slot: Some(slot),
+                id: new_id(),
+                account_id: account_id.to_string(),
+                name: name.to_string(),
+                platform,
+                created_at: now,
+                last_seen_at: now,
+                token_hash: hash(&raw),
+            };
             match self.devices().insert_one(&d).await {
-                Ok(_) => return Ok(Some((d,raw))),
+                Ok(_) => return Ok(Some((d, raw))),
                 Err(error) if is_duplicate_key(&error) => continue,
                 Err(error) => return Err(error.into()),
             }
@@ -457,17 +704,38 @@ impl Store for MongoStore {
     async fn device_for_token(&self, raw: &str, now: u64) -> Result<Option<Device>> {
         Ok(self
             .devices()
-            .find_one_and_update(doc! { "token_hash": hash(raw) }, doc! { "$set": { "last_seen_at": now as i64 } })
+            .find_one_and_update(
+                doc! { "token_hash": hash(raw) },
+                doc! { "$set": { "last_seen_at": now as i64 } },
+            )
             .return_document(ReturnDocument::After)
             .await?)
     }
 
-    async fn bind_security(&self, account_id:&str, device_id:&str, binding:&SecurityBinding)->Result<bool> {
-        match self.devices().update_one(doc!{"_id":device_id,"account_id":account_id,"security":{"$exists":false}},doc!{"$set":{"security":to_bson(binding)}}).await {
-            Ok(result) if result.matched_count==1=>Ok(true),
-            Ok(_)=>Ok(self.devices().find_one(doc!{"_id":device_id,"account_id":account_id,"security":to_bson(binding)}).await?.is_some()),
-            Err(error) if is_duplicate_key(&error)=>Ok(false),
-            Err(error)=>Err(error.into()),
+    async fn bind_security(
+        &self,
+        account_id: &str,
+        device_id: &str,
+        binding: &SecurityBinding,
+    ) -> Result<bool> {
+        match self
+            .devices()
+            .update_one(
+                doc! {"_id":device_id,"account_id":account_id,"security":{"$exists":false}},
+                doc! {"$set":{"security":to_bson(binding)}},
+            )
+            .await
+        {
+            Ok(result) if result.matched_count == 1 => Ok(true),
+            Ok(_) => Ok(self
+                .devices()
+                .find_one(
+                    doc! {"_id":device_id,"account_id":account_id,"security":to_bson(binding)},
+                )
+                .await?
+                .is_some()),
+            Err(error) if is_duplicate_key(&error) => Ok(false),
+            Err(error) => Err(error.into()),
         }
     }
     async fn devices(&self, account_id: &str) -> Result<Vec<Device>> {
@@ -482,7 +750,10 @@ impl Store for MongoStore {
     }
 
     async fn revoke_device(&self, account_id: &str, device_id: &str) -> Result<bool> {
-        let r = self.devices().delete_one(doc! { "_id": device_id, "account_id": account_id }).await?;
+        let r = self
+            .devices()
+            .delete_one(doc! { "_id": device_id, "account_id": account_id })
+            .await?;
         Ok(r.deleted_count == 1)
     }
 
@@ -524,7 +795,10 @@ impl Store for MongoStore {
     }
 
     async fn used_today(&self, account_id: &str, now: u64) -> Result<u32> {
-        let d = self.raw(USAGE_DAILY).find_one(doc! { "_id": format!("{account_id}:{}", now / 86_400) }).await?;
+        let d = self
+            .raw(USAGE_DAILY)
+            .find_one(doc! { "_id": format!("{account_id}:{}", now / 86_400) })
+            .await?;
         Ok(d.and_then(|d| d.get_i32("count").ok()).unwrap_or(0) as u32)
     }
 }

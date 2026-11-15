@@ -72,12 +72,12 @@ pub fn tab_text(title: &str, url: &str) -> String {
 
 /// Host portion of a URL, without scheme, credentials, port, or path.
 pub fn host_of(url: &str) -> String {
-    let rest = url
-        .split_once("://")
-        .map(|(_, r)| r)
-        .unwrap_or(url);
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let authority = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     authority
         .rsplit_once(':')
         .filter(|(h, p)| !h.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
@@ -148,9 +148,18 @@ pub const RELATIVE_CUT: f32 = 0.5;
 // cost of closing one the user wanted is their work. Both constants are biased
 // accordingly, and the bias is enforced at compile time.
 const _: () = {
-    assert!(RELEVANT_THRESHOLD <= 0.35, "a high bar closes plausibly-related tabs");
-    assert!(RELATIVE_CUT <= 0.6, "cutting above the midpoint closes too much");
-    assert!(MIN_SPREAD >= 0.10, "acting on a flat ranking is acting on noise");
+    assert!(
+        RELEVANT_THRESHOLD <= 0.35,
+        "a high bar closes plausibly-related tabs"
+    );
+    assert!(
+        RELATIVE_CUT <= 0.6,
+        "cutting above the midpoint closes too much"
+    );
+    assert!(
+        MIN_SPREAD >= 0.10,
+        "acting on a flat ranking is acting on noise"
+    );
 };
 
 /// Minimum score range for relevance to be used at all.
@@ -185,7 +194,10 @@ pub fn prefix_query(model: &str, text: &str) -> String {
 pub fn prefix_documents(model: &str, texts: &[String]) -> Vec<String> {
     let m = model.to_lowercase();
     if m.contains("nomic") {
-        return texts.iter().map(|t| format!("search_document: {t}")).collect();
+        return texts
+            .iter()
+            .map(|t| format!("search_document: {t}"))
+            .collect();
     }
     // mxbai and the NVIDIA models take documents unprefixed.
     texts.to_vec()
@@ -283,9 +295,15 @@ mod tests {
 
     #[test]
     fn extracts_the_host_from_real_urls() {
-        assert_eq!(host_of("https://www.youtube.com/watch?v=abc"), "youtube.com");
+        assert_eq!(
+            host_of("https://www.youtube.com/watch?v=abc"),
+            "youtube.com"
+        );
         assert_eq!(host_of("http://localhost:3000/admin"), "localhost");
-        assert_eq!(host_of("https://fau.sharepoint.com/:w:/r/sites/QEP"), "fau.sharepoint.com");
+        assert_eq!(
+            host_of("https://fau.sharepoint.com/:w:/r/sites/QEP"),
+            "fau.sharepoint.com"
+        );
         assert_eq!(host_of("https://github.com/me/proj/pull/9"), "github.com");
         assert_eq!(host_of("chrome://downloads/"), "downloads");
     }
@@ -293,7 +311,10 @@ mod tests {
     #[test]
     fn strips_credentials_and_ports_but_keeps_a_real_subdomain() {
         assert_eq!(host_of("https://user:pw@example.com:8443/x"), "example.com");
-        assert_eq!(host_of("https://api.v2.example.com/x"), "api.v2.example.com");
+        assert_eq!(
+            host_of("https://api.v2.example.com/x"),
+            "api.v2.example.com"
+        );
     }
 
     #[test]
@@ -311,7 +332,10 @@ mod tests {
     #[test]
     fn only_a_numeric_port_is_stripped() {
         assert_eq!(host_of("https://example.com:8443/x"), "example.com");
-        assert_eq!(host_of("https://example.com:notaport/x"), "example.com:notaport");
+        assert_eq!(
+            host_of("https://example.com:notaport/x"),
+            "example.com:notaport"
+        );
     }
 
     // ── Tab text ────────────────────────────────────────────────────────────
@@ -321,7 +345,10 @@ mod tests {
     /// want leaving the box.
     #[test]
     fn tab_text_uses_the_title_and_host_not_the_query_string() {
-        let t = tab_text("Rust ownership", "https://doc.rust-lang.org/book/ch04.html?utm_source=x&sid=SECRET");
+        let t = tab_text(
+            "Rust ownership",
+            "https://doc.rust-lang.org/book/ch04.html?utm_source=x&sid=SECRET",
+        );
         assert_eq!(t, "Rust ownership (doc.rust-lang.org)");
         assert!(!t.contains("SECRET"));
         assert!(!t.contains("utm_source"));
@@ -414,12 +441,18 @@ mod tests {
 
     #[test]
     fn each_model_family_gets_the_prefix_it_was_trained_with() {
-        assert_eq!(prefix_query("nomic-embed-text", "goal"), "search_query: goal");
+        assert_eq!(
+            prefix_query("nomic-embed-text", "goal"),
+            "search_query: goal"
+        );
         assert!(prefix_query("mxbai-embed-large", "goal").starts_with("Represent this sentence"));
         assert_eq!(prefix_query("nvidia/nemotron-3-embed-1b", "goal"), "goal");
 
         let docs = vec!["a".to_string()];
-        assert_eq!(prefix_documents("nomic-embed-text", &docs), vec!["search_document: a"]);
+        assert_eq!(
+            prefix_documents("nomic-embed-text", &docs),
+            vec!["search_document: a"]
+        );
         assert_eq!(prefix_documents("mxbai-embed-large", &docs), docs);
         assert_eq!(prefix_documents("nvidia/nemotron-3-embed-1b", &docs), docs);
     }
@@ -427,7 +460,10 @@ mod tests {
     #[test]
     fn prefixing_is_case_insensitive_about_the_model_name() {
         assert!(prefix_query("MXBAI-Embed-Large", "g").starts_with("Represent"));
-        assert_eq!(prefix_query("NOMIC-embed-text:latest", "g"), "search_query: g");
+        assert_eq!(
+            prefix_query("NOMIC-embed-text:latest", "g"),
+            "search_query: g"
+        );
     }
 
     // ── Spread and the relative cut ─────────────────────────────────────────
@@ -436,7 +472,10 @@ mod tests {
         scores
             .iter()
             .enumerate()
-            .map(|(i, &score)| Scored { id: i as i64, score })
+            .map(|(i, &score)| Scored {
+                id: i as i64,
+                score,
+            })
             .collect()
     }
 
@@ -479,8 +518,12 @@ mod tests {
 
     #[test]
     fn a_working_ranking_is_discriminating() {
-        assert!(discriminating(&scored(&[0.675, 0.524, 0.512, 0.431, 0.304, 0.281])));
-        assert!(discriminating(&scored(&[0.351, 0.274, 0.266, 0.199, 0.106, 0.096])));
+        assert!(discriminating(&scored(&[
+            0.675, 0.524, 0.512, 0.431, 0.304, 0.281
+        ])));
+        assert!(discriminating(&scored(&[
+            0.351, 0.274, 0.266, 0.199, 0.106, 0.096
+        ])));
     }
 
     #[test]

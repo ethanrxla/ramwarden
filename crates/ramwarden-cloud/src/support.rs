@@ -69,11 +69,19 @@ pub struct SupportMessage {
 
 impl SupportMessage {
     pub fn new(from: Speaker, text: &str, at: u64) -> Self {
-        SupportMessage { from, text: clip(text), at, topic: None }
+        SupportMessage {
+            from,
+            text: clip(text),
+            at,
+            topic: None,
+        }
     }
 
     pub fn warden(text: &str, topic: &str, at: u64) -> Self {
-        SupportMessage { topic: Some(topic.to_string()), ..Self::new(Speaker::Warden, text, at) }
+        SupportMessage {
+            topic: Some(topic.to_string()),
+            ..Self::new(Speaker::Warden, text, at)
+        }
     }
 }
 
@@ -138,7 +146,11 @@ pub struct Conversation {
 
 impl Conversation {
     fn retention(&self) -> u64 {
-        if self.ticket.is_some() { TICKET_RETENTION_SECONDS } else { CHAT_RETENTION_SECONDS }
+        if self.ticket.is_some() {
+            TICKET_RETENTION_SECONDS
+        } else {
+            CHAT_RETENTION_SECONDS
+        }
     }
 }
 
@@ -148,13 +160,20 @@ fn clip(text: &str) -> String {
 
 pub fn ticket_reference() -> String {
     let b = random_bytes::<6>();
-    let s: String = b.iter().map(|x| REF_ALPHABET[*x as usize % REF_ALPHABET.len()] as char).collect();
+    let s: String = b
+        .iter()
+        .map(|x| REF_ALPHABET[*x as usize % REF_ALPHABET.len()] as char)
+        .collect();
     format!("RW-{s}")
 }
 
 /// `RW-XXXXXX` from whatever was typed: case and spaces forgiven.
 pub fn normalise_reference(raw: &str) -> Option<String> {
-    let s: String = raw.chars().filter(|c| !c.is_whitespace() && *c != '-').collect::<String>().to_ascii_uppercase();
+    let s: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect::<String>()
+        .to_ascii_uppercase();
     let s = s.strip_prefix("RW").unwrap_or(&s);
     (s.len() == 6 && s.bytes().all(|b| REF_ALPHABET.contains(&b))).then(|| format!("RW-{s}"))
 }
@@ -169,24 +188,51 @@ pub struct TicketQuery {
 #[async_trait]
 pub trait SupportStore: Send + Sync {
     /// A new conversation. Returns the raw secret, for the visitor only.
-    async fn start_conversation(&self, warden: &str, account_id: Option<&str>, now: u64) -> Result<(String, Conversation)>;
+    async fn start_conversation(
+        &self,
+        warden: &str,
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<(String, Conversation)>;
     /// The live conversation this secret owns.
     async fn conversation(&self, raw_secret: &str, now: u64) -> Result<Option<Conversation>>;
     /// Appends messages (keeping the newest [`MAX_MESSAGES`]) and pushes the
     /// expiry forward. A visitor message on an answered ticket reopens it.
     /// `account_id` links a conversation that started signed out.
-    async fn append(&self, raw_secret: &str, msgs: &[SupportMessage], account_id: Option<&str>, now: u64) -> Result<Option<Conversation>>;
+    async fn append(
+        &self,
+        raw_secret: &str,
+        msgs: &[SupportMessage],
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Conversation>>;
     /// Makes the conversation a ticket, once: a second call returns the
     /// ticket the first one opened.
-    async fn open_ticket(&self, raw_secret: &str, subject: &str, email: Option<&str>, now: u64) -> Result<Option<Ticket>>;
+    async fn open_ticket(
+        &self,
+        raw_secret: &str,
+        subject: &str,
+        email: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Ticket>>;
 
     // --- staff
     async fn ticket(&self, reference: &str) -> Result<Option<Conversation>>;
     /// Newest activity first.
     async fn tickets(&self, q: TicketQuery) -> Result<Vec<Conversation>>;
     /// Adds a staff message and marks the ticket answered.
-    async fn staff_reply(&self, reference: &str, text: &str, now: u64) -> Result<Option<Conversation>>;
-    async fn set_ticket_status(&self, reference: &str, status: TicketStatus, now: u64) -> Result<bool>;
+    async fn staff_reply(
+        &self,
+        reference: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<Option<Conversation>>;
+    async fn set_ticket_status(
+        &self,
+        reference: &str,
+        status: TicketStatus,
+        now: u64,
+    ) -> Result<bool>;
 
     // --- the signed-in visitor
     async fn account_tickets(&self, account_id: &str) -> Result<Vec<Conversation>>;
@@ -226,7 +272,12 @@ fn newest_first(mut v: Vec<Conversation>, limit: u32) -> Vec<Conversation> {
 
 #[async_trait]
 impl SupportStore for MemoryStore {
-    async fn start_conversation(&self, warden: &str, account_id: Option<&str>, now: u64) -> Result<(String, Conversation)> {
+    async fn start_conversation(
+        &self,
+        warden: &str,
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<(String, Conversation)> {
         let raw = random_token("rwsc_");
         let c = Conversation {
             id: hash(&raw),
@@ -243,12 +294,24 @@ impl SupportStore for MemoryStore {
     }
 
     async fn conversation(&self, raw_secret: &str, now: u64) -> Result<Option<Conversation>> {
-        Ok(self.support().get(&hash(raw_secret)).filter(|c| live(c, now)).cloned())
+        Ok(self
+            .support()
+            .get(&hash(raw_secret))
+            .filter(|c| live(c, now))
+            .cloned())
     }
 
-    async fn append(&self, raw_secret: &str, msgs: &[SupportMessage], account_id: Option<&str>, now: u64) -> Result<Option<Conversation>> {
+    async fn append(
+        &self,
+        raw_secret: &str,
+        msgs: &[SupportMessage],
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Conversation>> {
         let mut g = self.support();
-        let Some(c) = g.get_mut(&hash(raw_secret)).filter(|c| live(c, now)) else { return Ok(None) };
+        let Some(c) = g.get_mut(&hash(raw_secret)).filter(|c| live(c, now)) else {
+            return Ok(None);
+        };
         push(c, msgs, now);
         if c.account_id.is_none() {
             c.account_id = account_id.map(str::to_string);
@@ -256,9 +319,17 @@ impl SupportStore for MemoryStore {
         Ok(Some(c.clone()))
     }
 
-    async fn open_ticket(&self, raw_secret: &str, subject: &str, email: Option<&str>, now: u64) -> Result<Option<Ticket>> {
+    async fn open_ticket(
+        &self,
+        raw_secret: &str,
+        subject: &str,
+        email: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Ticket>> {
         let mut g = self.support();
-        let Some(c) = g.get_mut(&hash(raw_secret)).filter(|c| live(c, now)) else { return Ok(None) };
+        let Some(c) = g.get_mut(&hash(raw_secret)).filter(|c| live(c, now)) else {
+            return Ok(None);
+        };
         if let Some(t) = &c.ticket {
             return Ok(Some(t.clone()));
         }
@@ -276,22 +347,38 @@ impl SupportStore for MemoryStore {
     }
 
     async fn ticket(&self, reference: &str) -> Result<Option<Conversation>> {
-        Ok(self.support().values().find(|c| c.ticket.as_ref().is_some_and(|t| t.reference == reference)).cloned())
+        Ok(self
+            .support()
+            .values()
+            .find(|c| c.ticket.as_ref().is_some_and(|t| t.reference == reference))
+            .cloned())
     }
 
     async fn tickets(&self, q: TicketQuery) -> Result<Vec<Conversation>> {
         let v = self
             .support()
             .values()
-            .filter(|c| c.ticket.as_ref().is_some_and(|t| q.status.is_none_or(|s| t.status == s)))
+            .filter(|c| {
+                c.ticket
+                    .as_ref()
+                    .is_some_and(|t| q.status.is_none_or(|s| t.status == s))
+            })
             .cloned()
             .collect();
         Ok(newest_first(v, q.limit))
     }
 
-    async fn staff_reply(&self, reference: &str, text: &str, now: u64) -> Result<Option<Conversation>> {
+    async fn staff_reply(
+        &self,
+        reference: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<Option<Conversation>> {
         let mut g = self.support();
-        let Some(c) = g.values_mut().find(|c| live(c,now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
+        let Some(c) = g
+            .values_mut()
+            .find(|c| live(c, now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference))
+        else {
             return Ok(None);
         };
         push(c, &[SupportMessage::new(Speaker::Staff, text, now)], now);
@@ -301,9 +388,17 @@ impl SupportStore for MemoryStore {
         Ok(Some(c.clone()))
     }
 
-    async fn set_ticket_status(&self, reference: &str, status: TicketStatus, now: u64) -> Result<bool> {
+    async fn set_ticket_status(
+        &self,
+        reference: &str,
+        status: TicketStatus,
+        now: u64,
+    ) -> Result<bool> {
         let mut g = self.support();
-        let Some(c) = g.values_mut().find(|c| live(c,now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference)) else {
+        let Some(c) = g
+            .values_mut()
+            .find(|c| live(c, now) && c.ticket.as_ref().is_some_and(|t| t.reference == reference))
+        else {
             return Ok(false);
         };
         if let Some(t) = &mut c.ticket {
@@ -344,7 +439,11 @@ impl MongoStore {
         let models = [
             IndexModel::builder()
                 .keys(doc! { "expire_at": 1 })
-                .options(opts("expire").expire_after(std::time::Duration::ZERO).build())
+                .options(
+                    opts("expire")
+                        .expire_after(std::time::Duration::ZERO)
+                        .build(),
+                )
                 .build(),
             // Only tickets have a reference; the partial filter keeps the
             // many plain chats out of a unique index they would all collide in.
@@ -370,18 +469,31 @@ impl MongoStore {
                 .options(opts("by_account").sparse(true).build())
                 .build(),
         ];
-        self.database().collection::<Document>(SUPPORT_CONVERSATIONS).create_indexes(models).await?;
+        self.database()
+            .collection::<Document>(SUPPORT_CONVERSATIONS)
+            .create_indexes(models)
+            .await?;
         Ok(())
     }
 
     /// The update that [`push`] makes in memory, as one atomic Mongo update:
     /// `$push` with `$slice` keeps the newest messages, the expiry moves by the
     /// conversation's own retention.
-    async fn push_messages(&self, filter: Document, msgs: &[SupportMessage], extra_set: Document, now: u64) -> Result<Option<Conversation>> {
-        let msgs: Vec<SupportMessage> = msgs.iter().cloned().map(|mut m| {
-            m.text = clip(&m.text);
-            m
-        }).collect();
+    async fn push_messages(
+        &self,
+        filter: Document,
+        msgs: &[SupportMessage],
+        extra_set: Document,
+        now: u64,
+    ) -> Result<Option<Conversation>> {
+        let msgs: Vec<SupportMessage> = msgs
+            .iter()
+            .cloned()
+            .map(|mut m| {
+                m.text = clip(&m.text);
+                m
+            })
+            .collect();
         let msgs = bson::to_bson(&msgs).expect("messages serialize");
         let mut set = doc! { "updated_at": now as i64 };
         set.extend(extra_set);
@@ -401,15 +513,26 @@ impl MongoStore {
         };
         let expires = now + c.retention();
         self.conversations()
-            .update_one(doc! { "_id": &c.id }, doc! { "$max": { "expires_at": expires as i64, "expire_at": date(expires) } })
+            .update_one(
+                doc! { "_id": &c.id },
+                doc! { "$max": { "expires_at": expires as i64, "expire_at": date(expires) } },
+            )
             .await?;
-        Ok(Some(Conversation { expires_at: expires, ..c }))
+        Ok(Some(Conversation {
+            expires_at: expires,
+            ..c
+        }))
     }
 }
 
 #[async_trait]
 impl SupportStore for MongoStore {
-    async fn start_conversation(&self, warden: &str, account_id: Option<&str>, now: u64) -> Result<(String, Conversation)> {
+    async fn start_conversation(
+        &self,
+        warden: &str,
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<(String, Conversation)> {
         let raw = random_token("rwsc_");
         let c = Conversation {
             id: hash(&raw),
@@ -423,7 +546,10 @@ impl SupportStore for MongoStore {
         };
         let mut d = to_doc(&c);
         d.insert("expire_at", date(c.expires_at));
-        self.database().collection::<Document>(SUPPORT_CONVERSATIONS).insert_one(d).await?;
+        self.database()
+            .collection::<Document>(SUPPORT_CONVERSATIONS)
+            .insert_one(d)
+            .await?;
         Ok((raw, c))
     }
 
@@ -434,14 +560,28 @@ impl SupportStore for MongoStore {
             .await?)
     }
 
-    async fn append(&self, raw_secret: &str, msgs: &[SupportMessage], account_id: Option<&str>, now: u64) -> Result<Option<Conversation>> {
+    async fn append(
+        &self,
+        raw_secret: &str,
+        msgs: &[SupportMessage],
+        account_id: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Conversation>> {
         let filter = doc! { "_id": hash(raw_secret), "expires_at": { "$gt": now as i64 } };
-        let Some(mut c) = self.push_messages(filter, msgs, doc! {}, now).await? else { return Ok(None) };
-        let reopen = c.ticket.as_ref().is_some_and(|t| t.status == TicketStatus::Answered)
+        let Some(mut c) = self.push_messages(filter, msgs, doc! {}, now).await? else {
+            return Ok(None);
+        };
+        let reopen = c
+            .ticket
+            .as_ref()
+            .is_some_and(|t| t.status == TicketStatus::Answered)
             && msgs.iter().any(|m| m.from == Speaker::Visitor);
         if reopen {
             self.conversations()
-                .update_one(doc! { "_id": &c.id, "ticket.status": "answered" }, doc! { "$set": { "ticket.status": "open" } })
+                .update_one(
+                    doc! { "_id": &c.id, "ticket.status": "answered" },
+                    doc! { "$set": { "ticket.status": "open" } },
+                )
                 .await?;
             if let Some(t) = &mut c.ticket {
                 t.status = TicketStatus::Open;
@@ -449,14 +589,23 @@ impl SupportStore for MongoStore {
         }
         if let (None, Some(a)) = (&c.account_id, account_id) {
             self.conversations()
-                .update_one(doc! { "_id": &c.id, "account_id": { "$exists": false } }, doc! { "$set": { "account_id": a } })
+                .update_one(
+                    doc! { "_id": &c.id, "account_id": { "$exists": false } },
+                    doc! { "$set": { "account_id": a } },
+                )
                 .await?;
             c.account_id = Some(a.to_string());
         }
         Ok(Some(c))
     }
 
-    async fn open_ticket(&self, raw_secret: &str, subject: &str, email: Option<&str>, now: u64) -> Result<Option<Ticket>> {
+    async fn open_ticket(
+        &self,
+        raw_secret: &str,
+        subject: &str,
+        email: Option<&str>,
+        now: u64,
+    ) -> Result<Option<Ticket>> {
         let id = hash(raw_secret);
         let t = Ticket {
             reference: ticket_reference(),
@@ -478,11 +627,18 @@ impl SupportStore for MongoStore {
                 } },
             )
             .await?;
-        Ok(self.conversations().find_one(doc! { "_id": &id }).await?.and_then(|c| c.ticket))
+        Ok(self
+            .conversations()
+            .find_one(doc! { "_id": &id })
+            .await?
+            .and_then(|c| c.ticket))
     }
 
     async fn ticket(&self, reference: &str) -> Result<Option<Conversation>> {
-        Ok(self.conversations().find_one(doc! { "ticket.reference": reference }).await?)
+        Ok(self
+            .conversations()
+            .find_one(doc! { "ticket.reference": reference })
+            .await?)
     }
 
     async fn tickets(&self, q: TicketQuery) -> Result<Vec<Conversation>> {
@@ -501,10 +657,20 @@ impl SupportStore for MongoStore {
             .await?)
     }
 
-    async fn staff_reply(&self, reference: &str, text: &str, now: u64) -> Result<Option<Conversation>> {
+    async fn staff_reply(
+        &self,
+        reference: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<Option<Conversation>> {
         let msg = SupportMessage::new(Speaker::Staff, text, now);
         let mut c = self
-            .push_messages(doc! { "ticket.reference": reference, "expires_at": { "$gt": now as i64 } }, &[msg], doc! { "ticket.status": "answered" }, now)
+            .push_messages(
+                doc! { "ticket.reference": reference, "expires_at": { "$gt": now as i64 } },
+                &[msg],
+                doc! { "ticket.status": "answered" },
+                now,
+            )
             .await?;
         if let Some(t) = c.as_mut().and_then(|c| c.ticket.as_mut()) {
             t.status = TicketStatus::Answered;
@@ -512,7 +678,12 @@ impl SupportStore for MongoStore {
         Ok(c)
     }
 
-    async fn set_ticket_status(&self, reference: &str, status: TicketStatus, now: u64) -> Result<bool> {
+    async fn set_ticket_status(
+        &self,
+        reference: &str,
+        status: TicketStatus,
+        now: u64,
+    ) -> Result<bool> {
         let r = self
             .conversations()
             .update_one(
@@ -553,49 +724,144 @@ pub mod contract {
 
         let q = SupportMessage::new(Speaker::Visitor, "  how much is Pro?  ", NOW + 1);
         let a = SupportMessage::warden("$5 every 2 months.", "pricing", NOW + 1);
-        let c = s.append(&raw, &[q, a], Some("acct1"), NOW + 1).await.unwrap().unwrap();
+        let c = s
+            .append(&raw, &[q, a], Some("acct1"), NOW + 1)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(c.messages.len(), 2);
         assert_eq!(c.messages[0].text, "how much is Pro?", "text is trimmed");
         assert_eq!(c.messages[1].topic.as_deref(), Some("pricing"));
-        assert_eq!(c.account_id.as_deref(), Some("acct1"), "signing in mid-chat links it");
+        assert_eq!(
+            c.account_id.as_deref(),
+            Some("acct1"),
+            "signing in mid-chat links it"
+        );
         assert_eq!(c.expires_at, NOW + 1 + CHAT_RETENTION_SECONDS);
 
         // The oldest messages fall off; a long message is clipped.
-        let many: Vec<_> = (0..MAX_MESSAGES).map(|i| SupportMessage::new(Speaker::Visitor, &format!("m{i}"), NOW + 2)).collect();
+        let many: Vec<_> = (0..MAX_MESSAGES)
+            .map(|i| SupportMessage::new(Speaker::Visitor, &format!("m{i}"), NOW + 2))
+            .collect();
         let c = s.append(&raw, &many, None, NOW + 2).await.unwrap().unwrap();
         assert_eq!(c.messages.len(), MAX_MESSAGES);
         assert_eq!(c.messages[0].text, "m0");
         let long = "x".repeat(MAX_TEXT_CHARS + 50);
-        let c = s.append(&raw, &[SupportMessage::new(Speaker::Visitor, &long, NOW + 3)], None, NOW + 3).await.unwrap().unwrap();
-        assert_eq!(c.messages.last().unwrap().text.chars().count(), MAX_TEXT_CHARS);
+        let c = s
+            .append(
+                &raw,
+                &[SupportMessage::new(Speaker::Visitor, &long, NOW + 3)],
+                None,
+                NOW + 3,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            c.messages.last().unwrap().text.chars().count(),
+            MAX_TEXT_CHARS
+        );
         assert_eq!(c.messages[0].text, "m1");
 
         // One ticket per conversation, kept a year.
-        let t = s.open_ticket(&raw, "Download failed", Some("a@example.com"), NOW + 4).await.unwrap().unwrap();
-        assert!(normalise_reference(&t.reference).is_some(), "{}", t.reference);
+        let t = s
+            .open_ticket(&raw, "Download failed", Some("a@example.com"), NOW + 4)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            normalise_reference(&t.reference).is_some(),
+            "{}",
+            t.reference
+        );
         assert_eq!(t.status, TicketStatus::Open);
-        let again = s.open_ticket(&raw, "other", None, NOW + 5).await.unwrap().unwrap();
-        assert_eq!(again.reference, t.reference, "a second click returns the same ticket");
-        let c = s.conversation(&raw, NOW + CHAT_RETENTION_SECONDS + 10).await.unwrap().unwrap();
-        assert!(c.expires_at >= NOW + TICKET_RETENTION_SECONDS, "tickets outlive the chat window");
+        let again = s
+            .open_ticket(&raw, "other", None, NOW + 5)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            again.reference, t.reference,
+            "a second click returns the same ticket"
+        );
+        let c = s
+            .conversation(&raw, NOW + CHAT_RETENTION_SECONDS + 10)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            c.expires_at >= NOW + TICKET_RETENTION_SECONDS,
+            "tickets outlive the chat window"
+        );
 
         // Staff reply; the visitor answering reopens it.
-        let c = s.staff_reply(&t.reference, "Try the installer again now.", NOW + 6).await.unwrap().unwrap();
+        let c = s
+            .staff_reply(&t.reference, "Try the installer again now.", NOW + 6)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(c.ticket.as_ref().unwrap().status, TicketStatus::Answered);
         assert_eq!(c.messages.last().unwrap().from, Speaker::Staff);
-        assert!(s.staff_reply("RW-ZZZZZZ", "x", NOW).await.unwrap().is_none());
-        let c = s.append(&raw, &[SupportMessage::new(Speaker::Visitor, "still broken", NOW + 7)], None, NOW + 7).await.unwrap().unwrap();
+        assert!(
+            s.staff_reply("RW-ZZZZZZ", "x", NOW)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let c = s
+            .append(
+                &raw,
+                &[SupportMessage::new(
+                    Speaker::Visitor,
+                    "still broken",
+                    NOW + 7,
+                )],
+                None,
+                NOW + 7,
+            )
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(c.ticket.as_ref().unwrap().status, TicketStatus::Open);
 
         // Listings.
         let (raw2, _) = s.start_conversation("threat", None, NOW + 8).await.unwrap();
-        assert!(s.open_ticket("rwsc_nope", "x", None, NOW).await.unwrap().is_none());
-        let t2 = s.open_ticket(&raw2, "Is ThreatWarden on Linux?", None, NOW + 8).await.unwrap().unwrap();
-        let all = s.tickets(TicketQuery { status: None, limit: 10 }).await.unwrap();
+        assert!(
+            s.open_ticket("rwsc_nope", "x", None, NOW)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let t2 = s
+            .open_ticket(&raw2, "Is ThreatWarden on Linux?", None, NOW + 8)
+            .await
+            .unwrap()
+            .unwrap();
+        let all = s
+            .tickets(TicketQuery {
+                status: None,
+                limit: 10,
+            })
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
-        assert_eq!(all[0].ticket.as_ref().unwrap().reference, t2.reference, "newest first");
-        assert!(s.set_ticket_status(&t2.reference, TicketStatus::Closed, NOW + 9).await.unwrap());
-        let open = s.tickets(TicketQuery { status: Some(TicketStatus::Open), limit: 10 }).await.unwrap();
+        assert_eq!(
+            all[0].ticket.as_ref().unwrap().reference,
+            t2.reference,
+            "newest first"
+        );
+        assert!(
+            s.set_ticket_status(&t2.reference, TicketStatus::Closed, NOW + 9)
+                .await
+                .unwrap()
+        );
+        let open = s
+            .tickets(TicketQuery {
+                status: Some(TicketStatus::Open),
+                limit: 10,
+            })
+            .await
+            .unwrap();
         assert_eq!(open.len(), 1);
         assert_eq!(s.ticket(&t.reference).await.unwrap().unwrap().id, c.id);
         let mine = s.account_tickets("acct1").await.unwrap();
@@ -603,14 +869,33 @@ pub mod contract {
         assert!(s.account_tickets("acct2").await.unwrap().is_empty());
 
         // Staff cannot resurrect a ticket awaiting asynchronous TTL deletion.
-        let expired=NOW+TICKET_RETENTION_SECONDS+100;
-        assert!(s.staff_reply(&t.reference,"late reply",expired).await.unwrap().is_none());
-        assert!(!s.set_ticket_status(&t.reference,TicketStatus::Open,expired).await.unwrap());
+        let expired = NOW + TICKET_RETENTION_SECONDS + 100;
+        assert!(
+            s.staff_reply(&t.reference, "late reply", expired)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !s.set_ticket_status(&t.reference, TicketStatus::Open, expired)
+                .await
+                .unwrap()
+        );
 
         // Expired chats are gone even before the TTL monitor runs.
         let (raw3, _) = s.start_conversation("ram", None, NOW).await.unwrap();
-        assert!(s.conversation(&raw3, NOW + CHAT_RETENTION_SECONDS + 1).await.unwrap().is_none());
-        assert!(s.append(&raw3, &[], None, NOW + CHAT_RETENTION_SECONDS + 1).await.unwrap().is_none());
+        assert!(
+            s.conversation(&raw3, NOW + CHAT_RETENTION_SECONDS + 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            s.append(&raw3, &[], None, NOW + CHAT_RETENTION_SECONDS + 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -622,10 +907,20 @@ mod tests {
     fn references_survive_retyping() {
         for _ in 0..100 {
             let r = ticket_reference();
-            assert_eq!(normalise_reference(&r.to_lowercase()).as_deref(), Some(r.as_str()));
+            assert_eq!(
+                normalise_reference(&r.to_lowercase()).as_deref(),
+                Some(r.as_str())
+            );
         }
-        assert_eq!(normalise_reference("rw bcd 234").as_deref(), Some("RW-BCD234"));
-        assert_eq!(normalise_reference("RW-BCD230"), None, "0 is not in the alphabet");
+        assert_eq!(
+            normalise_reference("rw bcd 234").as_deref(),
+            Some("RW-BCD234")
+        );
+        assert_eq!(
+            normalise_reference("RW-BCD230"),
+            None,
+            "0 is not in the alphabet"
+        );
         assert_eq!(normalise_reference("RW-BCD2"), None);
     }
 }

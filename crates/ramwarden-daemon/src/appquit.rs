@@ -38,7 +38,14 @@ pub struct Quitter {
 
 impl Quitter {
     pub fn new() -> Self {
-        Quitter { kept: Default::default(), announced: Default::default(), judged: Default::default(), last: Instant::now() - Duration::from_secs(3600), quits: VecDeque::new(), in_flight: Arc::new(AtomicBool::new(false)) }
+        Quitter {
+            kept: Default::default(),
+            announced: Default::default(),
+            judged: Default::default(),
+            last: Instant::now() - Duration::from_secs(3600),
+            quits: VecDeque::new(),
+            in_flight: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -66,7 +73,9 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
     if cfg.mode != "dry-run" && cfg.mode != "live" {
         return;
     }
-    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else { return };
+    let Some(intel) = crate::tabintel::global().filter(|i| i.active()) else {
+        return;
+    };
     if q.last.elapsed() < Duration::from_secs(60) || state.on_hold() {
         return;
     }
@@ -86,7 +95,8 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
     let mut cands: Vec<(String, appintel::AppFeatures, String)> = Vec::new();
     {
         let det = state.det.read().unwrap();
-        let mut by_app: std::collections::HashMap<&str, Vec<&ramwarden_core::signals::Signals>> = Default::default();
+        let mut by_app: std::collections::HashMap<&str, Vec<&ramwarden_core::signals::Signals>> =
+            Default::default();
         for s in det.snapshot().values() {
             by_app.entry(s.app.as_str()).or_default().push(s);
         }
@@ -127,7 +137,11 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
         });
     }
 
-    while q.quits.front().is_some_and(|t| t.elapsed() >= Duration::from_secs(3600)) {
+    while q
+        .quits
+        .front()
+        .is_some_and(|t| t.elapsed() >= Duration::from_secs(3600))
+    {
         q.quits.pop_front();
     }
     if q.quits.len() as u32 >= cfg.max_per_hour {
@@ -142,7 +156,14 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
                 if q.judged.get(app) != Some(&why) {
                     tracing::info!("quit: keep {app}: {why}");
                     if let Ok(h) = state.history.lock() {
-                        let d = crate::decisionlog::app_decision(f, j.as_ref(), "keep", "kept", &format!("memory {used_pct:.0}% used"), why.clone());
+                        let d = crate::decisionlog::app_decision(
+                            f,
+                            j.as_ref(),
+                            "keep",
+                            "kept",
+                            &format!("memory {used_pct:.0}% used"),
+                            why.clone(),
+                        );
                         let _ = h.record_decision(&d, ramwarden_core::history::unix_now() as i64);
                     }
                     q.judged.insert(app.clone(), why);
@@ -150,17 +171,38 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
             }
             Decision::Quit { p } => {
                 let live = cfg.mode == "live";
-                if !live && q.announced.get(app).is_some_and(|t| t.elapsed() < Duration::from_secs(30 * 60)) {
+                if !live
+                    && q.announced
+                        .get(app)
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(30 * 60))
+                {
                     break;
                 }
                 if !live {
                     q.announced.insert(app.clone(), Instant::now());
                 }
-                let ok = live && ramwarden_core::exec::run("osascript", &["-e", &format!("tell application {} to quit", script_quote(app))]).is_some();
+                let ok = live
+                    && ramwarden_core::exec::run(
+                        "osascript",
+                        &[
+                            "-e",
+                            &format!("tell application {} to quit", script_quote(app)),
+                        ],
+                    )
+                    .is_some();
                 tracing::info!(
                     "{} {app} ({:.0} MB, quiet {:.0} min, p={:.2}, memory {:.0}% used)",
-                    if !live { "would quit" } else if ok { "asked to quit" } else { "quit request failed for" },
-                    f.rss_mb, f.quiet_minutes, p, used_pct
+                    if !live {
+                        "would quit"
+                    } else if ok {
+                        "asked to quit"
+                    } else {
+                        "quit request failed for"
+                    },
+                    f.rss_mb,
+                    f.quiet_minutes,
+                    p,
+                    used_pct
                 );
                 if let Ok(h) = state.history.lock() {
                     let _ = h.log(&NewAction {
@@ -168,7 +210,11 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
                         trigger: format!("memory {used_pct:.0}% used"),
                         psi_some: 0.0,
                         psi_full: 0.0,
-                        action: if live { "quit_app".into() } else { "quit_app_dry_run".into() },
+                        action: if live {
+                            "quit_app".into()
+                        } else {
+                            "quit_app_dry_run".into()
+                        },
                         target: app.clone(),
                         bytes_freed: if ok { (f.rss_mb * 1048576.0) as i64 } else { 0 },
                         succeeded: ok,
@@ -176,13 +222,31 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
                     });
                 }
                 if let Ok(h) = state.history.lock() {
-                    let result = if !live { "dry_run" } else if ok { "confirmed" } else { "refused" };
+                    let result = if !live {
+                        "dry_run"
+                    } else if ok {
+                        "confirmed"
+                    } else {
+                        "refused"
+                    };
                     let reason = format!(
                         "quiet {:.0} min, {:.0} MB, safe-to-quit chance {p:.2}; memory {used_pct:.0}% used{}",
-                        f.quiet_minutes, f.rss_mb,
-                        if ok { "; asked to quit, a save prompt may keep it open" } else { "" },
+                        f.quiet_minutes,
+                        f.rss_mb,
+                        if ok {
+                            "; asked to quit, a save prompt may keep it open"
+                        } else {
+                            ""
+                        },
                     );
-                    let mut d = crate::decisionlog::app_decision(f, j.as_ref(), "quit", result, &format!("memory {used_pct:.0}% used"), reason);
+                    let mut d = crate::decisionlog::app_decision(
+                        f,
+                        j.as_ref(),
+                        "quit",
+                        result,
+                        &format!("memory {used_pct:.0}% used"),
+                        reason,
+                    );
                     d.inputs["p_blended"] = serde_json::json!(p);
                     d.bytes = if ok { (f.rss_mb * 1048576.0) as i64 } else { 0 };
                     let _ = h.record_decision(&d, ramwarden_core::history::unix_now() as i64);
@@ -206,9 +270,15 @@ mod tests {
         let mut kept = Default::default();
         note_kept(&mut kept, "Console", "working right now");
         note_kept(&mut kept, "Console", "working right now");
-        assert_eq!(kept.get("Console").map(String::as_str), Some("working right now"));
+        assert_eq!(
+            kept.get("Console").map(String::as_str),
+            Some("working right now")
+        );
         note_kept(&mut kept, "Console", "only quiet for 3 min");
-        assert_eq!(kept.get("Console").map(String::as_str), Some("only quiet for 3 min"));
+        assert_eq!(
+            kept.get("Console").map(String::as_str),
+            Some("only quiet for 3 min")
+        );
     }
 
     #[test]

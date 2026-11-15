@@ -31,7 +31,11 @@ pub struct Forecaster {
 impl Forecaster {
     pub fn push(&mut self, t: f64, available: f64) {
         self.window.push_back((t, available));
-        while self.window.front().is_some_and(|&(t0, _)| t - t0 > WINDOW_SECONDS) {
+        while self
+            .window
+            .front()
+            .is_some_and(|&(t0, _)| t - t0 > WINDOW_SECONDS)
+        {
             self.window.pop_front();
         }
     }
@@ -68,7 +72,11 @@ impl Forecaster {
             ss_tot += (x - mean).powi(2);
             ss_res += (x - pred).powi(2);
         }
-        let r2 = if ss_tot > 0.0 { 1.0 - ss_res / ss_tot } else { 0.0 };
+        let r2 = if ss_tot > 0.0 {
+            1.0 - ss_res / ss_tot
+        } else {
+            0.0
+        };
         Some(Fit { slope, level, r2 })
     }
 
@@ -154,6 +162,9 @@ mod tests {
             f.push(s as f64, 2_000.0);
         }
         let fit = f.fit().unwrap();
-        assert!(fit.slope.abs() < 1e-9, "only the flat recent window remains");
+        assert!(
+            fit.slope.abs() < 1e-9,
+            "only the flat recent window remains"
+        );
     }
 }

@@ -51,7 +51,8 @@ pub struct Hint {
 
 impl Hint {
     pub fn holds_back(&self) -> bool {
-        self.reopened >= MIN_REOPENED && self.reopened as f64 >= MIN_SHARE * self.similar.max(1) as f64
+        self.reopened >= MIN_REOPENED
+            && self.reopened as f64 >= MIN_SHARE * self.similar.max(1) as f64
     }
 
     pub fn reason(&self) -> String {
@@ -76,7 +77,9 @@ impl Recall {
 
     /// The current recall, or an empty one when there is none worth trusting.
     pub fn load(db_path: &Path) -> Recall {
-        let Ok(text) = std::fs::read_to_string(Self::path(db_path)) else { return Recall::default() };
+        let Ok(text) = std::fs::read_to_string(Self::path(db_path)) else {
+            return Recall::default();
+        };
         match serde_json::from_str::<Recall>(&text) {
             Ok(r) if unix_now().saturating_sub(r.generated_at) <= MAX_AGE_SECS => r,
             Ok(_) => Recall::default(),
@@ -92,12 +95,18 @@ impl Recall {
         if self.tabs.is_empty() {
             return (to_close, Vec::new());
         }
-        let by_tab: HashMap<(&str, i64, &str), &Hint> =
-            self.tabs.iter().map(|h| ((h.browser.as_str(), h.tab_id, h.url.as_str()), h)).collect();
+        let by_tab: HashMap<(&str, i64, &str), &Hint> = self
+            .tabs
+            .iter()
+            .map(|h| ((h.browser.as_str(), h.tab_id, h.url.as_str()), h))
+            .collect();
         let mut close = Vec::with_capacity(to_close.len());
         let mut held = Vec::new();
         for t in to_close {
-            let hint = by_tab.get(&(t.browser.as_str(), t.id, t.url.as_str())).filter(|h| h.holds_back()).map(|h| (*h).clone());
+            let hint = by_tab
+                .get(&(t.browser.as_str(), t.id, t.url.as_str()))
+                .filter(|h| h.holds_back())
+                .map(|h| (*h).clone());
             match hint {
                 Some(h) => held.push((t, h)),
                 None => close.push(t),
@@ -108,7 +117,12 @@ impl Recall {
 }
 
 /// Log each held-back close as a `keep` decision with the neighbours that caused it.
-pub fn record_kept(h: &History, rows: &HashMap<Target, Row>, held: &[(Target, Hint)], trigger: &str) {
+pub fn record_kept(
+    h: &History,
+    rows: &HashMap<Target, Row>,
+    held: &[(Target, Hint)],
+    trigger: &str,
+) {
     let now = unix_now() as i64;
     for (t, hint) in held {
         let Some(r) = rows.get(t) else { continue };
@@ -126,11 +140,22 @@ mod tests {
     use super::*;
 
     fn target(id: i64) -> Target {
-        Target { browser: "chrome".into(), id, url: format!("https://x.test/{id}") }
+        Target {
+            browser: "chrome".into(),
+            id,
+            url: format!("https://x.test/{id}"),
+        }
     }
 
     fn hint(id: i64, similar: u32, reopened: u32) -> Hint {
-        Hint { browser: "chrome".into(), tab_id: id, url: format!("https://x.test/{id}"), similar, reopened, examples: vec![] }
+        Hint {
+            browser: "chrome".into(),
+            tab_id: id,
+            url: format!("https://x.test/{id}"),
+            similar,
+            reopened,
+            examples: vec![],
+        }
     }
 
     #[test]
@@ -142,7 +167,10 @@ mod tests {
 
     #[test]
     fn hold_back_matches_browser_tab_and_url() {
-        let r = Recall { generated_at: unix_now(), tabs: vec![hint(1, 3, 3), hint(2, 3, 0)] };
+        let r = Recall {
+            generated_at: unix_now(),
+            tabs: vec![hint(1, 3, 3), hint(2, 3, 0)],
+        };
         let mut moved = target(1);
         moved.url = "https://x.test/other".into();
         let (close, held) = r.hold_back(vec![target(1), target(2), moved.clone()]);

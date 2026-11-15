@@ -58,13 +58,24 @@ fn class_text(class: &str) -> &'static str {
 /// The tabs worth describing, biggest estimated memory first.
 pub fn pick(rows: &[Row]) -> Vec<&Row> {
     let mut v: Vec<&Row> = rows.iter().collect();
-    v.sort_by(|a, b| b.est_mb.cmp(&a.est_mb).then(b.inactive_minutes.cmp(&a.inactive_minutes)).then(a.target.id.cmp(&b.target.id)));
+    v.sort_by(|a, b| {
+        b.est_mb
+            .cmp(&a.est_mb)
+            .then(b.inactive_minutes.cmp(&a.inactive_minutes))
+            .then(a.target.id.cmp(&b.target.id))
+    });
     v.truncate(MAX_TABS);
     v
 }
 
 /// The numbered, feature-only description sent to the model.
-pub fn describe(tabs: &[&Row], percent: f64, used_mb: u64, total_mb: u64, keep_tabs: usize) -> Value {
+pub fn describe(
+    tabs: &[&Row],
+    percent: f64,
+    used_mb: u64,
+    total_mb: u64,
+    keep_tabs: usize,
+) -> Value {
     json!({
         "memory": {"percent_in_use": percent.round(), "used_mb": used_mb, "total_mb": total_mb},
         "tab_budget": keep_tabs,
@@ -94,7 +105,11 @@ fn title(r: &Row) -> String {
     let t = r.title.trim();
     let t = if t.is_empty() { "this tab" } else { t };
     let short: String = t.chars().take(40).collect();
-    if t.chars().count() > 40 { format!("\u{201c}{short}…\u{201d}") } else { format!("\u{201c}{short}\u{201d}") }
+    if t.chars().count() > 40 {
+        format!("\u{201c}{short}…\u{201d}")
+    } else {
+        format!("\u{201c}{short}\u{201d}")
+    }
 }
 
 /// Put titles back where the model wrote `#N`. Longest numbers first, so `#12`
@@ -109,11 +124,20 @@ fn restore_titles(text: &str, tabs: &[&Row]) -> String {
 
 /// Read the model's JSON. Anything malformed or out of range is dropped.
 pub fn parse(raw: &str, tabs: &[&Row], max_close: usize) -> Option<Verdict> {
-    let v: Value = serde_json::from_str(raw.trim().trim_start_matches("```json").trim_end_matches("```").trim()).ok()?;
+    let v: Value = serde_json::from_str(
+        raw.trim()
+            .trim_start_matches("```json")
+            .trim_end_matches("```")
+            .trim(),
+    )
+    .ok()?;
     let reply = v["reply"].as_str().filter(|s| !s.trim().is_empty())?;
     let numbered = |key: &str, ok: &dyn Fn(&Row) -> bool, cap: usize| -> Vec<(Target, String)> {
         let mut seen = std::collections::HashSet::new();
-        v[key].as_array().into_iter().flatten()
+        v[key]
+            .as_array()
+            .into_iter()
+            .flatten()
             .filter_map(|n| n.as_u64())
             .filter_map(|n| tabs.get((n as usize).checked_sub(1)?).copied())
             .filter(|r| ok(r) && seen.insert(r.target.clone()))
@@ -125,31 +149,66 @@ pub fn parse(raw: &str, tabs: &[&Row], max_close: usize) -> Option<Verdict> {
     // page or a tab used in the last hour, whatever it says.
     let close = numbered("close", &|r| r.offerable_for_close(), max_close);
     let unload = numbered("unload", &|r| r.eligible, crate::browser::BATCH_LIMIT)
-        .into_iter().filter(|(t, _)| !close.iter().any(|(c, _)| c == t)).collect();
-    Some(Verdict { reply: restore_titles(reply, tabs), unload, close })
+        .into_iter()
+        .filter(|(t, _)| !close.iter().any(|(c, _)| c == t))
+        .collect();
+    Some(Verdict {
+        reply: restore_titles(reply, tabs),
+        unload,
+        close,
+    })
 }
 
 /// The rules' own view in the warden's voice, for when no model answers.
 pub fn fallback(rows: &[Row], close: &[Target], percent: f64) -> Verdict {
-    let eligible: Vec<&Row> = rows.iter().filter(|r| r.eligible && !close.contains(&r.target)).take(crate::browser::BATCH_LIMIT).collect();
+    let eligible: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.eligible && !close.contains(&r.target))
+        .take(crate::browser::BATCH_LIMIT)
+        .collect();
     let closing: Vec<&Row> = rows.iter().filter(|r| close.contains(&r.target)).collect();
-    let mb: u64 = eligible.iter().chain(&closing).map(|r| r.est_mb as u64).sum();
+    let mb: u64 = eligible
+        .iter()
+        .chain(&closing)
+        .map(|r| r.est_mb as u64)
+        .sum();
     let reply = if rows.is_empty() {
-        "No browser is reporting tabs to me yet. Once the extension connects I'll have opinions.".to_string()
+        "No browser is reporting tabs to me yet. Once the extension connects I'll have opinions."
+            .to_string()
     } else if eligible.is_empty() && closing.is_empty() {
-        format!("{} tabs, memory at {percent:.0}%, and nothing I'd release right now. Everything is recent, pinned or protected. Tidy herd.", rows.len())
+        format!(
+            "{} tabs, memory at {percent:.0}%, and nothing I'd release right now. Everything is recent, pinned or protected. Tidy herd.",
+            rows.len()
+        )
     } else {
         format!(
             "{} tabs open, memory at {percent:.0}%. I'd unload {} and close {}, roughly {} back. My AI side is offline, so this is the rules talking.",
-            rows.len(), eligible.len(), closing.len(), crate::voice::mb_text(mb)
+            rows.len(),
+            eligible.len(),
+            closing.len(),
+            crate::voice::mb_text(mb)
         )
     };
-    let pairs = |v: Vec<&Row>| v.into_iter().map(|r| (r.target.clone(), r.title.clone())).collect();
-    Verdict { reply, unload: pairs(eligible), close: pairs(closing) }
+    let pairs = |v: Vec<&Row>| {
+        v.into_iter()
+            .map(|r| (r.target.clone(), r.title.clone()))
+            .collect()
+    };
+    Verdict {
+        reply,
+        unload: pairs(eligible),
+        close: pairs(closing),
+    }
 }
 
 fn targets_json(v: &[(Target, String)]) -> Value {
-    json!(v.iter().map(|(t, title)| json!({"browser": t.browser, "id": t.id, "url": t.url, "title": title})).collect::<Vec<_>>())
+    json!(
+        v.iter()
+            .map(
+                |(t, title)| json!({"browser": t.browser, "id": t.id, "url": t.url, "title": title})
+            )
+            .collect::<Vec<_>>()
+    )
 }
 
 /// `POST /browser/explain`.
@@ -165,17 +224,33 @@ pub async fn explain(State(st): State<AppState>) -> Json<Value> {
     };
     let m = st.memory();
     let tabs = pick(&rows);
-    let facts = describe(&tabs, m.percent(), m.used() / 1_048_576, m.total / 1_048_576, tabs_config.keep_tabs);
+    let facts = describe(
+        &tabs,
+        m.percent(),
+        m.used() / 1_048_576,
+        m.total / 1_048_576,
+        tabs_config.keep_tabs,
+    );
     let messages = [
         json!({"role": "system", "content": SYSTEM}),
         json!({"role": "user", "content": format!("Analyze now. Snapshot: {facts}")}),
     ];
     let cloud_allowed = st.ai.cloud_enabled || st.cfg.assistant.cloud_enabled;
-    let answer = if rows.is_empty() { None } else { crate::assistant::ask_model(&st, &messages, cloud_allowed).await };
+    let answer = if rows.is_empty() {
+        None
+    } else {
+        crate::assistant::ask_model(&st, &messages, cloud_allowed).await
+    };
     let (verdict, tier) = answer
-        .and_then(|(raw, tier)| parse(&raw, &tabs, st.cfg.tabs.max_close_per_sweep).map(|v| (v, tier)))
+        .and_then(|(raw, tier)| {
+            parse(&raw, &tabs, st.cfg.tabs.max_close_per_sweep).map(|v| (v, tier))
+        })
         .unwrap_or_else(|| (fallback(&rows, &close, m.percent()), "facts"));
-    tracing::info!("analyze now ({tier}): {} unload, {} close suggested", verdict.unload.len(), verdict.close.len());
+    tracing::info!(
+        "analyze now ({tier}): {} unload, {} close suggested",
+        verdict.unload.len(),
+        verdict.close.len()
+    );
     Json(json!({
         "reply": verdict.reply,
         "tier": tier,
@@ -194,7 +269,11 @@ mod tests {
 
     fn row(id: i64, status: &'static str, eligible: bool, closeable: bool, mb: u32) -> Row {
         Row {
-            target: Target { browser: "b".into(), id, url: format!("https://secret.example/{id}") },
+            target: Target {
+                browser: "b".into(),
+                id,
+                url: format!("https://secret.example/{id}"),
+            },
             title: format!("Private title {id}"),
             inactive_minutes: 300,
             eligible,
@@ -221,7 +300,10 @@ mod tests {
         let rows = vec![row(1, "candidate", true, true, 400)];
         let text = describe(&pick(&rows), 71.0, 1000, 2000, 6).to_string();
         assert!(text.contains("\"n\":1") && text.contains("social feed"));
-        assert!(!text.contains("secret.example") && !text.contains("Private title"), "{text}");
+        assert!(
+            !text.contains("secret.example") && !text.contains("Private title"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -234,11 +316,22 @@ mod tests {
         let tabs = pick(&rows); // 2, 1, 3 by size
         let raw = r##"{"reply":"#2 is huge but #1 can go. Also #3.","unload":[1,2,2,9,0],"close":[2,3,1]}"##;
         let v = parse(raw, &tabs, 10).unwrap();
-        assert!(v.reply.contains("Private title 2") && v.reply.contains("Private title 1"), "{}", v.reply);
+        assert!(
+            v.reply.contains("Private title 2") && v.reply.contains("Private title 1"),
+            "{}",
+            v.reply
+        );
         assert!(!v.reply.contains('#'));
         let ids = |l: &[(Target, String)]| l.iter().map(|(t, _)| t.id).collect::<Vec<_>>();
-        assert_eq!(ids(&v.close), [1], "#1 is the protected tab 2 and #3 was used recently: both dropped");
-        assert!(ids(&v.unload).is_empty(), "tab 1 is being closed; tab 2 is not eligible");
+        assert_eq!(
+            ids(&v.close),
+            [1],
+            "#1 is the protected tab 2 and #3 was used recently: both dropped"
+        );
+        assert!(
+            ids(&v.unload).is_empty(),
+            "tab 1 is being closed; tab 2 is not eligible"
+        );
     }
 
     #[test]
@@ -249,7 +342,11 @@ mod tests {
         assert!(parse(r#"{"reply":"  "}"#, &tabs, 10).is_none());
         let f = fallback(&rows, &[], 80.0);
         assert_eq!(f.unload.len(), 1);
-        assert!(f.reply.contains("unload 1") && f.reply.contains("roughly 400 MB"), "{}", f.reply);
+        assert!(
+            f.reply.contains("unload 1") && f.reply.contains("roughly 400 MB"),
+            "{}",
+            f.reply
+        );
         assert!(fallback(&[], &[], 50.0).reply.contains("No browser"));
     }
 

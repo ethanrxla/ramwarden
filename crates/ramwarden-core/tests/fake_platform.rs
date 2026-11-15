@@ -28,7 +28,12 @@ fn world() -> Shared {
     add(10, "brave", 900, Some("brave#10"));
     add(11, "brave", 600, Some("brave#10"));
     add(20, "Discord", 500, Some("Discord#20"));
-    add(30, "FortniteClient-Win64-Shipping", 3000, Some("FortniteClient-Win64-Shipping#30"));
+    add(
+        30,
+        "FortniteClient-Win64-Shipping",
+        3000,
+        Some("FortniteClient-Win64-Shipping#30"),
+    );
     add(40, "explorer", 300, Some("explorer#40"));
 
     for (name, pids, cur) in [
@@ -71,7 +76,14 @@ fn pressure(some: f64, full: f64) -> Pressure {
     }
 }
 
-fn step(l: &mut Ladder, p: &Platform, det: &Detector, some: f64, full: f64, wl: &[String]) -> ramwarden_core::ladder::Report {
+fn step(
+    l: &mut Ladder,
+    p: &Platform,
+    det: &Detector,
+    some: f64,
+    full: f64,
+    wl: &[String],
+) -> ramwarden_core::ladder::Report {
     let mut w = World {
         det,
         groups: p.ready_groups(),
@@ -92,13 +104,28 @@ fn the_detector_differences_cpu_and_calls_quiet_apps_idle() {
     let det = warm_detector(&p, &shared);
     assert!(det.is_warm());
     assert_eq!(det.get(10).unwrap().verdict, Verdict::Idle);
-    assert_eq!(det.get(30).unwrap().verdict, Verdict::Protected, "a game is structural");
-    assert_eq!(det.get(40).unwrap().verdict, Verdict::Protected, "the shell is structural");
+    assert_eq!(
+        det.get(30).unwrap().verdict,
+        Verdict::Protected,
+        "a game is structural"
+    );
+    assert_eq!(
+        det.get(40).unwrap().verdict,
+        Verdict::Protected,
+        "the shell is structural"
+    );
 
     // Busy between samples: 2 CPU-seconds in one tick.
     let mut det = Detector::new(p.processes());
     det.sample(&Default::default()).unwrap();
-    shared.lock().unwrap().processes.iter_mut().find(|x| x.pid == 20).unwrap().cpu_seconds += 2.0;
+    shared
+        .lock()
+        .unwrap()
+        .processes
+        .iter_mut()
+        .find(|x| x.pid == 20)
+        .unwrap()
+        .cpu_seconds += 2.0;
     det.sample(&Default::default()).unwrap();
     assert_eq!(det.get(20).unwrap().verdict, Verdict::InUse);
 }
@@ -130,8 +157,16 @@ fn reclaim_targets_idle_groups_and_never_a_protected_one() {
     let w = shared.lock().unwrap();
     assert_eq!(fake::count(&w, "reclaim brave#10"), 1, "{:?}", w.log);
     assert_eq!(fake::count(&w, "reclaim Discord#20"), 1, "{:?}", w.log);
-    assert_eq!(fake::count(&w, "reclaim Fortnite"), 0, "a game must never be reclaimed from");
-    assert_eq!(fake::count(&w, "reclaim explorer"), 0, "the shell must never be reclaimed from");
+    assert_eq!(
+        fake::count(&w, "reclaim Fortnite"),
+        0,
+        "a game must never be reclaimed from"
+    );
+    assert_eq!(
+        fake::count(&w, "reclaim explorer"),
+        0,
+        "the shell must never be reclaimed from"
+    );
     assert!(report.total_freed > 0);
 }
 
@@ -145,14 +180,26 @@ fn the_game_is_never_a_target_at_any_rung_even_when_watchlisted() {
         ..Default::default()
     };
     let mut l = Ladder::new(cfg, Actuator::for_platform(&p));
-    let wl = vec!["FortniteClient-Win64-Shipping".to_string(), "Discord".to_string()];
+    let wl = vec![
+        "FortniteClient-Win64-Shipping".to_string(),
+        "Discord".to_string(),
+    ];
 
-    for (some, full) in [(2.0, 0.0), (6.0, 0.0), (11.0, 0.0), (16.0, 0.0), (1.0, 30.0)] {
+    for (some, full) in [
+        (2.0, 0.0),
+        (6.0, 0.0),
+        (11.0, 0.0),
+        (16.0, 0.0),
+        (1.0, 30.0),
+    ] {
         step(&mut l, &p, &det, some, full, &wl);
     }
     let w = shared.lock().unwrap();
     for entry in &w.log {
-        assert!(!entry.contains(" 30") && !entry.contains("Fortnite"), "the game was touched: {entry}");
+        assert!(
+            !entry.contains(" 30") && !entry.contains("Fortnite"),
+            "the game was touched: {entry}"
+        );
     }
     assert!(!w.exited.contains(&30) && !w.suspended.contains(&30));
 }
@@ -172,8 +219,14 @@ fn suspend_then_release_wakes_exactly_what_was_frozen() {
     let report = step(&mut l, &p, &det, 0.0, 0.0, &wl);
     assert_eq!(report.rung, Some(Rung::Release));
     let w = shared.lock().unwrap();
-    assert!(w.suspended.is_empty(), "release must resume what the ladder froze");
-    assert!(w.groups.iter().all(|g| g.cap.is_none()), "and lift every cap");
+    assert!(
+        w.suspended.is_empty(),
+        "release must resume what the ladder froze"
+    );
+    assert!(
+        w.groups.iter().all(|g| g.cap.is_none()),
+        "and lift every cap"
+    );
 }
 
 #[test]
@@ -185,11 +238,25 @@ fn a_soft_cap_is_set_at_pageout_and_lifted_on_release() {
 
     step(&mut l, &p, &det, 6.0, 0.0, &[]);
     assert!(l.actuator_has_caps());
-    assert!(shared.lock().unwrap().groups.iter().any(|g| g.cap.is_some()));
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .groups
+            .iter()
+            .any(|g| g.cap.is_some())
+    );
 
     step(&mut l, &p, &det, 0.0, 0.0, &[]);
     assert!(!l.actuator_has_caps());
-    assert!(shared.lock().unwrap().groups.iter().all(|g| g.cap.is_none()));
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .groups
+            .iter()
+            .all(|g| g.cap.is_none())
+    );
 }
 
 #[test]
@@ -212,7 +279,10 @@ fn estimated_pressure_is_logged_as_an_estimate() {
         .with_history(ramwarden_core::history::History::in_memory().unwrap());
     step(&mut l, &p, &det, 3.0, 0.0, &[]);
     let rows = l.history().unwrap().recent_actions(10).unwrap();
-    assert!(rows.iter().all(|r| r.trigger == "pressure-estimate"), "{rows:?}");
+    assert!(
+        rows.iter().all(|r| r.trigger == "pressure-estimate"),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -225,7 +295,10 @@ fn a_rung_the_platform_cannot_run_is_logged_once_not_every_tick() {
         .with_history(ramwarden_core::history::History::in_memory().unwrap());
     for _ in 0..3 {
         let report = step(&mut l, &p, &det, 3.0, 0.0, &[]);
-        assert!(report.steps.iter().any(|(a, _, _)| *a == "reclaim"), "the report still says why");
+        assert!(
+            report.steps.iter().any(|(a, _, _)| *a == "reclaim"),
+            "the report still says why"
+        );
     }
     let rows = l.history().unwrap().recent_actions(100).unwrap();
     let reclaims = rows.iter().filter(|r| r.action == "reclaim").count();

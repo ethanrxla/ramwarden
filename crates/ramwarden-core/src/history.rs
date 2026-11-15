@@ -314,7 +314,14 @@ impl History {
             for (url, title) in tabs {
                 // v1 fell back to the URL when a tab had no title.
                 let title = if title.is_empty() { url } else { title };
-                stmt.execute(params![url, title, now, per_tab, trigger_type, goal_context])?;
+                stmt.execute(params![
+                    url,
+                    title,
+                    now,
+                    per_tab,
+                    trigger_type,
+                    goal_context
+                ])?;
             }
         }
         tx.commit()?;
@@ -328,7 +335,17 @@ impl History {
             "INSERT INTO tab_outcomes
                (browser, tab_id, host, class, idle_minutes, p_return, est_mb, frecency, unloaded_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![u.browser, u.tab_id, u.host, u.class, u.idle_minutes, u.p_return, u.est_mb, u.frecency, now],
+            params![
+                u.browser,
+                u.tab_id,
+                u.host,
+                u.class,
+                u.idle_minutes,
+                u.p_return,
+                u.est_mb,
+                u.frecency,
+                now
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -399,11 +416,15 @@ impl History {
     }
 
     pub fn count_outcomes(&self) -> Result<i64> {
-        self.conn.query_row("SELECT COUNT(*) FROM tab_outcomes", [], |r| r.get(0))
+        self.conn
+            .query_row("SELECT COUNT(*) FROM tab_outcomes", [], |r| r.get(0))
     }
 
     pub fn prune_outcomes(&self, days: i64, now: i64) -> Result<usize> {
-        self.conn.execute("DELETE FROM tab_outcomes WHERE unloaded_at < ?1", [now - days * 86_400])
+        self.conn.execute(
+            "DELETE FROM tab_outcomes WHERE unloaded_at < ?1",
+            [now - days * 86_400],
+        )
     }
 
     pub fn recent_tabs(&self, limit: u32) -> Result<Vec<ClosedTab>> {
@@ -528,10 +549,28 @@ impl History {
             )?;
             for s in samples {
                 stmt.execute(params![
-                    now, epoch, s.pid, s.name, s.role, s.verdict, s.protection,
-                    s.pss, s.rss, s.cpu_recent, s.age_minutes, s.established, s.listening,
-                    s.focused as i32, s.windowed as i32, s.audio as i32, s.tty as i32,
-                    s.descendant as i32, s.scope, ctx.psi_some, ctx.psi_full, ctx.available,
+                    now,
+                    epoch,
+                    s.pid,
+                    s.name,
+                    s.role,
+                    s.verdict,
+                    s.protection,
+                    s.pss,
+                    s.rss,
+                    s.cpu_recent,
+                    s.age_minutes,
+                    s.established,
+                    s.listening,
+                    s.focused as i32,
+                    s.windowed as i32,
+                    s.audio as i32,
+                    s.tty as i32,
+                    s.descendant as i32,
+                    s.scope,
+                    ctx.psi_some,
+                    ctx.psi_full,
+                    ctx.available,
                 ])?;
             }
         }
@@ -694,7 +733,10 @@ mod tests {
     #[test]
     fn saves_and_reads_back_closed_tabs() {
         let h = History::in_memory().unwrap();
-        assert_eq!(h.save_tabs(&tabs(), 100.0, "auto", "bug bounty").unwrap(), 2);
+        assert_eq!(
+            h.save_tabs(&tabs(), 100.0, "auto", "bug bounty").unwrap(),
+            2
+        );
 
         let rows = h.recent_tabs(10).unwrap();
         assert_eq!(rows.len(), 2);
@@ -717,8 +759,13 @@ mod tests {
     #[test]
     fn a_tab_with_no_title_falls_back_to_its_url() {
         let h = History::in_memory().unwrap();
-        h.save_tabs(&[("https://x.test/".into(), String::new())], 0.0, "manual", "")
-            .unwrap();
+        h.save_tabs(
+            &[("https://x.test/".into(), String::new())],
+            0.0,
+            "manual",
+            "",
+        )
+        .unwrap();
         assert_eq!(h.recent_tabs(1).unwrap()[0].title, "https://x.test/");
     }
 
@@ -741,8 +788,13 @@ mod tests {
     fn the_limit_is_honoured_and_newest_comes_first() {
         let h = History::in_memory().unwrap();
         for i in 0..5 {
-            h.save_tabs(&[(format!("https://x/{i}"), format!("t{i}"))], 0.0, "auto", "")
-                .unwrap();
+            h.save_tabs(
+                &[(format!("https://x/{i}"), format!("t{i}"))],
+                0.0,
+                "auto",
+                "",
+            )
+            .unwrap();
         }
         let rows = h.recent_tabs(2).unwrap();
         assert_eq!(rows.len(), 2);
@@ -851,7 +903,11 @@ mod tests {
             pid,
             name: name.into(),
             role: "APP".into(),
-            verdict: if focused { "IN_USE".into() } else { "IDLE".into() },
+            verdict: if focused {
+                "IN_USE".into()
+            } else {
+                "IDLE".into()
+            },
             pss: 500 * 1024 * 1024,
             rss: 650 * 1024 * 1024,
             cpu_recent: cpu,
@@ -882,9 +938,19 @@ mod tests {
                     psi_some, psi_full, available)
                  VALUES ('t',?1,?2,?3,?4,?5,'',?6,?7,?8,?9,0,0,?10,0,0,0,0,NULL,?11,?12,?13)",
                 params![
-                    epoch, s.pid, s.name, s.role, s.verdict, s.pss, s.rss,
-                    s.cpu_recent, s.age_minutes, s.focused as i32,
-                    c.psi_some, c.psi_full, c.available
+                    epoch,
+                    s.pid,
+                    s.name,
+                    s.role,
+                    s.verdict,
+                    s.pss,
+                    s.rss,
+                    s.cpu_recent,
+                    s.age_minutes,
+                    s.focused as i32,
+                    c.psi_some,
+                    c.psi_full,
+                    c.available
                 ],
             )
             .unwrap();
@@ -894,7 +960,13 @@ mod tests {
     fn samples_are_recorded_with_their_machine_context() {
         let h = History::in_memory().unwrap();
         let n = h
-            .log_signals(&[sample(1, "brave", false, 0.0), sample(2, "Discord", false, 0.0)], ctx())
+            .log_signals(
+                &[
+                    sample(1, "brave", false, 0.0),
+                    sample(2, "Discord", false, 0.0),
+                ],
+                ctx(),
+            )
             .unwrap();
         assert_eq!(n, 2);
         assert_eq!(h.count_signals().unwrap(), 2);
@@ -930,7 +1002,12 @@ mod tests {
         insert_at(&h, now - 3300, &sample(101, "cargo", false, 2.5), ctx());
 
         let rows = h.return_labels(1800, 0.5).unwrap();
-        assert!(rows.iter().find(|r| r.epoch == now - 3600).unwrap().returned);
+        assert!(
+            rows.iter()
+                .find(|r| r.epoch == now - 3600)
+                .unwrap()
+                .returned
+        );
     }
 
     #[test]
@@ -955,7 +1032,10 @@ mod tests {
 
         let rows = h.return_labels(1800, 0.5).unwrap();
         let early = rows.iter().find(|r| r.epoch == now - 7200).unwrap();
-        assert!(!early.returned, "a return 100 min later is not within 30 min");
+        assert!(
+            !early.returned,
+            "a return 100 min later is not within 30 min"
+        );
     }
 
     /// The subtle one: rows too recent to have been observed for a full horizon
@@ -990,7 +1070,10 @@ mod tests {
 
         let rows = h.return_labels(1800, 0.5).unwrap();
         let old = rows.iter().find(|r| r.sample.name == "old-app").unwrap();
-        assert!(!old.returned, "a different program reusing the pid is not a return");
+        assert!(
+            !old.returned,
+            "a different program reusing the pid is not a return"
+        );
     }
 
     #[test]
@@ -1017,7 +1100,12 @@ mod tests {
         let h = History::in_memory().unwrap();
         let now = unix_now() as i64;
         insert_at(&h, now - 40 * 86_400, &sample(1, "old", false, 0.0), ctx());
-        insert_at(&h, now - 2 * 86_400, &sample(2, "recent", false, 0.0), ctx());
+        insert_at(
+            &h,
+            now - 2 * 86_400,
+            &sample(2, "recent", false, 0.0),
+            ctx(),
+        );
 
         assert_eq!(h.prune_signals(30).unwrap(), 1);
         assert_eq!(h.count_signals().unwrap(), 1);
@@ -1125,7 +1213,10 @@ mod tests {
         let h = History::open(&path).unwrap();
         let rows = h.recent_tabs(10).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].goal_context, "", "the added column defaults to empty");
+        assert_eq!(
+            rows[0].goal_context, "",
+            "the added column defaults to empty"
+        );
     }
 
     #[test]
@@ -1191,15 +1282,34 @@ mod tests {
         assert_eq!(h.pending_unloads("b").unwrap().len(), 4);
         assert_eq!(h.mark_returned("b", 1, 1_000 + 3_600).unwrap(), 1);
         assert_eq!(h.mark_returned("b", 3, 1_000 + 3 * day).unwrap(), 1);
-        assert_eq!(h.mark_returned("b", 99, 5_000).unwrap(), 0, "unknown tab: nothing changes");
-        assert_eq!(h.pending_unloads("other").unwrap().len(), 0, "scoped by browser");
+        assert_eq!(
+            h.mark_returned("b", 99, 5_000).unwrap(),
+            0,
+            "unknown tab: nothing changes"
+        );
+        assert_eq!(
+            h.pending_unloads("other").unwrap().len(),
+            0,
+            "scoped by browser"
+        );
 
         let now = 1_000 + 2 * day + 600;
         let labelled = h.labelled_outcomes(day, now).unwrap();
         let by_host = |host: &str| labelled.iter().find(|o| o.host == host);
-        assert_eq!(by_host("a.com").map(|o| (o.returned, o.after_seconds)), Some((true, Some(3_600))));
-        assert_eq!(by_host("b.com").map(|o| o.returned), Some(false), "horizon passed without a return");
-        assert_eq!(by_host("c.com").map(|o| o.returned), Some(false), "came back, but after the horizon");
+        assert_eq!(
+            by_host("a.com").map(|o| (o.returned, o.after_seconds)),
+            Some((true, Some(3_600)))
+        );
+        assert_eq!(
+            by_host("b.com").map(|o| o.returned),
+            Some(false),
+            "horizon passed without a return"
+        );
+        assert_eq!(
+            by_host("c.com").map(|o| o.returned),
+            Some(false),
+            "came back, but after the horizon"
+        );
         assert!(by_host("d.com").is_none(), "its answer is not known yet");
         assert_eq!(h.count_outcomes().unwrap(), 4);
     }
@@ -1207,8 +1317,16 @@ mod tests {
     #[test]
     fn a_return_marks_only_the_newest_pending_unload_of_that_tab() {
         let h = History::in_memory().unwrap();
-        let u = NewUnload { browser: "b".into(), tab_id: 7, host: "x.com".into(), class: "feed".into(),
-            idle_minutes: 90, p_return: 0.4, est_mb: 250, frecency: 1.0 };
+        let u = NewUnload {
+            browser: "b".into(),
+            tab_id: 7,
+            host: "x.com".into(),
+            class: "feed".into(),
+            idle_minutes: 90,
+            p_return: 0.4,
+            est_mb: 250,
+            frecency: 1.0,
+        };
         h.record_unload(&u, 100).unwrap();
         h.record_unload(&u, 200).unwrap();
         h.mark_returned("b", 7, 300).unwrap();
@@ -1220,33 +1338,54 @@ mod tests {
 /// Local tab feedback is never sent to the hosted support database.
 impl History {
     pub(crate) fn tab_safety_schema(&self) -> Result<()> {
-        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS tab_feedback (
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tab_feedback (
             url TEXT PRIMARY KEY, protected_until INTEGER NOT NULL, negative INTEGER NOT NULL,
             updated_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS tab_close_events (
             id INTEGER PRIMARY KEY, url TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS tab_close_events_at ON tab_close_events(at);")
+            CREATE INDEX IF NOT EXISTS tab_close_events_at ON tab_close_events(at);",
+        )
     }
     pub fn tab_feedback(&self, url: &str, kind: &str, now: i64) -> Result<()> {
         self.tab_safety_schema()?;
-        self.conn.execute("DELETE FROM tab_feedback WHERE updated_at < ?1", [now-30*86400])?;
-        self.conn.execute("DELETE FROM tab_close_events WHERE at < ?1", [now-30*86400])?;
-        self.conn.execute("INSERT INTO tab_close_events(url,at,outcome) VALUES (?1,?2,?3)", params![url,now,kind])?;
+        self.conn.execute(
+            "DELETE FROM tab_feedback WHERE updated_at < ?1",
+            [now - 30 * 86400],
+        )?;
+        self.conn.execute(
+            "DELETE FROM tab_close_events WHERE at < ?1",
+            [now - 30 * 86400],
+        )?;
+        self.conn.execute(
+            "INSERT INTO tab_close_events(url,at,outcome) VALUES (?1,?2,?3)",
+            params![url, now, kind],
+        )?;
         if kind == "keep" || kind == "reopened" {
-            self.conn.execute("INSERT INTO tab_feedback VALUES (?1,?2,1,?3)
+            self.conn.execute(
+                "INSERT INTO tab_feedback VALUES (?1,?2,1,?3)
                 ON CONFLICT(url) DO UPDATE SET protected_until=excluded.protected_until,
                 negative=MIN(4,tab_feedback.negative+1),updated_at=excluded.updated_at",
-                params![url,now+86400,now])?;
+                params![url, now + 86400, now],
+            )?;
         } else if kind == "manual_close" {
-            self.conn.execute("DELETE FROM tab_feedback WHERE url=?1", [url])?;
+            self.conn
+                .execute("DELETE FROM tab_feedback WHERE url=?1", [url])?;
         }
         Ok(())
     }
-    pub fn tab_protection(&self, url: &str, now: i64) -> Result<(i64,u32)> {
+    pub fn tab_protection(&self, url: &str, now: i64) -> Result<(i64, u32)> {
         self.tab_safety_schema()?;
         use rusqlite::OptionalExtension;
-        Ok(self.conn.query_row("SELECT protected_until,negative FROM tab_feedback WHERE url=?1 AND updated_at>=?2",
-            params![url,now-30*86400], |r| Ok((r.get(0)?,r.get(1)?))).optional()?.unwrap_or_default())
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT protected_until,negative FROM tab_feedback WHERE url=?1 AND updated_at>=?2",
+                params![url, now - 30 * 86400],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or_default())
     }
 }
 
@@ -1255,14 +1394,26 @@ mod tab_feedback_tests {
     use super::*;
     #[test]
     fn feedback_survives_restart_expires_and_manual_close_resets() {
-        let dir=tempfile::tempdir().unwrap(); let path=dir.path().join("history.db");
-        { let h=History::open(&path).unwrap(); h.tab_feedback("https://namecheap.com/", "reopened", 100).unwrap(); }
-        let h=History::open(&path).unwrap();
-        assert_eq!(h.tab_protection("https://namecheap.com/",101).unwrap(), (86500,1));
-        assert!(h.tab_protection("https://namecheap.com/",86501).unwrap().0 < 86501);
-        h.tab_feedback("https://namecheap.com/","manual_close",200).unwrap();
-        assert_eq!(h.tab_protection("https://namecheap.com/",201).unwrap(), (0,0));
-        h.tab_feedback("x","keep",300).unwrap();
-        assert_eq!(h.tab_protection("x",300+31*86400).unwrap(),(0,0));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db");
+        {
+            let h = History::open(&path).unwrap();
+            h.tab_feedback("https://namecheap.com/", "reopened", 100)
+                .unwrap();
+        }
+        let h = History::open(&path).unwrap();
+        assert_eq!(
+            h.tab_protection("https://namecheap.com/", 101).unwrap(),
+            (86500, 1)
+        );
+        assert!(h.tab_protection("https://namecheap.com/", 86501).unwrap().0 < 86501);
+        h.tab_feedback("https://namecheap.com/", "manual_close", 200)
+            .unwrap();
+        assert_eq!(
+            h.tab_protection("https://namecheap.com/", 201).unwrap(),
+            (0, 0)
+        );
+        h.tab_feedback("x", "keep", 300).unwrap();
+        assert_eq!(h.tab_protection("x", 300 + 31 * 86400).unwrap(), (0, 0));
     }
 }

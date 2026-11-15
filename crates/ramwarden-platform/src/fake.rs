@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::{
-    AppGroup, Background, Compression, Desktop, DesktopSource, Error, GroupSource, MemorySource, MemoryStatus, Outcome, Pager, Parts,
-    Platform, Pressure, PressureSource, PressureWaker, ProcessControl, ProcessHandle,
-    ProcessSample, ProcessSource, Result,
+    AppGroup, Background, Compression, Desktop, DesktopSource, Error, GroupSource, MemorySource,
+    MemoryStatus, Outcome, Pager, Parts, Platform, Pressure, PressureSource, PressureWaker,
+    ProcessControl, ProcessHandle, ProcessSample, ProcessSource, Result,
 };
 
 /// One fake reclaim group.
@@ -85,8 +85,7 @@ impl Fake {
 impl ProcessSource for Fake {
     fn sample(&mut self) -> Result<Vec<ProcessSample>> {
         let w = self.world();
-        Ok(w
-            .processes
+        Ok(w.processes
             .iter()
             .filter(|p| !w.exited.contains(&p.pid))
             .cloned()

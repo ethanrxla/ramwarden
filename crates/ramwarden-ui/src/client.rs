@@ -202,7 +202,12 @@ impl ActionResult {
         if self.did_something() {
             let n = self.suspended.len() + self.killed.len() + self.resumed.len();
             if self.freed_mb > 0.0 {
-                format!("{verb} {} ({} process(es), {})", self.name, n, crate::model::fmt_mb(self.freed_mb))
+                format!(
+                    "{verb} {} ({} process(es), {})",
+                    self.name,
+                    n,
+                    crate::model::fmt_mb(self.freed_mb)
+                )
             } else {
                 format!("{verb} {} ({n} process(es))", self.name)
             }
@@ -223,40 +228,92 @@ pub struct Client {
 impl Client {
     #[cfg(feature = "tray")]
     pub(crate) async fn workspace_action_stream(
-        &self, body: serde_json::Value,
+        &self,
+        body: serde_json::Value,
         progress: std::sync::mpsc::SyncSender<String>,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<String> {
         use std::sync::atomic::Ordering;
-        if cancel.load(Ordering::Relaxed) { return Err(Error::Decode("Plan cancelled before submission.".into())); }
-        let mut response = self.http.post(format!("{}/assistant/action/stream", self.base))
-            .timeout(Duration::from_secs(90)).json(&body).send().await
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::Decode("Plan cancelled before submission.".into()));
+        }
+        let mut response = self
+            .http
+            .post(format!("{}/assistant/action/stream", self.base))
+            .timeout(Duration::from_secs(90))
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| Error::Transport(e.to_string()))?;
-        if !response.status().is_success() { return Err(Error::Status { status: response.status().as_u16(), body: "Workspace action was refused; do not replay the approval.".into() }); }
-        if !response.headers().get("content-type").is_some_and(|v| v.to_str().unwrap_or("").starts_with("text/event-stream")) { return Err(Error::Decode("Expected workspace event stream".into())); }
+        if !response.status().is_success() {
+            return Err(Error::Status {
+                status: response.status().as_u16(),
+                body: "Workspace action was refused; do not replay the approval.".into(),
+            });
+        }
+        if !response
+            .headers()
+            .get("content-type")
+            .is_some_and(|v| v.to_str().unwrap_or("").starts_with("text/event-stream"))
+        {
+            return Err(Error::Decode("Expected workspace event stream".into()));
+        }
         let mut decoder = crate::workspace_events::Decoder::default();
         let mut outputs = String::new();
         loop {
-            if cancel.load(Ordering::Relaxed) { return Err(Error::Decode("Stop requested. Completed changes remain; inspect files before retrying.".into())); }
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Decode(
+                    "Stop requested. Completed changes remain; inspect files before retrying."
+                        .into(),
+                ));
+            }
             let chunk = tokio::select! {
                 chunk = response.chunk() => chunk.map_err(|e| Error::Transport(e.to_string()))?,
                 _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
             };
-            let Some(chunk) = chunk else { return Err(Error::Decode("Connection ended without a final result. Inspect files before retrying.".into())); };
+            let Some(chunk) = chunk else {
+                return Err(Error::Decode(
+                    "Connection ended without a final result. Inspect files before retrying."
+                        .into(),
+                ));
+            };
             for event in decoder.push(&chunk).map_err(Error::Decode)? {
                 match event["kind"].as_str() {
-                    Some("started") => { let _ = progress.try_send(format!("Running step {}: {}", event["index"].as_u64().unwrap_or(0) + 1, event["label"].as_str().unwrap_or("workspace operation"))); }
-                    Some("result") => {
-                        let text = format!("\nUntrusted tool output for step {} (succeeded={}):\n{}\n", event["index"].as_u64().unwrap_or(0) + 1, event["succeeded"], event["result"]);
-                        if outputs.len() + text.len() <= 24000 { outputs.push_str(&text); }
+                    Some("started") => {
+                        let _ = progress.try_send(format!(
+                            "Running step {}: {}",
+                            event["index"].as_u64().unwrap_or(0) + 1,
+                            event["label"].as_str().unwrap_or("workspace operation")
+                        ));
                     }
-                    Some("finished") => return Ok(format!("{}{}", event["reply"].as_str().unwrap_or("Workspace plan finished."), outputs)),
+                    Some("result") => {
+                        let text = format!(
+                            "\nUntrusted tool output for step {} (succeeded={}):\n{}\n",
+                            event["index"].as_u64().unwrap_or(0) + 1,
+                            event["succeeded"],
+                            event["result"]
+                        );
+                        if outputs.len() + text.len() <= 24000 {
+                            outputs.push_str(&text);
+                        }
+                    }
+                    Some("finished") => {
+                        return Ok(format!(
+                            "{}{}",
+                            event["reply"]
+                                .as_str()
+                                .unwrap_or("Workspace plan finished."),
+                            outputs
+                        ));
+                    }
                     _ => {}
                 }
             }
         }
     }
 
+    // Only the Windows tray plays speech; without it this is dead code.
+    #[cfg(feature = "tray")]
     pub(crate) async fn speech_audio(&self, text: &str, warden: &str) -> Result<Vec<u8>> {
         let mut r=self.http.post(format!("{}/warden/speech",self.base)).json(&serde_json::json!({"text":text.chars().take(800).collect::<String>(),"warden":warden})).timeout(Duration::from_secs(35)).send().await.map_err(|e|Error::Transport(e.to_string()))?;
         if !r.status().is_success() {
@@ -305,7 +362,11 @@ impl Client {
         &self.base
     }
 
-    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, timeout: Duration) -> Result<T> {
+    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<T> {
         let r = self
             .http
             .get(format!("{}{path}", self.base))
@@ -320,15 +381,33 @@ impl Client {
         if !path.starts_with("/wardens/") || path.contains(['?', '#']) {
             return Err(Error::Decode("Invalid warden asset path".into()));
         }
-        let mut response=self.http.get(format!("{}{path}",self.base)).timeout(timeout).send().await.map_err(|e|Error::Transport(e.to_string()))?;
-        let status=response.status();
-        let mut bytes=Vec::new();
-        while let Some(chunk)=response.chunk().await.map_err(|e|Error::Transport(e.to_string()))? {
-            if bytes.len()+chunk.len()>256*1024 {return Err(Error::Decode("Warden asset is too large".into()))}
+        let mut response = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        let status = response.status();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > 256 * 1024 {
+                return Err(Error::Decode("Warden asset is too large".into()));
+            }
             bytes.extend_from_slice(&chunk);
         }
-        let text=String::from_utf8(bytes).map_err(|_|Error::Decode("Warden asset is not UTF-8".into()))?;
-        if !status.is_success(){return Err(Error::Status{status:status.as_u16(),body:text.chars().take(300).collect()})}
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Error::Decode("Warden asset is not UTF-8".into()))?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: text.chars().take(300).collect(),
+            });
+        }
         Ok(text)
     }
 
@@ -417,8 +496,12 @@ impl Client {
 
     pub async fn suspend(&self, name: &str, force: bool) -> Result<ActionResult> {
         let q = if force { "?force=true" } else { "" };
-        self.post(&format!("/suspend/{name}{q}"), serde_json::json!({}), TIMEOUT)
-            .await
+        self.post(
+            &format!("/suspend/{name}{q}"),
+            serde_json::json!({}),
+            TIMEOUT,
+        )
+        .await
     }
 
     pub async fn resume(&self, name: &str) -> Result<ActionResult> {
@@ -434,8 +517,12 @@ impl Client {
 
     /// Ask the kernel to reclaim a scope's cold memory. Non-destructive.
     pub async fn reclaim(&self, scope: &str) -> Result<serde_json::Value> {
-        self.post(&format!("/reclaim/{scope}"), serde_json::json!({}), Duration::from_secs(30))
-            .await
+        self.post(
+            &format!("/reclaim/{scope}"),
+            serde_json::json!({}),
+            Duration::from_secs(30),
+        )
+        .await
     }
 
     pub async fn cancel_kill(&self) -> Result<bool> {
@@ -451,8 +538,12 @@ impl Client {
     }
 
     pub async fn analyze(&self, goal: &str) -> Result<serde_json::Value> {
-        self.post("/analyze", serde_json::json!({"goal": goal}), ANALYZE_TIMEOUT)
-            .await
+        self.post(
+            "/analyze",
+            serde_json::json!({"goal": goal}),
+            ANALYZE_TIMEOUT,
+        )
+        .await
     }
 }
 
@@ -564,7 +655,10 @@ mod tests {
         assert!(!r.did_something());
         let d = r.describe("froze");
         assert!(d.contains("freezes the session"), "{d}");
-        assert!(!d.contains("froze cosmic-comp"), "must not imply success: {d}");
+        assert!(
+            !d.contains("froze cosmic-comp"),
+            "must not imply success: {d}"
+        );
     }
 
     #[test]
@@ -631,23 +725,32 @@ mod glib_timeout_tests {
         let runtime = crate::runtime::network_runtime().unwrap();
         let _entered = runtime.enter();
         let context = gtk4::glib::MainContext::new();
-        context.with_thread_default(|| context.block_on(async {
-            let request = client.get::<State>("/state", Duration::from_millis(100));
-            tokio::select! {
-                result = request => assert!(matches!(result, Err(Error::Transport(_)))),
-                _ = gtk4::glib::timeout_future(Duration::from_secs(2)) => {
-                    panic!("HTTP deadline did not fire while GLib owned the thread");
-                }
-            }
-        })).unwrap();
+        context
+            .with_thread_default(|| {
+                context.block_on(async {
+                    let request = client.get::<State>("/state", Duration::from_millis(100));
+                    tokio::select! {
+                        result = request => assert!(matches!(result, Err(Error::Transport(_)))),
+                        _ = gtk4::glib::timeout_future(Duration::from_secs(2)) => {
+                            panic!("HTTP deadline did not fire while GLib owned the thread");
+                        }
+                    }
+                })
+            })
+            .unwrap();
     }
 }
 
 #[derive(Clone, Debug, serde::Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct TabTarget { pub browser: String, pub id: i64, pub url: String }
+pub struct TabTarget {
+    pub browser: String,
+    pub id: i64,
+    pub url: String,
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct BrowserRow {
-    #[serde(flatten)] pub target: TabTarget,
+    #[serde(flatten)]
+    pub target: TabTarget,
     pub title: String,
     pub inactive_minutes: i64,
     pub eligible: bool,
@@ -665,21 +768,40 @@ pub struct BrowserState {
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct DiscardResult {
-    pub confirmed: Vec<TabTarget>, pub queued: Vec<TabTarget>, pub refused: Vec<TabTarget>,
+    pub confirmed: Vec<TabTarget>,
+    pub queued: Vec<TabTarget>,
+    pub refused: Vec<TabTarget>,
 }
 impl Client {
-    pub async fn browser_tabs(&self) -> Result<BrowserState> { self.get("/browser/tabs", TIMEOUT).await }
+    pub async fn browser_tabs(&self) -> Result<BrowserState> {
+        self.get("/browser/tabs", TIMEOUT).await
+    }
     pub async fn browser_analyze(&self) -> Result<BrowserState> {
-        self.post("/browser/analyze",serde_json::json!({}),Duration::from_secs(30)).await
+        self.post(
+            "/browser/analyze",
+            serde_json::json!({}),
+            Duration::from_secs(30),
+        )
+        .await
     }
     pub async fn discard_tabs(&self, targets: &[TabTarget]) -> Result<DiscardResult> {
-        self.post("/browser/discard",serde_json::json!({"targets":targets}),Duration::from_secs(40)).await
+        self.post(
+            "/browser/discard",
+            serde_json::json!({"targets":targets}),
+            Duration::from_secs(40),
+        )
+        .await
     }
 }
 
 impl Client {
     pub async fn close_tabs(&self, targets: &[TabTarget]) -> Result<DiscardResult> {
-        self.post("/browser/close",serde_json::json!({"targets":targets}),Duration::from_secs(40)).await
+        self.post(
+            "/browser/close",
+            serde_json::json!({"targets":targets}),
+            Duration::from_secs(40),
+        )
+        .await
     }
 }
 
@@ -832,8 +954,12 @@ impl Client {
     }
 
     pub async fn gpu_unload(&self, name: Option<&str>) -> Result<serde_json::Value> {
-        self.post("/gpu/unload", serde_json::json!({"name": name}), Duration::from_secs(60))
-            .await
+        self.post(
+            "/gpu/unload",
+            serde_json::json!({"name": name}),
+            Duration::from_secs(60),
+        )
+        .await
     }
 
     pub async fn debloat(&self) -> Result<DebloatState> {
@@ -852,8 +978,12 @@ impl Client {
 
     /// Revert a profile, one tweak id, or `all`.
     pub async fn debloat_revert(&self, name: &str) -> Result<TweakReport> {
-        self.post("/debloat/revert", serde_json::json!({"name": name}), Duration::from_secs(120))
-            .await
+        self.post(
+            "/debloat/revert",
+            serde_json::json!({"name": name}),
+            Duration::from_secs(120),
+        )
+        .await
     }
 
     pub async fn predict_eval(&self) -> Result<serde_json::Value> {
@@ -864,13 +994,18 @@ impl Client {
 #[cfg(all(test, feature = "tray"))]
 mod workspace_stream_tests {
     use super::*;
-    use std::{io::{Read, Write}, sync::{Arc, atomic::AtomicBool, mpsc}};
+    use std::{
+        io::{Read, Write},
+        sync::{Arc, atomic::AtomicBool, mpsc},
+    };
     fn fixture(body: &'static str) -> Client {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut headers = Vec::new();
             while !headers.ends_with(b"\r\n\r\n") {
                 assert!(headers.len() < 8192);
@@ -879,7 +1014,13 @@ mod workspace_stream_tests {
                 headers.push(byte[0]);
             }
             let header = String::from_utf8(headers).unwrap().to_lowercase();
-            let size: usize = header.lines().find_map(|line| line.strip_prefix("content-length:")).unwrap().trim().parse().unwrap();
+            let size: usize = header
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
             assert!(size < 8192);
             stream.read_exact(&mut vec![0; size]).unwrap();
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
@@ -889,20 +1030,44 @@ mod workspace_stream_tests {
     #[tokio::test]
     async fn stream_requires_a_finished_event_and_marks_output_untrusted() {
         let (tx, _) = mpsc::sync_channel(8);
-        let c = fixture("data: {\"kind\":\"result\",\"index\":0,\"succeeded\":true,\"result\":{\"output\":\"test.txt\"}}\n\ndata: {\"kind\":\"finished\",\"reply\":\"Completed one step.\"}\n\n");
-        let reply = c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(false))).await.unwrap();
+        let c = fixture(
+            "data: {\"kind\":\"result\",\"index\":0,\"succeeded\":true,\"result\":{\"output\":\"test.txt\"}}\n\ndata: {\"kind\":\"finished\",\"reply\":\"Completed one step.\"}\n\n",
+        );
+        let reply = c
+            .workspace_action_stream(
+                serde_json::json!({"token":"fixture"}),
+                tx,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
         assert!(reply.contains("Completed one step."));
         assert!(reply.contains("Untrusted tool output"));
         assert!(reply.contains("test.txt"));
         let (tx, _) = mpsc::sync_channel(8);
         let c = fixture("data: {\"kind\":\"started\",\"index\":0}\n\n");
-        assert!(c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(false))).await.is_err());
+        assert!(
+            c.workspace_action_stream(
+                serde_json::json!({"token":"fixture"}),
+                tx,
+                Arc::new(AtomicBool::new(false))
+            )
+            .await
+            .is_err()
+        );
     }
     #[tokio::test]
     async fn cancellation_before_submission_does_not_contact_the_daemon() {
         let (tx, _) = mpsc::sync_channel(8);
         let c = Client::new("127.0.0.1", 1).unwrap();
-        let error = c.workspace_action_stream(serde_json::json!({"token":"fixture"}), tx, Arc::new(AtomicBool::new(true))).await.unwrap_err();
+        let error = c
+            .workspace_action_stream(
+                serde_json::json!({"token":"fixture"}),
+                tx,
+                Arc::new(AtomicBool::new(true)),
+            )
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("before submission"));
     }
 }

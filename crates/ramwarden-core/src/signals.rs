@@ -169,7 +169,12 @@ impl Signals {
             || self.cpu_seconds_recent >= CPU_BUSY_SECONDS
             || matches!(
                 self.role,
-                Role::Hypervisor | Role::Container | Role::Agent | Role::Build | Role::Sync | Role::Media
+                Role::Hypervisor
+                    | Role::Container
+                    | Role::Agent
+                    | Role::Build
+                    | Role::Sync
+                    | Role::Media
             )
     }
 
@@ -228,7 +233,8 @@ impl Signals {
 
         // 3. Positive evidence the user is using it.
         if self.is_focused {
-            self.reasons.push("this is the window you are looking at".into());
+            self.reasons
+                .push("this is the window you are looking at".into());
         }
         if self.playing_audio {
             self.reasons.push("playing audio".into());
@@ -359,9 +365,18 @@ mod tests {
     fn each_signal_marks_a_process_in_use() {
         type Apply = Box<dyn Fn(&mut Signals)>;
         let cases: Vec<(&str, Apply)> = vec![
-            ("looking at", Box::new(|s: &mut Signals| s.is_focused = true)),
-            ("playing audio", Box::new(|s: &mut Signals| s.playing_audio = true)),
-            ("CPU", Box::new(|s: &mut Signals| s.cpu_seconds_recent = CPU_BUSY_SECONDS + 0.1)),
+            (
+                "looking at",
+                Box::new(|s: &mut Signals| s.is_focused = true),
+            ),
+            (
+                "playing audio",
+                Box::new(|s: &mut Signals| s.playing_audio = true),
+            ),
+            (
+                "CPU",
+                Box::new(|s: &mut Signals| s.cpu_seconds_recent = CPU_BUSY_SECONDS + 0.1),
+            ),
             ("started", Box::new(|s: &mut Signals| s.age_minutes = 1.0)),
             (
                 "child still working",
@@ -381,7 +396,9 @@ mod tests {
 
     #[test]
     fn cpu_just_below_the_threshold_is_not_busy() {
-        let s = warm("Discord", |s| s.cpu_seconds_recent = CPU_BUSY_SECONDS - 0.01);
+        let s = warm("Discord", |s| {
+            s.cpu_seconds_recent = CPU_BUSY_SECONDS - 0.01
+        });
         assert_eq!(s.verdict, Verdict::Idle);
     }
 
@@ -410,7 +427,11 @@ mod tests {
             s.established = 3;
         });
         assert_eq!(s.verdict, Verdict::Idle);
-        assert!(s.reasons.iter().any(|r| r.contains("window open but untouched")));
+        assert!(
+            s.reasons
+                .iter()
+                .any(|r| r.contains("window open but untouched"))
+        );
         assert!(s.reasons.iter().any(|r| r.contains("3 idle connection")));
     }
 
@@ -484,7 +505,14 @@ mod tests {
 
     #[test]
     fn structural_roles_are_always_their_own_activity_seed() {
-        for name in ["cargo", "dockerd", "qemu-system-x86_64", "claude", "syncthing", "mpv"] {
+        for name in [
+            "cargo",
+            "dockerd",
+            "qemu-system-x86_64",
+            "claude",
+            "syncthing",
+            "mpv",
+        ] {
             assert!(warm(name, |_| {}).self_active(), "{name}");
         }
         // A terminal is protected but is not a seed: an idle shell should not

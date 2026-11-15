@@ -160,7 +160,10 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, p: ThreatPane) {
     if !p.detail.is_empty() {
         c.append(&label(&p.detail, true));
     }
-    if let Some(s) = &p.summary && s != &p.detail && s != &p.headline {
+    if let Some(s) = &p.summary
+        && s != &p.detail
+        && s != &p.headline
+    {
         c.append(&markup(&format!("<i>{}</i>", esc(s))));
     }
 

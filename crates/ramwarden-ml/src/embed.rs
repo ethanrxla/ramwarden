@@ -37,7 +37,8 @@ impl LocalEmbedder {
         let tokenizer = repo.get("tokenizer.json").map_err(err)?;
         let weights = repo.get("model.safetensors").map_err(err)?;
 
-        let config: Config = serde_json::from_str(&std::fs::read_to_string(config).map_err(err)?).map_err(err)?;
+        let config: Config =
+            serde_json::from_str(&std::fs::read_to_string(config).map_err(err)?).map_err(err)?;
         let mut tokenizer = Tokenizer::from_file(tokenizer).map_err(err)?;
         tokenizer.with_padding(Some(PaddingParams::default()));
         tokenizer
@@ -55,7 +56,8 @@ impl LocalEmbedder {
         let dtype = DType::F32;
         // SAFETY: the file is a safetensors download from the hub, memory-
         // mapped read-only for the lifetime of the model.
-        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], dtype, device).map_err(err)? };
+        let vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&[weights], dtype, device).map_err(err)? };
         let model = BertModel::load(vb, &config).map_err(err)?;
         Ok(LocalEmbedder {
             model,
@@ -70,7 +72,10 @@ impl LocalEmbedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let enc = self.tokenizer.encode_batch(texts.to_vec(), true).map_err(err)?;
+        let enc = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(err)?;
         let ids: Vec<Tensor> = enc
             .iter()
             .map(|e| Tensor::new(e.get_ids(), &self.device))
@@ -86,7 +91,10 @@ impl LocalEmbedder {
         let types = ids.zeros_like().map_err(err)?;
 
         let hidden = self.model.forward(&ids, &types, Some(&mask)).map_err(err)?;
-        let cls = hidden.narrow(1, 0, 1).and_then(|t| t.squeeze(1)).map_err(err)?;
+        let cls = hidden
+            .narrow(1, 0, 1)
+            .and_then(|t| t.squeeze(1))
+            .map_err(err)?;
         let cls = cls.to_dtype(DType::F32).map_err(err)?;
         let norm = cls
             .sqr()
@@ -110,13 +118,19 @@ mod tests {
         let e = LocalEmbedder::load(MXBAI, &crate::jepa::device()).unwrap();
         let v = e
             .embed(&[
-                "Represent this sentence for searching relevant passages: rust memory management".into(),
+                "Represent this sentence for searching relevant passages: rust memory management"
+                    .into(),
                 "Rust ownership and borrowing explained".into(),
                 "Best pizza places in Chicago".into(),
             ])
             .unwrap();
         let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
         assert!((dot(&v[0], &v[0]) - 1.0).abs() < 1e-3, "normalised");
-        assert!(dot(&v[0], &v[1]) > dot(&v[0], &v[2]) + 0.1, "{} vs {}", dot(&v[0], &v[1]), dot(&v[0], &v[2]));
+        assert!(
+            dot(&v[0], &v[1]) > dot(&v[0], &v[2]) + 0.1,
+            "{} vs {}",
+            dot(&v[0], &v[1]),
+            dot(&v[0], &v[2])
+        );
     }
 }

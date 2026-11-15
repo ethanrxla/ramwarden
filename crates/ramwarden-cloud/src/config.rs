@@ -28,9 +28,7 @@ pub struct CloudConfig {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error(
-        "no MongoDB connection string: set MONGODB_URI, or mongodb_uri in {0}"
-    )]
+    #[error("no MongoDB connection string: set MONGODB_URI, or mongodb_uri in {0}")]
     Missing(String),
     #[error("{0}: {1}")]
     Read(String, String),
@@ -83,7 +81,10 @@ impl CloudConfig {
             .or(nonblank(file.mongodb_database))
             .unwrap_or_else(|| DEFAULT_DATABASE.to_string());
 
-        Ok(CloudConfig { mongodb_uri: Secret::new(uri), database })
+        Ok(CloudConfig {
+            mongodb_uri: Secret::new(uri),
+            database,
+        })
     }
 }
 
@@ -119,8 +120,11 @@ mod tests {
     fn the_file_is_used_when_the_environment_is_blank() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("secrets.toml");
-        std::fs::write(&p, format!("mongodb_uri = \"{URI}\"\nmongodb_database = \"ramwarden-dev\"\n"))
-            .unwrap();
+        std::fs::write(
+            &p,
+            format!("mongodb_uri = \"{URI}\"\nmongodb_database = \"ramwarden-dev\"\n"),
+        )
+        .unwrap();
         let c = CloudConfig::from_sources(Some("  ".into()), None, &p).unwrap();
         assert_eq!(c.mongodb_uri.expose(), URI);
         assert_eq!(c.database, "ramwarden-dev");

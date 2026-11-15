@@ -307,7 +307,8 @@ pub async fn install(e: &Enrollment) -> Result<()> {
     let status = wait_for_installer(
         tokio::process::Command::new(&program).args(&args),
         std::time::Duration::from_secs(600),
-    ).await;
+    )
+    .await;
     let _ = std::fs::remove_file(&pkg);
     match status? {
         s if s.success() => Ok(()),
@@ -321,7 +322,9 @@ async fn wait_for_installer(
     command: &mut tokio::process::Command,
     timeout: std::time::Duration,
 ) -> Result<std::process::ExitStatus> {
-    let mut child = command.kill_on_drop(true).spawn()
+    let mut child = command
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|err| Error::Install(format!("could not start installer: {err}")))?;
     match tokio::time::timeout(timeout, child.wait()).await {
         Ok(result) => result.map_err(|err| Error::Install(format!("installer: {err}"))),
@@ -344,9 +347,18 @@ mod tests {
     #[tokio::test]
     async fn installer_wait_is_bounded() {
         let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact", "install::tests::sleeping_installer_child", "--ignored"]);
+        command.args([
+            "--exact",
+            "install::tests::sleeping_installer_child",
+            "--ignored",
+        ]);
         let result = wait_for_installer(&mut command, std::time::Duration::from_millis(100)).await;
-        assert!(result.unwrap_err().to_string().contains("Installer timed out"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Installer timed out")
+        );
     }
 
     #[test]

@@ -245,7 +245,11 @@ mod tests {
     #[test]
     fn the_french_locale_marker_is_recognised() {
         let found = parse_firefox_private(WINDOW_LIST);
-        assert!(found.iter().any(|(_, _, t)| t.contains("Navigation privée")));
+        assert!(
+            found
+                .iter()
+                .any(|(_, _, t)| t.contains("Navigation privée"))
+        );
     }
 
     #[test]
@@ -389,7 +393,11 @@ mod tests {
         std::fs::write(d.join("cmdline"), b"firefox\0".as_slice()).unwrap();
         std::os::unix::fs::symlink("/usr/lib/firefox/firefox", d.join("exe")).unwrap();
 
-        assert!(detect(&root, false).iter().all(|c| c.kind != Kind::TorBrowser));
+        assert!(
+            detect(&root, false)
+                .iter()
+                .all(|c| c.kind != Kind::TorBrowser)
+        );
     }
 
     /// A machine with nothing private running must report nothing, not guess.

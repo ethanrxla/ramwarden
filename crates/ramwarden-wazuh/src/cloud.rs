@@ -85,9 +85,14 @@ impl Cloud {
     /// `base` is the hosted API, e.g. `https://api.ramwarden.com`. It must be
     /// https (http only to this computer, for tests and local development).
     pub fn new(base: &str, token: Secret, timeout: Duration) -> Result<Cloud> {
-        let base = crate::api::parse_url(base)?.ok_or_else(|| Error::BadUrl(base.into(), "empty".into()))?;
+        let base = crate::api::parse_url(base)?
+            .ok_or_else(|| Error::BadUrl(base.into(), "empty".into()))?;
         let http = reqwest::Client::builder()
-            .timeout(if timeout.is_zero() { Duration::from_secs(15) } else { timeout })
+            .timeout(if timeout.is_zero() {
+                Duration::from_secs(15)
+            } else {
+                timeout
+            })
             .build()
             .map_err(|e| Error::Unreachable("cloud", e.to_string()))?;
         Ok(Cloud { http, base, token })
@@ -118,26 +123,71 @@ impl Cloud {
             .await
             .map_err(|e| Error::Unreachable("cloud", e.without_url().to_string()))?;
         Cloud::check(resp.status())?;
-        let e: Enrollment = resp.json().await.map_err(|e| Error::Parse("cloud", e.to_string()))?;
+        let e: Enrollment = resp
+            .json()
+            .await
+            .map_err(|e| Error::Parse("cloud", e.to_string()))?;
         crate::install::validate(&e)?;
         Ok(e)
     }
 
-    pub async fn events(&self,rule:Option<&str>,group:Option<&str>)->Result<Vec<Alert>>{
-        let mut url=self.url("v1/wardens/threat/events");
-        {let mut query=url.query_pairs_mut();if let Some(rule)=rule{query.append_pair("rule",rule);}
-        if let Some(group)=group{query.append_pair("group",group);}}
-        let response=self.http.get(url).bearer_auth(self.token.expose()).send().await.map_err(|e|Error::Unreachable("cloud",e.without_url().to_string()))?;
-        Self::check(response.status())?;let body:serde_json::Value=response.json().await.map_err(|_|Error::Parse("events","invalid response".into()))?;
-        let mut alerts:Vec<Alert>=serde_json::from_value(body["events"].clone()).map_err(|_|Error::Parse("events","invalid events".into()))?;alerts.truncate(crate::api::MAX_ALERTS);Ok(alerts)
-    }
-    pub async fn event(&self,id:&str)->Result<serde_json::Value>{
-        if !crate::evidence::valid_event_id(id){return Err(Error::Parse("event","invalid event reference".into()));}
-        let mut url=self.url("v1/wardens/threat/events/");url.path_segments_mut().map_err(|_|Error::Parse("event","invalid URL".into()))?.pop_if_empty().push(id);
-        let mut response=self.http.get(url).bearer_auth(self.token.expose()).send().await.map_err(|e|Error::Unreachable("cloud",e.without_url().to_string()))?;
+    pub async fn events(&self, rule: Option<&str>, group: Option<&str>) -> Result<Vec<Alert>> {
+        let mut url = self.url("v1/wardens/threat/events");
+        {
+            let mut query = url.query_pairs_mut();
+            if let Some(rule) = rule {
+                query.append_pair("rule", rule);
+            }
+            if let Some(group) = group {
+                query.append_pair("group", group);
+            }
+        }
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(self.token.expose())
+            .send()
+            .await
+            .map_err(|e| Error::Unreachable("cloud", e.without_url().to_string()))?;
         Self::check(response.status())?;
-        let mut data=vec![];while let Some(chunk)=response.chunk().await.map_err(|_|Error::Parse("event","read failed".into()))? {if data.len()+chunk.len()>256*1024{return Err(Error::Parse("event","response limit exceeded".into()));}data.extend_from_slice(&chunk);}
-        serde_json::from_slice(&data).map_err(|_|Error::Parse("event","invalid response".into()))
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|_| Error::Parse("events", "invalid response".into()))?;
+        let mut alerts: Vec<Alert> = serde_json::from_value(body["events"].clone())
+            .map_err(|_| Error::Parse("events", "invalid events".into()))?;
+        alerts.truncate(crate::api::MAX_ALERTS);
+        Ok(alerts)
+    }
+    pub async fn event(&self, id: &str) -> Result<serde_json::Value> {
+        if !crate::evidence::valid_event_id(id) {
+            return Err(Error::Parse("event", "invalid event reference".into()));
+        }
+        let mut url = self.url("v1/wardens/threat/events/");
+        url.path_segments_mut()
+            .map_err(|_| Error::Parse("event", "invalid URL".into()))?
+            .pop_if_empty()
+            .push(id);
+        let mut response = self
+            .http
+            .get(url)
+            .bearer_auth(self.token.expose())
+            .send()
+            .await
+            .map_err(|e| Error::Unreachable("cloud", e.without_url().to_string()))?;
+        Self::check(response.status())?;
+        let mut data = vec![];
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| Error::Parse("event", "read failed".into()))?
+        {
+            if data.len() + chunk.len() > 256 * 1024 {
+                return Err(Error::Parse("event", "response limit exceeded".into()));
+            }
+            data.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&data).map_err(|_| Error::Parse("event", "invalid response".into()))
     }
     /// This account's agents and triaged alerts.
     pub async fn status(&self) -> Result<CloudStatus> {
@@ -149,7 +199,10 @@ impl Cloud {
             .await
             .map_err(|e| Error::Unreachable("cloud", e.without_url().to_string()))?;
         Cloud::check(resp.status())?;
-        let mut s: CloudStatus = resp.json().await.map_err(|e| Error::Parse("cloud", e.to_string()))?;
+        let mut s: CloudStatus = resp
+            .json()
+            .await
+            .map_err(|e| Error::Parse("cloud", e.to_string()))?;
         s.alerts.truncate(crate::api::MAX_ALERTS);
         Ok(s)
     }

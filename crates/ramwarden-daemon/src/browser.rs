@@ -144,12 +144,14 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             let eligible = status == "candidate";
             let class = tabrank::classify(&t.url);
             let mb = tabrank::est_mb(class);
-            let frec = tabrank::frecency(&t.activations, now_ms) + f64::from(t.negative_feedback.min(4));
+            let frec =
+                tabrank::frecency(&t.activations, now_ms) + f64::from(t.negative_feedback.min(4));
             let related = tabrank::site_key(&t.url).is_some_and(|k| active_sites.contains(&k));
             // A work page keeps its return chance four times longer, so it is the
             // last thing unloaded once its protection lifts. It is never closed
             // automatically at all (see `can_auto_close_at`).
-            let mult = tabrank::half_life_multiplier(frec, related) * if work { WORK_FACTOR } else { 1.0 };
+            let mult =
+                tabrank::half_life_multiplier(frec, related) * if work { WORK_FACTOR } else { 1.0 };
             let p_rules = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
             let features = crate::tabintel::Features {
                 class: tabrank::class_name(class),
@@ -161,9 +163,17 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             };
             // Advisory model tier: a cached answer adjusts the estimate or vetoes the
             // unload. Absent (disabled, not asked yet, breaker open) means no change.
-            let adj = if eligible || status == "unloaded" { crate::tabintel::adjust(p_rules, &features) } else { crate::tabintel::Adjusted::none(p_rules) };
+            let adj = if eligible || status == "unloaded" {
+                crate::tabintel::adjust(p_rules, &features)
+            } else {
+                crate::tabintel::Adjusted::none(p_rules)
+            };
             let (status, reason, eligible) = if adj.veto {
-                ("protected", "model says this tab may hold unsaved work", false)
+                (
+                    "protected",
+                    "model says this tab may hold unsaved work",
+                    false,
+                )
             } else {
                 (status, reason, eligible)
             };
@@ -188,7 +198,11 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 work,
                 status,
                 reason,
-                priority: if eligible { tabrank::score(mb, p).round() as i64 } else { 0 },
+                priority: if eligible {
+                    tabrank::score(mb, p).round() as i64
+                } else {
+                    0
+                },
                 p_return: p,
                 est_mb: mb,
                 frecency: frec,
@@ -223,7 +237,9 @@ impl Row {
     /// already be safe: no work page, nothing used in the last hour, and only
     /// tabs the rules already consider idle.
     pub fn offerable_for_close(&self) -> bool {
-        if !self.closeable || self.work { return false; }
+        if !self.closeable || self.work {
+            return false;
+        }
         match self.status {
             "browser page" => true,
             "candidate" | "unloaded" => self.inactive_minutes >= OFFER_CLOSE_MIN_IDLE_MINUTES,
@@ -418,26 +434,41 @@ mod selection_tests {
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
     // A budget is a keep floor, never permission to close. Preserve the newest
     // N tabs in each browser even when an old tab passes the normal safety floor.
-    let mut by_browser: std::collections::HashMap<&str, Vec<&Row>> = std::collections::HashMap::new();
-    for row in rows { by_browser.entry(&row.target.browser).or_default().push(row); }
+    let mut by_browser: std::collections::HashMap<&str, Vec<&Row>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_browser.entry(&row.target.browser).or_default().push(row);
+    }
     let mut kept = std::collections::HashSet::new();
     for tabs in by_browser.values_mut() {
         tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
         kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
     }
     let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
-    let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
-        && !r.work
-        && r.inactive_minutes >= min_idle
-        && (r.status == "browser page"
-            || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
-    picked.sort_by(|a,b| close_priority(a,b));
-    picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
+    let mut picked: Vec<_> = rows
+        .iter()
+        .filter(|r| {
+            !kept.contains(&r.target)
+                && r.auto_closeable
+                && !r.work
+                && r.inactive_minutes >= min_idle
+                && (r.status == "browser page"
+                    || (matches!(r.status, "candidate" | "unloaded")
+                        && r.p_return < cfg.close_below_return.min(0.3)))
+        })
+        .collect();
+    picked.sort_by(|a, b| close_priority(a, b));
+    picked
+        .into_iter()
+        .take(cfg.max_close_per_sweep)
+        .map(|r| r.target.clone())
+        .collect()
 }
 
 pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
     // Prefer disposable browser pages, exact copies, then the lowest return chance.
-    (b.status == "browser page").cmp(&(a.status == "browser page"))
+    (b.status == "browser page")
+        .cmp(&(a.status == "browser page"))
         .then(b.duplicate.cmp(&a.duplicate))
         .then(a.p_return.total_cmp(&b.p_return))
         .then(b.inactive_minutes.cmp(&a.inactive_minutes))
@@ -446,12 +477,17 @@ pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
 }
 
 pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
-    can_close(tab) && tab.activity_version >= 1
-        && tab.active == Some(false) && tab.pinned == Some(false)
-        && tab.audible == Some(false) && tab.status.as_deref() == Some("complete")
-        && tab.auto_discardable == Some(true) && !tab.work_in_progress
+    can_close(tab)
+        && tab.activity_version >= 1
+        && tab.active == Some(false)
+        && tab.pinned == Some(false)
+        && tab.audible == Some(false)
+        && tab.status.as_deref() == Some("complete")
+        && tab.auto_discardable == Some(true)
+        && !tab.work_in_progress
         && tab.protected_until_ms <= now_ms
-        && tab.last_active_ms.is_finite() && tab.last_active_ms > 0.0
+        && tab.last_active_ms.is_finite()
+        && tab.last_active_ms > 0.0
         && tab.last_active_ms <= now_ms
         && now_ms - tab.last_active_ms >= 3_600_000.0
         && tab.inactive_minutes >= 60
@@ -459,7 +495,8 @@ pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
 }
 
 pub fn can_close(tab: &Tab) -> bool {
-    (tabpolicy::is_disposable_browser_page(&tab.url) || !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes))
+    (tabpolicy::is_disposable_browser_page(&tab.url)
+        || !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes))
         && !tab.incognito
         && tab.active != Some(true)
         && tab.pinned != Some(true)
@@ -480,7 +517,10 @@ mod manual_close_tests {
 
     #[test]
     fn the_sweep_closes_long_idle_tabs_and_keeps_recent_or_pinned_ones() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs {
+            keep_tabs: 0,
+            ..Default::default()
+        };
         let mut pinned = idle(4, "https://example.org/pinned", 10_000, false);
         pinned.pinned = Some(true);
         let tabs = vec![
@@ -511,24 +551,30 @@ mod manual_close_tests {
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        assert!(ids.is_empty(), "same-site pages do not bypass the inactivity floor");
+        assert!(
+            ids.is_empty(),
+            "same-site pages do not bypass the inactivity floor"
+        );
     }
 
     #[test]
     fn the_budget_keeps_the_most_recent_tabs_and_closes_the_rest_once_left_alone() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 2, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs {
+            keep_tabs: 2,
+            ..Default::default()
+        };
         let mut pinned = idle(7, "https://example.org/pinned", 900, false);
         pinned.pinned = Some(true);
         let tabs = vec![
             idle(1, "https://a.example/one", 2, false),
             idle(2, "https://b.example/two", 20, false),
-            idle(3, "https://c.example/three", 50, false),     // outside the budget, but not left alone long enough
+            idle(3, "https://c.example/three", 50, false), // outside the budget, but not left alone long enough
             idle(4, "https://mail.google.com/mail/u/0/", 300, false),
             idle(5, "https://console.tailscale.com/admin", 400, true), // protection lifted after 4 h
-            idle(6, "https://console.tailscale.com/x", 100, false),    // still protected: used 100 min ago... but a copy of 5
+            idle(6, "https://console.tailscale.com/x", 100, false), // still protected: used 100 min ago... but a copy of 5
             pinned,
-            idle(8, "http://10.0.0.1/", 900, false),            // the router: never
-            idle(9, "https://vscode.dev/", 900, false),         // local-state editor: never
+            idle(8, "http://10.0.0.1/", 900, false), // the router: never
+            idle(9, "https://vscode.dev/", 900, false), // local-state editor: never
         ];
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
@@ -538,22 +584,40 @@ mod manual_close_tests {
 
     #[test]
     fn a_zero_budget_turns_the_budget_off() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_duplicates_after_hours: 0.0, ..Default::default() };
-        let tabs: Vec<Tab> = (1..=9).map(|i| idle(i, &format!("https://site{i}.example/"), 200, false)).collect();
+        let cfg = ramwarden_core::config::Tabs {
+            keep_tabs: 0,
+            close_duplicates_after_hours: 0.0,
+            ..Default::default()
+        };
+        let tabs: Vec<Tab> = (1..=9)
+            .map(|i| idle(i, &format!("https://site{i}.example/"), 200, false))
+            .collect();
         assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
     }
 
     #[test]
     fn duplicate_closing_can_be_turned_off() {
-        let cfg = ramwarden_core::config::Tabs { close_duplicates_after_hours: 0.0, ..Default::default() };
-        let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 90, false)];
+        let cfg = ramwarden_core::config::Tabs {
+            close_duplicates_after_hours: 0.0,
+            ..Default::default()
+        };
+        let tabs = vec![
+            idle(1, "https://example.org/a", 300, false),
+            idle(2, "https://example.org/b", 90, false),
+        ];
         assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
     }
 
     #[test]
     fn the_sweep_respects_its_per_sweep_cap() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, max_close_per_sweep: 2, ..Default::default() };
-        let tabs: Vec<Tab> = (1..=6).map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false)).collect();
+        let cfg = ramwarden_core::config::Tabs {
+            keep_tabs: 0,
+            max_close_per_sweep: 2,
+            ..Default::default()
+        };
+        let tabs: Vec<Tab> = (1..=6)
+            .map(|i| idle(i, &format!("https://example.org/{i}"), 10_000, false))
+            .collect();
         assert_eq!(close_candidates(&rank("b", &tabs, 30), &cfg).len(), 2);
     }
 
@@ -589,18 +653,34 @@ mod manual_close_tests {
     #[test]
     fn a_tab_you_visit_often_outranks_an_identical_one_you_do_not() {
         let now = 20.0 * DAY_MS;
-        let daily: Vec<f64> = (0..6).map(|d| now - d as f64 * DAY_MS - 3_600_000.0).collect();
+        let daily: Vec<f64> = (0..6)
+            .map(|d| now - d as f64 * DAY_MS - 3_600_000.0)
+            .collect();
         // Same site type, same idleness; only the visit history differs.
         let rows = rank_at(
             "b",
-            &[tab_at(1, "https://a.example.org/x", 600, &[]), tab_at(2, "https://b.example.org/y", 600, &daily)],
+            &[
+                tab_at(1, "https://a.example.org/x", 600, &[]),
+                tab_at(2, "https://b.example.org/y", 600, &daily),
+            ],
             45,
             now,
         );
-        let release_order: Vec<i64> = rows.iter().filter(|r| r.eligible).map(|r| r.target.id).collect();
-        assert_eq!(release_order, vec![1, 2], "the rarely-visited tab is released first");
+        let release_order: Vec<i64> = rows
+            .iter()
+            .filter(|r| r.eligible)
+            .map(|r| r.target.id)
+            .collect();
+        assert_eq!(
+            release_order,
+            vec![1, 2],
+            "the rarely-visited tab is released first"
+        );
         let freq = rows.iter().find(|r| r.target.id == 2).unwrap();
-        assert!(freq.frecency > 3.0 && freq.p_return > rows.iter().find(|r| r.target.id == 1).unwrap().p_return);
+        assert!(
+            freq.frecency > 3.0
+                && freq.p_return > rows.iter().find(|r| r.target.id == 1).unwrap().p_return
+        );
     }
 
     #[test]
@@ -610,7 +690,11 @@ mod manual_close_tests {
         active.active = Some(true);
         let rows = rank_at(
             "b",
-            &[active, tab_at(1, "https://docs.example.org/guide", 600, &[]), tab_at(2, "https://other.net/z", 600, &[])],
+            &[
+                active,
+                tab_at(1, "https://docs.example.org/guide", 600, &[]),
+                tab_at(2, "https://other.net/z", 600, &[]),
+            ],
             45,
             now,
         );
@@ -618,7 +702,10 @@ mod manual_close_tests {
         let stranger = rows.iter().find(|r| r.target.id == 2).unwrap();
         assert!(related.related && !stranger.related);
         assert!(related.p_return > stranger.p_return);
-        assert!(related.priority < stranger.priority, "the unrelated tab goes first");
+        assert!(
+            related.priority < stranger.priority,
+            "the unrelated tab goes first"
+        );
     }
 }
 
@@ -627,23 +714,48 @@ mod safety_regressions {
     use super::*;
     #[test]
     fn recently_reopened_missing_activity_and_dirty_work_are_never_auto_closed() {
-        let now=2_000_000_000_000.0;
-        let mut t=Tab {id:1,url:"https://example.org/some/article".into(),
-            inactive_minutes:3000,last_active_ms:now-3000.0*60000.0,activity_version:1,
-            active:Some(false),pinned:Some(false),audible:Some(false),auto_discardable:Some(true),
-            status:Some("complete".into()),..Default::default()};
-        assert!(can_auto_close_at(&t,now));
-        t.protected_until_ms=now+86400000.0;assert!(!can_auto_close_at(&t,now));
-        t.protected_until_ms=0.0;t.activity_version=0;assert!(!can_auto_close_at(&t,now));
-        t.activity_version=1;t.work_in_progress=true;assert!(!can_auto_close_at(&t,now));
-        t.work_in_progress=false;t.last_active_ms=now-60000.0;assert!(!can_auto_close_at(&t,now));
-        t.last_active_ms=0.0;assert!(!can_auto_close_at(&t,now));
+        let now = 2_000_000_000_000.0;
+        let mut t = Tab {
+            id: 1,
+            url: "https://example.org/some/article".into(),
+            inactive_minutes: 3000,
+            last_active_ms: now - 3000.0 * 60000.0,
+            activity_version: 1,
+            active: Some(false),
+            pinned: Some(false),
+            audible: Some(false),
+            auto_discardable: Some(true),
+            status: Some("complete".into()),
+            ..Default::default()
+        };
+        assert!(can_auto_close_at(&t, now));
+        t.protected_until_ms = now + 86400000.0;
+        assert!(!can_auto_close_at(&t, now));
+        t.protected_until_ms = 0.0;
+        t.activity_version = 0;
+        assert!(!can_auto_close_at(&t, now));
+        t.activity_version = 1;
+        t.work_in_progress = true;
+        assert!(!can_auto_close_at(&t, now));
+        t.work_in_progress = false;
+        t.last_active_ms = now - 60000.0;
+        assert!(!can_auto_close_at(&t, now));
+        t.last_active_ms = 0.0;
+        assert!(!can_auto_close_at(&t, now));
     }
     #[test]
     fn different_same_site_pages_are_not_duplicates() {
-        let a=Tab{id:1,url:"https://namecheap.com/shoppingcart/".into(),..Default::default()};
-        let b=Tab{id:2,url:"https://namecheap.com/domains/".into(),..Default::default()};
-        assert!(rank_at("b",&[a,b],30,1.0).iter().all(|r|!r.duplicate));
+        let a = Tab {
+            id: 1,
+            url: "https://namecheap.com/shoppingcart/".into(),
+            ..Default::default()
+        };
+        let b = Tab {
+            id: 2,
+            url: "https://namecheap.com/domains/".into(),
+            ..Default::default()
+        };
+        assert!(rank_at("b", &[a, b], 30, 1.0).iter().all(|r| !r.duplicate));
     }
 
     fn idle(id: i64, url: &str, minutes: i64) -> Tab {
@@ -658,9 +770,16 @@ mod safety_regressions {
     /// browser page and the forgotten article first and never the work tabs.
     #[test]
     fn work_tabs_are_never_auto_closed_and_browser_pages_go_first() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs {
+            keep_tabs: 0,
+            ..Default::default()
+        };
         let tabs = vec![
-            idle(1, "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase?region=us-ashburn-1", 2880),
+            idle(
+                1,
+                "https://cloud.oracle.com/db/adb/ocid1.autonomousdatabase?region=us-ashburn-1",
+                2880,
+            ),
             idle(2, "https://agensi.io/creators/submit-a-skill", 2880),
             idle(3, "https://ap.www.namecheap.com/domains/list/", 2880),
             idle(4, "chrome://extensions/", 2880),
@@ -672,8 +791,15 @@ mod safety_regressions {
             assert!(row.work, "tab {id} is a work page");
         }
         let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
-        assert_eq!(ids.first(), Some(&4), "the browser page goes first: {ids:?}");
-        assert!(!ids.iter().any(|id| [1, 2, 3].contains(id)), "work tabs stay: {ids:?}");
+        assert_eq!(
+            ids.first(),
+            Some(&4),
+            "the browser page goes first: {ids:?}"
+        );
+        assert!(
+            !ids.iter().any(|id| [1, 2, 3].contains(id)),
+            "work tabs stay: {ids:?}"
+        );
     }
 
     /// The 2026-11-14 report: Namecheap and the Agensi submit form were still
@@ -681,14 +807,22 @@ mod safety_regressions {
     /// and the review card offered them. Recently used tabs were offered too.
     #[test]
     fn work_pages_and_recent_tabs_are_never_offered_for_closing() {
-        let rows = rank("b", &[
-            idle(1, "https://agensi.io/creators/submit-a-skill", 600),
-            idle(2, "https://ap.www.namecheap.com/domains/list/", 600),
-            idle(3, "https://example.org/read-me", 20),
-            idle(4, "https://example.org/old-article", 600),
-            idle(5, "chrome://settings/", 1),
-        ], 30);
-        let offered: Vec<i64> = rows.iter().filter(|r| r.offerable_for_close()).map(|r| r.target.id).collect();
+        let rows = rank(
+            "b",
+            &[
+                idle(1, "https://agensi.io/creators/submit-a-skill", 600),
+                idle(2, "https://ap.www.namecheap.com/domains/list/", 600),
+                idle(3, "https://example.org/read-me", 20),
+                idle(4, "https://example.org/old-article", 600),
+                idle(5, "chrome://settings/", 1),
+            ],
+            30,
+        );
+        let offered: Vec<i64> = rows
+            .iter()
+            .filter(|r| r.offerable_for_close())
+            .map(|r| r.target.id)
+            .collect();
         assert_eq!(offered.len(), 2, "{offered:?}");
         assert!(offered.contains(&4) && offered.contains(&5), "{offered:?}");
     }
@@ -697,19 +831,32 @@ mod safety_regressions {
     fn a_work_page_is_protected_from_unloading_while_recent_and_ranks_last_after() {
         let rows = rank("b", &[idle(1, "https://cloud.oracle.com/db", 90)], 30);
         assert_eq!(rows[0].status, "protected");
-        let late = rank("b", &[
-            idle(1, "https://cloud.oracle.com/db", 600),
-            idle(2, "https://example.org/some/article", 600),
-        ], 30);
+        let late = rank(
+            "b",
+            &[
+                idle(1, "https://cloud.oracle.com/db", 600),
+                idle(2, "https://example.org/some/article", 600),
+            ],
+            30,
+        );
         let work = late.iter().find(|r| r.target.id == 1).unwrap();
         let plain = late.iter().find(|r| r.target.id == 2).unwrap();
-        assert!(work.p_return > plain.p_return, "work keeps its return chance longer");
-        assert!(work.priority < plain.priority, "the plain page unloads first");
+        assert!(
+            work.p_return > plain.p_return,
+            "work keeps its return chance longer"
+        );
+        assert!(
+            work.priority < plain.priority,
+            "the plain page unloads first"
+        );
     }
 
     #[test]
     fn a_legacy_extension_tab_is_closeable_by_hand_but_never_unattended() {
-        let t: Tab = serde_json::from_value(serde_json::json!({"id":7,"url":"https://example.org/article","inactiveMinutes":5000})).unwrap();
+        let t: Tab = serde_json::from_value(
+            serde_json::json!({"id":7,"url":"https://example.org/article","inactiveMinutes":5000}),
+        )
+        .unwrap();
         let rows = rank("b", &[t], 30);
         assert!(rows[0].closeable);
         assert!(!rows[0].auto_closeable);

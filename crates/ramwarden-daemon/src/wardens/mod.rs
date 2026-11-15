@@ -86,7 +86,11 @@ impl Wardens {
     /// One warden's current status.
     fn status(&self, st: &AppState, w: &WardenInfo) -> Status {
         if self.public_key.is_none() {
-            return Status::off("Plan verification unavailable", "This build is missing its pass verification key. Reinstall the signed release; this is not a request to purchase another plan.", 0);
+            return Status::off(
+                "Plan verification unavailable",
+                "This build is missing its pass verification key. Reinstall the signed release; this is not a request to purchase another plan.",
+                0,
+            );
         }
         if !self.unlocked(w) {
             return Status::locked(w);
@@ -94,8 +98,16 @@ impl Wardens {
         match w.id {
             "ram" => {
                 let m = st.memory();
-                let rung = ladder::rung_for(&st.cfg.ladder, &st.pressure(), ladder::available_bytes(st.platform.memory.as_ref()));
-                let used = if m.total > 0 { m.used() as f64 * 100.0 / m.total as f64 } else { 0.0 };
+                let rung = ladder::rung_for(
+                    &st.cfg.ladder,
+                    &st.pressure(),
+                    ladder::available_bytes(st.platform.memory.as_ref()),
+                );
+                let used = if m.total > 0 {
+                    m.used() as f64 * 100.0 / m.total as f64
+                } else {
+                    0.0
+                };
                 wardens::ram_status(rung, used, wardens::now())
             }
             "threat" => self.threat.status(),
@@ -128,7 +140,9 @@ impl Wardens {
     /// Start every add-on warden's poller.
     pub fn spawn(self: &Arc<Self>, handle: &tokio::runtime::Handle) {
         let me = self.clone();
-        self.threat.clone().spawn(handle, move || me.unlocked(&wardens::THREAT));
+        self.threat
+            .clone()
+            .spawn(handle, move || me.unlocked(&wardens::THREAT));
     }
 }
 
@@ -148,7 +162,10 @@ pub async fn list(State(st): State<AppState>) -> Json<Value> {
 
 pub async fn one(State(st): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(info) = wardens::find(&id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": format!("no warden called {id}")})));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("no warden called {id}")})),
+        );
     };
     let w = Wardens::global(&st.cfg);
     let mut entry = w.entry(&st, info);
@@ -161,15 +178,34 @@ pub async fn one(State(st): State<AppState>, Path(id): Path<String>) -> impl Int
 }
 
 // Keep stable identifiers and raw evidence intact; normalize public prose only.
-fn customer_fields(mut value:Value)->Value {
+fn customer_fields(mut value: Value) -> Value {
     match &mut value {
-        Value::Array(items)=>for item in items {*item=customer_fields(item.take());},
-        Value::Object(fields)=>for (key,item) in fields {
-            if ["description","advice","headline","detail","summary","source"].contains(&key.as_str()) {
-                if let Some(text)=item.as_str(){*item=json!(ramwarden_core::branding::public_text(text));}
-            } else {*item=customer_fields(item.take());}
-        },
-        _=>{}
+        Value::Array(items) => {
+            for item in items {
+                *item = customer_fields(item.take());
+            }
+        }
+        Value::Object(fields) => {
+            for (key, item) in fields {
+                if [
+                    "description",
+                    "advice",
+                    "headline",
+                    "detail",
+                    "summary",
+                    "source",
+                ]
+                .contains(&key.as_str())
+                {
+                    if let Some(text) = item.as_str() {
+                        *item = json!(ramwarden_core::branding::public_text(text));
+                    }
+                } else {
+                    *item = customer_fields(item.take());
+                }
+            }
+        }
+        _ => {}
     }
     value
 }
@@ -178,33 +214,62 @@ fn customer_fields(mut value:Value)->Value {
 /// user, because it raises the OS's admin prompt.
 pub async fn setup(State(st): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let Some(info) = wardens::find(&id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": format!("no warden called {id}")})));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("no warden called {id}")})),
+        );
     };
     let w = Wardens::global(&st.cfg);
     if !w.unlocked(info) {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": Status::locked(info).headline})));
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": Status::locked(info).headline})),
+        );
     }
     match info.id {
         "threat" => match w.threat.start_setup(&tokio::runtime::Handle::current()) {
             Ok(()) => (StatusCode::ACCEPTED, Json(json!({"started": true}))),
-            Err(why) => (StatusCode::CONFLICT, Json(json!({"started": false, "error": why}))),
+            Err(why) => (
+                StatusCode::CONFLICT,
+                Json(json!({"started": false, "error": why})),
+            ),
         },
-        _ => (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{} needs no setup", info.name)}))),
+        _ => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{} needs no setup", info.name)})),
+        ),
     }
 }
 
 pub async fn icon_svg(Path(id): Path<String>) -> impl IntoResponse {
     match icon(&id) {
-        Some(svg) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/svg+xml")], svg).into_response(),
+        Some(svg) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "image/svg+xml")],
+            svg,
+        )
+            .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-pub async fn event(State(st):State<AppState>,Path(id):Path<String>)->Result<Json<Value>,StatusCode>{
-    let wardens=Wardens::global(&st.cfg);let info=wardens::find("threat").ok_or(StatusCode::NOT_FOUND)?;
-    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
-    let record=wardens.threat.event(&id).await.map_err(|_|StatusCode::BAD_GATEWAY)?;
-    if !wardens.unlocked(info){return Err(StatusCode::FORBIDDEN);}
+pub async fn event(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let wardens = Wardens::global(&st.cfg);
+    let info = wardens::find("threat").ok_or(StatusCode::NOT_FOUND)?;
+    if !wardens.unlocked(info) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let record = wardens
+        .threat
+        .event(&id)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !wardens.unlocked(info) {
+        return Err(StatusCode::FORBIDDEN);
+    }
     Ok(Json(record))
 }
 
@@ -214,7 +279,10 @@ mod tests {
 
     #[test]
     fn every_add_on_warden_has_an_icon() {
-        for w in wardens::CATALOGUE.iter().filter(|w| w.access != wardens::Access::Free) {
+        for w in wardens::CATALOGUE
+            .iter()
+            .filter(|w| w.access != wardens::Access::Free)
+        {
             let svg = icon(w.id).unwrap_or_else(|| panic!("{} has no icon", w.id));
             assert!(svg.trim_start().starts_with("<svg"), "{}", w.id);
         }

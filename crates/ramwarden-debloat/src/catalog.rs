@@ -21,10 +21,32 @@ const PROFILES: &[(&str, &str)] = &[
 /// Services that keep the machine secure, updated, fast or able to run games.
 /// Absolute: a profile naming one fails to load.
 const FORBIDDEN_SERVICES: &[&str] = &[
-    "windefend", "wdnissvc", "sense", "securityhealthservice", "mpssvc", "bfe", "wscsvc",
-    "wuauserv", "usosvc", "waasmedicsvc", "bits", "trustedinstaller", "cryptsvc",
-    "sysmain", "wsearch", "eventlog", "rpcss", "dcomlaunch", "audiosrv", "nvdisplay.containerlocalsystem",
-    "vgc", "vgk", "easyanticheat", "easyanticheat_eos", "beservice", "faceit",
+    "windefend",
+    "wdnissvc",
+    "sense",
+    "securityhealthservice",
+    "mpssvc",
+    "bfe",
+    "wscsvc",
+    "wuauserv",
+    "usosvc",
+    "waasmedicsvc",
+    "bits",
+    "trustedinstaller",
+    "cryptsvc",
+    "sysmain",
+    "wsearch",
+    "eventlog",
+    "rpcss",
+    "dcomlaunch",
+    "audiosrv",
+    "nvdisplay.containerlocalsystem",
+    "vgc",
+    "vgk",
+    "easyanticheat",
+    "easyanticheat_eos",
+    "beservice",
+    "faceit",
 ];
 
 /// Registry subtrees no profile may write under.
@@ -87,7 +109,10 @@ impl Spec {
             return refuse(&format!("startup entry {r}"));
         }
         if self.kind == "service" && self.start.as_deref().and_then(Start::parse).is_none() {
-            return Err(Error::os(format!("{}: start must be disabled or manual", self.id)));
+            return Err(Error::os(format!(
+                "{}: start must be disabled or manual",
+                self.id
+            )));
         }
         Ok(())
     }
@@ -101,7 +126,8 @@ impl Spec {
     /// Build the tweak this spec describes, after the forbidden-list check.
     pub fn build(&self) -> Result<Box<dyn Tweak>> {
         self.check()?;
-        let (id, description, optional) = (self.id.clone(), self.description.clone(), self.optional);
+        let (id, description, optional) =
+            (self.id.clone(), self.description.clone(), self.optional);
         Ok(match self.kind.as_str() {
             "service" => Box::new(ServiceTweak {
                 id,
@@ -119,7 +145,12 @@ impl Spec {
                 data: match (self.dword, &self.string) {
                     (Some(d), None) => Data::Dword(d),
                     (None, Some(s)) => Data::String(s.clone()),
-                    _ => return Err(Error::os(format!("{}: exactly one of dword/string", self.id))),
+                    _ => {
+                        return Err(Error::os(format!(
+                            "{}: exactly one of dword/string",
+                            self.id
+                        )));
+                    }
                 },
             }),
             "task" => Box::new(TaskTweak {
@@ -151,7 +182,8 @@ pub fn profiles() -> Result<Vec<Profile>> {
     PROFILES
         .iter()
         .map(|(_, text)| {
-            let raw: RawProfile = toml::from_str(text).map_err(|e| Error::os(format!("profile: {e}")))?;
+            let raw: RawProfile =
+                toml::from_str(text).map_err(|e| Error::os(format!("profile: {e}")))?;
             Ok(Profile {
                 name: raw.name,
                 description: raw.description,
@@ -184,7 +216,11 @@ mod tests {
             assert!(!p.tweaks.is_empty(), "{}", p.name);
             for t in &p.tweaks {
                 assert!(ids.insert(t.id().to_string()), "duplicate id {}", t.id());
-                assert!(t.id().starts_with(&format!("{}.", p.name)), "{} not namespaced", t.id());
+                assert!(
+                    t.id().starts_with(&format!("{}.", p.name)),
+                    "{} not namespaced",
+                    t.id()
+                );
             }
         }
     }
@@ -208,24 +244,44 @@ mod tests {
 
     #[test]
     fn defender_update_and_anti_cheat_can_never_be_named() {
-        for svc in ["WinDefend", "wuauserv", "SysMain", "WSearch", "vgc", "EasyAntiCheat_EOS"] {
-            let s = Spec { service: Some(svc.into()), start: Some("disabled".into()), ..spec("service") };
+        for svc in [
+            "WinDefend",
+            "wuauserv",
+            "SysMain",
+            "WSearch",
+            "vgc",
+            "EasyAntiCheat_EOS",
+        ] {
+            let s = Spec {
+                service: Some(svc.into()),
+                start: Some("disabled".into()),
+                ..spec("service")
+            };
             assert!(s.build().unwrap_err().is_denied(), "{svc}");
         }
         let s = Spec {
-            key: Some(r"HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection".into()),
+            key: Some(
+                r"HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection".into(),
+            ),
             value: Some("DisableRealtimeMonitoring".into()),
             dword: Some(1),
             ..spec("registry")
         };
         assert!(s.build().unwrap_err().is_denied());
-        let s = Spec { run: Some("Riot Vanguard".into()), ..spec("startup") };
+        let s = Spec {
+            run: Some("Riot Vanguard".into()),
+            ..spec("startup")
+        };
         assert!(s.build().unwrap_err().is_denied());
     }
 
     #[test]
     fn a_service_can_only_be_made_to_start_less() {
-        let s = Spec { service: Some("DiagTrack".into()), start: Some("auto".into()), ..spec("service") };
+        let s = Spec {
+            service: Some("DiagTrack".into()),
+            start: Some("auto".into()),
+            ..spec("service")
+        };
         assert!(s.build().is_err());
     }
 

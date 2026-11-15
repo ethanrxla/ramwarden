@@ -131,7 +131,10 @@ fn owners(root: &Root, wanted: &HashSet<u64>) -> HashMap<u64, i32> {
 
 /// `"socket:[42623807]"` -> `42623807`.
 fn socket_inode(link: &str) -> Option<u64> {
-    link.strip_prefix("socket:[")?.strip_suffix(']')?.parse().ok()
+    link.strip_prefix("socket:[")?
+        .strip_suffix(']')?
+        .parse()
+        .ok()
 }
 
 /// Collect listening ports and established counts for every process.
@@ -196,7 +199,14 @@ mod tests {
         let rows = parse_table(TCP, &p()).unwrap();
         // The TIME_WAIT row (state 06) is dropped.
         assert_eq!(rows.len(), 4);
-        assert_eq!(rows[0], Row { inode: 42_623_807, port: 0xDECF, listening: true });
+        assert_eq!(
+            rows[0],
+            Row {
+                inode: 42_623_807,
+                port: 0xDECF,
+                listening: true
+            }
+        );
         assert_eq!(rows[1].port, 0x1E93);
         assert!(rows[1].listening);
         assert!(!rows[2].listening);

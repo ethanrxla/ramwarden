@@ -84,15 +84,25 @@ impl DaemonLauncher {
         if now.duration_since(since) < self.grace {
             return "Waiting for the daemon to start…".into();
         }
-        if self.child.is_some() || self.last_launch.is_some_and(|t| now.duration_since(t) < RETRY) {
-            return format!("Started ramwarden-daemon; waiting for it to answer (log: {}).", self.log.display());
+        if self.child.is_some()
+            || self
+                .last_launch
+                .is_some_and(|t| now.duration_since(t) < RETRY)
+        {
+            return format!(
+                "Started ramwarden-daemon; waiting for it to answer (log: {}).",
+                self.log.display()
+            );
         }
         self.last_launch = Some(now);
         match self.spawn(&exe) {
             Ok(c) => {
                 tracing::info!("started {} (pid {})", exe.display(), c.id());
                 self.child = Some(c);
-                format!("The daemon was not running; started it (log: {}).", self.log.display())
+                format!(
+                    "The daemon was not running; started it (log: {}).",
+                    self.log.display()
+                )
             }
             Err(e) => {
                 tracing::error!("cannot start {}: {e}", exe.display());

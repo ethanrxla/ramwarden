@@ -45,7 +45,11 @@ pub fn provider(cfg: &Config) -> Provider {
                 "cloud tier configured: {} key {} ({})",
                 n.model,
                 n.key_fingerprint(),
-                if cfg.nvidia.enabled { "enabled" } else { "DISABLED — set [nvidia] enabled = true to use it" }
+                if cfg.nvidia.enabled {
+                    "enabled"
+                } else {
+                    "DISABLED — set [nvidia] enabled = true to use it"
+                }
             );
         })
         .inspect_err(|e| tracing::warn!("cloud model tier unavailable: {e}"))
@@ -181,8 +185,7 @@ pub async fn decide(
     allowed_tabs.sort_unstable();
 
     let terms = crate::extras::terminals();
-    let allowed_terminals: Vec<i32> =
-        terms.iter().filter(|t| t.is_idle).map(|t| t.pid).collect();
+    let allowed_terminals: Vec<i32> = terms.iter().filter(|t| t.is_idle).map(|t| t.pid).collect();
 
     let tab_rows: Vec<(i64, i64, String, String)> = tabs
         .iter()
@@ -208,7 +211,12 @@ pub async fn decide(
     };
 
     let analysis = provider
-        .analyze(&ctx, &snap.reclaimable_names, &allowed_terminals, &allowed_tabs)
+        .analyze(
+            &ctx,
+            &snap.reclaimable_names,
+            &allowed_terminals,
+            &allowed_tabs,
+        )
         .await;
 
     // A model that answered picks from the allowed set; otherwise the heuristic's
@@ -259,22 +267,46 @@ mod tests {
     /// A key alone must not switch the cloud tier on.
     #[test]
     fn a_key_without_enabled_builds_the_client_but_leaves_it_off() {
-        let p = provider(&cfg_with(false, "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "local"));
+        let p = provider(&cfg_with(
+            false,
+            "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "local",
+        ));
         assert!(p.nim.is_some(), "the client is built so it can be reported");
         assert!(!p.cloud_enabled, "but it must not be used");
     }
 
     #[test]
     fn enabling_the_cloud_tier_and_preferring_it_both_take_effect() {
-        let p = provider(&cfg_with(true, "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cloud"));
+        let p = provider(&cfg_with(
+            true,
+            "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cloud",
+        ));
         assert!(p.cloud_enabled);
         assert_eq!(p.prefer, Prefer::Cloud);
     }
 
     #[test]
     fn the_prefer_field_is_case_insensitive_and_defaults_to_local() {
-        assert_eq!(provider(&cfg_with(true, "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "CLOUD")).prefer, Prefer::Cloud);
-        assert_eq!(provider(&cfg_with(true, "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "nonsense")).prefer, Prefer::Local);
+        assert_eq!(
+            provider(&cfg_with(
+                true,
+                "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "CLOUD"
+            ))
+            .prefer,
+            Prefer::Cloud
+        );
+        assert_eq!(
+            provider(&cfg_with(
+                true,
+                "nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "nonsense"
+            ))
+            .prefer,
+            Prefer::Local
+        );
     }
 
     #[test]

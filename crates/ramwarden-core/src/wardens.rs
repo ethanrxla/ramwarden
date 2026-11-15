@@ -162,7 +162,10 @@ impl Entitlement {
         else {
             return false;
         };
-        self.v == 2 && key.verify(self.signed_text().as_bytes(), &Signature::from_bytes(&sig)).is_ok()
+        self.v == 2
+            && key
+                .verify(self.signed_text().as_bytes(), &Signature::from_bytes(&sig))
+                .is_ok()
     }
 
     /// Whether `w` is unlocked at `now` (Unix seconds).
@@ -231,7 +234,10 @@ impl Entitlement {
         match key {
             Some(k) if e.verify(k) => e,
             Some(_) => {
-                tracing::warn!("{}: signature does not verify; treating as no paid wardens", path.display());
+                tracing::warn!(
+                    "{}: signature does not verify; treating as no paid wardens",
+                    path.display()
+                );
                 Entitlement::default()
             }
             None => {
@@ -271,8 +277,18 @@ pub struct Status {
 }
 
 impl Status {
-    pub fn new(level: Level, headline: impl Into<String>, detail: impl Into<String>, checked_at: u64) -> Self {
-        Status { level, headline: crate::branding::public_text(&headline.into()), detail: crate::branding::service_detail(&detail.into()), checked_at }
+    pub fn new(
+        level: Level,
+        headline: impl Into<String>,
+        detail: impl Into<String>,
+        checked_at: u64,
+    ) -> Self {
+        Status {
+            level,
+            headline: crate::branding::public_text(&headline.into()),
+            detail: crate::branding::service_detail(&detail.into()),
+            checked_at,
+        }
     }
 
     pub fn locked(w: &WardenInfo) -> Self {
@@ -301,7 +317,10 @@ pub struct ThreatThresholds {
 
 impl Default for ThreatThresholds {
     fn default() -> Self {
-        ThreatThresholds { min_level: 7, alert_level: 12 }
+        ThreatThresholds {
+            min_level: 7,
+            alert_level: 12,
+        }
     }
 }
 
@@ -335,7 +354,12 @@ pub enum AgentHealth {
 ///
 /// Silence from an agent that cannot report is not safety: a disconnected agent
 /// is at least [`Level::Watch`], whatever the alert count says.
-pub fn assess_threats(health: AgentHealth, alert_levels: &[u8], t: ThreatThresholds, now: u64) -> Status {
+pub fn assess_threats(
+    health: AgentHealth,
+    alert_levels: &[u8],
+    t: ThreatThresholds,
+    now: u64,
+) -> Status {
     let high = alert_levels.iter().filter(|&&l| l >= t.alert_level).count();
     let notable = alert_levels.iter().filter(|&&l| l >= t.min_level).count();
     let plural = |n: usize| if n == 1 { "" } else { "s" };
@@ -372,8 +396,12 @@ pub fn assess_threats(health: AgentHealth, alert_levels: &[u8], t: ThreatThresho
         );
     }
     if health == AgentHealth::Unknown {
-        return Status::new(Level::Watch, "Agent connection not confirmed",
-            "The local state is unreadable and the manager has not confirmed this agent is connected.", now);
+        return Status::new(
+            Level::Watch,
+            "Agent connection not confirmed",
+            "The local state is unreadable and the manager has not confirmed this agent is connected.",
+            now,
+        );
     }
     let detail = match health {
         AgentHealth::Unknown => "No alerts found. The agent's own state file was not readable.",
@@ -455,7 +483,13 @@ mod tests {
         let (mut e, key) = signed(&[("threat", NOW + 60)]);
         assert!(e.verify(&key));
         e.v = 1;
-        e.sig = Some(B64.encode(SigningKey::from_bytes(&TEST_SEED).sign(e.signed_text().as_bytes()).to_bytes()));
+        e.sig = Some(
+            B64.encode(
+                SigningKey::from_bytes(&TEST_SEED)
+                    .sign(e.signed_text().as_bytes())
+                    .to_bytes(),
+            ),
+        );
         assert!(!e.verify(&key));
     }
 
@@ -474,7 +508,10 @@ mod tests {
         assert!(!e.allows(&THREAT, NOW));
         let e = ent(&[("threat", NOW + 60)]);
         assert!(e.allows(&THREAT, NOW));
-        let other = WardenInfo { id: "future", ..THREAT };
+        let other = WardenInfo {
+            id: "future",
+            ..THREAT
+        };
         assert!(!e.allows(&other, NOW));
     }
 
@@ -520,7 +557,9 @@ mod tests {
         let (e, _) = signed(&[("threat", 7), ("ram", 5)]);
         assert_eq!(
             e.signed_text(),
-            format!("ramwarden-entitlement-v2\naccount=acct1\ndevice=dev1\nissued_at={NOW}\ntier=pro\nstatus=trial\nwarden:ram=5\nwarden:threat=7")
+            format!(
+                "ramwarden-entitlement-v2\naccount=acct1\ndevice=dev1\nissued_at={NOW}\ntier=pro\nstatus=trial\nwarden:ram=5\nwarden:threat=7"
+            )
         );
     }
 
@@ -531,20 +570,42 @@ mod tests {
         let (e, key) = signed(&[("threat", NOW + 60)]);
         std::fs::write(&p, serde_json::to_string(&e).unwrap()).unwrap();
         assert!(Entitlement::load_verified(&p, Some(&key)).allows(&THREAT, NOW));
-        assert!(!Entitlement::load_verified(&p, None).allows(&THREAT, NOW), "no key, no unlock");
+        assert!(
+            !Entitlement::load_verified(&p, None).allows(&THREAT, NOW),
+            "no key, no unlock"
+        );
 
         // Extending your own pass by editing the file breaks the signature.
         let mut forged = e.clone();
         forged.wardens.insert("threat".into(), NOW + 999_999);
         std::fs::write(&p, serde_json::to_string(&forged).unwrap()).unwrap();
-        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
+        assert_eq!(
+            Entitlement::load_verified(&p, Some(&key)),
+            Entitlement::default()
+        );
 
         // Unsigned, garbage, missing.
-        std::fs::write(&p, format!(r#"{{"v":2,"tier":"pro","wardens":{{"threat":{}}}}}"#, NOW + 5)).unwrap();
-        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
+        std::fs::write(
+            &p,
+            format!(
+                r#"{{"v":2,"tier":"pro","wardens":{{"threat":{}}}}}"#,
+                NOW + 5
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            Entitlement::load_verified(&p, Some(&key)),
+            Entitlement::default()
+        );
         std::fs::write(&p, "{not json").unwrap();
-        assert_eq!(Entitlement::load_verified(&p, Some(&key)), Entitlement::default());
-        assert_eq!(Entitlement::load_verified(&dir.path().join("nope"), Some(&key)), Entitlement::default());
+        assert_eq!(
+            Entitlement::load_verified(&p, Some(&key)),
+            Entitlement::default()
+        );
+        assert_eq!(
+            Entitlement::load_verified(&dir.path().join("nope"), Some(&key)),
+            Entitlement::default()
+        );
     }
 
     #[test]
@@ -567,7 +628,10 @@ mod tests {
         let s = assess_threats(c, &[12, 3], t, NOW);
         assert_eq!(s.level, Level::Alert);
         assert_eq!(s.headline, "1 high-severity security alert");
-        assert_eq!(assess_threats(c, &[15, 13], t, NOW).headline, "2 high-severity security alerts");
+        assert_eq!(
+            assess_threats(c, &[15, 13], t, NOW).headline,
+            "2 high-severity security alerts"
+        );
     }
 
     #[test]
@@ -577,7 +641,10 @@ mod tests {
         assert_eq!(s.level, Level::Watch);
         assert!(s.headline.contains("not connected"));
         // A high alert still outranks the connection problem.
-        assert_eq!(assess_threats(AgentHealth::Disconnected, &[14], t, NOW).level, Level::Alert);
+        assert_eq!(
+            assess_threats(AgentHealth::Disconnected, &[14], t, NOW).level,
+            Level::Alert
+        );
     }
 
     #[test]
@@ -586,7 +653,11 @@ mod tests {
         assert_eq!(effective_level(8, Some("threat"), t), 12);
         assert_eq!(effective_level(14, Some("threat"), t), 14);
         assert_eq!(effective_level(14, Some("benign"), t), 14, "never quieter");
-        assert_eq!(effective_level(3, Some("threat"), t), 3, "below the floor stays hidden");
+        assert_eq!(
+            effective_level(3, Some("threat"), t),
+            3,
+            "below the floor stays hidden"
+        );
         assert_eq!(effective_level(9, None, t), 9);
     }
 
@@ -619,7 +690,10 @@ mod tests {
             wardens: [("ram".to_string(), until)].into_iter().collect(),
             ..Default::default()
         };
-        assert!(Entitlement::default().has_pet(100), "signed out: the open-source app keeps its pet");
+        assert!(
+            Entitlement::default().has_pet(100),
+            "signed out: the open-source app keeps its pet"
+        );
         assert!(signed_in("ram", 200).has_pet(100));
         assert!(signed_in("pro", 200).has_pet(100));
         assert!(!signed_in("lite", 200).has_pet(100));

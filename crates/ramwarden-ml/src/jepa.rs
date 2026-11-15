@@ -162,7 +162,8 @@ impl Jepa {
         let (vars, encoder, predictor, probe) = Self::build(device)?;
         // The target encoder: same shape, its own variables, updated only by EMA.
         let target_vars = VarMap::new();
-        let target = Encoder::new(VarBuilder::from_varmap(&target_vars, DType::F32, device).pp("encoder"))?;
+        let target =
+            Encoder::new(VarBuilder::from_varmap(&target_vars, DType::F32, device).pp("encoder"))?;
         copy_encoder(&vars, &target_vars, 0.0)?;
 
         let mut opt = AdamW::new(
@@ -205,7 +206,11 @@ impl Jepa {
                 final_loss = total.to_scalar::<f32>()?;
 
                 if epoch % CHECK_EVERY == 0 || epoch == epochs {
-                    let score = model.score(&val_ctx).ok().and_then(|s| auc(&s, &val_y)).unwrap_or(0.5);
+                    let score = model
+                        .score(&val_ctx)
+                        .ok()
+                        .and_then(|s| auc(&s, &val_y))
+                        .unwrap_or(0.5);
                     if best.as_ref().is_none_or(|(b, _)| score > *b) {
                         best = Some((score, snapshot(&model.vars)?));
                     }
@@ -216,7 +221,12 @@ impl Jepa {
             }
         }
 
-        let scores = model.score(&test.iter().map(|e| e.context.as_slice()).collect::<Vec<_>>())?;
+        let scores = model.score(
+            &test
+                .iter()
+                .map(|e| e.context.as_slice())
+                .collect::<Vec<_>>(),
+        )?;
         let labels: Vec<bool> = test.iter().map(|e| e.returned).collect();
         let lru: Vec<f32> = test.iter().map(|e| e.lru).collect();
         model.metrics = Metrics {
@@ -239,7 +249,9 @@ impl Jepa {
         }
         let x = tensor(contexts, WINDOW * FEATURES, &self.device)?;
         let logits = self.probe.forward(&self.encoder.forward(&x)?)?;
-        candle_nn::ops::sigmoid(&logits)?.flatten_all()?.to_vec1::<f32>()
+        candle_nn::ops::sigmoid(&logits)?
+            .flatten_all()?
+            .to_vec1::<f32>()
     }
 
     /// Save weights (safetensors) and metrics (JSON) side by side.
@@ -253,7 +265,8 @@ impl Jepa {
     }
 
     pub fn load(path: &Path, device: &Device) -> std::result::Result<Self, String> {
-        let (mut vars, encoder, _predictor, probe) = Self::build(device).map_err(|e| e.to_string())?;
+        let (mut vars, encoder, _predictor, probe) =
+            Self::build(device).map_err(|e| e.to_string())?;
         vars.load(path).map_err(|e| e.to_string())?;
         let metrics = std::fs::read_to_string(path.with_extension("json"))
             .ok()
@@ -296,7 +309,8 @@ fn copy_encoder(from: &VarMap, to: &VarMap, momentum: f64) -> Result<()> {
     let dst = to.data().lock().unwrap();
     for (name, var) in dst.iter() {
         if let Some(s) = src.get(name) {
-            let mixed = ((var.as_tensor() * momentum)? + (s.as_tensor().detach() * (1.0 - momentum))?)?;
+            let mixed =
+                ((var.as_tensor() * momentum)? + (s.as_tensor().detach() * (1.0 - momentum))?)?;
             var.set(&mixed)?;
         }
     }
@@ -370,7 +384,10 @@ mod tests {
         let device = Device::Cpu;
         let m = Jepa::train(&ex, 300, &device).unwrap();
         let (auc, lru) = (m.metrics.auc.unwrap(), m.metrics.lru_auc.unwrap());
-        eprintln!("routine: model AUC {auc:.3}, LRU AUC {lru:.3}, {} train / {} test", m.metrics.n_train, m.metrics.n_test);
+        eprintln!(
+            "routine: model AUC {auc:.3}, LRU AUC {lru:.3}, {} train / {} test",
+            m.metrics.n_train, m.metrics.n_test
+        );
         assert!(auc > lru + MARGIN, "model {auc:.3} vs LRU {lru:.3}");
         assert!(m.metrics.enabled, "{:?}", m.metrics);
     }
@@ -407,7 +424,11 @@ mod tests {
         let cpu = Jepa::load(&p, &Device::Cpu).unwrap();
         let ctx: Vec<&[f32]> = ex.iter().take(512).map(|e| e.context.as_slice()).collect();
         let (on_gpu, on_cpu) = (m.score(&ctx).unwrap(), cpu.score(&ctx).unwrap());
-        let worst = on_gpu.iter().zip(&on_cpu).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let worst = on_gpu
+            .iter()
+            .zip(&on_cpu)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         assert!(worst < 1e-4, "GPU and CPU disagree by {worst}");
     }
 

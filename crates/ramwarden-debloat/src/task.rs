@@ -55,7 +55,10 @@ fn set_enabled(path: &str, on: bool) -> Result<()> {
     // SAFETY: property write on a live interface.
     unsafe { task.SetEnabled(if on { VARIANT_TRUE } else { VARIANT_FALSE }) }.map_err(|e| {
         if e.code().0 as u32 == 0x8007_0005 {
-            Error::denied(format!("task {path}"), "needs administrator — use ramwarden-service")
+            Error::denied(
+                format!("task {path}"),
+                "needs administrator — use ramwarden-service",
+            )
         } else {
             Error::os(format!("task {path}: {e}"))
         }
@@ -93,7 +96,11 @@ impl Tweak for TaskTweak {
 
     fn detect(&self) -> Result<State> {
         match open(&self.task) {
-            Ok(t) => Ok(if enabled(&t)? { State::Default } else { State::Applied }),
+            Ok(t) => Ok(if enabled(&t)? {
+                State::Default
+            } else {
+                State::Applied
+            }),
             Err(e) if e.is_missing() => Ok(State::Missing),
             Err(e) => Err(e),
         }
@@ -120,7 +127,10 @@ mod tests {
     fn task_paths_split_into_folder_and_name() {
         assert_eq!(
             split(r"\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser"),
-            (r"\Microsoft\Windows\Application Experience".into(), "Microsoft Compatibility Appraiser".into())
+            (
+                r"\Microsoft\Windows\Application Experience".into(),
+                "Microsoft Compatibility Appraiser".into()
+            )
         );
         assert_eq!(split(r"\Top"), (r"\".into(), "Top".into()));
     }
@@ -134,7 +144,10 @@ mod tests {
             task: r"\Microsoft\Windows\Customer Experience Improvement Program\Consolidator".into(),
         };
         assert!(real.detect().is_ok());
-        let missing = TaskTweak { task: r"\RamWarden\NoSuchTask".into(), ..real };
+        let missing = TaskTweak {
+            task: r"\RamWarden\NoSuchTask".into(),
+            ..real
+        };
         assert_eq!(missing.detect().unwrap(), State::Missing);
     }
 }

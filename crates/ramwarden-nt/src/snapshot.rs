@@ -108,7 +108,8 @@ fn query_process_information() -> Result<Vec<u64>> {
         if ntdll::success(status) {
             return Ok(buf);
         }
-        if status == ntdll::STATUS_INFO_LENGTH_MISMATCH || status == ntdll::STATUS_BUFFER_TOO_SMALL {
+        if status == ntdll::STATUS_INFO_LENGTH_MISMATCH || status == ntdll::STATUS_BUFFER_TOO_SMALL
+        {
             words = (needed as usize / 8 + 1).max(words) + 16 * 1024;
             continue;
         }
@@ -116,7 +117,9 @@ fn query_process_information() -> Result<Vec<u64>> {
             "NtQuerySystemInformation(SystemProcessInformation) failed: {status:#x}"
         )));
     }
-    Err(Error::os("process table kept growing faster than it could be read"))
+    Err(Error::os(
+        "process table kept growing faster than it could be read",
+    ))
 }
 
 /// Walk the entries the kernel wrote.

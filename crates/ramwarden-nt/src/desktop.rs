@@ -20,9 +20,12 @@ use windows::Win32::Media::Audio::{
     AudioSessionStateActive, DEVICE_STATE_ACTIVE, IAudioSessionControl2, IAudioSessionManager2,
     IMMDeviceEnumerator, MMDeviceEnumerator, eAll,
 };
-use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
+use windows::Win32::System::Com::{
+    CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow, GetWindowThreadProcessId, IsWindowVisible,
+    EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow, GetWindowThreadProcessId,
+    IsWindowVisible,
 };
 use windows::core::{BOOL, Interface};
 
@@ -155,20 +158,29 @@ fn collect_audio() -> windows::core::Result<HashSet<i32>> {
     let mut out = HashSet::new();
     // SAFETY: COM calls on interfaces obtained from the system enumerator.
     unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let devices = enumerator.EnumAudioEndpoints(eAll, DEVICE_STATE_ACTIVE)?;
         for i in 0..devices.GetCount()? {
-            let Ok(device) = devices.Item(i) else { continue };
+            let Ok(device) = devices.Item(i) else {
+                continue;
+            };
             let Ok(manager) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else {
                 continue;
             };
-            let Ok(sessions) = manager.GetSessionEnumerator() else { continue };
+            let Ok(sessions) = manager.GetSessionEnumerator() else {
+                continue;
+            };
             for j in 0..sessions.GetCount().unwrap_or(0) {
-                let Ok(session) = sessions.GetSession(j) else { continue };
+                let Ok(session) = sessions.GetSession(j) else {
+                    continue;
+                };
                 if session.GetState().ok() != Some(AudioSessionStateActive) {
                     continue;
                 }
-                let Ok(control) = session.cast::<IAudioSessionControl2>() else { continue };
+                let Ok(control) = session.cast::<IAudioSessionControl2>() else {
+                    continue;
+                };
                 if let Ok(pid) = control.GetProcessId()
                     && pid > 4
                 {

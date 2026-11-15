@@ -52,7 +52,11 @@ mod windows_main {
             Some("console") => {
                 init_log(false);
                 let (_tx, rx) = watch::channel(false);
-                exit(runtime().block_on(crate::server::serve(rx)).map_err(|e| e.to_string()));
+                exit(
+                    runtime()
+                        .block_on(crate::server::serve(rx))
+                        .map_err(|e| e.to_string()),
+                );
             }
             _ => {
                 if let Err(e) = service_dispatcher::start(NAME, ffi_service_main) {
@@ -116,7 +120,10 @@ mod windows_main {
         let locked = crate::secure::lock_down(&log_dir());
         init_log(true);
         if let Err(e) = locked {
-            tracing::error!("cannot secure {}: {e} — refusing to run", log_dir().display());
+            tracing::error!(
+                "cannot secure {}: {e} — refusing to run",
+                log_dir().display()
+            );
             return;
         }
         if let Err(e) = run_service() {
@@ -202,7 +209,9 @@ mod windows_main {
             .create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
             .map_err(|e| format!("create service: {e}"))?;
         let _ = service.set_description(DESCRIPTION);
-        service.start::<&str>(&[]).map_err(|e| format!("start: {e}"))?;
+        service
+            .start::<&str>(&[])
+            .map_err(|e| format!("start: {e}"))?;
         println!("installed and started {NAME}");
         Ok(())
     }
@@ -211,7 +220,10 @@ mod windows_main {
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
             .map_err(|e| e.to_string())?;
         let service = manager
-            .open_service(NAME, ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS)
+            .open_service(
+                NAME,
+                ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS,
+            )
             .map_err(|e| format!("open {NAME}: {e}"))?;
         let _ = service.stop();
         service.delete().map_err(|e| format!("delete: {e}"))?;

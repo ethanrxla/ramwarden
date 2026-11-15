@@ -68,7 +68,9 @@ impl Identities {
 
     pub fn get(&mut self, p: &NtProcess) -> Identity {
         let (my_sid, cache) = (&self.my_sid, &mut self.cache);
-        let (id, _) = cache.entry(p.pid as i32, p.create_time as u64, || Self::resolve(my_sid, p));
+        let (id, _) = cache.entry(p.pid as i32, p.create_time as u64, || {
+            Self::resolve(my_sid, p)
+        });
         id.clone()
     }
 
@@ -158,7 +160,11 @@ fn token_sid(process: HANDLE) -> Option<Vec<u8>> {
 fn sid_eq(a: &[u8], b: &[u8]) -> bool {
     // SAFETY: both are complete SIDs copied out of tokens.
     unsafe {
-        EqualSid(PSID(a.as_ptr() as *mut c_void), PSID(b.as_ptr() as *mut c_void)).is_ok()
+        EqualSid(
+            PSID(a.as_ptr() as *mut c_void),
+            PSID(b.as_ptr() as *mut c_void),
+        )
+        .is_ok()
     }
 }
 
@@ -216,7 +222,11 @@ mod tests {
         let me = table.iter().find(|p| p.pid == std::process::id()).unwrap();
         let id = ids.get(me);
         assert_eq!(id.owner, Owner::CurrentUser);
-        assert!(id.cmdline.to_lowercase().contains("ramwarden_nt"), "{}", id.cmdline);
+        assert!(
+            id.cmdline.to_lowercase().contains("ramwarden_nt"),
+            "{}",
+            id.cmdline
+        );
     }
 
     #[test]
@@ -250,12 +260,27 @@ fn sid_string(sid: &[u8]) -> Option<String> {
 /// services. Keep in step with `ramwarden_core::roles::ANTI_CHEAT` and `GAMES`.
 pub fn never_open(name: &str) -> bool {
     const ANTI_CHEAT: &[&str] = &[
-        "vgc", "vgtray", "easyanticheat", "easyanticheat_eos", "beservice",
-        "eaanticheat.gameservice", "faceit", "faceitservice", "gameguard",
+        "vgc",
+        "vgtray",
+        "easyanticheat",
+        "easyanticheat_eos",
+        "beservice",
+        "eaanticheat.gameservice",
+        "faceit",
+        "faceitservice",
+        "gameguard",
     ];
     const GAMES: &[&str] = &[
-        "league of legends", "valorant", "cs2", "dota2", "rocketleague", "r5apex",
-        "overwatch", "eldenring", "gta5", "gtav",
+        "league of legends",
+        "valorant",
+        "cs2",
+        "dota2",
+        "rocketleague",
+        "r5apex",
+        "overwatch",
+        "eldenring",
+        "gta5",
+        "gtav",
     ];
     let lower = name.trim().to_lowercase();
     let lower = lower.strip_suffix(".exe").unwrap_or(&lower);
@@ -284,7 +309,10 @@ mod sid_tests {
     fn this_process_has_a_user_sid_and_it_matches_by_pid() {
         let me = super::current_user_sid().unwrap();
         assert!(me.starts_with("S-1-5-"), "{me}");
-        assert_eq!(super::process_user_sid(std::process::id()).as_deref(), Some(me.as_str()));
+        assert_eq!(
+            super::process_user_sid(std::process::id()).as_deref(),
+            Some(me.as_str())
+        );
     }
 
     /// Measured on the target machine with Fortnite running.

@@ -1,7 +1,7 @@
 //! A lightweight status path: never wait behind detector or remediation locks.
+use crate::hub::AppState;
 use axum::{Json, extract::State};
 use serde_json::{Value, json};
-use crate::hub::AppState;
 
 pub async fn status(State(st): State<AppState>) -> Json<Value> {
     let result = tokio::task::spawn_blocking(move || {

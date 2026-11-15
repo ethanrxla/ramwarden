@@ -23,7 +23,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let d = probe.sample();
     det.sample(&d)?;
-    println!("first sample taken (warm={}) — waiting 2s for a CPU delta", det.is_warm());
+    println!(
+        "first sample taken (warm={}) — waiting 2s for a CPU delta",
+        det.is_warm()
+    );
     std::thread::sleep(std::time::Duration::from_secs(2));
     det.sample(&d)?;
     println!("second sample taken (warm={})\n", det.is_warm());
@@ -31,13 +34,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let t = det.totals();
     println!(
         "totals (proportional)   protected {} MB   in use {} MB   idle {} MB   across {} processes\n",
-        mb(t["PROTECTED"]), mb(t["IN_USE"]), mb(t["IDLE"]), det.snapshot().len()
+        mb(t["PROTECTED"]),
+        mb(t["IN_USE"]),
+        mb(t["IDLE"]),
+        det.snapshot().len()
     );
 
     let mut all: Vec<_> = det.snapshot().values().collect();
     all.sort_by_key(|s| std::cmp::Reverse(s.pss));
 
-    println!("{:<22} {:>7} {:>7} {:<10} {:<11} WHY", "NAME", "OWNED", "RESID", "VERDICT", "ROLE");
+    println!(
+        "{:<22} {:>7} {:>7} {:<10} {:<11} WHY",
+        "NAME", "OWNED", "RESID", "VERDICT", "ROLE"
+    );
     println!("{}", "-".repeat(118));
     for s in all.iter().filter(|s| s.pss > 150_000_000) {
         println!(
@@ -57,11 +66,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  none this round");
     }
     for s in &r {
-        println!("  {} (pid {}) {} MB — {}", s.name, s.pid, mb(s.pss), s.reasons.join("; "));
+        println!(
+            "  {} (pid {}) {} MB — {}",
+            s.name,
+            s.pid,
+            mb(s.pss),
+            s.reasons.join("; ")
+        );
     }
 
     println!("\nGATE CHECKS:");
-    for name in ["cosmic-comp", "dwm", "dockerd", "brave", "Discord", "ollama", "not-running"] {
+    for name in [
+        "cosmic-comp",
+        "dwm",
+        "dockerd",
+        "brave",
+        "Discord",
+        "ollama",
+        "not-running",
+    ] {
         let d = det.may_suspend(name, &watchlist);
         println!(
             "  {:<14} {:<7} {}",
@@ -71,7 +94,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let protected = all.iter().filter(|s| s.verdict == Verdict::Protected).count();
+    let protected = all
+        .iter()
+        .filter(|s| s.verdict == Verdict::Protected)
+        .count();
     println!("\n{protected} processes structurally or soft protected");
     Ok(())
 }

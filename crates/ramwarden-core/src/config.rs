@@ -277,7 +277,10 @@ pub struct Desktop {
 
 impl Default for Desktop {
     fn default() -> Self {
-        Desktop { enabled: true, backend: "auto".into() }
+        Desktop {
+            enabled: true,
+            backend: "auto".into(),
+        }
     }
 }
 
@@ -712,10 +715,16 @@ struct RawWorkspaces {
 }
 
 fn default_watchlist() -> Vec<String> {
-    ["Discord", "BurpSuiteCommunity", "burpsuite", "cursor", "Cursor"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "Discord",
+        "BurpSuiteCommunity",
+        "burpsuite",
+        "cursor",
+        "Cursor",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 fn default_db_path() -> PathBuf {
@@ -837,8 +846,10 @@ fn dotenv_value(text: &str, keys: &[&str]) -> Option<String> {
 /// Read an integration secret without adding it to debug-printable configuration.
 pub fn integration_secret(cfg: &Config, var: &str) -> Option<String> {
     let mut paths = vec![config_dir().join("ramwarden").join(".env")];
-    if let Some(parent) = cfg.source.as_ref().and_then(|p|p.parent()) { paths.insert(0,parent.join(".env")); }
-    secret_from_env(var,&paths)
+    if let Some(parent) = cfg.source.as_ref().and_then(|p| p.parent()) {
+        paths.insert(0, parent.join(".env"));
+    }
+    secret_from_env(var, &paths)
 }
 
 fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
@@ -847,9 +858,11 @@ fn secret_from_env(var: &str, env_files: &[PathBuf]) -> Option<String> {
     {
         return Some(v.trim().to_string());
     }
-    env_files
-        .iter()
-        .find_map(|f| std::fs::read_to_string(f).ok().and_then(|t| dotenv_value(&t, &[var])))
+    env_files.iter().find_map(|f| {
+        std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| dotenv_value(&t, &[var]))
+    })
 }
 
 /// Load one specific file, merging any adjacent `secrets.toml`.
@@ -869,8 +882,7 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
             continue;
         }
         let stext = std::fs::read_to_string(&sp).map_err(|e| format!("{}: {e}", sp.display()))?;
-        let secrets: Raw =
-            toml::from_str(&stext).map_err(|e| format!("{}: {e}", sp.display()))?;
+        let secrets: Raw = toml::from_str(&stext).map_err(|e| format!("{}: {e}", sp.display()))?;
         // Only the fields a secrets file has any business setting.
         if secrets.ollama.host != Ollama::default().host {
             cfg.ollama.host = secrets.ollama.host;
@@ -878,8 +890,12 @@ pub fn load_from(path: &Path) -> Result<Config, String> {
         if !secrets.nvidia.api_key.is_empty() {
             cfg.nvidia.api_key = secrets.nvidia.api_key;
         }
-        if secrets.assistant.cloud_enabled { cfg.assistant.cloud_enabled = true; }
-        if secrets.assistant.cloud_model.is_some() { cfg.assistant.cloud_model = secrets.assistant.cloud_model; }
+        if secrets.assistant.cloud_enabled {
+            cfg.assistant.cloud_enabled = true;
+        }
+        if secrets.assistant.cloud_model.is_some() {
+            cfg.assistant.cloud_model = secrets.assistant.cloud_model;
+        }
         if secrets.nvidia.enabled {
             cfg.nvidia.enabled = true;
         }
@@ -997,7 +1013,10 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         voice: raw.voice,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
-        db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
+        db_path: raw
+            .db_path
+            .map(PathBuf::from)
+            .unwrap_or_else(default_db_path),
         source: None,
     })
 }
@@ -1007,9 +1026,18 @@ mod tests {
     #[test]
     fn dotenv_accepts_either_key_name_and_ignores_noise() {
         let text = "# comment\nJEV_API_KEY=abc\nexport NVIDIA_NIM_API_KEY=\"nvapi-xyz\"\n";
-        assert_eq!(dotenv_value(text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]).as_deref(), Some("nvapi-xyz"));
-        assert_eq!(dotenv_value("NVIDIA_API_KEY=\nOTHER=1", &["NVIDIA_API_KEY"]), None);
-        assert_eq!(dotenv_value("# NVIDIA_API_KEY=nope", &["NVIDIA_API_KEY"]), None);
+        assert_eq!(
+            dotenv_value(text, &["NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY"]).as_deref(),
+            Some("nvapi-xyz")
+        );
+        assert_eq!(
+            dotenv_value("NVIDIA_API_KEY=\nOTHER=1", &["NVIDIA_API_KEY"]),
+            None
+        );
+        assert_eq!(
+            dotenv_value("# NVIDIA_API_KEY=nope", &["NVIDIA_API_KEY"]),
+            None
+        );
     }
 
     use super::*;
@@ -1038,7 +1066,10 @@ min_level = 5
         assert_eq!(w.min_level, 5);
         assert_eq!(w.alert_level, 12, "unset keys keep their defaults");
         assert_eq!(w.api_user, "wazuh-wui");
-        assert_eq!(w.ca_file.as_deref(), Some(Path::new("/etc/ramwarden/wazuh-root-ca.pem")));
+        assert_eq!(
+            w.ca_file.as_deref(),
+            Some(Path::new("/etc/ramwarden/wazuh-root-ca.pem"))
+        );
     }
 
     #[test]
@@ -1105,12 +1136,19 @@ port = 7823
 
     #[test]
     fn the_shipped_configs_keep_tab_closing_in_dry_run() {
-        for text in [include_str!("../../../ramwarden.toml"), include_str!("../../../packaging/macos/config.toml")] {
+        for text in [
+            include_str!("../../../ramwarden.toml"),
+            include_str!("../../../packaging/macos/config.toml"),
+        ] {
             let c = parse(text).unwrap();
             assert_eq!(c.tabs.close, "dry-run");
             assert_eq!(c.tabs.sweep_minutes, 5.0);
         }
-        assert_eq!(parse("").unwrap().tabs.close, "dry-run", "closing is never live by default");
+        assert_eq!(
+            parse("").unwrap().tabs.close,
+            "dry-run",
+            "closing is never live by default"
+        );
     }
 
     #[test]
@@ -1122,7 +1160,10 @@ port = 7823
         assert_eq!(c.thresholds.debounce_minutes, 120);
         assert_eq!(c.server.host, "0.0.0.0");
         assert_eq!(c.server.port, 7823);
-        assert_eq!(c.watchlist, vec!["Discord", "BurpSuiteCommunity", "burpsuite"]);
+        assert_eq!(
+            c.watchlist,
+            vec!["Discord", "BurpSuiteCommunity", "burpsuite"]
+        );
         assert_eq!(c.workspace_rules.len(), 2);
         assert_eq!(c.workspace_rules[0].pattern, "cosmic-term");
         assert_eq!(c.workspace_rules[0].workspace, 2);
@@ -1133,14 +1174,20 @@ port = 7823
     fn a_v1_config_with_an_api_key_section_still_loads() {
         let c = parse(V1_WITH_API).unwrap();
         assert_eq!(c.thresholds.ram_percent, 65.0);
-        assert_eq!(c.ollama.model, "nemotron-3-nano:4b", "falls back to the local model");
+        assert_eq!(
+            c.ollama.model, "nemotron-3-nano:4b",
+            "falls back to the local model"
+        );
     }
 
     #[test]
     fn an_empty_config_yields_working_defaults() {
         let c = parse("").unwrap();
         assert_eq!(c.server.port, 7823);
-        assert_eq!(c.server.host, "127.0.0.1", "not every interface, by default");
+        assert_eq!(
+            c.server.host, "127.0.0.1",
+            "not every interface, by default"
+        );
         assert!(c.ladder.validate().is_ok());
         assert!(!c.watchlist.is_empty());
     }
@@ -1186,7 +1233,10 @@ port = 7823
         )
         .unwrap();
         assert!(c.ladder.validate().is_ok());
-        assert_eq!(c.ladder.kill_grace_seconds, 0, "0 means kill with no window");
+        assert_eq!(
+            c.ladder.kill_grace_seconds, 0,
+            "0 means kill with no window"
+        );
         assert_eq!(c.ladder.tabs_at, 7.0);
     }
 
@@ -1299,10 +1349,9 @@ port = 7823
 
     #[test]
     fn the_ollama_endpoint_is_configurable() {
-        let c = parse(
-            "[ollama]\nhost = \"http://gpu.local:11434\"\nmodel = \"nemotron-3-nano:30b\"\n",
-        )
-        .unwrap();
+        let c =
+            parse("[ollama]\nhost = \"http://gpu.local:11434\"\nmodel = \"nemotron-3-nano:30b\"\n")
+                .unwrap();
         assert_eq!(c.ollama.host, "http://gpu.local:11434");
         assert_eq!(c.ollama.model, "nemotron-3-nano:30b");
         assert_eq!(
@@ -1341,14 +1390,20 @@ port = 7823
         assert!(paths.contains(&config_dir().join("ramwarden").join("config.toml")));
         #[cfg(target_os = "linux")]
         {
-            assert!(strs.iter().any(|s| s.ends_with(".config/ramwarden/config.toml")));
+            assert!(
+                strs.iter()
+                    .any(|s| s.ends_with(".config/ramwarden/config.toml"))
+            );
             assert_eq!(strs.last().unwrap(), "/etc/ramwarden/config.toml");
         }
         #[cfg(windows)]
         {
             let appdata = std::env::var("APPDATA").unwrap();
             assert!(strs.iter().any(|s| s.starts_with(&appdata)), "{strs:?}");
-            assert!(strs.last().unwrap().ends_with(r"ramwarden\config.toml"), "{strs:?}");
+            assert!(
+                strs.last().unwrap().ends_with(r"ramwarden\config.toml"),
+                "{strs:?}"
+            );
         }
     }
 
@@ -1402,11 +1457,21 @@ port = 7823
         assert!((c.jev.band_low, c.jev.band_high) == (0.15, 0.6));
         let c = parse("[jev]\nenabled = true\nweight = 0.25\nmax_calls_per_hour = 10\n").unwrap();
         assert!(c.jev.enabled && c.jev.weight == 0.25 && c.jev.max_calls_per_hour == 10);
-        assert_eq!(c.jev.model, "jev-latest", "unset fields keep their defaults");
+        assert_eq!(
+            c.jev.model, "jev-latest",
+            "unset fields keep their defaults"
+        );
     }
 
     #[test]
     fn dotenv_finds_the_jev_key() {
-        assert_eq!(dotenv_value("JEV_API_KEY=abc123\nNVIDIA_NIM_API_KEY=x", &["JEV_API_KEY", "TYPESAFE_API_KEY"]).as_deref(), Some("abc123"));
+        assert_eq!(
+            dotenv_value(
+                "JEV_API_KEY=abc123\nNVIDIA_NIM_API_KEY=x",
+                &["JEV_API_KEY", "TYPESAFE_API_KEY"]
+            )
+            .as_deref(),
+            Some("abc123")
+        );
     }
 }

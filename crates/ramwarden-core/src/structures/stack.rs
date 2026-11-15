@@ -17,7 +17,10 @@ pub struct LinkedStack<T> {
 impl<T> LinkedStack<T> {
     /// Create an empty stack.
     pub fn new() -> Self {
-        LinkedStack { head: None, size: 0 }
+        LinkedStack {
+            head: None,
+            size: 0,
+        }
     }
 
     pub fn len(&self) -> usize {

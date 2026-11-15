@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ramwarden_platform::{
-    Cadence, Error, Instances, Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource, Result,
+    Cadence, Error, Instances, Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource,
+    Result,
 };
 
 use crate::sys;
@@ -117,13 +118,18 @@ impl ProcessSource for MacProcesses {
         if pids.is_empty() {
             return Err(Error::Unsupported("proc_listallpids"));
         }
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let mut degraded = false;
         let mut appeared = false;
         let mut infos = Vec::with_capacity(pids.len());
         self.cmdlines.begin();
         for pid in pids {
-            let Some(b) = sys::bsd_info(pid) else { continue };
+            let Some(b) = sys::bsd_info(pid) else {
+                continue;
+            };
             let started = b.pbi_start_tvsec * 1_000_000 + b.pbi_start_tvusec;
             let mine = owner_of(b.pbi_ruid, self.me) == Owner::CurrentUser;
             let (argbuf, cmdlines) = (&mut self.argbuf, &mut self.cmdlines);
@@ -145,7 +151,11 @@ impl ProcessSource for MacProcesses {
         for (pid, b, started, cmdline) in infos {
             let name = {
                 let n = sys::cstr(&b.pbi_name);
-                if n.is_empty() { sys::cstr(&b.pbi_comm) } else { n }
+                if n.is_empty() {
+                    sys::cstr(&b.pbi_comm)
+                } else {
+                    n
+                }
             };
             let owner = owner_of(b.pbi_ruid, self.me);
             // SIDL=1 SRUN=2 SSLEEP=3 SSTOP=4 SZOMB=5. BSD status reports SRUN for
@@ -182,7 +192,12 @@ impl ProcessSource for MacProcesses {
                 state,
                 has_tty: b.e_tdev != 0 && b.e_tdev != u32::MAX,
                 age_seconds: now.saturating_sub(b.pbi_start_tvsec) as f64,
-                listening_ports: self.sockets.listening.get(&pid).cloned().unwrap_or_default(),
+                listening_ports: self
+                    .sockets
+                    .listening
+                    .get(&pid)
+                    .cloned()
+                    .unwrap_or_default(),
                 established: self.sockets.established.get(&pid).copied().unwrap_or(0),
                 group: None,
             });
@@ -213,12 +228,17 @@ fn start_of(pid: i32) -> Option<(u64, u64)> {
 
 impl MacHandle {
     pub fn open(pid: i32) -> Result<Self> {
-        start_of(pid).map(|start| MacHandle { pid, start }).ok_or_else(|| Error::missing(format!("pid {pid}")))
+        start_of(pid)
+            .map(|start| MacHandle { pid, start })
+            .ok_or_else(|| Error::missing(format!("pid {pid}")))
     }
 
     fn signal(&self, sig: i32) -> Result<()> {
         if start_of(self.pid) != Some(self.start) {
-            return Err(Error::missing(format!("pid {} (exited or PID reused)", self.pid)));
+            return Err(Error::missing(format!(
+                "pid {} (exited or PID reused)",
+                self.pid
+            )));
         }
         // SAFETY: plain kill(2) on a pid whose identity was just verified.
         if unsafe { libc::kill(self.pid, sig) } == 0 {
@@ -226,7 +246,10 @@ impl MacHandle {
         }
         Err(match std::io::Error::last_os_error().raw_os_error() {
             Some(libc::ESRCH) => Error::missing(format!("pid {}", self.pid)),
-            Some(libc::EPERM) => Error::denied(format!("pid {}", self.pid), "process belongs to another user"),
+            Some(libc::EPERM) => Error::denied(
+                format!("pid {}", self.pid),
+                "process belongs to another user",
+            ),
             _ => Error::os(std::io::Error::last_os_error()),
         })
     }
@@ -238,7 +261,8 @@ impl ProcessHandle for MacHandle {
     }
 
     fn is_alive(&self) -> bool {
-        start_of(self.pid) == Some(self.start) && sys::bsd_info(self.pid).is_some_and(|b| b.pbi_status != 5)
+        start_of(self.pid) == Some(self.start)
+            && sys::bsd_info(self.pid).is_some_and(|b| b.pbi_status != 5)
     }
 
     fn suspend(&self) -> Result<()> {
@@ -307,7 +331,9 @@ mod tests {
         assert_eq!(state, 4, "stopped");
         h.resume().unwrap();
         h.terminate().unwrap();
-        assert!(h.wait_exit(Duration::from_secs(3)).unwrap() || child.try_wait().unwrap().is_some());
+        assert!(
+            h.wait_exit(Duration::from_secs(3)).unwrap() || child.try_wait().unwrap().is_some()
+        );
         let _ = child.wait();
     }
 

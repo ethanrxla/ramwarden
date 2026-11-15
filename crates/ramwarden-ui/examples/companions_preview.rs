@@ -25,7 +25,9 @@ fn main() {
                 DispatchMessageW(&message);
             }
         }
-        if pets.click().is_some() {println!("companion click received");}
+        if pets.click().is_some() {
+            println!("companion click received");
+        }
         std::thread::sleep(Duration::from_millis(25));
     }
 }

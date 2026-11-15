@@ -84,9 +84,7 @@ pub fn advise(pidfd: &PidFd, vmas: &[Vma], advice: i32) -> Result<u64> {
                     path: format!("/proc/{}", pidfd.pid()).into(),
                     hint: "process_madvise on another process needs CAP_SYS_NICE",
                 },
-                Some(libc::ENOSYS) => {
-                    Error::Unsupported("process_madvise (needs Linux 5.10+)")
-                }
+                Some(libc::ENOSYS) => Error::Unsupported("process_madvise (needs Linux 5.10+)"),
                 Some(libc::EINVAL) => {
                     Error::Unsupported("MADV_COLD/MADV_PAGEOUT via process_madvise")
                 }
@@ -97,7 +95,11 @@ pub fn advise(pidfd: &PidFd, vmas: &[Vma], advice: i32) -> Result<u64> {
             };
             // Report partial progress rather than losing it.
             if total > 0 {
-                tracing::debug!(pid = pidfd.pid(), bytes = total, "partial page-out: {mapped}");
+                tracing::debug!(
+                    pid = pidfd.pid(),
+                    bytes = total,
+                    "partial page-out: {mapped}"
+                );
                 return Ok(total);
             }
             return Err(mapped);
@@ -269,7 +271,10 @@ mod tests {
     /// The capability check must agree with what actually happens when we try.
     #[test]
     fn the_capability_check_predicts_the_real_outcome() {
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
         let fd = PidFd::open(child.id() as i32).unwrap();
         let region = Vma {
             start: 0x1000_0000,
@@ -296,7 +301,10 @@ mod tests {
 
     #[test]
     fn a_handle_to_a_dead_process_reports_no_progress_rather_than_erroring() {
-        let mut child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let fd = PidFd::open(child.id() as i32).unwrap();
         child.kill().unwrap();
         child.wait().unwrap();

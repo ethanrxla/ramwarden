@@ -7,8 +7,8 @@ pub fn gauge(_fraction: f32) -> Vec<u8> {
 mod tests {
     #[test]
     fn brand_icon_has_complete_rgba_pixels() {
-        let image=super::gauge(0.5);
-        assert_eq!(image.len(),(super::SIZE*super::SIZE*4) as usize);
-        assert!(image.as_chunks::<4>().0.iter().any(|pixel|pixel[3]>0));
+        let image = super::gauge(0.5);
+        assert_eq!(image.len(), (super::SIZE * super::SIZE * 4) as usize);
+        assert!(image.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0));
     }
 }

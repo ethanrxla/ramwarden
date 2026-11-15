@@ -115,7 +115,6 @@ struct OllamaTag {
 }
 
 impl Ollama {
-
     /// Read-only conversational explanation. No tools or action execution.
     pub async fn explain(&self, messages: &[serde_json::Value]) -> Result<String> {
         let r = self.http.post(format!("{}/api/chat", self.host))
@@ -124,12 +123,18 @@ impl Ollama {
         let text = r.text().await.map_err(transport)?;
         if !status.is_success() {
             // Do not return upstream bodies: these may echo user context or keys.
-            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+            return Err(Error::Reply(format!(
+                "assistant provider HTTP {}",
+                status.as_u16()
+            )));
         }
-        let parsed: OllamaChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let parsed: OllamaChat =
+            serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
         let content = parsed.message.content;
         let answer = prompt::strip_thinking(&content).trim();
-        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        if answer.is_empty() {
+            return Err(Error::Reply("empty assistant response".into()));
+        }
         Ok(answer.chars().take(6000).collect())
     }
 
@@ -163,7 +168,8 @@ impl Ollama {
                 body: body.chars().take(200).collect(),
             });
         }
-        let tags: OllamaTags = serde_json::from_str(&body).map_err(|e| Error::Reply(e.to_string()))?;
+        let tags: OllamaTags =
+            serde_json::from_str(&body).map_err(|e| Error::Reply(e.to_string()))?;
         Ok(tags.models.into_iter().map(|m| m.name).collect())
     }
 
@@ -238,14 +244,24 @@ impl Ollama {
 
     /// A JSON object constrained to `schema`, for callers with their own
     /// reply shape (desktop arrangement).
-    pub async fn complete_json(&self, system: &str, user: &str, schema: serde_json::Value) -> Result<serde_json::Value> {
+    pub async fn complete_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         let content = self.chat_text(system, user, schema).await?;
         prompt::extract_object(&content).map_err(Error::Reply)
     }
 
     /// One schema-constrained chat turn; the reply text with any reasoning
     /// preamble removed.
-    async fn chat_text(&self, system: &str, user: &str, format: serde_json::Value) -> Result<String> {
+    async fn chat_text(
+        &self,
+        system: &str,
+        user: &str,
+        format: serde_json::Value,
+    ) -> Result<String> {
         let body = serde_json::json!({
             "model": self.model,
             "stream": false,
@@ -297,7 +313,12 @@ impl Ollama {
     /// [`crate::rerank::prefix_query`].
     pub async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
         let q = crate::rerank::prefix_query(&self.embed_model, text);
-        Ok(self.embed_raw(&[q]).await?.into_iter().next().unwrap_or_default())
+        Ok(self
+            .embed_raw(&[q])
+            .await?
+            .into_iter()
+            .next()
+            .unwrap_or_default())
     }
 
     async fn embed_raw(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
@@ -370,21 +391,34 @@ struct OpenAiEmbedding {
 }
 
 impl Nim {
-
     /// Read-only conversational explanation. No tools or action execution.
-    pub async fn explain(&self, messages: &[serde_json::Value], model: Option<&str>) -> Result<String> {
+    pub async fn explain(
+        &self,
+        messages: &[serde_json::Value],
+        model: Option<&str>,
+    ) -> Result<String> {
         let r = self.http.post(format!("{}/v1/chat/completions", self.base)).bearer_auth(self.key.expose())
             .json(&serde_json::json!({"model":model.filter(|s| !s.trim().is_empty()).unwrap_or(&self.model),"messages":messages,"response_format":{"type":"json_object"},"temperature":0.3,"max_tokens":900,"chat_template_kwargs":{"thinking":false}})).send().await.map_err(transport)?;
         let status = r.status();
         let text = r.text().await.map_err(transport)?;
         if !status.is_success() {
             // Do not return upstream bodies: these may echo user context or keys.
-            return Err(Error::Reply(format!("assistant provider HTTP {}", status.as_u16())));
+            return Err(Error::Reply(format!(
+                "assistant provider HTTP {}",
+                status.as_u16()
+            )));
         }
-        let parsed: OpenAiChat = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
-        let content = parsed.choices.first().map(|c|c.message.content.clone()).unwrap_or_default();
+        let parsed: OpenAiChat =
+            serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let content = parsed
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default();
         let answer = prompt::strip_thinking(&content).trim();
-        if answer.is_empty() { return Err(Error::Reply("empty assistant response".into())); }
+        if answer.is_empty() {
+            return Err(Error::Reply("empty assistant response".into()));
+        }
         Ok(answer.chars().take(6000).collect())
     }
 
@@ -444,7 +478,8 @@ impl Nim {
                 body: text.chars().take(200).collect(),
             });
         }
-        let parsed: Models = serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
+        let parsed: Models =
+            serde_json::from_str(&text).map_err(|e| Error::Reply(e.to_string()))?;
         Ok(parsed.data.into_iter().map(|m| m.id).collect())
     }
 
@@ -612,7 +647,10 @@ mod tests {
     /// so `nemotron-3-nano:4b` is satisfied by `nemotron-3-nano:4b`.
     #[test]
     fn model_presence_matches_on_the_base_name() {
-        let have = ["nemotron-3-nano:4b".to_string(), "nomic-embed-text:latest".to_string()];
+        let have = [
+            "nemotron-3-nano:4b".to_string(),
+            "nomic-embed-text:latest".to_string(),
+        ];
         let present = |want: &str| {
             have.iter()
                 .any(|h| h == want || h.split(':').next() == want.split(':').next())
@@ -631,8 +669,11 @@ mod tests {
             {"index":0,"embedding":[1.0]},
             {"index":1,"embedding":[2.0]}]}"#;
         let parsed: OpenAiEmbeddings = serde_json::from_str(body).unwrap();
-        let mut rows: Vec<(usize, Vec<f32>)> =
-            parsed.data.into_iter().map(|d| (d.index, d.embedding)).collect();
+        let mut rows: Vec<(usize, Vec<f32>)> = parsed
+            .data
+            .into_iter()
+            .map(|d| (d.index, d.embedding))
+            .collect();
         rows.sort_by_key(|(i, _)| *i);
         let vectors: Vec<Vec<f32>> = rows.into_iter().map(|(_, v)| v).collect();
         assert_eq!(vectors, vec![vec![1.0], vec![2.0], vec![3.0]]);
@@ -640,7 +681,8 @@ mod tests {
 
     #[test]
     fn an_ollama_reply_is_read_out_of_its_envelope() {
-        let body = r#"{"message":{"role":"assistant","content":"{\"summary\":\"ok\"}"},"done":true}"#;
+        let body =
+            r#"{"message":{"role":"assistant","content":"{\"summary\":\"ok\"}"},"done":true}"#;
         let parsed: OllamaChat = serde_json::from_str(body).unwrap();
         let rec = prompt::extract_json(&parsed.message.content).unwrap();
         assert_eq!(rec.summary, "ok");
@@ -658,7 +700,11 @@ mod tests {
     #[test]
     fn a_reply_with_no_choices_is_an_error_rather_than_an_empty_recommendation() {
         let parsed: OpenAiChat = serde_json::from_str(r#"{"choices":[]}"#).unwrap();
-        let content = parsed.choices.first().map(|c| c.message.content.as_str()).unwrap_or("");
+        let content = parsed
+            .choices
+            .first()
+            .map(|c| c.message.content.as_str())
+            .unwrap_or("");
         assert!(prompt::extract_json(content).is_err());
     }
 }

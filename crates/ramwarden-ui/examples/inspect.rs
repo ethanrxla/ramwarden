@@ -22,7 +22,10 @@ fn walk(w: &gtk4::Widget, depth: usize, out: &mut Vec<(usize, String, gtk4::Widg
 fn main() {
     let runtime = ramwarden_ui::runtime::network_runtime().expect("network runtime");
     let _entered = runtime.enter();
-    let port: u16 = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(7824);
+    let port: u16 = std::env::args()
+        .nth(1)
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(7824);
     let client = Client::new("127.0.0.1", port).expect("client");
 
     let app = gtk4::Application::builder()

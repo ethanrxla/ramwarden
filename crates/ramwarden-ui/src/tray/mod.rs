@@ -16,16 +16,16 @@
 //! **Open** launches this same executable with `--window` ([`run_window`]);
 //! closing that window ends its process and returns everything it used.
 
-pub mod icon;
-pub mod launch;
-pub mod poller;
-pub mod views;
-pub mod pets;
 mod activation;
 pub mod audio;
-mod workspace_ui;
 mod companion_ui;
 mod companion_window;
+pub mod icon;
+pub mod launch;
+pub mod pets;
+pub mod poller;
+pub mod views;
+mod workspace_ui;
 use activation::Surface;
 
 use std::process::Child;
@@ -34,8 +34,11 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Pane { Ram, Threat }
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, CheckMenuItem, PredefinedMenuItem};
+pub enum Pane {
+    Ram,
+    Threat,
+}
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::client::Client;
@@ -54,11 +57,11 @@ enum Tab {
 
 struct WindowApp {
     activation: activation::Reader,
-    surface:Surface,
-    client:Client,
-    chats:[companion_ui::Chat;2],
-    options:crate::companions::Options,
-    settings_error:Option<String>,
+    surface: Surface,
+    client: Client,
+    chats: [companion_ui::Chat; 2],
+    options: crate::companions::Options,
+    settings_error: Option<String>,
     poller: Poller,
     pane: Pane,
     threat_icon: Option<egui::TextureHandle>,
@@ -70,30 +73,55 @@ impl eframe::App for WindowApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(400));
-        if let Some((pane,surface))=self.activation.next_pane(){self.pane=pane;self.surface=surface;ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));ctx.send_viewport_cmd(egui::ViewportCommand::Focus);}
+        if let Some((pane, surface)) = self.activation.next_pane() {
+            self.pane = pane;
+            self.surface = surface;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         let snap = self.poller.snapshot();
 
-        if self.threat_icon.is_none() && let Some(sprite)=&snap.threat_icon {
-            self.threat_icon=Some(ctx.load_texture("threatwarden",egui::ColorImage::from_rgba_unmultiplied([sprite.width as usize,sprite.height as usize],&sprite.rgba),egui::TextureOptions::NEAREST));
+        if self.threat_icon.is_none()
+            && let Some(sprite) = &snap.threat_icon
+        {
+            self.threat_icon = Some(ctx.load_texture(
+                "threatwarden",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [sprite.width as usize, sprite.height as usize],
+                    &sprite.rgba,
+                ),
+                egui::TextureOptions::NEAREST,
+            ));
         }
 
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.pane,Pane::Ram,"RamWarden");
-                ui.selectable_value(&mut self.pane,Pane::Threat,"ThreatWarden");
-                if let Some(p)=&snap.threat {ui.colored_label(views::level_colour(p.level),p.level.label());}
-            });
-            ui.horizontal(|ui| {ui.selectable_value(&mut self.surface,Surface::Dashboard,"Overview");ui.selectable_value(&mut self.surface,Surface::Chat,"Chat");if ui.selectable_value(&mut self.surface,Surface::Settings,"Settings").clicked(){self.options=crate::companions::Options::load();}});
-            if self.pane==Pane::Ram && self.surface==Surface::Dashboard {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
-                ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
-                ui.selectable_value(&mut self.tab, Tab::Debloat, "Privacy & startup");
-                ui.selectable_value(&mut self.tab, Tab::Gpu, "GPU");
-                if snap.busy {
-                    ui.spinner();
+                ui.selectable_value(&mut self.pane, Pane::Ram, "RamWarden");
+                ui.selectable_value(&mut self.pane, Pane::Threat, "ThreatWarden");
+                if let Some(p) = &snap.threat {
+                    ui.colored_label(views::level_colour(p.level), p.level.label());
                 }
             });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.surface, Surface::Dashboard, "Overview");
+                ui.selectable_value(&mut self.surface, Surface::Chat, "Chat");
+                if ui
+                    .selectable_value(&mut self.surface, Surface::Settings, "Settings")
+                    .clicked()
+                {
+                    self.options = crate::companions::Options::load();
+                }
+            });
+            if self.pane == Pane::Ram && self.surface == Surface::Dashboard {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.tab, Tab::Overview, "Overview");
+                    ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
+                    ui.selectable_value(&mut self.tab, Tab::Debloat, "Privacy & startup");
+                    ui.selectable_value(&mut self.tab, Tab::Gpu, "GPU");
+                    if snap.busy {
+                        ui.spinner();
+                    }
+                });
             }
         });
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -112,14 +140,44 @@ impl eframe::App for WindowApp {
                 command = Some(c);
             }
         });
-        egui::CentralPanel::default().show(ui, |ui| {if self.surface==Surface::Chat {self.chats[usize::from(self.pane==Pane::Threat)].show(ui,&self.client,self.pane==Pane::Threat);return;}
-if self.surface==Surface::Settings{companion_ui::settings(ui,self.pane==Pane::Threat,&mut self.options,&mut self.settings_error);return;}match (self.pane,self.tab) {
-            (Pane::Threat,_) => command=views::threat(ui,&snap,self.threat_icon.as_ref(),&mut self.view),
-            (Pane::Ram,Tab::Overview) => {egui::ScrollArea::vertical().id_salt("overview").show(ui, |ui| views::overview(ui, &snap));}
-            (Pane::Ram,Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
-            (Pane::Ram,Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
-            (Pane::Ram,Tab::Gpu) => {egui::ScrollArea::vertical().id_salt("gpu").show(ui, |ui| command = views::gpu(ui, &snap));}
-        }});
+        egui::CentralPanel::default().show(ui, |ui| {
+            if self.surface == Surface::Chat {
+                self.chats[usize::from(self.pane == Pane::Threat)].show(
+                    ui,
+                    &self.client,
+                    self.pane == Pane::Threat,
+                );
+                return;
+            }
+            if self.surface == Surface::Settings {
+                companion_ui::settings(
+                    ui,
+                    self.pane == Pane::Threat,
+                    &mut self.options,
+                    &mut self.settings_error,
+                );
+                return;
+            }
+            match (self.pane, self.tab) {
+                (Pane::Threat, _) => {
+                    command = views::threat(ui, &snap, self.threat_icon.as_ref(), &mut self.view)
+                }
+                (Pane::Ram, Tab::Overview) => {
+                    egui::ScrollArea::vertical()
+                        .id_salt("overview")
+                        .show(ui, |ui| views::overview(ui, &snap));
+                }
+                (Pane::Ram, Tab::Processes) => {
+                    command = views::processes(ui, &snap, &mut self.view)
+                }
+                (Pane::Ram, Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
+                (Pane::Ram, Tab::Gpu) => {
+                    egui::ScrollArea::vertical()
+                        .id_salt("gpu")
+                        .show(ui, |ui| command = views::gpu(ui, &snap));
+                }
+            }
+        });
 
         if let Some((pending, question)) = self.view.confirm.clone() {
             egui::Window::new("Confirm")
@@ -147,7 +205,9 @@ if self.surface==Surface::Settings{companion_ui::settings(ui,self.pane==Pane::Th
 
 /// Run the window until it is closed.
 pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
-    if std::env::args().any(|a|a=="--companion") {return companion_window::run(client,pane);}
+    if std::env::args().any(|a| a == "--companion") {
+        return companion_window::run(client, pane);
+    }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
@@ -170,8 +230,17 @@ pub fn run_window(client: Client, pane: Pane) -> Result<(), String> {
             let ctx = cc.egui_ctx.clone();
             Ok(Box::new(WindowApp {
                 activation: activation::Reader::default(),
-                surface:if std::env::args().any(|a|a=="--chat"){Surface::Chat}else if std::env::args().any(|a|a=="--settings"){Surface::Settings}else{Surface::Dashboard},
-                client:client.clone(),chats:std::array::from_fn(|_|companion_ui::Chat::default()),options:crate::companions::Options::load(),settings_error:None,
+                surface: if std::env::args().any(|a| a == "--chat") {
+                    Surface::Chat
+                } else if std::env::args().any(|a| a == "--settings") {
+                    Surface::Settings
+                } else {
+                    Surface::Dashboard
+                },
+                client: client.clone(),
+                chats: std::array::from_fn(|_| companion_ui::Chat::default()),
+                options: crate::companions::Options::load(),
+                settings_error: None,
                 poller: Poller::start(client, true, move || ctx.request_repaint()),
                 pane,
                 threat_icon: None,
@@ -217,15 +286,15 @@ struct VoiceItems {
 impl Tray {
     fn new() -> Result<Self, String> {
         let open = MenuItem::new("RamWarden", true, None);
-        let threat=MenuItem::new("ThreatWarden",true,None);
+        let threat = MenuItem::new("ThreatWarden", true, None);
         let quit = MenuItem::new("Quit", true, None);
-        let ram_pet=CheckMenuItem::new("Show RamWarden companion",true,true,None);
-        let threat_pet=CheckMenuItem::new("Show ThreatWarden companion",false,true,None);
+        let ram_pet = CheckMenuItem::new("Show RamWarden companion", true, true, None);
+        let threat_pet = CheckMenuItem::new("Show ThreatWarden companion", false, true, None);
         let menu = Menu::new();
         menu.append(&open).map_err(|e| e.to_string())?;
         menu.append(&threat).map_err(|e| e.to_string())?;
-        menu.append(&ram_pet).map_err(|e|e.to_string())?;
-        menu.append(&threat_pet).map_err(|e|e.to_string())?;
+        menu.append(&ram_pet).map_err(|e| e.to_string())?;
+        menu.append(&threat_pet).map_err(|e| e.to_string())?;
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
@@ -249,13 +318,19 @@ impl Tray {
 
     /// Whether a clicked menu item asks to answer the warden in the window.
     fn wants_window(&self, id: &MenuId) -> bool {
-        self.voice.as_ref().and_then(|v| v.type_answer.as_ref()).is_some_and(|item| item.id() == id)
+        self.voice
+            .as_ref()
+            .and_then(|v| v.type_answer.as_ref())
+            .is_some_and(|item| item.id() == id)
     }
 
     /// The command behind a clicked menu item, if it is one of the warden's.
     fn voice_command(&self, id: &MenuId) -> Option<Command> {
         let v = self.voice.as_ref()?;
-        v.choices.iter().find(|(item, _)| item.id() == id).map(|(_, c)| c.clone())
+        v.choices
+            .iter()
+            .find(|(item, _)| item.id() == id)
+            .map(|(_, c)| c.clone())
     }
 
     /// Show the warden's current question in the menu and the tooltip, or
@@ -263,7 +338,9 @@ impl Tray {
     /// what needs an answer.
     fn show_question(&mut self, poller: &Poller) {
         let snap = poller.snapshot();
-        let question = snap.speech.as_ref()
+        let question = snap
+            .speech
+            .as_ref()
             .filter(|s| s.pet)
             .and_then(|s| s.bubble.as_ref())
             .filter(|b| b.is_question());
@@ -283,11 +360,21 @@ impl Tray {
         }
         let Some(b) = question else { return };
         let line = MenuItem::new(format!("🐏 {}", b.text), false, None);
-        let choices: Vec<(MenuItem, Command)> = b.buttons()
-            .map(|c| (MenuItem::new(format!("    {}", c.label), true, None),
-                Command::Answer { id: b.id.clone(), choice: c.id.clone() }))
+        let choices: Vec<(MenuItem, Command)> = b
+            .buttons()
+            .map(|c| {
+                (
+                    MenuItem::new(format!("    {}", c.label), true, None),
+                    Command::Answer {
+                        id: b.id.clone(),
+                        choice: c.id.clone(),
+                    },
+                )
+            })
             .collect();
-        let type_answer = b.asks_focus().then(|| MenuItem::new("    Type your answer…", true, None));
+        let type_answer = b
+            .asks_focus()
+            .then(|| MenuItem::new("    Type your answer…", true, None));
         let gap = PredefinedMenuItem::separator();
         let _ = self.menu.insert(&line, 0);
         let mut at = 1;
@@ -300,8 +387,16 @@ impl Tray {
             at += 1;
         }
         let _ = self.menu.insert(&gap, at);
-        let _ = self.icon.set_tooltip(Some(format!("RamWarden: {}", b.text)));
-        self.voice = Some(VoiceItems { bubble: b.id.clone(), line, choices, type_answer, gap });
+        let _ = self
+            .icon
+            .set_tooltip(Some(format!("RamWarden: {}", b.text)));
+        self.voice = Some(VoiceItems {
+            bubble: b.id.clone(),
+            line,
+            choices,
+            type_answer,
+            gap,
+        });
     }
 
     /// Redraw the gauge when the figure visibly changes.
@@ -318,47 +413,106 @@ impl Tray {
             let _ = self.icon.set_icon(gauge_icon(f));
             self.shown_fraction = f;
         }
-        let mut tooltip=format!("RamWarden: {:.1}/{:.1} GB ({:.0}%) · pressure {:.1}%",st.used_mb/1024.0,st.total_mb/1024.0,st.percent,st.psi_some);
-        if let Some(threat)=&snap.threat && threat.unlocked {
-            tooltip.push_str(&format!("\nThreatWarden: {}",threat.headline));
+        let mut tooltip = format!(
+            "RamWarden: {:.1}/{:.1} GB ({:.0}%) · pressure {:.1}%",
+            st.used_mb / 1024.0,
+            st.total_mb / 1024.0,
+            st.percent,
+            st.psi_some
+        );
+        if let Some(threat) = &snap.threat
+            && threat.unlocked
+        {
+            tooltip.push_str(&format!("\nThreatWarden: {}", threat.headline));
         }
-        let _=self.icon.set_tooltip(Some(tooltip));
+        let _ = self.icon.set_tooltip(Some(tooltip));
     }
 }
 
 /// Launch the window process, or leave it alone if it is already open.
 fn open_window(child: &mut Option<Child>, pane: Pane) {
-    open_surface(child,pane,Surface::Dashboard);
+    open_surface(child, pane, Surface::Dashboard);
 }
-fn open_surface(child:&mut Option<Child>,pane:Pane,surface:Surface){
-    activation::request(pane,surface,false);
+fn open_surface(child: &mut Option<Child>, pane: Pane, surface: Surface) {
+    activation::request(pane, surface, false);
     if let Some(c) = child
         && matches!(c.try_wait(), Ok(None))
     {
         return; // already open
     }
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--window").arg(match surface{Surface::Dashboard=>"--dashboard",Surface::Chat|Surface::ToggleChat=>"--chat",Surface::Settings=>"--settings",Surface::Thought=>"--thought"}).arg(if pane==Pane::Threat {"--threat"}else{"--ram"}).spawn()) {
+    match std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .arg("--window")
+            .arg(match surface {
+                Surface::Dashboard => "--dashboard",
+                Surface::Chat | Surface::ToggleChat => "--chat",
+                Surface::Settings => "--settings",
+                Surface::Thought => "--thought",
+            })
+            .arg(if pane == Pane::Threat {
+                "--threat"
+            } else {
+                "--ram"
+            })
+            .spawn()
+    }) {
         Ok(c) => *child = Some(c),
         Err(e) => tracing::error!("cannot open the window: {e}"),
     }
 }
 
-fn open_attached(child:&mut Option<Child>,pane:Pane,surface:Surface){
-    if surface!=Surface::Thought {activation::request(pane,surface,true);}
-    if child.as_mut().is_some_and(|c|matches!(c.try_wait(),Ok(None))){return;}
-    match std::env::current_exe().and_then(|exe|std::process::Command::new(exe).args(["--window","--companion",if pane==Pane::Threat{"--threat"}else{"--ram"},match surface{Surface::Settings=>"--settings",Surface::Thought=>"--thought",_=>"--chat"}]).spawn()) {
-        Ok(c)=>*child=Some(c),Err(e)=>tracing::error!("cannot open companion box: {e}"),
+fn open_attached(child: &mut Option<Child>, pane: Pane, surface: Surface) {
+    if surface != Surface::Thought {
+        activation::request(pane, surface, true);
+    }
+    if child
+        .as_mut()
+        .is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+    {
+        return;
+    }
+    match std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args([
+                "--window",
+                "--companion",
+                if pane == Pane::Threat {
+                    "--threat"
+                } else {
+                    "--ram"
+                },
+                match surface {
+                    Surface::Settings => "--settings",
+                    Surface::Thought => "--thought",
+                    _ => "--chat",
+                },
+            ])
+            .spawn()
+    }) {
+        Ok(c) => *child = Some(c),
+        Err(e) => tracing::error!("cannot open companion box: {e}"),
     }
 }
-fn close_child(child:&mut Option<Child>){if let Some(mut c)=child.take(){let _=c.kill();let _=c.wait();}}
-fn child_running(child:&mut Option<Child>)->bool{child.as_mut().is_some_and(|c|matches!(c.try_wait(),Ok(None)))}
+fn close_child(child: &mut Option<Child>) {
+    if let Some(mut c) = child.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+fn child_running(child: &mut Option<Child>) -> bool {
+    child
+        .as_mut()
+        .is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+}
 
 /// Run the tray until Quit. `start_hidden` (the logon task) does not open the
 /// window at start.
 pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows::Win32::System::Threading::CreateMutexW;
-    use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
     use windows::core::w;
 
     // One tray per session. Launching the app again (Start menu, a second
@@ -369,18 +523,18 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         if start_hidden {
             return Ok(()); // a second logon start: the tray is already there
         }
-        return run_window(client,Pane::Ram);
+        return run_window(client, Pane::Ram);
     }
 
     let poller = Poller::start(client, false, || {});
     let mut tray = Tray::new()?;
-    let pets=pets::Pets::new()?;
+    let pets = pets::Pets::new()?;
     let mut window: Option<Child> = None;
-    let mut chats:[Option<Child>;2]=[None,None];
-    let mut thoughts:[Option<Child>;2]=[None,None];
-    let mut last_bubble=String::new();
+    let mut chats: [Option<Child>; 2] = [None, None];
+    let mut thoughts: [Option<Child>; 2] = [None, None];
+    let mut last_bubble = String::new();
     if !start_hidden {
-        open_window(&mut window,Pane::Ram);
+        open_window(&mut window, Pane::Ram);
     }
 
     let mut last = Instant::now() - Duration::from_secs(10);
@@ -395,20 +549,26 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
             }
         }
         while let Ok(e) = MenuEvent::receiver().try_recv() {
-            if e.id==*tray.ram_pet.id(){pets.toggle(Pane::Ram);}
-            if e.id==*tray.threat_pet.id(){pets.toggle(Pane::Threat);}
+            if e.id == *tray.ram_pet.id() {
+                pets.toggle(Pane::Ram);
+            }
+            if e.id == *tray.threat_pet.id() {
+                pets.toggle(Pane::Threat);
+            }
             if e.id == tray.quit {
-                for child in chats.iter_mut().chain(thoughts.iter_mut()){close_child(child);}
+                for child in chats.iter_mut().chain(thoughts.iter_mut()) {
+                    close_child(child);
+                }
                 if let Some(mut c) = window.take() {
                     let _ = c.kill();
                 }
                 return Ok(());
             }
             if e.id == tray.open || tray.wants_window(&e.id) {
-                open_window(&mut window,Pane::Ram);
+                open_window(&mut window, Pane::Ram);
             }
-            if e.id==tray.threat {
-                open_window(&mut window,Pane::Threat);
+            if e.id == tray.threat {
+                open_window(&mut window, Pane::Threat);
             }
             if let Some(c) = tray.voice_command(&e.id) {
                 poller.send(c);
@@ -418,32 +578,74 @@ pub fn run_tray(client: Client, start_hidden: bool) -> Result<(), String> {
         // otherwise opening the menu to toggle a pet also opens the RAM pane.
         while TrayIconEvent::receiver().try_recv().is_ok() {}
         if last.elapsed() >= Duration::from_secs(2) {
-            let pro=poller.snapshot().threat.as_ref().is_some_and(|p|p.unlocked);
+            let pro = poller
+                .snapshot()
+                .threat
+                .as_ref()
+                .is_some_and(|p| p.unlocked);
             pets.refresh(pro);
-            let [ram,threat]=pets.visibility();
-            let visible=[ram,threat&&pro];
-            for i in 0..2 {if !visible[i]{close_child(&mut chats[i]);close_child(&mut thoughts[i]);}}
-            let snap=poller.snapshot();
-            if let Some(speech)=snap.speech.as_ref().filter(|s|s.pet&&!s.muted) && let Some(b)=&speech.bubble && matches!(b.warden.as_str(),""|"ram"|"threat") {
-                let index=usize::from(b.warden=="threat");
-                if visible[index] && b.id!=last_bubble {
-                    last_bubble=b.id.clone();open_attached(&mut thoughts[index],if index==0{Pane::Ram}else{Pane::Threat},Surface::Thought);
+            let [ram, threat] = pets.visibility();
+            let visible = [ram, threat && pro];
+            for i in 0..2 {
+                if !visible[i] {
+                    close_child(&mut chats[i]);
+                    close_child(&mut thoughts[i]);
+                }
+            }
+            let snap = poller.snapshot();
+            if let Some(speech) = snap.speech.as_ref().filter(|s| s.pet && !s.muted)
+                && let Some(b) = &speech.bubble
+                && matches!(b.warden.as_str(), "" | "ram" | "threat")
+            {
+                let index = usize::from(b.warden == "threat");
+                if visible[index] && b.id != last_bubble {
+                    last_bubble = b.id.clone();
+                    open_attached(
+                        &mut thoughts[index],
+                        if index == 0 { Pane::Ram } else { Pane::Threat },
+                        Surface::Thought,
+                    );
                 }
             }
 
-            tray.ram_pet.set_checked(ram);tray.threat_pet.set_checked(threat&&pro);
+            tray.ram_pet.set_checked(ram);
+            tray.threat_pet.set_checked(threat && pro);
             tray.threat_pet.set_enabled(pro);
             tray.update(&poller);
             tray.show_question(&poller);
             last = Instant::now();
         }
-        if let Some((pane,surface))=pets.click(){let index=usize::from(pane==Pane::Threat);
-            if toggle_closes(surface,child_running(&mut chats[index])) {close_child(&mut chats[index]);}
-            else {open_attached(&mut chats[index],pane,if surface==Surface::ToggleChat{Surface::Chat}else{surface});}
+        if let Some((pane, surface)) = pets.click() {
+            let index = usize::from(pane == Pane::Threat);
+            if toggle_closes(surface, child_running(&mut chats[index])) {
+                close_child(&mut chats[index]);
+            } else {
+                open_attached(
+                    &mut chats[index],
+                    pane,
+                    if surface == Surface::ToggleChat {
+                        Surface::Chat
+                    } else {
+                        surface
+                    },
+                );
+            }
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn toggle_closes(surface:Surface,running:bool)->bool{surface==Surface::ToggleChat&&running}
-#[cfg(test)]mod companion_toggle_tests{use super::*;#[test]fn pet_click_toggles_but_menu_chat_and_settings_open(){assert!(toggle_closes(Surface::ToggleChat,true));assert!(!toggle_closes(Surface::ToggleChat,false));assert!(!toggle_closes(Surface::Chat,true));assert!(!toggle_closes(Surface::Settings,true));}}
+fn toggle_closes(surface: Surface, running: bool) -> bool {
+    surface == Surface::ToggleChat && running
+}
+#[cfg(test)]
+mod companion_toggle_tests {
+    use super::*;
+    #[test]
+    fn pet_click_toggles_but_menu_chat_and_settings_open() {
+        assert!(toggle_closes(Surface::ToggleChat, true));
+        assert!(!toggle_closes(Surface::ToggleChat, false));
+        assert!(!toggle_closes(Surface::Chat, true));
+        assert!(!toggle_closes(Surface::Settings, true));
+    }
+}

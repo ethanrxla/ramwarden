@@ -166,7 +166,10 @@ mod tests {
     use std::process::{Child, Command};
 
     fn spawn_sleeper() -> Child {
-        Command::new("sleep").arg("60").spawn().expect("spawn sleep")
+        Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn sleep")
     }
 
     fn state_of(pid: i32) -> char {
@@ -221,10 +224,16 @@ mod tests {
     fn wait_exit_observes_a_kill() {
         let mut child = spawn_sleeper();
         let fd = PidFd::open(child.id() as i32).unwrap();
-        assert!(!fd.wait_exit(Duration::from_millis(50)).unwrap(), "still alive");
+        assert!(
+            !fd.wait_exit(Duration::from_millis(50)).unwrap(),
+            "still alive"
+        );
 
         fd.kill().unwrap();
-        assert!(fd.wait_exit(Duration::from_secs(5)).unwrap(), "should have exited");
+        assert!(
+            fd.wait_exit(Duration::from_secs(5)).unwrap(),
+            "should have exited"
+        );
         child.wait().ok();
     }
 
@@ -278,7 +287,10 @@ mod tests {
 
         // Signalling before the shell has run `trap` would kill it with the
         // default disposition and test nothing.
-        assert!(await_ignored(pid, 15), "shell never installed the SIGTERM trap");
+        assert!(
+            await_ignored(pid, 15),
+            "shell never installed the SIGTERM trap"
+        );
 
         fd.terminate().unwrap();
         assert!(
@@ -287,7 +299,10 @@ mod tests {
         );
 
         fd.hangup().unwrap();
-        assert!(fd.wait_exit(Duration::from_secs(5)).unwrap(), "SIGHUP should land");
+        assert!(
+            fd.wait_exit(Duration::from_secs(5)).unwrap(),
+            "SIGHUP should land"
+        );
         child.wait().ok();
     }
 

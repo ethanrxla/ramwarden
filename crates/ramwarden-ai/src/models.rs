@@ -56,7 +56,9 @@ impl LmStudio {
             .map_err(|_| Error::Transport("lms timed out".into()))?
             .map_err(|e| Error::Transport(format!("lms: {e}")))?;
         if !out.status.success() {
-            return Err(Error::Reply(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+            return Err(Error::Reply(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
@@ -73,7 +75,8 @@ impl LmStudio {
 /// `lms ps --json`: an array of loaded models. Tolerant of field names, since
 /// the CLI's JSON shape is not a published contract.
 pub fn parse_lms_ps(text: &str) -> Result<Vec<LoadedModel>> {
-    let v: Value = serde_json::from_str(text.trim()).map_err(|e| Error::Reply(format!("lms ps: {e}")))?;
+    let v: Value =
+        serde_json::from_str(text.trim()).map_err(|e| Error::Reply(format!("lms ps: {e}")))?;
     let Some(items) = v.as_array() else {
         return Err(Error::Reply("lms ps: expected a JSON array".into()));
     };
@@ -84,7 +87,9 @@ pub fn parse_lms_ps(text: &str) -> Result<Vec<LoadedModel>> {
                 .iter()
                 .find_map(|k| m.get(*k).and_then(Value::as_str))?
                 .to_string();
-            let bytes = ["sizeBytes", "size"].iter().find_map(|k| m.get(*k).and_then(Value::as_u64));
+            let bytes = ["sizeBytes", "size"]
+                .iter()
+                .find_map(|k| m.get(*k).and_then(Value::as_u64));
             Some(LoadedModel {
                 host: "lmstudio",
                 name,
@@ -158,7 +163,10 @@ mod tests {
     #[test]
     fn lms_ps_parses_whatever_identifier_field_it_finds() {
         assert!(parse_lms_ps("[]").unwrap().is_empty());
-        let m = parse_lms_ps(r#"[{"identifier":"qwen3-8b","sizeBytes":5000000000},{"path":"x/y.gguf"}]"#).unwrap();
+        let m = parse_lms_ps(
+            r#"[{"identifier":"qwen3-8b","sizeBytes":5000000000},{"path":"x/y.gguf"}]"#,
+        )
+        .unwrap();
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].name, "qwen3-8b");
         assert_eq!(m[0].bytes, Some(5_000_000_000));

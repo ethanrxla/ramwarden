@@ -457,7 +457,10 @@ mod tests {
         mk(
             "app-flatpak-com.brave.Browser-1681016714.scope",
             5_201_741_414,
-            &[(6669, "brave", 4_000_000_000), (2070834, "brave", 900_000_000)],
+            &[
+                (6669, "brave", 4_000_000_000),
+                (2070834, "brave", 900_000_000),
+            ],
         );
         mk(
             "app-flatpak-com.brave.Browser-1053156663.scope",
@@ -476,7 +479,9 @@ mod tests {
         );
 
         // Outside the hierarchy entirely — a Docker container. Must never appear.
-        let sys = root.cgroup_fs().join("system.slice/docker-chimera-core.scope");
+        let sys = root
+            .cgroup_fs()
+            .join("system.slice/docker-chimera-core.scope");
         fs::create_dir_all(&sys).unwrap();
         fs::write(sys.join("cgroup.procs"), "3026\n").unwrap();
         fs::write(sys.join("memory.current"), "43109120\n").unwrap();
@@ -488,7 +493,12 @@ mod tests {
     #[test]
     fn finds_application_scopes_but_not_parent_slices() {
         let (_d, _root, h) = fixture();
-        let names: Vec<_> = h.scopes().unwrap().iter().map(|s| s.name().to_string()).collect();
+        let names: Vec<_> = h
+            .scopes()
+            .unwrap()
+            .iter()
+            .map(|s| s.name().to_string())
+            .collect();
         assert_eq!(names.len(), 3, "{names:?}");
         assert!(!names.iter().any(|n| n == "app.slice"), "{names:?}");
         assert!(!names.iter().any(|n| n.contains("user@")), "{names:?}");
@@ -504,7 +514,11 @@ mod tests {
             assert!(!s.path().to_string_lossy().contains("system.slice"));
         }
         // The Docker scope exists in the fixture and is still not reachable.
-        assert!(root.cgroup_fs().join("system.slice/docker-chimera-core.scope").is_dir());
+        assert!(
+            root.cgroup_fs()
+                .join("system.slice/docker-chimera-core.scope")
+                .is_dir()
+        );
         assert!(h.scope("docker-chimera-core.scope").is_err());
     }
 
@@ -527,7 +541,9 @@ mod tests {
     #[test]
     fn labels_a_scope_by_its_largest_process_not_its_directory_name() {
         let (_d, root, h) = fixture();
-        let scope = h.scope("app-cosmic-com.system76.CosmicAppList-88887.scope").unwrap();
+        let scope = h
+            .scope("app-cosmic-com.system76.CosmicAppList-88887.scope")
+            .unwrap();
         assert_eq!(scope.label(&root).unwrap(), "ChatGPT");
         assert!(scope.name().contains("CosmicAppList"));
     }
@@ -535,7 +551,9 @@ mod tests {
     #[test]
     fn labels_fall_back_to_the_scope_name_when_no_process_is_readable() {
         let (_d, root, h) = fixture();
-        let scope = h.scope("app-flatpak-com.brave.Browser-1053156663.scope").unwrap();
+        let scope = h
+            .scope("app-flatpak-com.brave.Browser-1053156663.scope")
+            .unwrap();
         // Remove the only process's proc entry, as if it exited mid-read.
         fs::remove_dir_all(root.join("proc/1680002")).unwrap();
         assert_eq!(
@@ -547,7 +565,9 @@ mod tests {
     #[test]
     fn reads_memory_stat_and_reports_what_is_reclaimable() {
         let (_d, _root, h) = fixture();
-        let s = h.scope("app-flatpak-com.brave.Browser-1053156663.scope").unwrap();
+        let s = h
+            .scope("app-flatpak-com.brave.Browser-1053156663.scope")
+            .unwrap();
         let stat = s.stat().unwrap();
         let c = 1_453_326_336u64;
         assert_eq!(stat.inactive_anon, c / 3);
@@ -558,7 +578,9 @@ mod tests {
     #[test]
     fn reclaim_asks_the_kernel_for_exactly_the_requested_byte_count() {
         let (_d, _root, h) = fixture();
-        let s = h.scope("app-flatpak-com.brave.Browser-1053156663.scope").unwrap();
+        let s = h
+            .scope("app-flatpak-com.brave.Browser-1053156663.scope")
+            .unwrap();
         s.reclaim(500_000_000).unwrap();
         assert_eq!(
             fs::read_to_string(s.path().join("memory.reclaim")).unwrap(),
@@ -584,14 +606,18 @@ mod tests {
     #[test]
     fn reclaim_of_an_unbudging_scope_reports_zero_rather_than_failing() {
         let (_d, _root, h) = fixture();
-        let s = h.scope("app-flatpak-com.brave.Browser-1681016714.scope").unwrap();
+        let s = h
+            .scope("app-flatpak-com.brave.Browser-1681016714.scope")
+            .unwrap();
         assert_eq!(s.reclaim(1_000_000_000).unwrap(), 0);
     }
 
     #[test]
     fn soft_cap_round_trips_and_clears_to_max() {
         let (_d, _root, h) = fixture();
-        let s = h.scope("app-flatpak-com.brave.Browser-1053156663.scope").unwrap();
+        let s = h
+            .scope("app-flatpak-com.brave.Browser-1053156663.scope")
+            .unwrap();
         assert_eq!(s.high().unwrap(), None, "starts uncapped");
         s.set_high(1_000_000_000).unwrap();
         assert_eq!(s.high().unwrap(), Some(1_000_000_000));
@@ -603,7 +629,9 @@ mod tests {
     fn a_session_without_the_memory_controller_is_unsupported() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::at(dir.path());
-        let base = root.cgroup_fs().join("user.slice/user-1000.slice/user@1000.service");
+        let base = root
+            .cgroup_fs()
+            .join("user.slice/user-1000.slice/user@1000.service");
         fs::create_dir_all(&base).unwrap();
         // systemd delegated cpu and pids, but not memory.
         fs::write(base.join("cgroup.controllers"), "cpu pids\n").unwrap();

@@ -43,7 +43,11 @@ pub struct Cadence {
 
 impl Cadence {
     pub const fn new(every: Duration, soonest: Duration) -> Self {
-        Cadence { every, soonest, last: None }
+        Cadence {
+            every,
+            soonest,
+            last: None,
+        }
     }
 
     /// Whether to read again at `now`. Always true before the first read.
@@ -88,7 +92,10 @@ pub struct Instances<V> {
 
 impl<V> Default for Instances<V> {
     fn default() -> Self {
-        Instances { map: HashMap::new(), generation: 0 }
+        Instances {
+            map: HashMap::new(),
+            generation: 0,
+        }
     }
 }
 
@@ -113,13 +120,21 @@ impl<V> Instances<V> {
                 let slot = o.into_mut();
                 let replaced = slot.started != started;
                 if replaced {
-                    *slot = Slot { started, seen: generation, value: make() };
+                    *slot = Slot {
+                        started,
+                        seen: generation,
+                        value: make(),
+                    };
                 }
                 slot.seen = generation;
                 (&mut slot.value, replaced)
             }
             Entry::Vacant(v) => {
-                let slot = v.insert(Slot { started, seen: generation, value: make() });
+                let slot = v.insert(Slot {
+                    started,
+                    seen: generation,
+                    value: make(),
+                });
                 (&mut slot.value, true)
             }
         }
@@ -206,7 +221,10 @@ mod tests {
         let mut c = Cadence::new(Duration::from_secs(10), Duration::from_secs(2));
         assert!(c.due(t0, false));
         c.mark(t0);
-        assert!(!c.due(t0 + Duration::from_secs(1), true), "too soon even with a change");
+        assert!(
+            !c.due(t0 + Duration::from_secs(1), true),
+            "too soon even with a change"
+        );
         assert!(!c.due(t0 + Duration::from_secs(5), false));
         assert!(c.due(t0 + Duration::from_secs(5), true));
         assert!(c.due(t0 + Duration::from_secs(10), false));

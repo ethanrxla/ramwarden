@@ -36,13 +36,18 @@ pub struct GpuEmbedder {
 impl GpuEmbedder {
     fn spawn(&self) -> Result<Worker, String> {
         let mut cmd = Command::new(&self.exe);
-        cmd.arg("embed").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd.arg("embed")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        let mut child = cmd.spawn().map_err(|e| format!("start {}: {e}", self.exe.display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("start {}: {e}", self.exe.display()))?;
         Ok(Worker {
             stdin: child.stdin.take().ok_or("no stdin")?,
             stdout: BufReader::new(child.stdout.take().ok_or("no stdout")?),

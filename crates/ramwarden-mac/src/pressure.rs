@@ -97,7 +97,10 @@ impl Default for Estimator {
             full: [0.0; 3],
             seeded: false,
             forecast: Forecaster::default(),
-            latest: Pressure { estimated: true, ..Pressure::default() },
+            latest: Pressure {
+                estimated: true,
+                ..Pressure::default()
+            },
         }
     }
 }
@@ -137,7 +140,11 @@ impl Estimator {
             _ => (0.0, 0.0),
         };
         let armed = (c.available as f64) < c.total as f64 * ARM_BELOW_FRACTION;
-        let imminent = armed && self.forecast.seconds_until(floor).is_some_and(|s| s <= HORIZON_SECONDS);
+        let imminent = armed
+            && self
+                .forecast
+                .seconds_until(floor)
+                .is_some_and(|s| s <= HORIZON_SECONDS);
         let lift = if imminent { WARN_SOME } else { 0.0 };
 
         let some = |v: f64| v.max(lvl_some).max(lift);
@@ -167,7 +174,10 @@ pub struct MacPressure {
 
 impl MacPressure {
     pub fn new() -> Self {
-        MacPressure { start: Instant::now(), state: Mutex::new(Estimator::default()) }
+        MacPressure {
+            start: Instant::now(),
+            state: Mutex::new(Estimator::default()),
+        }
     }
 }
 
@@ -185,7 +195,8 @@ fn counters() -> Result<Counters> {
         swapins: vm.swapins,
         swapouts: vm.swapouts,
         decompressions: vm.decompressions,
-        available: (vm.free_count as u64 + vm.inactive_count as u64 + vm.speculative_count as u64) * ps,
+        available: (vm.free_count as u64 + vm.inactive_count as u64 + vm.speculative_count as u64)
+            * ps,
         total,
     })
 }
@@ -197,14 +208,22 @@ impl PressureSource for MacPressure {
         let c = counters()?;
         let mut est = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let p = est.update(self.start.elapsed().as_secs_f64(), c, level);
-        if let Some(s) = est.seconds_to_floor(c.total).filter(|&s| s <= HORIZON_SECONDS && s > 0.0) {
-            tracing::debug!("memory forecast: floor in ~{s:.0}s (available {} MB)", c.available / 1_000_000);
+        if let Some(s) = est
+            .seconds_to_floor(c.total)
+            .filter(|&s| s <= HORIZON_SECONDS && s > 0.0)
+        {
+            tracing::debug!(
+                "memory forecast: floor in ~{s:.0}s (available {} MB)",
+                c.available / 1_000_000
+            );
         }
         Ok(p)
     }
 
     fn waker(&self) -> Result<Box<dyn PressureWaker>> {
-        Err(Error::Unsupported("pressure wakeups (macOS has no PSI trigger; polling adaptively)"))
+        Err(Error::Unsupported(
+            "pressure wakeups (macOS has no PSI trigger; polling adaptively)",
+        ))
     }
 }
 
@@ -215,7 +234,11 @@ mod tests {
     const GB: u64 = 1_000_000_000;
 
     fn calm(avail: u64) -> Counters {
-        Counters { available: avail, total: 16 * GB, ..Counters::default() }
+        Counters {
+            available: avail,
+            total: 16 * GB,
+            ..Counters::default()
+        }
     }
 
     #[test]
@@ -231,14 +254,21 @@ mod tests {
     fn stall_math_is_exact() {
         let a = Counters::default();
         // 1000 swap-ins/s * 150us = 15% stalled; 1000 decompressions/s * 10us = 1%.
-        let b = Counters { swapins: 1000, decompressions: 1000, ..a };
+        let b = Counters {
+            swapins: 1000,
+            decompressions: 1000,
+            ..a
+        };
         let (some, full) = stall_percent(&a, &b, 1.0);
         assert!((some - 16.0).abs() < 1e-9);
         assert!((full - 7.5).abs() < 1e-9);
         // Over two seconds the same counts are half the rate.
         assert!((stall_percent(&a, &b, 2.0).0 - 8.0).abs() < 1e-9);
         // Saturates at 100.
-        let huge = Counters { swapins: 10_000_000, ..a };
+        let huge = Counters {
+            swapins: 10_000_000,
+            ..a
+        };
         assert_eq!(stall_percent(&a, &huge, 1.0), (100.0, 100.0));
     }
 
@@ -252,14 +282,39 @@ mod tests {
             c.available = 8 * GB;
             e.update(s as f64, c, 1);
         }
-        let hot = e.update(21.0, Counters { swapins: c.swapins + 400, ..c }, 1);
-        assert!(hot.some_avg10 > 5.0 && hot.some_avg10 < 7.0, "got {}", hot.some_avg10);
-        assert!(hot.some_avg10 >= hot.some_avg300, "short window reacts first");
+        let hot = e.update(
+            21.0,
+            Counters {
+                swapins: c.swapins + 400,
+                ..c
+            },
+            1,
+        );
+        assert!(
+            hot.some_avg10 > 5.0 && hot.some_avg10 < 7.0,
+            "got {}",
+            hot.some_avg10
+        );
+        assert!(
+            hot.some_avg10 >= hot.some_avg300,
+            "short window reacts first"
+        );
         let mut cool = hot;
         for s in 22..80 {
-            cool = e.update(s as f64, Counters { swapins: c.swapins + 400, ..c }, 1);
+            cool = e.update(
+                s as f64,
+                Counters {
+                    swapins: c.swapins + 400,
+                    ..c
+                },
+                1,
+            );
         }
-        assert!(cool.some_avg10 < 0.1, "decays once swapping stops, got {}", cool.some_avg10);
+        assert!(
+            cool.some_avg10 < 0.1,
+            "decays once swapping stops, got {}",
+            cool.some_avg10
+        );
     }
 
     #[test]

@@ -45,8 +45,13 @@ fn apply(path: &Path) -> Result<(), String> {
     // SAFETY: `sd` is LocalAlloc'd by the call and freed below; the owner and
     // DACL pointers point into it and are used before it is freed.
     unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(SDDL), SDDL_REVISION_1, &mut sd, None)
-            .map_err(|e| e.to_string())?;
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &HSTRING::from(SDDL),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
 
         let mut owner = PSID::default();
         let mut defaulted = BOOL::default();
@@ -59,7 +64,9 @@ fn apply(path: &Path) -> Result<(), String> {
                 SetNamedSecurityInfoW(
                     &HSTRING::from(path.as_os_str()),
                     SE_FILE_OBJECT,
-                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    OWNER_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION
+                        | PROTECTED_DACL_SECURITY_INFORMATION,
                     Some(owner),
                     None,
                     Some(dacl),

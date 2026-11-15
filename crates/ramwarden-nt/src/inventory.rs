@@ -117,10 +117,16 @@ mod tests {
     fn this_process_is_sampled_as_ours_and_grouped() {
         let mut src = NtProcesses::new();
         let all = src.sample().unwrap();
-        let me = all.iter().find(|s| s.pid == std::process::id() as i32).unwrap();
+        let me = all
+            .iter()
+            .find(|s| s.pid == std::process::id() as i32)
+            .unwrap();
         assert_eq!(me.owner, ramwarden_platform::Owner::CurrentUser);
         assert!(me.proportional > 0 && me.resident >= me.proportional);
-        assert!(me.group.is_some(), "the user's own process belongs to a group");
+        assert!(
+            me.group.is_some(),
+            "the user's own process belongs to a group"
+        );
         assert_eq!(me.state, 'S');
     }
 

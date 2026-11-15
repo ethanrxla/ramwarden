@@ -90,10 +90,23 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
     let ui = Rc::new(Ui {
         store: store.clone(),
         process_scroll: gtk4::ScrolledWindow::new(),
-        ram_label: gtk4::Label::builder().label("Loading memory statistics…").xalign(0.0).ellipsize(gtk4::pango::EllipsizeMode::End).max_width_chars(1).build(),
+        ram_label: gtk4::Label::builder()
+            .label("Loading memory statistics…")
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .max_width_chars(1)
+            .build(),
         ram_bar: gtk4::ProgressBar::new(),
-        detail: gtk4::Label::builder().xalign(0.0).wrap(true).wrap_mode(gtk4::pango::WrapMode::WordChar).max_width_chars(1).build(),
-        status: gtk4::Label::builder().xalign(1.0).ellipsize(gtk4::pango::EllipsizeMode::End).build(),
+        detail: gtk4::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk4::pango::WrapMode::WordChar)
+            .max_width_chars(1)
+            .build(),
+        status: gtk4::Label::builder()
+            .xalign(1.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build(),
         suspended_box: gtk4::Box::new(gtk4::Orientation::Vertical, 4),
         suspended_frame: gtk4::Frame::new(None),
         kill_banner: gtk4::Frame::new(None),
@@ -241,7 +254,10 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
     }
     outer.append(&bulk);
 
-    let browser = gtk4::Expander::builder().label("Browser tabs · suggested cleanup").expanded(true).build();
+    let browser = gtk4::Expander::builder()
+        .label("Browser tabs · suggested cleanup")
+        .expanded(true)
+        .build();
     browser.set_widget_name("browser-cleanup");
     browser.set_child(Some(&crate::browser::pane((*client).clone())));
     outer.append(&browser);
@@ -272,7 +288,10 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
                     Ok(v) => {
                         let tier = v.get("tier").and_then(|t| t.as_str()).unwrap_or("?");
                         let summary = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
-                        let n = v.get("tabs_to_close").and_then(|t| t.as_array()).map_or(0, |a| a.len());
+                        let n = v
+                            .get("tabs_to_close")
+                            .and_then(|t| t.as_array())
+                            .map_or(0, |a| a.len());
                         tracing::info!(tier, tabs = n, "analysis completed");
                         set_status(&u, &format!("[{tier}] {summary} ({n} tab(s))"));
                     }
@@ -329,7 +348,9 @@ fn build(app: &gtk4::Application, client: Rc<Client>) {
 /// ThreatWarden's carries its level dot so an alert is visible from the RAM
 /// pane too.
 fn panes(ram: &gtk4::Box, client: &Rc<Client>) -> gtk4::Box {
-    let stack = gtk4::Stack::builder().transition_type(gtk4::StackTransitionType::Crossfade).build();
+    let stack = gtk4::Stack::builder()
+        .transition_type(gtk4::StackTransitionType::Crossfade)
+        .build();
     stack.add_named(ram, Some("ram"));
     let threat = crate::threat::pane(Rc::clone(client));
     stack.add_named(&threat.widget, Some("threat"));
@@ -404,12 +425,18 @@ fn add_columns(view: &gtk4::ColumnView, ui: &Rc<Ui>, client: &Rc<Client>) {
                 let u = Rc::clone(ui);
                 factory.connect_setup(|_, item| {
                     let check = gtk4::CheckButton::new();
-                    item.downcast_ref::<gtk4::ListItem>().unwrap().set_child(Some(&check));
+                    item.downcast_ref::<gtk4::ListItem>()
+                        .unwrap()
+                        .set_child(Some(&check));
                 });
                 factory.connect_bind(move |_, item| {
                     let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
-                    let Some(obj) = item.item().and_downcast::<RowObject>() else { return };
-                    let Some(check) = item.child().and_downcast::<gtk4::CheckButton>() else { return };
+                    let Some(obj) = item.item().and_downcast::<RowObject>() else {
+                        return;
+                    };
+                    let Some(check) = item.child().and_downcast::<gtk4::CheckButton>() else {
+                        return;
+                    };
                     let row = obj.row();
                     // A structurally protected row can never be acted on, so it
                     // cannot be ticked either.
@@ -438,12 +465,18 @@ fn add_columns(view: &gtk4::ColumnView, ui: &Rc<Ui>, client: &Rc<Client>) {
                         .xalign(0.0)
                         .ellipsize(gtk4::pango::EllipsizeMode::None)
                         .build();
-                    item.downcast_ref::<gtk4::ListItem>().unwrap().set_child(Some(&label));
+                    item.downcast_ref::<gtk4::ListItem>()
+                        .unwrap()
+                        .set_child(Some(&label));
                 });
                 factory.connect_bind(move |_, item| {
                     let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
-                    let Some(obj) = item.item().and_downcast::<RowObject>() else { return };
-                    let Some(label) = item.child().and_downcast::<gtk4::Label>() else { return };
+                    let Some(obj) = item.item().and_downcast::<RowObject>() else {
+                        return;
+                    };
+                    let Some(label) = item.child().and_downcast::<gtk4::Label>() else {
+                        return;
+                    };
                     let row = obj.row();
                     match title.as_str() {
                         "Process" => {
@@ -549,14 +582,7 @@ fn row_at(view: &gtk4::ColumnView, _ui: &Rc<Ui>, y: f64) -> Option<Row> {
 }
 
 /// The context menu for one row.
-fn show_menu(
-    view: &gtk4::ColumnView,
-    ui: &Rc<Ui>,
-    client: &Rc<Client>,
-    row: &Row,
-    x: f64,
-    y: f64,
-) {
+fn show_menu(view: &gtk4::ColumnView, ui: &Rc<Ui>, client: &Rc<Client>, row: &Row, x: f64, y: f64) {
     let watchlisted = ui
         .watchlist
         .borrow()
@@ -610,14 +636,18 @@ fn show_menu(
             button.set_tooltip_text(Some(warning));
         }
 
-        let (c, u, r, act) = (
-            Rc::clone(client), Rc::clone(ui), row.clone(), item.action,
-        );
+        let (c, u, r, act) = (Rc::clone(client), Rc::clone(ui), row.clone(), item.action);
         let warning = item.warning.clone();
         let pop = popover.clone();
         button.connect_clicked(move |_| {
             pop.popdown();
-            apply(Rc::clone(&c), Rc::clone(&u), r.clone(), act, warning.clone());
+            apply(
+                Rc::clone(&c),
+                Rc::clone(&u),
+                r.clone(),
+                act,
+                warning.clone(),
+            );
         });
         list.append(&button);
     }
@@ -626,13 +656,7 @@ fn show_menu(
 }
 
 /// Carry out one action, or ask first when it cannot be undone.
-fn apply(
-    client: Rc<Client>,
-    ui: Rc<Ui>,
-    row: Row,
-    action: Action,
-    warning: Option<String>,
-) {
+fn apply(client: Rc<Client>, ui: Rc<Ui>, row: Row, action: Action, warning: Option<String>) {
     if action == Action::CopyPid {
         if let Some(display) = gdk::Display::default() {
             display.clipboard().set_text(&row.pid.to_string());
@@ -650,18 +674,10 @@ fn apply(
     perform(client, ui, row, action, false);
 }
 
-fn confirm(
-    client: Rc<Client>,
-    ui: Rc<Ui>,
-    row: Row,
-    action: Action,
-    warning: Option<String>,
-) {
+fn confirm(client: Rc<Client>, ui: Rc<Ui>, row: Row, action: Action, warning: Option<String>) {
     let detail = match (&warning, action) {
         (Some(w), _) => format!("{w}\n\nThis overrides RamWarden's protection."),
-        (None, Action::Kill) => {
-            "Unsaved work in this application will be lost.".to_string()
-        }
+        (None, Action::Kill) => "Unsaved work in this application will be lost.".to_string(),
         _ => String::new(),
     };
 
@@ -776,8 +792,10 @@ fn bulk_apply(client: Rc<Client>, ui: Rc<Ui>, action: Action) {
 }
 
 fn set_status(ui: &Rc<Ui>, text: &str) {
-    ui.status
-        .set_markup(&format!("<small>{}</small>", glib::markup_escape_text(text)));
+    ui.status.set_markup(&format!(
+        "<small>{}</small>",
+        glib::markup_escape_text(text)
+    ));
 }
 
 /// Re-filter the store from the rows we already have.
@@ -796,10 +814,12 @@ fn repopulate(ui: &Rc<Ui>) {
     ui.store.splice(0, ui.store.n_items(), &objects);
     // ColumnView recomputes adjustments during layout, after idle callbacks.
     // Restore on the next completed layout rather than before it resets them.
-    let frames=std::cell::Cell::new(0);
+    let frames = std::cell::Cell::new(0);
     ui.process_scroll.add_tick_callback(move |_, _| {
         frames.set(frames.get() + 1);
-        if frames.get() < 2 { return glib::ControlFlow::Continue; }
+        if frames.get() < 2 {
+            return glib::ControlFlow::Continue;
+        }
         vertical.set_value(y.min((vertical.upper() - vertical.page_size()).max(0.0)));
         horizontal.set_value(x.min((horizontal.upper() - horizontal.page_size()).max(0.0)));
         glib::ControlFlow::Break
@@ -812,15 +832,21 @@ async fn refresh(client: &Rc<Client>, ui: &Rc<Ui>) {
         Err(e) => {
             // Keep the last sample visible, but clearly identify it as stale.
             tracing::warn!("state refresh failed: {e}");
-            ui.ram_label.set_text("Memory statistics unavailable (last sample may be stale)");
-            ui.detail
-                .set_markup(&format!("<small>daemon unreachable: {}</small>",
-                    glib::markup_escape_text(&e.to_string())));
+            ui.ram_label
+                .set_text("Memory statistics unavailable (last sample may be stale)");
+            ui.detail.set_markup(&format!(
+                "<small>daemon unreachable: {}</small>",
+                glib::markup_escape_text(&e.to_string())
+            ));
             return;
         }
     };
 
-    tracing::debug!(processes = state.processes.len(), percent = state.percent, "state refreshed");
+    tracing::debug!(
+        processes = state.processes.len(),
+        percent = state.percent,
+        "state refreshed"
+    );
     render_header(ui, &state);
     render_suspended(ui, client, &state);
 
@@ -859,7 +885,8 @@ fn render_header(ui: &Rc<Ui>, state: &State) {
         fmt(state.used_mb),
         fmt(state.total_mb)
     ));
-    ui.ram_bar.set_fraction((state.percent / 100.0).clamp(0.0, 1.0));
+    ui.ram_bar
+        .set_fraction((state.percent / 100.0).clamp(0.0, 1.0));
 
     if state.warm {
         ui.detail.set_markup(&format!(
@@ -931,7 +958,10 @@ fn render_suspended(ui: &Rc<Ui>, client: &Rc<Client>, state: &State) {
 mod live_tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     fn widgets(root: &gtk4::Widget) -> Vec<gtk4::Widget> {
         let mut out = vec![root.clone()];
@@ -946,7 +976,10 @@ mod live_tests {
     async fn until(mut predicate: impl FnMut() -> bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(8);
         while !predicate() {
-            assert!(std::time::Instant::now() < deadline, "GTK display did not reach the expected state");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GTK display did not reach the expected state"
+            );
             glib::timeout_future(Duration::from_millis(20)).await;
         }
     }
@@ -962,14 +995,21 @@ mod live_tests {
         let samples = Arc::new(AtomicUsize::new(0));
         let analyses = Arc::new(AtomicUsize::new(0));
         let worker = {
-            let (stop, fail, samples, analyses) = (stop.clone(), fail.clone(), samples.clone(), analyses.clone());
+            let (stop, fail, samples, analyses) = (
+                stop.clone(),
+                fail.clone(),
+                samples.clone(),
+                analyses.clone(),
+            );
             std::thread::spawn(move || {
                 while !stop.load(Ordering::SeqCst) {
                     let Ok((mut stream, _)) = listener.accept() else {
                         std::thread::sleep(Duration::from_millis(5));
                         continue;
                     };
-                    stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
                     let mut buf = [0; 8192];
                     let n = stream.read(&mut buf).unwrap_or(0);
                     let request = String::from_utf8_lossy(&buf[..n]);
@@ -984,8 +1024,12 @@ mod live_tests {
                             analyses.fetch_add(1, Ordering::SeqCst);
                             r#"{"tier":"heuristic","summary":"Fixture analysis complete","tabs_to_close":[]}"#
                         }
-                        "/browser/tabs" | "/browser/analyze" => r#"{"browsers_connected":1,"candidates":1,"tabs":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article","title":"Fixture browser tab","inactive_minutes":120,"eligible":true,"status":"candidate","reason":"idle background tab","priority":120}]}"#,
-                        "/browser/discard" => r#"{"confirmed":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article"}],"queued":[],"refused":[]}"#,
+                        "/browser/tabs" | "/browser/analyze" => {
+                            r#"{"browsers_connected":1,"candidates":1,"tabs":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article","title":"Fixture browser tab","inactive_minutes":120,"eligible":true,"status":"candidate","reason":"idle background tab","priority":120}]}"#
+                        }
+                        "/browser/discard" => {
+                            r#"{"confirmed":[{"browser":"fixture-browser","id":7,"url":"https://example.org/article"}],"queued":[],"refused":[]}"#
+                        }
                         "/watchlist" => r#"{"patterns":[]}"#,
                         _ => "{}",
                     };
@@ -995,53 +1039,108 @@ mod live_tests {
                             "pid":123+i,"name":format!("fixture-app-{i}"),"rss_mb":250+i,"verdict":"IN_USE"
                         })).collect::<Vec<_>>());
                         value.to_string()
-                    } else { body.to_string() };
+                    } else {
+                        body.to_string()
+                    };
                     std::thread::sleep(Duration::from_millis(50));
-                    let status = if failed { "503 Service Unavailable" } else { "200 OK" };
-                    let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let status = if failed {
+                        "503 Service Unavailable"
+                    } else {
+                        "200 OK"
+                    };
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
                 }
             })
         };
         let runtime = crate::runtime::network_runtime().unwrap();
         let _entered = runtime.enter();
-        let app = gtk4::Application::builder().application_id("com.system76.RamWardenRegression").build();
+        let app = gtk4::Application::builder()
+            .application_id("com.system76.RamWardenRegression")
+            .build();
         app.register(None::<&gio::Cancellable>).unwrap();
         build_for_test(&app, Client::new("127.0.0.1", port).unwrap());
         let window = app.windows()[0].clone();
         let tree = widgets(window.upcast_ref());
-        let stack=tree.iter().find_map(|w|w.clone().downcast::<gtk4::Stack>().ok()).expect("warden panes");
+        let stack = tree
+            .iter()
+            .find_map(|w| w.clone().downcast::<gtk4::Stack>().ok())
+            .expect("warden panes");
         assert!(stack.child_by_name("ram").is_some());
         assert!(stack.child_by_name("threat").is_some());
-        let toggles:Vec<_>=tree.iter().filter_map(|w|w.clone().downcast::<gtk4::ToggleButton>().ok()).collect();
-        let ram_toggle=toggles.iter().find(|b|b.label().as_deref()==Some("RAM")).expect("RAM toggle");
-        let threat_toggle=toggles.iter().find(|b|b.child().is_some_and(|c|widgets(&c).iter().filter_map(|w|w.clone().downcast::<gtk4::Label>().ok()).any(|l|l.text()=="ThreatWarden"))).expect("ThreatWarden toggle");
+        let toggles: Vec<_> = tree
+            .iter()
+            .filter_map(|w| w.clone().downcast::<gtk4::ToggleButton>().ok())
+            .collect();
+        let ram_toggle = toggles
+            .iter()
+            .find(|b| b.label().as_deref() == Some("RAM"))
+            .expect("RAM toggle");
+        let threat_toggle = toggles
+            .iter()
+            .find(|b| {
+                b.child().is_some_and(|c| {
+                    widgets(&c)
+                        .iter()
+                        .filter_map(|w| w.clone().downcast::<gtk4::Label>().ok())
+                        .any(|l| l.text() == "ThreatWarden")
+                })
+            })
+            .expect("ThreatWarden toggle");
         threat_toggle.set_active(true);
-        assert_eq!(stack.visible_child_name().as_deref(),Some("threat"));
+        assert_eq!(stack.visible_child_name().as_deref(), Some("threat"));
         ram_toggle.set_active(true);
-        assert_eq!(stack.visible_child_name().as_deref(),Some("ram"));
-        let labels: Vec<_> = tree.iter().filter_map(|w| w.clone().downcast::<gtk4::Label>().ok()).collect();
+        assert_eq!(stack.visible_child_name().as_deref(), Some("ram"));
+        let labels: Vec<_> = tree
+            .iter()
+            .filter_map(|w| w.clone().downcast::<gtk4::Label>().ok())
+            .collect();
         let has_text = |needle: &str| labels.iter().any(|l| l.text().contains(needle));
-        let analyse = tree.iter().filter_map(|w| w.clone().downcast::<gtk4::Button>().ok())
-            .find(|b| b.label().as_deref() == Some("Analyse")).unwrap();
-        let view = tree.iter().find_map(|w| w.clone().downcast::<gtk4::ColumnView>().ok()).unwrap();
+        let analyse = tree
+            .iter()
+            .filter_map(|w| w.clone().downcast::<gtk4::Button>().ok())
+            .find(|b| b.label().as_deref() == Some("Analyse"))
+            .unwrap();
+        let view = tree
+            .iter()
+            .find_map(|w| w.clone().downcast::<gtk4::ColumnView>().ok())
+            .unwrap();
         glib::MainContext::default().block_on(async {
             until(|| has_text("42%") && view.model().unwrap().n_items() == 50).await;
             assert!(has_text("PSI"));
-            let process_scroll=tree.iter().filter_map(|w|w.clone().downcast::<gtk4::ScrolledWindow>().ok())
-                .find(|s|s.child().is_some_and(|c|c.is::<gtk4::ColumnView>())).unwrap();
+            let process_scroll = tree
+                .iter()
+                .filter_map(|w| w.clone().downcast::<gtk4::ScrolledWindow>().ok())
+                .find(|s| s.child().is_some_and(|c| c.is::<gtk4::ColumnView>()))
+                .unwrap();
             glib::timeout_future(Duration::from_millis(150)).await;
-            until(||process_scroll.vadjustment().upper()-process_scroll.vadjustment().page_size()>150.0).await;
+            until(|| {
+                process_scroll.vadjustment().upper() - process_scroll.vadjustment().page_size()
+                    > 150.0
+            })
+            .await;
             process_scroll.vadjustment().set_value(150.0);
-            assert_eq!(process_scroll.vadjustment().value(),150.0);
-            let samples_before=samples.load(Ordering::SeqCst);
-            until(||samples.load(Ordering::SeqCst)>samples_before).await;
+            assert_eq!(process_scroll.vadjustment().value(), 150.0);
+            let samples_before = samples.load(Ordering::SeqCst);
+            until(|| samples.load(Ordering::SeqCst) > samples_before).await;
             glib::timeout_future(Duration::from_millis(150)).await;
-            assert!((process_scroll.vadjustment().value()-150.0).abs()<1.0,"process scroll reset on refresh: {}",process_scroll.vadjustment().value());
+            assert!(
+                (process_scroll.vadjustment().value() - 150.0).abs() < 1.0,
+                "process scroll reset on refresh: {}",
+                process_scroll.vadjustment().value()
+            );
             analyse.emit_clicked();
             analyse.emit_clicked();
             until(|| has_text("Fixture analysis complete")).await;
             assert!(analyse.is_sensitive());
-            assert_eq!(analyses.load(Ordering::SeqCst), 1, "duplicate analysis was submitted");
+            assert_eq!(
+                analyses.load(Ordering::SeqCst),
+                1,
+                "duplicate analysis was submitted"
+            );
             fail.store(true, Ordering::SeqCst);
             analyse.emit_clicked();
             until(|| has_text("analysis failed")).await;
@@ -1051,16 +1150,36 @@ mod live_tests {
             until(|| has_text("PSI")).await;
             assert!(samples.load(Ordering::SeqCst) >= 3);
             assert_eq!(window.default_width(), 420);
-            assert!(window.width() <= 440, "window forced wider: {}", window.width());
-            let pane=tree.iter().find(|w|w.widget_name()=="browser-cleanup").unwrap().clone();
-            let browser_text = |needle: &str| widgets(&pane).iter().filter_map(|w|w.clone().downcast::<gtk4::Label>().ok()).any(|l|l.text().contains(needle));
+            assert!(
+                window.width() <= 440,
+                "window forced wider: {}",
+                window.width()
+            );
+            let pane = tree
+                .iter()
+                .find(|w| w.widget_name() == "browser-cleanup")
+                .unwrap()
+                .clone();
+            let browser_text = |needle: &str| {
+                widgets(&pane)
+                    .iter()
+                    .filter_map(|w| w.clone().downcast::<gtk4::Label>().ok())
+                    .any(|l| l.text().contains(needle))
+            };
             until(|| browser_text("Fixture browser tab")).await;
-            let check=widgets(&pane).iter().find_map(|w|w.clone().downcast::<gtk4::CheckButton>().ok()).unwrap();
+            let check = widgets(&pane)
+                .iter()
+                .find_map(|w| w.clone().downcast::<gtk4::CheckButton>().ok())
+                .unwrap();
             check.set_active(true);
-            let unload=widgets(&pane).iter().filter_map(|w|w.clone().downcast::<gtk4::Button>().ok())
-                .find(|b|b.label().is_some_and(|l|l == "Unload")).unwrap();
-            assert!(unload.is_sensitive());unload.emit_clicked();
-            until(||browser_text("1 unloaded")).await;
+            let unload = widgets(&pane)
+                .iter()
+                .filter_map(|w| w.clone().downcast::<gtk4::Button>().ok())
+                .find(|b| b.label().is_some_and(|l| l == "Unload"))
+                .unwrap();
+            assert!(unload.is_sensitive());
+            unload.emit_clicked();
+            until(|| browser_text("1 unloaded")).await;
             assert!(!unload.is_sensitive());
             crate::browser::test_refresh_stability().await;
         });

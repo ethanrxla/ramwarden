@@ -60,15 +60,22 @@ impl AeroSpace {
     }
 
     /// Parse the three listings into one state. Split out for tests.
-    pub fn parse(windows: &str, focused: Option<&str>, workspaces: &str, monitors: &str) -> Result<WmState> {
+    pub fn parse(
+        windows: &str,
+        focused: Option<&str>,
+        workspaces: &str,
+        monitors: &str,
+    ) -> Result<WmState> {
         let bad = |what: &str, e: serde_json::Error| Error::os(format!("aerospace {what}: {e}"));
-        let raw: Vec<RawWindow> = serde_json::from_str(windows).map_err(|e| bad("list-windows", e))?;
+        let raw: Vec<RawWindow> =
+            serde_json::from_str(windows).map_err(|e| bad("list-windows", e))?;
         let focused_id: Option<u64> = focused
             .and_then(|f| serde_json::from_str::<Vec<RawWindow>>(f).ok())
             .and_then(|v| v.first().map(|w| w.id));
         let spaces: Vec<RawWorkspace> =
             serde_json::from_str(workspaces).map_err(|e| bad("list-workspaces", e))?;
-        let mons: Vec<RawMonitor> = serde_json::from_str(monitors).map_err(|e| bad("list-monitors", e))?;
+        let mons: Vec<RawMonitor> =
+            serde_json::from_str(monitors).map_err(|e| bad("list-monitors", e))?;
 
         Ok(WmState {
             kind: WmKind::AeroSpace,
@@ -100,13 +107,21 @@ impl AeroSpace {
         let id = |w: &u64| w.to_string();
         match cmd {
             WmCommand::Focus { window } => argv(&["focus", "--window-id", &id(window)]),
-            WmCommand::MoveToWorkspace { window, workspace } => {
-                argv(&["move-node-to-workspace", "--window-id", &id(window), "--", workspace])
-            }
+            WmCommand::MoveToWorkspace { window, workspace } => argv(&[
+                "move-node-to-workspace",
+                "--window-id",
+                &id(window),
+                "--",
+                workspace,
+            ]),
             WmCommand::SwitchWorkspace { workspace } => argv(&["workspace", "--", workspace]),
-            WmCommand::MoveWorkspaceToMonitor { workspace, monitor } => {
-                argv(&["move-workspace-to-monitor", "--workspace", workspace, "--", monitor])
-            }
+            WmCommand::MoveWorkspaceToMonitor { workspace, monitor } => argv(&[
+                "move-workspace-to-monitor",
+                "--workspace",
+                workspace,
+                "--",
+                monitor,
+            ]),
             WmCommand::SetLayout { window, layout } => {
                 argv(&["layout", "--window-id", &id(window), layout.as_str()])
             }
@@ -122,13 +137,27 @@ impl WindowManager for AeroSpace {
 
     fn state(&mut self) -> Result<WmState> {
         let windows = self.call(&[
-            "list-windows", "--all", "--json", "--format",
+            "list-windows",
+            "--all",
+            "--json",
+            "--format",
             "%{window-id}%{app-name}%{window-title}%{workspace}%{app-pid}",
         ])?;
         // Nothing focused (an empty workspace) is an error exit, not a failure.
-        let focused = self.call(&["list-windows", "--focused", "--json", "--format", "%{window-id}"]).ok();
+        let focused = self
+            .call(&[
+                "list-windows",
+                "--focused",
+                "--json",
+                "--format",
+                "%{window-id}",
+            ])
+            .ok();
         let workspaces = self.call(&[
-            "list-workspaces", "--all", "--json", "--format",
+            "list-workspaces",
+            "--all",
+            "--json",
+            "--format",
             "%{workspace}%{workspace-is-focused}%{monitor-name}",
         ])?;
         let monitors = self.call(&["list-monitors", "--json", "--format", "%{monitor-name}"])?;
@@ -182,7 +211,8 @@ mod tests {
       {"workspace": "1", "workspace-is-focused": false, "monitor-name": "Built-in Retina Display"},
       {"workspace": "B", "workspace-is-focused": true, "monitor-name": "LG UltraFine"}
     ]"#;
-    const MONITORS: &str = r#"[{"monitor-name": "Built-in Retina Display"}, {"monitor-name": "LG UltraFine"}]"#;
+    const MONITORS: &str =
+        r#"[{"monitor-name": "Built-in Retina Display"}, {"monitor-name": "LG UltraFine"}]"#;
 
     #[test]
     fn listings_parse_into_one_state() {
@@ -205,9 +235,18 @@ mod tests {
 
     #[test]
     fn names_go_after_a_double_dash_so_they_cannot_be_flags() {
-        let a = AeroSpace::args(&WmCommand::MoveToWorkspace { window: 9, workspace: "-h".into() });
-        assert_eq!(a, argv(&["move-node-to-workspace", "--window-id", "9", "--", "-h"]));
-        let a = AeroSpace::args(&WmCommand::SetLayout { window: 9, layout: WmLayout::Floating });
+        let a = AeroSpace::args(&WmCommand::MoveToWorkspace {
+            window: 9,
+            workspace: "-h".into(),
+        });
+        assert_eq!(
+            a,
+            argv(&["move-node-to-workspace", "--window-id", "9", "--", "-h"])
+        );
+        let a = AeroSpace::args(&WmCommand::SetLayout {
+            window: 9,
+            layout: WmLayout::Floating,
+        });
         assert_eq!(a, argv(&["layout", "--window-id", "9", "floating"]));
     }
 
@@ -228,9 +267,16 @@ mod tests {
 
     #[test]
     fn a_refused_command_carries_aerospaces_own_words() {
-        let r = Arc::new(Scripted::default().fail("aerospace move-node-to-workspace", "Invalid window-id"));
+        let r = Arc::new(
+            Scripted::default().fail("aerospace move-node-to-workspace", "Invalid window-id"),
+        );
         let mut a = AeroSpace::new(r);
-        let e = a.run(&WmCommand::MoveToWorkspace { window: 1, workspace: "2".into() }).unwrap_err();
+        let e = a
+            .run(&WmCommand::MoveToWorkspace {
+                window: 1,
+                workspace: "2".into(),
+            })
+            .unwrap_err();
         assert!(e.to_string().contains("Invalid window-id"));
     }
 

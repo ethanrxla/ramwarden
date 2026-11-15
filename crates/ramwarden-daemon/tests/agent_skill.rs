@@ -48,7 +48,12 @@ fn served_routes() -> Vec<(String, String)> {
             // The handlers follow up to the closing paren of `.route(`.
             let call_end = rest.find("))").map(|j| j + 2).unwrap_or(rest.len());
             let call = &rest[end..call_end];
-            for (needle, method) in [("get(", "GET"), ("post(", "POST"), ("delete(", "DELETE"), ("put(", "PUT")] {
+            for (needle, method) in [
+                ("get(", "GET"),
+                ("post(", "POST"),
+                ("delete(", "DELETE"),
+                ("put(", "PUT"),
+            ] {
                 if call.contains(needle) {
                     out.push((method.to_string(), pattern.clone()));
                 }
@@ -81,7 +86,8 @@ fn skill_calls() -> Vec<(String, String)> {
         let text = read(&skill_dir().join(file));
         for chunk in text.split('`').skip(1).step_by(2) {
             let mut words = chunk.split_whitespace();
-            let (Some(method), Some(path), None) = (words.next(), words.next(), words.next()) else {
+            let (Some(method), Some(path), None) = (words.next(), words.next(), words.next())
+            else {
                 continue;
             };
             if !["GET", "POST", "DELETE", "PUT"].contains(&method) || !path.starts_with('/') {
@@ -109,7 +115,10 @@ fn every_route_the_skill_names_is_served() {
         .filter(|(m, path)| !served.iter().any(|(sm, pat)| sm == m && matches(pat, path)))
         .filter(|(_, path)| !PENDING.iter().any(|pat| matches(pat, path)))
         .collect();
-    assert!(missing.is_empty(), "the skill names routes the daemon does not serve: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "the skill names routes the daemon does not serve: {missing:?}"
+    );
 }
 
 #[test]
@@ -133,7 +142,10 @@ fn skill_frontmatter_is_valid() {
     // requests against, at most 1024 characters, with no angle brackets.
     let name = field("name");
     assert_eq!(name, "ramwarden");
-    assert!(name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+    assert!(
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    );
     let description = field("description");
     assert!(!description.is_empty() && description.len() <= 1024);
     assert!(!description.contains('<') && !description.contains('>'));
@@ -166,5 +178,10 @@ fn plugin_version_matches_the_workspace() {
     let market: serde_json::Value =
         serde_json::from_str(&read(&repo().join(".claude-plugin/marketplace.json"))).unwrap();
     let source = market["plugins"][0]["source"].as_str().unwrap();
-    assert!(repo().join(source).join(".claude-plugin/plugin.json").exists());
+    assert!(
+        repo()
+            .join(source)
+            .join(".claude-plugin/plugin.json")
+            .exists()
+    );
 }

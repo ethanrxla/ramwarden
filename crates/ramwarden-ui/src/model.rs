@@ -171,14 +171,62 @@ pub struct Column {
 /// was unreadable: 260px fits `openclaw-gatewa` and most Flatpak scope stems, and
 /// dragging covers the rest.
 pub const COLUMNS: &[Column] = &[
-    Column { title: "",        min_width: 34,  resizable: false, sort: None,                   expand: false },
-    Column { title: "Process", min_width: 260, resizable: true,  sort: Some(SortKey::Memory),  expand: true  },
-    Column { title: "PID",     min_width: 80,  resizable: true,  sort: Some(SortKey::Pid),     expand: false },
-    Column { title: "RAM",     min_width: 100, resizable: true,  sort: Some(SortKey::Memory),  expand: false },
-    Column { title: "VRAM",    min_width: 90,  resizable: true,  sort: Some(SortKey::Vram),    expand: false },
-    Column { title: "Status",  min_width: 110, resizable: true,  sort: Some(SortKey::Status),  expand: false },
-    Column { title: "Scope",   min_width: 180, resizable: true,  sort: Some(SortKey::Scope),   expand: false },
-    Column { title: "Why",     min_width: 320, resizable: true,  sort: None,                   expand: true  },
+    Column {
+        title: "",
+        min_width: 34,
+        resizable: false,
+        sort: None,
+        expand: false,
+    },
+    Column {
+        title: "Process",
+        min_width: 260,
+        resizable: true,
+        sort: Some(SortKey::Memory),
+        expand: true,
+    },
+    Column {
+        title: "PID",
+        min_width: 80,
+        resizable: true,
+        sort: Some(SortKey::Pid),
+        expand: false,
+    },
+    Column {
+        title: "RAM",
+        min_width: 100,
+        resizable: true,
+        sort: Some(SortKey::Memory),
+        expand: false,
+    },
+    Column {
+        title: "VRAM",
+        min_width: 90,
+        resizable: true,
+        sort: Some(SortKey::Vram),
+        expand: false,
+    },
+    Column {
+        title: "Status",
+        min_width: 110,
+        resizable: true,
+        sort: Some(SortKey::Status),
+        expand: false,
+    },
+    Column {
+        title: "Scope",
+        min_width: 180,
+        resizable: true,
+        sort: Some(SortKey::Scope),
+        expand: false,
+    },
+    Column {
+        title: "Why",
+        min_width: 320,
+        resizable: true,
+        sort: None,
+        expand: true,
+    },
 ];
 
 /// Colours for each verdict, carried over from v1's legend so the window looks
@@ -203,7 +251,10 @@ pub fn sort(rows: &mut [Row], key: SortKey, dir: Direction) {
             SortKey::Memory => a.pss_mb.total_cmp(&b.pss_mb),
             SortKey::Vram => a.vram_mb.total_cmp(&b.vram_mb),
             SortKey::Status => a.verdict.cmp(&b.verdict),
-            SortKey::Scope => a.scope_label().to_lowercase().cmp(&b.scope_label().to_lowercase()),
+            SortKey::Scope => a
+                .scope_label()
+                .to_lowercase()
+                .cmp(&b.scope_label().to_lowercase()),
         };
         // A stable tiebreak on pid, so rows do not shuffle between refreshes
         // when their sort values are equal.
@@ -389,7 +440,11 @@ mod tests {
             true_rss_mb: pss * 1.3,
             status: "S".into(),
             verdict: verdict.into(),
-            protection: if verdict == "PROTECTED" { "structural".into() } else { String::new() },
+            protection: if verdict == "PROTECTED" {
+                "structural".into()
+            } else {
+                String::new()
+            },
             reasons: vec!["no CPU since the last sample".into()],
             ..Default::default()
         }
@@ -413,7 +468,12 @@ mod tests {
     fn every_data_column_is_resizable_and_wide_enough_to_read() {
         for c in COLUMNS.iter().filter(|c| !c.title.is_empty()) {
             assert!(c.resizable, "{} must be draggable", c.title);
-            assert!(c.min_width >= 80, "{} is too narrow at {}px", c.title, c.min_width);
+            assert!(
+                c.min_width >= 80,
+                "{} is too narrow at {}px",
+                c.title,
+                c.min_width
+            );
         }
     }
 
@@ -437,7 +497,11 @@ mod tests {
     fn the_process_column_is_the_widest_and_expands() {
         let p = COLUMNS.iter().find(|c| c.title == "Process").unwrap();
         assert!(p.expand);
-        assert!(p.min_width >= 260, "{}px will ellipsize real names", p.min_width);
+        assert!(
+            p.min_width >= 260,
+            "{}px will ellipsize real names",
+            p.min_width
+        );
         // Long enough for the values that were being truncated.
         assert!("openclaw-gatewa".len() * 9 < p.min_width as usize);
     }
@@ -457,7 +521,11 @@ mod tests {
     fn the_reason_column_is_wide_and_expands() {
         let w = COLUMNS.iter().find(|c| c.title == "Why").unwrap();
         assert!(w.expand);
-        assert!(w.min_width >= 300, "reasons are sentences: {}px", w.min_width);
+        assert!(
+            w.min_width >= 300,
+            "reasons are sentences: {}px",
+            w.min_width
+        );
         let longest = "desktop compositor — suspending it freezes the session";
         assert!(longest.len() * 7 < w.min_width as usize * 2);
     }
@@ -699,14 +767,29 @@ mod tests {
     #[test]
     fn only_kill_is_marked_destructive() {
         assert!(Action::Kill.destructive());
-        for a in [Action::Reclaim, Action::Suspend, Action::Resume, Action::Watch, Action::Spare, Action::CopyPid] {
+        for a in [
+            Action::Reclaim,
+            Action::Suspend,
+            Action::Resume,
+            Action::Watch,
+            Action::Spare,
+            Action::CopyPid,
+        ] {
             assert!(!a.destructive(), "{:?}", a);
         }
     }
 
     #[test]
     fn every_action_has_a_label_a_user_can_read() {
-        for a in [Action::Reclaim, Action::Suspend, Action::Resume, Action::Kill, Action::Watch, Action::Spare, Action::CopyPid] {
+        for a in [
+            Action::Reclaim,
+            Action::Suspend,
+            Action::Resume,
+            Action::Kill,
+            Action::Watch,
+            Action::Spare,
+            Action::CopyPid,
+        ] {
             assert!(a.label().len() > 3, "{:?}", a);
         }
     }

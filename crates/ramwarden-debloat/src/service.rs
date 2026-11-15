@@ -8,11 +8,11 @@ use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXI
 use windows::Win32::System::Services::{
     ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ControlService,
     ENUM_SERVICE_TYPE, OpenSCManagerW, OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfig2W,
-    QueryServiceConfigW, QueryServiceStatus, SC_HANDLE, SC_MANAGER_CONNECT,
-    SERVICE_AUTO_START, SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
-    SERVICE_CONTROL_STOP, SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DEMAND_START, SERVICE_DISABLED,
-    SERVICE_ERROR, SERVICE_NO_CHANGE, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_RUNNING,
-    SERVICE_START, SERVICE_START_TYPE, SERVICE_STATUS, SERVICE_STOP, StartServiceW,
+    QueryServiceConfigW, QueryServiceStatus, SC_HANDLE, SC_MANAGER_CONNECT, SERVICE_AUTO_START,
+    SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, SERVICE_CONTROL_STOP,
+    SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DEMAND_START, SERVICE_DISABLED, SERVICE_ERROR,
+    SERVICE_NO_CHANGE, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START,
+    SERVICE_START_TYPE, SERVICE_STATUS, SERVICE_STOP, StartServiceW,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -92,12 +92,21 @@ fn query(name: &str) -> Result<(u32, bool, bool)> {
             &mut delayed as *mut _ as *mut u8,
             std::mem::size_of::<SERVICE_DELAYED_AUTO_START_INFO>(),
         );
-        let _ = QueryServiceConfig2W(h.0, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, Some(bytes), &mut needed);
+        let _ = QueryServiceConfig2W(
+            h.0,
+            SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+            Some(bytes),
+            &mut needed,
+        );
 
         let mut status = SERVICE_STATUS::default();
         QueryServiceStatus(h.0, &mut status)
             .map_err(|e| Error::os(format!("QueryServiceStatus({name}): {e}")))?;
-        Ok((start, delayed.fDelayedAutostart.as_bool(), status.dwCurrentState == SERVICE_RUNNING))
+        Ok((
+            start,
+            delayed.fDelayedAutostart.as_bool(),
+            status.dwCurrentState == SERVICE_RUNNING,
+        ))
     }
 }
 
@@ -208,8 +217,13 @@ impl Tweak for ServiceTweak {
     fn revert(&self, snapshot: &Value) -> Result<()> {
         let start_type = snapshot["start"]
             .as_u64()
-            .ok_or_else(|| Error::os(format!("corrupt snapshot for {}", self.service)))? as u32;
-        set_start(&self.service, start_type, snapshot["delayed"].as_bool().unwrap_or(false))?;
+            .ok_or_else(|| Error::os(format!("corrupt snapshot for {}", self.service)))?
+            as u32;
+        set_start(
+            &self.service,
+            start_type,
+            snapshot["delayed"].as_bool().unwrap_or(false),
+        )?;
         if snapshot["running"].as_bool() == Some(true) {
             let _ = start(&self.service);
         }
@@ -225,7 +239,11 @@ mod tests {
     fn start_types_parse_and_never_include_automatic() {
         assert_eq!(Start::parse("disabled"), Some(Start::Disabled));
         assert_eq!(Start::parse("manual"), Some(Start::Manual));
-        assert_eq!(Start::parse("auto"), None, "a tweak never makes something start more");
+        assert_eq!(
+            Start::parse("auto"),
+            None,
+            "a tweak never makes something start more"
+        );
     }
 
     /// Reading needs no privilege; this exercises the real SCM.
@@ -239,7 +257,10 @@ mod tests {
             start: Start::Disabled,
         };
         assert!(t.detect().is_ok());
-        let missing = ServiceTweak { service: "RamWardenNoSuchService".into(), ..t };
+        let missing = ServiceTweak {
+            service: "RamWardenNoSuchService".into(),
+            ..t
+        };
         assert_eq!(missing.detect().unwrap(), State::Missing);
     }
 }

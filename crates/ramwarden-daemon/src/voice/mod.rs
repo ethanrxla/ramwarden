@@ -24,11 +24,11 @@
 //! daily cap and the mute are ceilings, and each kind of bubble has its own so
 //! jokes can never crowd out a question. See `docs/specs/warden-voice.md`.
 
-pub mod lines;
 pub mod facts;
 pub mod focus;
-pub mod routes;
 pub mod focus_chat;
+pub mod lines;
+pub mod routes;
 pub mod speech;
 
 use std::path::PathBuf;
@@ -78,9 +78,18 @@ pub struct Choice {
 pub const FOCUS_PROMPT: &str = "What are you working on?";
 
 const CHECK_IN_CHOICES: [Choice; 3] = [
-    Choice { id: "keep", label: "Yes, keep it" },
-    Choice { id: "close", label: "No, close it" },
-    Choice { id: "later", label: "Ask me later" },
+    Choice {
+        id: "keep",
+        label: "Yes, keep it",
+    },
+    Choice {
+        id: "close",
+        label: "No, close it",
+    },
+    Choice {
+        id: "later",
+        label: "Ask me later",
+    },
 ];
 
 /// The tab a check-in is about.
@@ -106,8 +115,8 @@ pub struct Bubble {
     pub tab: Option<TabRef>,
     /// Seconds until it goes away on its own, as of this reply.
     pub expires_in_s: u64,
-    #[serde(skip_serializing_if="Option::is_none")]
-    pub source_url:Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
 }
 
 /// What the user picked.
@@ -197,7 +206,7 @@ struct Inner {
 /// The voice. Shared by every route and the monitor; one lock, never held
 /// across an await.
 pub struct Voice {
-    pub facts:facts::Facts,
+    pub facts: facts::Facts,
     inner: Mutex<Inner>,
     pub focus: focus::Focus,
     focus_pending: Mutex<Option<focus_chat::Pending>>,
@@ -212,7 +221,10 @@ impl Default for Voice {
 }
 
 pub fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// The default store: `<data dir>/ramwarden/voice.json`.
@@ -230,7 +242,13 @@ fn minutes(m: f64) -> Duration {
 
 /// "45 minutes", "3 hours", "2 days".
 pub fn idle_text(minutes: i64) -> String {
-    let plural = |n: i64, unit: &str| if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") };
+    let plural = |n: i64, unit: &str| {
+        if n == 1 {
+            format!("1 {unit}")
+        } else {
+            format!("{n} {unit}s")
+        }
+    };
     match minutes.max(1) {
         m @ 1..=89 => plural(m, "minute"),
         m @ 90..=2159 => plural((m + 30) / 60, "hour"),
@@ -240,17 +258,28 @@ pub fn idle_text(minutes: i64) -> String {
 
 /// "512 MB", "1.1 GB".
 pub fn mb_text(mb: u64) -> String {
-    if mb >= 1024 { format!("{:.1} GB", mb as f64 / 1024.0) } else { format!("{mb} MB") }
+    if mb >= 1024 {
+        format!("{:.1} GB", mb as f64 / 1024.0)
+    } else {
+        format!("{mb} MB")
+    }
 }
 
 /// A tab's name for a bubble: its title, or its host, kept short.
 fn tab_name(row: &Row) -> String {
     let name = if row.title.trim().is_empty() {
-        url::Url::parse(&row.target.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| "this tab".into())
+        url::Url::parse(&row.target.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_else(|| "this tab".into())
     } else {
         row.title.trim().to_string()
     };
-    if name.chars().count() > 48 { format!("{}…", name.chars().take(47).collect::<String>()) } else { name }
+    if name.chars().count() > 48 {
+        format!("{}…", name.chars().take(47).collect::<String>())
+    } else {
+        name
+    }
 }
 
 impl Voice {
@@ -261,7 +290,7 @@ impl Voice {
             .and_then(|b| serde_json::from_slice::<Stored>(&b).ok())
             .and_then(|s| s.muted_until);
         Voice {
-            facts:facts::Facts::new(store.as_ref().map(|p|p.with_file_name("fun-facts.json"))),
+            facts: facts::Facts::new(store.as_ref().map(|p| p.with_file_name("fun-facts.json"))),
             focus_pending: Mutex::new(None),
             focus: focus::Focus::new(store.as_ref().map(|p| p.with_file_name("focus.json"))),
             inner: Mutex::new(Inner {
@@ -312,29 +341,62 @@ impl Voice {
             }
             s.current = None;
         }
-        if s.said_today >= cfg.max_per_day || within(s.last_any, minutes(cfg.min_gap_minutes), now) {
+        if s.said_today >= cfg.max_per_day || within(s.last_any, minutes(cfg.min_gap_minutes), now)
+        {
             return None;
         }
-        while s.events.first().is_some_and(|e| now.saturating_duration_since(e.at) > EVENT_SHELF_LIFE) {
+        while s
+            .events
+            .first()
+            .is_some_and(|e| now.saturating_duration_since(e.at) > EVENT_SHELF_LIFE)
+        {
             s.events.dequeue();
         }
 
         let lines = Lines::ram();
-        let mut source_url=None;
+        let mut source_url = None;
         let (kind, text, tab) = if let Some(e) = s.events.dequeue() {
-            let (pool, count) = if e.closed > 0 { (&lines.activity.closed, e.closed) } else { (&lines.activity.unloaded, e.unloaded) };
+            let (pool, count) = if e.closed > 0 {
+                (&lines.activity.closed, e.closed)
+            } else {
+                (&lines.activity.unloaded, e.unloaded)
+            };
             let line = s.pick(pool);
-            (Kind::Activity, fill(&line, &[("count", &count.to_string()), ("mb", &mb_text(e.mb))]), None)
-        } else if let Some(row) = (cfg.ask_about_tabs && !within(s.last_ask, minutes(cfg.ask_every_minutes), now))
-            .then(|| Self::ask_about(&s, cfg, scene))
-            .flatten()
+            (
+                Kind::Activity,
+                fill(
+                    &line,
+                    &[("count", &count.to_string()), ("mb", &mb_text(e.mb))],
+                ),
+                None,
+            )
+        } else if let Some(row) = (cfg.ask_about_tabs
+            && !within(s.last_ask, minutes(cfg.ask_every_minutes), now))
+        .then(|| Self::ask_about(&s, cfg, scene))
+        .flatten()
         {
             let line = s.pick(&lines.check_in);
-            let text = fill(&line, &[("title", &tab_name(row)), ("idle", &idle_text(row.inactive_minutes))]);
-            (Kind::CheckIn, text, Some(TabRef { target: row.target.clone(), title: row.title.clone() }))
+            let text = fill(
+                &line,
+                &[
+                    ("title", &tab_name(row)),
+                    ("idle", &idle_text(row.inactive_minutes)),
+                ],
+            );
+            (
+                Kind::CheckIn,
+                text,
+                Some(TabRef {
+                    target: row.target.clone(),
+                    title: row.title.clone(),
+                }),
+            )
         } else if cfg.ask_about_focus && self.focus.ask(scene.unix) {
             (Kind::Focus, "What are you working on? I'll pull together a few tabs for you to mark as relevant.".into(), None)
-        } else if cfg.quips && s.jokes_today < cfg.max_quips_per_day && !within(s.last_quip, minutes(cfg.quip_every_minutes), now) {
+        } else if cfg.quips
+            && s.jokes_today < cfg.max_quips_per_day
+            && !within(s.last_quip, minutes(cfg.quip_every_minutes), now)
+        {
             let tabs = scene.rows.len();
             let q = &lines.quips;
             // Alternate a general joke with one about the real numbers.
@@ -349,10 +411,18 @@ impl Voice {
             } else {
                 &q.any
             };
-            let dynamic=self.facts.take();
-            source_url=dynamic.as_ref().and_then(|fact|fact.source_url.clone());
-            let line = dynamic.map(|fact|fact.text).unwrap_or_else(||s.pick(pool));
-            let text = fill(&line, &[("tabs", &tabs.to_string()), ("percent", &format!("{:.0}", scene.percent))]);
+            let dynamic = self.facts.take();
+            source_url = dynamic.as_ref().and_then(|fact| fact.source_url.clone());
+            let line = dynamic
+                .map(|fact| fact.text)
+                .unwrap_or_else(|| s.pick(pool));
+            let text = fill(
+                &line,
+                &[
+                    ("tabs", &tabs.to_string()),
+                    ("percent", &format!("{:.0}", scene.percent)),
+                ],
+            );
             (Kind::Quip, text, None)
         } else {
             return None;
@@ -368,13 +438,21 @@ impl Voice {
             }
             _ => {}
         }
-        let life = if matches!(kind, Kind::CheckIn | Kind::Focus) { QUESTION_LIFE } else { REMARK_LIFE };
+        let life = if matches!(kind, Kind::CheckIn | Kind::Focus) {
+            QUESTION_LIFE
+        } else {
+            REMARK_LIFE
+        };
         let bubble = Bubble {
             id: uuid::Uuid::new_v4().to_string(),
             warden: "ram",
             kind,
             text,
-            choices: if kind == Kind::CheckIn { CHECK_IN_CHOICES.to_vec() } else { Vec::new() },
+            choices: if kind == Kind::CheckIn {
+                CHECK_IN_CHOICES.to_vec()
+            } else {
+                Vec::new()
+            },
             input: (kind == Kind::Focus).then_some(FOCUS_PROMPT),
             tab,
             expires_in_s: life.as_secs(),
@@ -394,14 +472,31 @@ impl Voice {
                 && !s.answered(&r.target, cfg, scene.now)
         };
         let best = |rows: Vec<&'a Row>| {
-            rows.into_iter().max_by(|a, b| a.est_mb.cmp(&b.est_mb).then(a.inactive_minutes.cmp(&b.inactive_minutes)).then(b.target.id.cmp(&a.target.id)))
+            rows.into_iter().max_by(|a, b| {
+                a.est_mb
+                    .cmp(&b.est_mb)
+                    .then(a.inactive_minutes.cmp(&b.inactive_minutes))
+                    .then(b.target.id.cmp(&a.target.id))
+            })
         };
-        let soon: Vec<&Row> = scene.rows.iter().filter(|r| scene.closing.contains(&r.target)).filter(askable).collect();
+        let soon: Vec<&Row> = scene
+            .rows
+            .iter()
+            .filter(|r| scene.closing.contains(&r.target))
+            .filter(askable)
+            .collect();
         best(soon).or_else(|| {
-            best(scene.rows.iter()
-                .filter(|r| matches!(r.status, "candidate" | "unloaded") && BORDERLINE.contains(&r.p_return))
-                .filter(askable)
-                .collect())
+            best(
+                scene
+                    .rows
+                    .iter()
+                    .filter(|r| {
+                        matches!(r.status, "candidate" | "unloaded")
+                            && BORDERLINE.contains(&r.p_return)
+                    })
+                    .filter(askable)
+                    .collect(),
+            )
         })
     }
 
@@ -410,7 +505,9 @@ impl Voice {
     /// Take the user's choice on bubble `id`.
     pub fn answer(&self, id: &str, pick: Pick, now: Instant) -> Result<Answered, Stale> {
         let mut s = self.inner.lock().unwrap();
-        let Some((bubble, until)) = s.current.clone() else { return Err(Stale) };
+        let Some((bubble, until)) = s.current.clone() else {
+            return Err(Stale);
+        };
         if bubble.id != id || now >= until {
             return Err(Stale);
         }
@@ -424,7 +521,11 @@ impl Voice {
             }
             (Some(tab), Pick::Later | Pick::Dismiss | Pick::Focus) => {
                 s.answers.put_hot(tab.target, (Answer::Later, now));
-                let text = if pick == Pick::Later { s.reply(&lines.replies.later, now) } else { String::new() };
+                let text = if pick == Pick::Later {
+                    s.reply(&lines.replies.later, now)
+                } else {
+                    String::new()
+                };
                 Ok(Answered::Said(text))
             }
             // A remark has nothing to keep or close: any choice dismisses it.
@@ -472,7 +573,12 @@ impl Voice {
             return;
         }
         let mut s = self.inner.lock().unwrap();
-        s.events.enqueue(Event { unloaded, closed, mb, at: now });
+        s.events.enqueue(Event {
+            unloaded,
+            closed,
+            mb,
+            at: now,
+        });
         while s.events.len() > 4 {
             s.events.dequeue();
         }
@@ -499,7 +605,9 @@ impl Voice {
             s.current = None;
         }
         if let Some(path) = &self.store {
-            let stored = Stored { muted_until: s.muted_until };
+            let stored = Stored {
+                muted_until: s.muted_until,
+            };
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -507,7 +615,11 @@ impl Voice {
                 tracing::warn!("voice: could not save the mute to {}: {e}", path.display());
             }
         }
-        if muted { s.pick(&Lines::ram().replies.muted) } else { String::new() }
+        if muted {
+            s.pick(&Lines::ram().replies.muted)
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -518,14 +630,20 @@ impl Inner {
 
     fn answered(&self, target: &Target, cfg: &config::Voice, now: Instant) -> bool {
         match self.answers.peek(target) {
-            Some((Answer::Keep, at)) => now.saturating_duration_since(*at) < minutes(cfg.keep_hours * 60.0),
-            Some((Answer::Later, at)) => now.saturating_duration_since(*at) < minutes(cfg.later_hours * 60.0),
+            Some((Answer::Keep, at)) => {
+                now.saturating_duration_since(*at) < minutes(cfg.keep_hours * 60.0)
+            }
+            Some((Answer::Later, at)) => {
+                now.saturating_duration_since(*at) < minutes(cfg.later_hours * 60.0)
+            }
             None => false,
         }
     }
 
     fn holds(&self, cfg: &config::Voice, target: &Target, now: Instant) -> bool {
-        let asking = self.current.as_ref().is_some_and(|(b, until)| now < *until && b.tab.as_ref().is_some_and(|t| &t.target == target));
+        let asking = self.current.as_ref().is_some_and(|(b, until)| {
+            now < *until && b.tab.as_ref().is_some_and(|t| &t.target == target)
+        });
         let kept = matches!(self.answers.peek(target), Some((Answer::Keep, at)) if now.saturating_duration_since(*at) < minutes(cfg.keep_hours * 60.0));
         asking || kept
     }
@@ -568,7 +686,7 @@ impl Inner {
                 input: None,
                 tab: None,
                 expires_in_s: REPLY_LIFE.as_secs(),
-                source_url:None,
+                source_url: None,
             },
             now + REPLY_LIFE,
         ));

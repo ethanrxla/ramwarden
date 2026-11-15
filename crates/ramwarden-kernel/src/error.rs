@@ -28,10 +28,7 @@ pub enum Error {
     /// the remediation ladder can log "no CAP_SYS_NICE, using cgroup reclaim
     /// instead" rather than treating a permission boundary as a failure.
     #[error("{path}: permission denied ({hint})")]
-    Denied {
-        path: PathBuf,
-        hint: &'static str,
-    },
+    Denied { path: PathBuf, hint: &'static str },
 }
 
 impl Error {

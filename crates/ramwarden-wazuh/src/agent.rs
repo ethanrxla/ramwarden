@@ -50,8 +50,14 @@ impl LocalAgent {
             return LocalAgent::default();
         }
         match std::fs::read_to_string(state_file(dir)) {
-            Ok(text) => LocalAgent { installed: true, ..LocalAgent::parse(&text) },
-            Err(_) => LocalAgent { installed: true, ..LocalAgent::default() },
+            Ok(text) => LocalAgent {
+                installed: true,
+                ..LocalAgent::parse(&text)
+            },
+            Err(_) => LocalAgent {
+                installed: true,
+                ..LocalAgent::default()
+            },
         }
     }
 
@@ -63,7 +69,9 @@ impl LocalAgent {
             if line.starts_with('#') {
                 continue;
             }
-            let Some((k, v)) = line.split_once('=') else { continue };
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
             let v = v.trim().trim_matches(['\'', '"']).to_string();
             match k.trim() {
                 "status" if !v.is_empty() => out.status = Some(v),
@@ -143,13 +151,19 @@ mod tests {
         assert_eq!(a.last_keepalive.as_deref(), Some("2026-11-01 08:00:01"));
         assert!(a.is_connected());
         assert!(!LocalAgent::parse("status='disconnected'\n").is_connected());
-        assert_eq!(LocalAgent::parse("garbage\n# status='connected'"), LocalAgent::default());
+        assert_eq!(
+            LocalAgent::parse("garbage\n# status='connected'"),
+            LocalAgent::default()
+        );
     }
 
     #[test]
     fn a_missing_install_is_not_installed() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(LocalAgent::read_at(&dir.path().join("nope")), LocalAgent::default());
+        assert_eq!(
+            LocalAgent::read_at(&dir.path().join("nope")),
+            LocalAgent::default()
+        );
     }
 
     #[test]

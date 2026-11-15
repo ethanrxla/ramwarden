@@ -29,7 +29,11 @@ pub fn enable(name: &str) -> Result<()> {
     let mut raw = HANDLE::default();
     // SAFETY: `raw` receives a new token handle, owned immediately below.
     unsafe {
-        OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut raw)
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut raw,
+        )
     }
     .map_err(|e| Error::os(format!("OpenProcessToken: {e}")))?;
     let token = Handle::new(raw).ok_or_else(|| Error::os("OpenProcessToken returned no handle"))?;
@@ -54,7 +58,10 @@ pub fn enable(name: &str) -> Result<()> {
     // reports the truth only through the last error.
     // SAFETY: reads thread-local state.
     if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED {
-        return Err(Error::denied(name, "this account does not hold the privilege; run as administrator or via ramwarden-service"));
+        return Err(Error::denied(
+            name,
+            "this account does not hold the privilege; run as administrator or via ramwarden-service",
+        ));
     }
     Ok(())
 }
@@ -66,7 +73,9 @@ pub fn is_elevated() -> bool {
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) }.is_err() {
         return false;
     }
-    let Some(token) = Handle::new(raw) else { return false };
+    let Some(token) = Handle::new(raw) else {
+        return false;
+    };
     let mut elevation = TOKEN_ELEVATION::default();
     let mut len = 0u32;
     // SAFETY: the buffer is a TOKEN_ELEVATION of the stated size.

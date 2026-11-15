@@ -350,7 +350,10 @@ impl Ladder {
 
     /// Kills past their grace period that have not happened yet, next first.
     pub fn queued_kills(&self) -> Vec<String> {
-        self.kill_queue.iter().map(|(name, _)| name.clone()).collect()
+        self.kill_queue
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     /// Call off an armed kill, and any still queued. The UI's cancel button.
@@ -427,7 +430,10 @@ impl Ladder {
     /// Distinct process names that are both idle and on the watchlist, least
     /// recently used first.
     fn eligible_names(&self, w: &World<'_>) -> Vec<String> {
-        self.eligible(w, usize::MAX).into_iter().map(|(name, _)| name).collect()
+        self.eligible(w, usize::MAX)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// At most `limit` eligible names, least recently used first, each with its
@@ -472,7 +478,10 @@ impl Ladder {
         }
 
         // Names the LRU has not seen yet keep their ranked (or largest-first) place.
-        let mut rest: Vec<&'d Signals> = reclaimable.into_iter().filter(|s| by_name.contains_key(s.name.as_str())).collect();
+        let mut rest: Vec<&'d Signals> = reclaimable
+            .into_iter()
+            .filter(|s| by_name.contains_key(s.name.as_str()))
+            .collect();
         if let Some(r) = &self.ranker {
             let back = |pid: i32| r.reuse(pid).unwrap_or(0.5);
             rest.sort_by(|a, b| {
@@ -499,7 +508,11 @@ impl Ladder {
             .into_iter()
             .enumerate()
             .map(|(rank, (name, procs))| {
-                let idle = w.det.recency(&name).map(|r| r.idle().as_secs_f64() / 60.0).unwrap_or(0.0);
+                let idle = w
+                    .det
+                    .recency(&name)
+                    .map(|r| r.idle().as_secs_f64() / 60.0)
+                    .unwrap_or(0.0);
                 Candidate::from_signals(&name, rank, idle, &procs)
             })
             .collect()
@@ -565,7 +578,9 @@ impl Ladder {
                     match verdicts.iter().find(|j| j.name == c.name) {
                         Some(j) if j.close => keep.push(c.name),
                         Some(j) => vetoed.push((c.name, Outcome::refused(j.reason.clone()))),
-                        None => vetoed.push((c.name, Outcome::refused("the judge gave no verdict"))),
+                        None => {
+                            vetoed.push((c.name, Outcome::refused("the judge gave no verdict")))
+                        }
                     }
                 }
                 (keep, vetoed, None)
@@ -697,7 +712,9 @@ impl Ladder {
                 continue;
             }
 
-            let Ok(reclaimable) = group.reclaimable() else { continue };
+            let Ok(reclaimable) = group.reclaimable() else {
+                continue;
+            };
             if reclaimable < SCOPE_FLOOR {
                 continue;
             }
@@ -712,7 +729,11 @@ impl Ladder {
         // A missing capability is reported on every tick, so the live report
         // always says why; `log` writes it to history only once per change.
         let Some(groups) = w.groups else {
-            report.steps.push(("reclaim", String::new(), Outcome::refused(GROUPS_UNAVAILABLE)));
+            report.steps.push((
+                "reclaim",
+                String::new(),
+                Outcome::refused(GROUPS_UNAVAILABLE),
+            ));
             return;
         };
 
@@ -756,14 +777,17 @@ impl Ladder {
 
         // Keep the circle in step with what is idle now; newcomers join at the
         // back, largest first.
-        self.pageout_turns.retain(|pid| idle.iter().any(|(p, _, _)| p == pid));
+        self.pageout_turns
+            .retain(|pid| idle.iter().any(|(p, _, _)| p == pid));
         for (pid, _, _) in &idle {
             if !self.pageout_turns.iter().any(|p| p == pid) {
                 self.pageout_turns.insert_last(*pid);
             }
         }
         let turns = PAGEOUT_LIMIT.min(self.pageout_turns.len());
-        let picked: Vec<i32> = (0..turns).filter_map(|_| self.pageout_turns.turn().copied()).collect();
+        let picked: Vec<i32> = (0..turns)
+            .filter_map(|_| self.pageout_turns.turn().copied())
+            .collect();
 
         for pid in picked {
             let Some((_, name, _)) = idle.iter().find(|(p, _, _)| *p == pid).cloned() else {
@@ -771,7 +795,9 @@ impl Ladder {
             };
             let outcome = self.act.page_out(pid, COLD_RATIO, COLD_VMA_FLOOR);
             report.total_freed += outcome.bytes_freed;
-            report.steps.push(("pageout", format!("{name} (pid {pid})"), outcome));
+            report
+                .steps
+                .push(("pageout", format!("{name} (pid {pid})"), outcome));
         }
     }
 
@@ -795,7 +821,12 @@ impl Ladder {
 
     fn do_tabs(&mut self, w: &mut World<'_>, report: &mut Report) {
         // Give the browser and pressure signal time to settle between batches.
-        if self.last_tabs.is_some_and(|at| at.elapsed() < Duration::from_secs(30)) { return; }
+        if self
+            .last_tabs
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(30))
+        {
+            return;
+        }
         self.last_tabs = Some(Instant::now());
         let goal = w.goal.clone();
         let Some(closer) = w.tabs.as_mut() else {
@@ -808,7 +839,9 @@ impl Ladder {
         };
         let outcome = closer.close_stale(&goal);
         report.total_freed += outcome.bytes_freed;
-        report.steps.push(("discard_tab", "idle tabs".into(), outcome));
+        report
+            .steps
+            .push(("discard_tab", "idle tabs".into(), outcome));
     }
 
     // ── Rung 3: suspend ─────────────────────────────────────────────────────
@@ -848,7 +881,10 @@ impl Ladder {
         let Some((name, armed_at)) = self.kill_queue.dequeue() else {
             return;
         };
-        if w.det.recency(&name).is_some_and(|r| r.touched && r.since > armed_at) {
+        if w.det
+            .recency(&name)
+            .is_some_and(|r| r.touched && r.since > armed_at)
+        {
             report.steps.push((
                 "kill",
                 name,
@@ -981,7 +1017,12 @@ impl Ladder {
             }
             let _ = h.log(&NewAction {
                 rung: rung.index(),
-                trigger: if w.psi.estimated { "pressure-estimate" } else { "psi" }.into(),
+                trigger: if w.psi.estimated {
+                    "pressure-estimate"
+                } else {
+                    "psi"
+                }
+                .into(),
                 psi_some: w.psi.some_avg10,
                 psi_full: w.psi.full_avg10,
                 action: (*action).to_string(),
@@ -1047,22 +1088,53 @@ mod rung_tests {
         let shared = Arc::new(Mutex::new(ramwarden_platform::fake::World::default()));
         let platform = ramwarden_platform::fake::platform(shared);
         let detector = Detector::preloaded(true, vec![]);
-        let act = Actuator::new(platform.control.clone(), Arc::new(ramwarden_platform::NoPager), platform.background.clone());
+        let act = Actuator::new(
+            platform.control.clone(),
+            Arc::new(ramwarden_platform::NoPager),
+            platform.background.clone(),
+        );
         let mut ladder = Ladder::new(cfg(), act);
-        let mut world = World { det: &detector, groups: None, psi: psi(6.0,0.0),
-            available_bytes: PLENTY, watchlist: &[], goal: String::new(), tabs: None, judge: None };
+        let mut world = World {
+            det: &detector,
+            groups: None,
+            psi: psi(6.0, 0.0),
+            available_bytes: PLENTY,
+            watchlist: &[],
+            goal: String::new(),
+            tabs: None,
+            judge: None,
+        };
         struct Tabs(usize);
         impl TabCloser for Tabs {
-            fn close_stale(&mut self, _: &str) -> Outcome { self.0 += 1; Outcome::default() }
+            fn close_stale(&mut self, _: &str) -> Outcome {
+                self.0 += 1;
+                Outcome::default()
+            }
         }
         let first = ladder.step(&mut world);
-        assert!(first.steps.iter().any(|(action,_,_)| *action == "reclaim"));
-        assert!(first.steps.iter().any(|(action,_,_)| *action == "pageout"));
+        assert!(
+            first
+                .steps
+                .iter()
+                .any(|(action, _, _)| *action == "reclaim")
+        );
+        assert!(
+            first
+                .steps
+                .iter()
+                .any(|(action, _, _)| *action == "pageout")
+        );
         // The live report keeps saying why on every tick; history records it
         // once (see `a_rung_the_platform_cannot_run_is_logged_once_not_every_tick`).
         for _ in 0..100 {
             let repeated = ladder.step(&mut world);
-            assert!(repeated.steps.iter().all(|(action,_,o)| !matches!(*action,"reclaim"|"pageout") || o.did_nothing()));
+            assert!(
+                repeated
+                    .steps
+                    .iter()
+                    .all(|(action, _, o)| !matches!(*action, "reclaim" | "pageout")
+                        || o.did_nothing())
+            );
         }
         // Capability recovery resets the diagnostic, rather than disabling
         // reclaim forever. Empty fake groups are safe and do not actuate.
@@ -1070,12 +1142,20 @@ mod rung_tests {
         ladder.step(&mut world);
         world.groups = None;
         let missing_again = ladder.step(&mut world);
-        assert!(missing_again.steps.iter().any(|(action,_,_)| *action == "reclaim"));
+        assert!(
+            missing_again
+                .steps
+                .iter()
+                .any(|(action, _, _)| *action == "reclaim")
+        );
         let mut tabs = Tabs(0);
-        world.psi = psi(12.0,0.0);
+        world.psi = psi(12.0, 0.0);
         world.tabs = Some(&mut tabs);
         ladder.step(&mut world);
-        assert_eq!(tabs.0, 1, "missing capabilities must not block higher rungs");
+        assert_eq!(
+            tabs.0, 1,
+            "missing capabilities must not block higher rungs"
+        );
     }
 
     // ── Rung selection, driven by a synthetic pressure series ───────────────
@@ -1086,8 +1166,8 @@ mod rung_tests {
         let series = [
             (0.0, Rung::Release),
             (0.5, Rung::Release),
-            (1.0, Rung::Release),  // release_below is inclusive
-            (1.5, Rung::Hold),     // the hysteresis band
+            (1.0, Rung::Release), // release_below is inclusive
+            (1.5, Rung::Hold),    // the hysteresis band
             (2.0, Rung::Reclaim),
             (4.9, Rung::Reclaim),
             (5.0, Rung::PageOut),
@@ -1156,7 +1236,6 @@ mod rung_tests {
         assert!(Rung::Tabs < Rung::Suspend);
         assert!(Rung::Suspend < Rung::Kill);
     }
-
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1321,8 +1400,7 @@ mod tests {
     }
 
     fn ladder(cfg: config::Ladder, root: &Root) -> Ladder {
-        Ladder::new(cfg, Actuator::linux(root.clone()))
-            .with_history(History::in_memory().unwrap())
+        Ladder::new(cfg, Actuator::linux(root.clone())).with_history(History::in_memory().unwrap())
     }
 
     struct FakeTabs {
@@ -1443,15 +1521,27 @@ mod tests {
 
     #[test]
     fn browser_batches_wait_for_pressure_to_settle() {
-        let f=Fixture::new();let h=f.hierarchy();let det=f.detector(true);
-        let mut tabs=FakeTabs { closed: 0 };let mut l=ladder(cfg(),&f.root);
-        let mut w=World { tabs:Some(&mut tabs),..world(&f,&h,&det,11.0,0.0,&[]) };
-        let first=l.step(&mut w);let second=l.step(&mut w);
-        assert!(first.steps.iter().any(|(a,_,_)|*a=="discard_tab"));
-        assert!(!second.steps.iter().any(|(a,_,_)|*a=="discard_tab"));
-        l.last_tabs=Some(Instant::now()-Duration::from_secs(31));
-        assert!(l.step(&mut w).steps.iter().any(|(a,_,_)|*a=="discard_tab"));
-        assert_eq!(tabs.closed,2);
+        let f = Fixture::new();
+        let h = f.hierarchy();
+        let det = f.detector(true);
+        let mut tabs = FakeTabs { closed: 0 };
+        let mut l = ladder(cfg(), &f.root);
+        let mut w = World {
+            tabs: Some(&mut tabs),
+            ..world(&f, &h, &det, 11.0, 0.0, &[])
+        };
+        let first = l.step(&mut w);
+        let second = l.step(&mut w);
+        assert!(first.steps.iter().any(|(a, _, _)| *a == "discard_tab"));
+        assert!(!second.steps.iter().any(|(a, _, _)| *a == "discard_tab"));
+        l.last_tabs = Some(Instant::now() - Duration::from_secs(31));
+        assert!(
+            l.step(&mut w)
+                .steps
+                .iter()
+                .any(|(a, _, _)| *a == "discard_tab")
+        );
+        assert_eq!(tabs.closed, 2);
     }
 
     // ── Cumulative escalation ───────────────────────────────────────────────
@@ -1513,7 +1603,10 @@ mod tests {
         let mut w = world(&f, &h, &det, 30.0, 30.0, &wl);
         let report = l.step(&mut w);
 
-        assert!(f.reclaim_requests().is_empty(), "nothing should be reclaimed");
+        assert!(
+            f.reclaim_requests().is_empty(),
+            "nothing should be reclaimed"
+        );
         assert!(
             report.steps[0].2.notes[0].contains("warming up"),
             "{:?}",
@@ -1532,10 +1625,10 @@ mod tests {
         let report = l.step(&mut w);
         assert_eq!(report.rung, Some(Rung::Release));
         assert!(
-            !report.steps.iter().any(|(_, _, o)| o
-                .notes
+            !report
+                .steps
                 .iter()
-                .any(|n| n.contains("warming up"))),
+                .any(|(_, _, o)| o.notes.iter().any(|n| n.contains("warming up"))),
             "{:?}",
             report.steps
         );
@@ -1565,11 +1658,8 @@ mod tests {
         let mut w = world(&f, &h, &det, 11.0, 0.0, &[]);
         let report = l.step(&mut w);
         assert!(
-            report
-                .steps
-                .iter()
-                .any(|(a, _, o)| *a == "discard_tab"
-                    && o.notes.iter().any(|n| n.contains("no browser connected"))),
+            report.steps.iter().any(|(a, _, o)| *a == "discard_tab"
+                && o.notes.iter().any(|n| n.contains("no browser connected"))),
             "{:?}",
             report.steps
         );
@@ -1631,7 +1721,10 @@ mod tests {
 
         // Still under pressure, but no longer thrashing.
         l.step(&mut world(&f, &h, &det, 16.0, 0.0, &wl));
-        assert!(l.pending_kill().is_none(), "the kill should have stood down");
+        assert!(
+            l.pending_kill().is_none(),
+            "the kill should have stood down"
+        );
     }
 
     #[test]
@@ -1697,7 +1790,13 @@ mod tests {
         c.kill_grace_seconds = 0;
         let mut l = ladder(c, &f.root);
 
-        for (some, full) in [(2.0, 0.0), (6.0, 0.0), (11.0, 0.0), (16.0, 0.0), (1.0, 30.0)] {
+        for (some, full) in [
+            (2.0, 0.0),
+            (6.0, 0.0),
+            (11.0, 0.0),
+            (16.0, 0.0),
+            (1.0, 30.0),
+        ] {
             let report = l.step(&mut world(&f, &h, &det, some, full, &wl));
             for (action, target, _) in &report.steps {
                 assert!(
@@ -1960,7 +2059,10 @@ mod tests {
     #[test]
     fn available_memory_is_read_from_meminfo() {
         let f = Fixture::new();
-        assert_eq!(available_bytes(&LinuxMemory::new(f.root.clone())), 7_000_000 * 1024);
+        assert_eq!(
+            available_bytes(&LinuxMemory::new(f.root.clone())),
+            7_000_000 * 1024
+        );
     }
 
     /// An unreadable meminfo must not look like an out-of-memory condition and
@@ -2016,8 +2118,13 @@ mod tests {
     }
 
     impl Judge for FakeJudge {
-        fn judge(&mut self, intent: Intent, c: &[Candidate]) -> Result<Vec<crate::judge::Judgement>, String> {
-            self.calls.push((intent, c.iter().map(|c| c.name.clone()).collect()));
+        fn judge(
+            &mut self,
+            intent: Intent,
+            c: &[Candidate],
+        ) -> Result<Vec<crate::judge::Judgement>, String> {
+            self.calls
+                .push((intent, c.iter().map(|c| c.name.clone()).collect()));
             if self.fail {
                 return Err("timed out".into());
             }
@@ -2061,9 +2168,16 @@ mod tests {
         let det = lru_detector(&f, "none");
         let wl = vec!["Discord".to_string(), "Slack".to_string()];
         let mut l = ladder(cfg(), &f.root);
-        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: false };
+        let mut j = FakeJudge {
+            calls: vec![],
+            allow: vec![],
+            fail: false,
+        };
 
-        let mut w = World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) };
+        let mut w = World {
+            judge: Some(&mut j),
+            ..world(&f, &h, &det, 1.0, 30.0, &wl)
+        };
         let report = l.step(&mut w);
 
         assert_eq!(j.calls[0].0, Intent::Suspend);
@@ -2075,7 +2189,10 @@ mod tests {
             .filter(|(_, _, o)| o.notes.iter().any(|n| n.contains("Jev is not convinced")))
             .collect();
         assert_eq!(vetoes.len(), 4, "{:?}", report.steps); // 2 apps x suspend + kill
-        assert!(l.pending_kill().is_none(), "nothing approved, nothing armed");
+        assert!(
+            l.pending_kill().is_none(),
+            "nothing approved, nothing armed"
+        );
     }
 
     #[test]
@@ -2085,9 +2202,16 @@ mod tests {
         let det = lru_detector(&f, "none");
         let wl = vec!["Discord".to_string(), "Slack".to_string()];
         let mut l = ladder(cfg(), &f.root);
-        let mut j = FakeJudge { calls: vec![], allow: vec!["Slack"], fail: false };
+        let mut j = FakeJudge {
+            calls: vec![],
+            allow: vec!["Slack"],
+            fail: false,
+        };
 
-        l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+        l.step(&mut World {
+            judge: Some(&mut j),
+            ..world(&f, &h, &det, 1.0, 30.0, &wl)
+        });
         assert_eq!(l.pending_kill().unwrap().targets, vec!["Slack".to_string()]);
     }
 
@@ -2098,11 +2222,26 @@ mod tests {
         let det = lru_detector(&f, "none");
         let wl = vec!["Discord".to_string(), "Slack".to_string()];
         let mut l = ladder(cfg(), &f.root);
-        let mut j = FakeJudge { calls: vec![], allow: vec![], fail: true };
+        let mut j = FakeJudge {
+            calls: vec![],
+            allow: vec![],
+            fail: true,
+        };
 
-        let report = l.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
-        let suspends = report.steps.iter().filter(|(a, _, _)| *a == "suspend").count();
-        assert_eq!(suspends, 2, "suspend falls back to the gate: {:?}", report.steps);
+        let report = l.step(&mut World {
+            judge: Some(&mut j),
+            ..world(&f, &h, &det, 1.0, 30.0, &wl)
+        });
+        let suspends = report
+            .steps
+            .iter()
+            .filter(|(a, _, _)| *a == "suspend")
+            .count();
+        assert_eq!(
+            suspends, 2,
+            "suspend falls back to the gate: {:?}",
+            report.steps
+        );
         let (_, _, kill) = report.steps.iter().find(|(a, _, _)| *a == "kill").unwrap();
         assert!(kill.notes[0].contains("not killing without it"), "{kill:?}");
         assert!(l.pending_kill().is_none());
@@ -2112,28 +2251,55 @@ mod tests {
     /// exactly what asking from inside the step decides.
     #[test]
     fn judging_ahead_of_the_step_decides_what_judging_inside_it_would() {
-        for (allow, fail) in [(vec![], false), (vec!["Slack"], false), (vec!["Slack", "Discord"], false), (vec![], true)] {
+        for (allow, fail) in [
+            (vec![], false),
+            (vec!["Slack"], false),
+            (vec!["Slack", "Discord"], false),
+            (vec![], true),
+        ] {
             let f = Fixture::new();
             let h = f.hierarchy();
             let det = lru_detector(&f, "none");
             let wl = vec!["Discord".to_string(), "Slack".to_string()];
 
             let mut inside = ladder(cfg(), &f.root);
-            let mut j = FakeJudge { calls: vec![], allow: allow.clone(), fail };
-            let a = inside.step(&mut World { judge: Some(&mut j), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
+            let mut j = FakeJudge {
+                calls: vec![],
+                allow: allow.clone(),
+                fail,
+            };
+            let a = inside.step(&mut World {
+                judge: Some(&mut j),
+                ..world(&f, &h, &det, 1.0, 30.0, &wl)
+            });
 
             let f2 = Fixture::new();
             let h2 = f2.hierarchy();
             let mut ahead = ladder(cfg(), &f2.root);
             let requests = ahead.judge_requests(&world(&f2, &h2, &det, 1.0, 30.0, &wl));
-            let mut j2 = FakeJudge { calls: vec![], allow, fail };
+            let mut j2 = FakeJudge {
+                calls: vec![],
+                allow,
+                fail,
+            };
             let mut pre = crate::judge::Prejudged::ask(&mut j2, &requests);
-            let b = ahead.step(&mut World { judge: Some(&mut pre), ..world(&f2, &h2, &det, 1.0, 30.0, &wl) });
+            let b = ahead.step(&mut World {
+                judge: Some(&mut pre),
+                ..world(&f2, &h2, &det, 1.0, 30.0, &wl)
+            });
 
             assert_eq!(j.calls, j2.calls, "the same questions were asked");
-            let show = |r: &Report| r.steps.iter().map(|(a, t, o)| format!("{a} {t} {:?}", o.notes)).collect::<Vec<_>>();
+            let show = |r: &Report| {
+                r.steps
+                    .iter()
+                    .map(|(a, t, o)| format!("{a} {t} {:?}", o.notes))
+                    .collect::<Vec<_>>()
+            };
             assert_eq!(show(&a), show(&b));
-            assert_eq!(inside.pending_kill().map(|p| p.targets.clone()), ahead.pending_kill().map(|p| p.targets.clone()));
+            assert_eq!(
+                inside.pending_kill().map(|p| p.targets.clone()),
+                ahead.pending_kill().map(|p| p.targets.clone())
+            );
         }
     }
 
@@ -2146,8 +2312,18 @@ mod tests {
         let wl = vec!["Discord".to_string(), "Slack".to_string()];
         let mut l = ladder(cfg(), &f.root);
         let mut pre = crate::judge::Prejudged::new();
-        let report = l.step(&mut World { judge: Some(&mut pre), ..world(&f, &h, &det, 1.0, 30.0, &wl) });
-        assert!(report.steps.iter().all(|(a, _, o)| !matches!(*a, "suspend" | "kill") || o.did_nothing()), "{:?}", report.steps);
+        let report = l.step(&mut World {
+            judge: Some(&mut pre),
+            ..world(&f, &h, &det, 1.0, 30.0, &wl)
+        });
+        assert!(
+            report
+                .steps
+                .iter()
+                .all(|(a, _, o)| !matches!(*a, "suspend" | "kill") || o.did_nothing()),
+            "{:?}",
+            report.steps
+        );
         assert!(l.pending_kill().is_none());
     }
 

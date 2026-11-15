@@ -32,8 +32,13 @@ pub const KEEP_DAYS: i64 = 90;
 /// The full host, lowercased, `www.` dropped: `docs.google.com`, not the
 /// registrable `google.com`, because "which Google tab?" is the question.
 pub fn host_of(url: &str) -> String {
-    let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).unwrap_or_default();
-    host.strip_prefix("www.").map(str::to_string).unwrap_or(host)
+    let host = url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .unwrap_or_default();
+    host.strip_prefix("www.")
+        .map(str::to_string)
+        .unwrap_or(host)
 }
 
 fn utc_hour(now: i64) -> u32 {
@@ -72,12 +77,21 @@ impl Row {
                 "veto": j.unsaved >= cfg.unsaved_veto,
                 "blended": self.p_return,
             }),
-            None => json!({ "consulted": false, "why": "borderline, no answer cached yet", "asked": state }),
+            None => {
+                json!({ "consulted": false, "why": "borderline, no answer cached yet", "asked": state })
+            }
         })
     }
 
     /// The row as a decision. `reason` is the sentence a person reads first.
-    pub fn decision(&self, action: &str, result: &str, trigger: &str, reason: String, now: i64) -> NewDecision {
+    pub fn decision(
+        &self,
+        action: &str,
+        result: &str,
+        trigger: &str,
+        reason: String,
+        now: i64,
+    ) -> NewDecision {
         let jev = self.jev_record();
         let unsaved = jev.as_ref().and_then(|j| j["unsaved"].as_f64());
         NewDecision {
@@ -136,7 +150,11 @@ impl Row {
             cfg.close_after_hours.max(24.0),
             self.p_return,
             cfg.close_below_return.min(0.3),
-            if self.duplicate { "; older copy of an open page" } else { "" },
+            if self.duplicate {
+                "; older copy of an open page"
+            } else {
+                ""
+            },
         )
     }
 
@@ -194,12 +212,24 @@ pub fn record_batch(
 }
 
 /// Dry-run closes: what a live sweep would have closed, logged the same way.
-pub fn record_dry_run(h: &History, rows: &HashMap<Target, Row>, targets: &[Target], trigger: &str, cfg: &config::Tabs) -> usize {
+pub fn record_dry_run(
+    h: &History,
+    rows: &HashMap<Target, Row>,
+    targets: &[Target],
+    trigger: &str,
+    cfg: &config::Tabs,
+) -> usize {
     let now = unix_now() as i64;
     targets
         .iter()
         .filter_map(|t| rows.get(t))
-        .filter_map(|r| h.record_decision(&r.decision("close", "dry_run", trigger, r.close_reason(cfg), now), now).ok())
+        .filter_map(|r| {
+            h.record_decision(
+                &r.decision("close", "dry_run", trigger, r.close_reason(cfg), now),
+                now,
+            )
+            .ok()
+        })
         .count()
 }
 
@@ -207,7 +237,9 @@ pub fn record_dry_run(h: &History, rows: &HashMap<Target, Row>, targets: &[Targe
 pub fn note_reopened(h: &History, url: &str) {
     let subject = host_of(url);
     match h.mark_close_reopened(url, &subject, unix_now() as i64) {
-        Ok(Some(id)) => tracing::info!("decision {id}: the user reopened a tab RamWarden closed ({subject})"),
+        Ok(Some(id)) => {
+            tracing::info!("decision {id}: the user reopened a tab RamWarden closed ({subject})")
+        }
         Ok(None) => {}
         Err(e) => tracing::debug!("could not mark reopen: {e}"),
     }
@@ -216,13 +248,23 @@ pub fn note_reopened(h: &History, url: &str) {
 /// The current report's rows by target, taken before a manual action so the
 /// log has the tab's numbers even after the tab is gone.
 pub fn rows_by_target(st: &AppState) -> HashMap<Target, Row> {
-    crate::tabreview::snapshot(st).into_iter().map(|r| (r.target.clone(), r)).collect()
+    crate::tabreview::snapshot(st)
+        .into_iter()
+        .map(|r| (r.target.clone(), r))
+        .collect()
 }
 
 /// A manual unload or close from the popup, the app or the API.
-pub fn record_manual(st: &AppState, rows: &HashMap<Target, Row>, result: &DiscardResult, action: &str) {
+pub fn record_manual(
+    st: &AppState,
+    rows: &HashMap<Target, Row>,
+    result: &DiscardResult,
+    action: &str,
+) {
     if let Ok(h) = st.history.lock() {
-        record_batch(&h, rows, result, action, "manual", |_| format!("you chose to {action} it"));
+        record_batch(&h, rows, result, action, "manual", |_| {
+            format!("you chose to {action} it")
+        });
     }
 }
 
@@ -231,7 +273,16 @@ pub fn record_user_keep(st: &AppState, offered: &[Row], kept: &[Target]) {
     let Ok(h) = st.history.lock() else { return };
     let now = unix_now() as i64;
     for r in offered.iter().filter(|r| kept.contains(&r.target)) {
-        let _ = h.record_decision(&r.decision("keep", "kept", "user", "you chose to keep it in the close review".into(), now), now);
+        let _ = h.record_decision(
+            &r.decision(
+                "keep",
+                "kept",
+                "user",
+                "you chose to keep it in the close review".into(),
+                now,
+            ),
+            now,
+        );
     }
 }
 
@@ -292,12 +343,19 @@ struct Filter {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/decisions", get(list)).route("/decisions/{id}", get(one))
+    Router::new()
+        .route("/decisions", get(list))
+        .route("/decisions/{id}", get(one))
 }
 
 async fn list(State(st): State<AppState>, Query(f): Query<Filter>) -> Json<Value> {
     let h = st.history.lock().unwrap();
-    let q = DecisionQuery { kind: f.kind, action: f.action, text: f.q, limit: f.limit.unwrap_or(100) };
+    let q = DecisionQuery {
+        kind: f.kind,
+        action: f.action,
+        text: f.q,
+        limit: f.limit.unwrap_or(100),
+    };
     let rows = h.recent_decisions(&q).unwrap_or_default();
     Json(json!({ "count": h.count_decisions().unwrap_or(0), "decisions": rows }))
 }
@@ -331,10 +389,22 @@ mod tests {
         let r = row(4, "https://docs.example.com/plan");
         let mut rows = HashMap::new();
         rows.insert(r.target.clone(), r.clone());
-        let result = DiscardResult { refused: vec![r.target.clone()], ..Default::default() };
-        assert_eq!(record_batch(&h, &rows, &result, "close", "sweep", |r| r.close_reason(&config::Tabs::default())), 1);
+        let result = DiscardResult {
+            refused: vec![r.target.clone()],
+            ..Default::default()
+        };
+        assert_eq!(
+            record_batch(&h, &rows, &result, "close", "sweep", |r| r
+                .close_reason(&config::Tabs::default())),
+            1
+        );
 
-        let d = &h.recent_decisions(&DecisionQuery { limit: 5, ..Default::default() }).unwrap()[0];
+        let d = &h
+            .recent_decisions(&DecisionQuery {
+                limit: 5,
+                ..Default::default()
+            })
+            .unwrap()[0];
         assert_eq!(d.result, "refused");
         assert_eq!(d.subject, "docs.example.com");
         assert_eq!(d.title, "Quarterly plan");
@@ -346,10 +416,26 @@ mod tests {
     #[test]
     fn a_target_missing_from_the_report_is_still_logged() {
         let h = History::in_memory().unwrap();
-        let t = Target { browser: "chrome".into(), id: 9, url: "https://x.test/".into() };
-        let result = DiscardResult { confirmed: vec![t], ..Default::default() };
-        assert_eq!(record_batch(&h, &HashMap::new(), &result, "unload", "pressure", |r| r.unload_reason()), 1);
-        let d = &h.recent_decisions(&DecisionQuery { limit: 5, ..Default::default() }).unwrap()[0];
+        let t = Target {
+            browser: "chrome".into(),
+            id: 9,
+            url: "https://x.test/".into(),
+        };
+        let result = DiscardResult {
+            confirmed: vec![t],
+            ..Default::default()
+        };
+        assert_eq!(
+            record_batch(&h, &HashMap::new(), &result, "unload", "pressure", |r| r
+                .unload_reason()),
+            1
+        );
+        let d = &h
+            .recent_decisions(&DecisionQuery {
+                limit: 5,
+                ..Default::default()
+            })
+            .unwrap()[0];
         assert_eq!(d.reason, "tab was not in the latest report");
     }
 
@@ -358,16 +444,41 @@ mod tests {
         let h = History::in_memory().unwrap();
         let r = row(4, "https://docs.example.com/plan");
         let rows: HashMap<_, _> = [(r.target.clone(), r.clone())].into();
-        assert_eq!(record_dry_run(&h, &rows, std::slice::from_ref(&r.target), "sweep", &config::Tabs::default()), 1);
+        assert_eq!(
+            record_dry_run(
+                &h,
+                &rows,
+                std::slice::from_ref(&r.target),
+                "sweep",
+                &config::Tabs::default()
+            ),
+            1
+        );
         note_reopened(&h, "https://docs.example.com/plan");
-        let d = &h.recent_decisions(&DecisionQuery { limit: 5, ..Default::default() }).unwrap()[0];
+        let d = &h
+            .recent_decisions(&DecisionQuery {
+                limit: 5,
+                ..Default::default()
+            })
+            .unwrap()[0];
         assert_eq!(d.result, "dry_run");
         assert_eq!(d.outcome, None);
 
-        let live = DiscardResult { confirmed: vec![r.target.clone()], ..Default::default() };
-        record_batch(&h, &rows, &live, "close", "sweep", |r| r.close_reason(&config::Tabs::default()));
+        let live = DiscardResult {
+            confirmed: vec![r.target.clone()],
+            ..Default::default()
+        };
+        record_batch(&h, &rows, &live, "close", "sweep", |r| {
+            r.close_reason(&config::Tabs::default())
+        });
         note_reopened(&h, "https://docs.example.com/plan");
-        let d = &h.recent_decisions(&DecisionQuery { action: Some("close".into()), limit: 1, ..Default::default() }).unwrap()[0];
+        let d = &h
+            .recent_decisions(&DecisionQuery {
+                action: Some("close".into()),
+                limit: 1,
+                ..Default::default()
+            })
+            .unwrap()[0];
         assert_eq!(d.outcome.as_deref(), Some("reopened"));
     }
 }

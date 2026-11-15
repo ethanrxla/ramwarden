@@ -163,20 +163,25 @@ fn clamav(log: &Path, db: &Path, now: u64) -> Sensor {
             "watch",
             "Scheduled scan deferred: memory not clear".to_string(),
         ),
-        Some("scan_started") if timestamp.is_some_and(|t| fresh(t, now, 4 * 3600)) => {
-            ("watch", "Scan started; completion not yet confirmed".to_string())
-        }
+        Some("scan_started") if timestamp.is_some_and(|t| fresh(t, now, 4 * 3600)) => (
+            "watch",
+            "Scan started; completion not yet confirmed".to_string(),
+        ),
         Some("scan_finished") if event["exit_code"] == 1 => (
             "watch",
             "Last scan found a detection; review alerts".to_string(),
         ),
-        Some("scan_finished") if event["exit_code"] == 0 && timestamp.is_some_and(|t| fresh(t, now, 48 * 3600)) => (
-            "on",
-            format!(
-                "Last scan finished {}h ago; selected folders only",
-                age.unwrap_or(0)
-            ),
-        ),
+        Some("scan_finished")
+            if event["exit_code"] == 0 && timestamp.is_some_and(|t| fresh(t, now, 48 * 3600)) =>
+        {
+            (
+                "on",
+                format!(
+                    "Last scan finished {}h ago; selected folders only",
+                    age.unwrap_or(0)
+                ),
+            )
+        }
         Some("scan_finished") if event["exit_code"] == 0 => (
             "watch",
             "No timestamped successful scan in the last 48 hours".to_string(),
@@ -227,7 +232,11 @@ fn suricata(directory: &Path, now: u64) -> Sensor {
     };
     let stats_time = stats["timestamp"]
         .as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%z")).ok())
+        .and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%z"))
+                .ok()
+        })
         .and_then(|t| u64::try_from(t.timestamp()).ok());
     if !stats_time.is_some_and(|t| fresh(t, now, 120)) {
         return Sensor::unknown("Capture counters are stale or have no valid timestamp");
@@ -241,7 +250,11 @@ fn suricata(directory: &Path, now: u64) -> Sensor {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     Sensor {
-        state: if packets > 0 && drops <= packets / 100 { "on" } else { "watch" },
+        state: if packets > 0 && drops <= packets / 100 {
+            "on"
+        } else {
+            "watch"
+        },
         detail: format!(
             "Passive IDS: {packets} packets, {drops} capture drops since start; encrypted payloads remain encrypted"
         ),
@@ -301,7 +314,10 @@ mod tests {
     #[test]
     fn suricata_native_offset_timestamp_is_validated() {
         let d = tempfile::tempdir().unwrap();
-        let time = chrono::DateTime::from_timestamp(now() as i64, 0).unwrap().format("%Y-%m-%dT%H:%M:%S%.6f%z").to_string();
+        let time = chrono::DateTime::from_timestamp(now() as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S%.6f%z")
+            .to_string();
         fs::write(d.path().join("eve.json"), format!("{{\"event_type\":\"stats\",\"timestamp\":\"{time}\",\"stats\":{{\"decoder\":{{\"pkts\":42}}}}}}\n")).unwrap();
         assert_eq!(suricata(d.path(), now()).state, "on");
         assert_eq!(suricata(d.path(), now() + 121).state, "error");

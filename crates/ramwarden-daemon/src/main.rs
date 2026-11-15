@@ -30,7 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            std::fs::OpenOptions::new().create(true).append(true).open(p).ok()
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()
         });
     match log_file {
         Some(f) => tracing_subscriber::fmt()
@@ -73,7 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Whatever a previous run froze and never woke (a crash, a hard kill, a
     // restart) is thawed now: nothing else would ever wake it.
     let journal = cfg.db_path.with_file_name("suspended.json");
-    for woke in ramwarden_daemon::freeze_journal::thaw_leftovers(&journal, &detector, platform.control.as_ref()) {
+    for woke in ramwarden_daemon::freeze_journal::thaw_leftovers(
+        &journal,
+        &detector,
+        platform.control.as_ref(),
+    ) {
         tracing::warn!("thawed {woke}, left frozen by a previous run");
     }
 
@@ -96,7 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The Jev decision tier: advisory, opt-in, and a no-op unless enabled and keyed.
     {
         let j = &cfg.jev;
-        let asker: Option<Box<dyn ramwarden_daemon::tabintel::Asker>> = if j.enabled && !j.api_key.trim().is_empty() {
+        let asker: Option<Box<dyn ramwarden_daemon::tabintel::Asker>> = if j.enabled
+            && !j.api_key.trim().is_empty()
+        {
             match ramwarden_ai::jev::Jev::new(
                 &j.base_url,
                 ramwarden_ai::secret::Secret::new(j.api_key.trim()),
@@ -104,7 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Duration::from_secs(j.timeout_seconds),
             ) {
                 Ok(c) => {
-                    tracing::info!("jev tier on: model {} key {} weight {} (feature descriptions only; no URLs or titles)", j.model, c.key_fingerprint(), j.weight);
+                    tracing::info!(
+                        "jev tier on: model {} key {} weight {} (feature descriptions only; no URLs or titles)",
+                        j.model,
+                        c.key_fingerprint(),
+                        j.weight
+                    );
                     Some(Box::new(c))
                 }
                 Err(e) => {
@@ -113,10 +128,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         } else {
-            tracing::info!("jev tier off ({})", if !j.enabled { "set [jev] enabled = true to use it" } else { "no JEV_API_KEY" });
+            tracing::info!(
+                "jev tier off ({})",
+                if !j.enabled {
+                    "set [jev] enabled = true to use it"
+                } else {
+                    "no JEV_API_KEY"
+                }
+            );
             None
         };
-        ramwarden_daemon::tabintel::install(Arc::new(ramwarden_daemon::tabintel::TabIntel::new(j.clone(), asker)));
+        ramwarden_daemon::tabintel::install(Arc::new(ramwarden_daemon::tabintel::TabIntel::new(
+            j.clone(),
+            asker,
+        )));
     }
 
     let provider = ai::provider(&cfg);
@@ -130,12 +155,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ladder: Arc::new(Mutex::new(ladder)),
         hub: Arc::new(Mutex::new(Hub::new())),
         history: Arc::new(Mutex::new(api_history)),
-        models: Arc::new(ramwarden_ai::models::ModelHosts::new(provider.ollama.clone())),
+        models: Arc::new(ramwarden_ai::models::ModelHosts::new(
+            provider.ollama.clone(),
+        )),
         predictor,
         ai: Arc::new(provider),
         started: Instant::now(),
         hold_until: Arc::new(Mutex::new(None)),
-        voice: Arc::new(ramwarden_daemon::voice::Voice::new(Some(ramwarden_daemon::voice::default_store()))),
+        voice: Arc::new(ramwarden_daemon::voice::Voice::new(Some(
+            ramwarden_daemon::voice::default_store(),
+        ))),
     };
 
     // Bind before the monitor starts, so a daemon that cannot have the port
@@ -153,7 +182,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add-on wardens poll in the background; each does nothing until unlocked
     // and enabled.
-    ramwarden_daemon::wardens::Wardens::global(&state.cfg).spawn(&tokio::runtime::Handle::current());
+    ramwarden_daemon::wardens::Wardens::global(&state.cfg)
+        .spawn(&tokio::runtime::Handle::current());
 
     // CORS and the origin guard are part of the router; see `guard`.
     let app = routes::router(state.clone());
@@ -177,7 +207,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // No frozen app outlives the daemon that froze it.
     for (name, outcome) in state.ladder.lock().unwrap().thaw_all() {
-        tracing::info!("thawed {name} on shutdown ({} process(es))", outcome.affected.len());
+        tracing::info!(
+            "thawed {name} on shutdown ({} process(es))",
+            outcome.affected.len()
+        );
     }
     ramwarden_daemon::freeze_journal::write(&journal, &[]);
 
@@ -215,13 +248,14 @@ async fn shutdown_signal() {
     #[cfg(windows)]
     {
         use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
-        let (mut close, mut logoff, mut shutdown) = match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
-            (Ok(c), Ok(l), Ok(s)) => (c, l, s),
-            _ => {
-                let _ = tokio::signal::ctrl_c().await;
-                return;
-            }
-        };
+        let (mut close, mut logoff, mut shutdown) =
+            match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
+                (Ok(c), Ok(l), Ok(s)) => (c, l, s),
+                _ => {
+                    let _ = tokio::signal::ctrl_c().await;
+                    return;
+                }
+            };
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = close.recv() => {}

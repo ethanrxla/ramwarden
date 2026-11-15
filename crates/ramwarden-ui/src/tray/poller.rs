@@ -40,25 +40,45 @@ pub struct Snapshot {
 #[derive(Clone, Debug)]
 pub enum Command {
     WardenSetup(String),
-    Suspend { name: String, force: bool },
+    Suspend {
+        name: String,
+        force: bool,
+    },
     Resume(String),
-    Kill { name: String, force: bool },
+    Kill {
+        name: String,
+        force: bool,
+    },
     Reclaim(String),
-    DebloatApply { name: String, include_optional: bool },
+    DebloatApply {
+        name: String,
+        include_optional: bool,
+    },
     DebloatRevert(String),
     GpuUnload(Option<String>),
     /// An answer to the warden's bubble: `keep`, `close`, `later` or `dismiss`.
-    Answer { id: String, choice: String },
+    Answer {
+        id: String,
+        choice: String,
+    },
     /// Quiet the warden for this many hours, or until unmuted with `None`.
     Mute(Option<f64>),
     Unmute,
     /// Words typed in the bubble: a focus when the warden asked for one,
     /// otherwise a chat message.
-    Say { text: String, focus: bool },
+    Say {
+        text: String,
+        focus: bool,
+    },
     /// Keep the checked tabs of a focus checklist.
-    FocusKeep { token: String, tabs: Vec<crate::voice::FocusTab> },
+    FocusKeep {
+        token: String,
+        tabs: Vec<crate::voice::FocusTab>,
+    },
     /// Apply a change the chat proposed, after the user approved it.
-    Act { token: String },
+    Act {
+        token: String,
+    },
     /// Put the bubble's reply away.
     ForgetSaid,
 }
@@ -140,11 +160,11 @@ impl Poller {
                 }
             });
         } else {
-            let (shared,client)=(shared.clone(),client.clone());
+            let (shared, client) = (shared.clone(), client.clone());
             runtime.spawn(async move {
                 loop {
-                    let threat=client.threat_pane().await;
-                    shared.lock().unwrap().threat=Some(threat);
+                    let threat = client.threat_pane().await;
+                    shared.lock().unwrap().threat = Some(threat);
                     tokio::time::sleep(Duration::from_secs(20)).await;
                 }
             });
@@ -199,12 +219,18 @@ impl Poller {
     }
 
     async fn refresh_slow(client: &Client, shared: &Mutex<Snapshot>) {
-        let (gpu, debloat, threat) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
-        let need_icon=shared.lock().unwrap().threat_icon.is_none();
-        let icon=match (&threat.icon,need_icon){(Some(path),true)=>client.warden_icon(path).await.ok(),_=>None};
+        let (gpu, debloat, threat) =
+            tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
+        let need_icon = shared.lock().unwrap().threat_icon.is_none();
+        let icon = match (&threat.icon, need_icon) {
+            (Some(path), true) => client.warden_icon(path).await.ok(),
+            _ => None,
+        };
         let mut s = shared.lock().unwrap();
-        s.threat=Some(threat);
-        if icon.is_some(){s.threat_icon=icon;}
+        s.threat = Some(threat);
+        if icon.is_some() {
+            s.threat_icon = icon;
+        }
         if let Ok(g) = gpu {
             s.gpu = Some(g);
         }
@@ -278,10 +304,16 @@ impl Poller {
         }
     }
 
-    fn report(verb: &str, name: &str, r: crate::client::Result<crate::client::TweakReport>) -> String {
+    fn report(
+        verb: &str,
+        name: &str,
+        r: crate::client::Result<crate::client::TweakReport>,
+    ) -> String {
         match r {
             Err(e) => format!("{verb} {name}: {e}"),
-            Ok(rep) if rep.error.is_some() => format!("{verb} {name}: {}", rep.error.unwrap_or_default()),
+            Ok(rep) if rep.error.is_some() => {
+                format!("{verb} {name}: {}", rep.error.unwrap_or_default())
+            }
             Ok(rep) => {
                 let failed: Vec<String> = rep
                     .results
@@ -293,7 +325,11 @@ impl Poller {
                 if failed.is_empty() {
                     format!("{verb} {name}: {ok} done")
                 } else {
-                    format!("{verb} {name}: {ok} done, {} failed — {}", failed.len(), failed.join("; "))
+                    format!(
+                        "{verb} {name}: {ok} done, {} failed — {}",
+                        failed.len(),
+                        failed.join("; ")
+                    )
                 }
             }
         }

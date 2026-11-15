@@ -94,7 +94,9 @@ impl Role {
             Media => "playing or recording media",
             Build => "build or long computation in flight",
             Sync => "file sync or transfer in progress",
-            Game => "game or anti-cheat in progress — touching it causes stutter and may be flagged",
+            Game => {
+                "game or anti-cheat in progress — touching it causes stutter and may be flagged"
+            }
             Browser => "browser",
             App => "application",
         }
@@ -126,81 +128,253 @@ impl fmt::Display for Role {
 }
 
 const COMPOSITOR: &[&str] = &[
-    "cosmic-comp", "cosmic-session", "cosmic-panel", "cosmic-applets",
-    "mutter", "kwin_wayland", "kwin_x11", "xfwm4", "openbox", "i3", "sway",
-    "xorg", "x", "xwayland", "gnome-shell", "plasmashell",
-    "cosmic-greeter", "gdm", "sddm", "lightdm",
+    "cosmic-comp",
+    "cosmic-session",
+    "cosmic-panel",
+    "cosmic-applets",
+    "mutter",
+    "kwin_wayland",
+    "kwin_x11",
+    "xfwm4",
+    "openbox",
+    "i3",
+    "sway",
+    "xorg",
+    "x",
+    "xwayland",
+    "gnome-shell",
+    "plasmashell",
+    "cosmic-greeter",
+    "gdm",
+    "sddm",
+    "lightdm",
 ];
 const COMPOSITOR_PREFIXES: &[&str] = &["cosmic-", "xdg-desktop-portal", "gnome-shell", "plasma"];
 
 /// A SIGSTOP here stalls a guest OS mid-write.
 const HYPERVISOR_PREFIXES: &[&str] = &[
-    "qemu", "kvm", "virtualbox", "vboxheadless", "vboxsvc",
-    "vmware", "virt-manager", "libvirtd", "virtiofsd",
-    "crosvm", "cloud-hypervisor", "waydroid",
+    "qemu",
+    "kvm",
+    "virtualbox",
+    "vboxheadless",
+    "vboxsvc",
+    "vmware",
+    "virt-manager",
+    "libvirtd",
+    "virtiofsd",
+    "crosvm",
+    "cloud-hypervisor",
+    "waydroid",
 ];
 
 /// Freezing the shim orphans everything inside it.
 const CONTAINER_PREFIXES: &[&str] = &[
-    "containerd", "dockerd", "docker-proxy", "docker",
-    "podman", "conmon", "crun", "runc", "systemd-nspawn", "lxc", "lxd",
-    "bwrap", "flatpak-session-helper", "snapd",
+    "containerd",
+    "dockerd",
+    "docker-proxy",
+    "docker",
+    "podman",
+    "conmon",
+    "crun",
+    "runc",
+    "systemd-nspawn",
+    "lxc",
+    "lxd",
+    "bwrap",
+    "flatpak-session-helper",
+    "snapd",
 ];
 
-const AGENT_NAMES: &[&str] = &["claude", "codex", "ollama", "aider", "cursor-agent", "copilot"];
+const AGENT_NAMES: &[&str] = &[
+    "claude",
+    "codex",
+    "ollama",
+    "aider",
+    "cursor-agent",
+    "copilot",
+];
 const AGENT_CMDLINE: &[&str] = &["claude-code", "ollama serve"];
 
 const TERMINAL_EMULATORS: &[&str] = &[
-    "cosmic-term", "gnome-terminal", "gnome-terminal-server", "tilix", "xterm",
-    "alacritty", "kitty", "konsole", "xfce4-terminal", "lxterminal",
-    "mate-terminal", "terminator", "wezterm", "wezterm-gui", "foot", "ptyxis",
+    "cosmic-term",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "tilix",
+    "xterm",
+    "alacritty",
+    "kitty",
+    "konsole",
+    "xfce4-terminal",
+    "lxterminal",
+    "mate-terminal",
+    "terminator",
+    "wezterm",
+    "wezterm-gui",
+    "foot",
+    "ptyxis",
     // macOS: they hold the user's shells.
-    "terminal", "iterm2", "warp", "ghostty",
+    "terminal",
+    "iterm2",
+    "warp",
+    "ghostty",
 ];
 
 const BROWSERS: &[&str] = &[
-    "brave", "brave-browser", "chrome", "chromium", "chromium-browser",
-    "google-chrome", "firefox", "firefox-bin", "librewolf", "vivaldi",
-    "epiphany", "tor", "torbrowser-launch",
+    "brave",
+    "brave-browser",
+    "chrome",
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "firefox",
+    "firefox-bin",
+    "librewolf",
+    "vivaldi",
+    "epiphany",
+    "tor",
+    "torbrowser-launch",
 ];
 const BROWSER_PREFIXES: &[&str] = &["brave", "firefox", "chrom"];
 
 /// The user is watching, listening, or recording.
 const MEDIA: &[&str] = &[
-    "mpv", "vlc", "mplayer", "ffmpeg", "ffplay", "obs", "obs-studio",
-    "totem", "celluloid", "audacity", "kdenlive", "spotify", "rhythmbox",
+    "mpv",
+    "vlc",
+    "mplayer",
+    "ffmpeg",
+    "ffplay",
+    "obs",
+    "obs-studio",
+    "totem",
+    "celluloid",
+    "audacity",
+    "kdenlive",
+    "spotify",
+    "rhythmbox",
 ];
 
 /// Interrupting any of these wastes the user's time.
 const BUILD: &[&str] = &[
-    "cargo", "rustc", "gcc", "cc1", "cc1plus", "g++", "clang", "clang++",
-    "ld", "make", "ninja", "cmake", "gradle", "javac", "kotlinc", "go",
-    "webpack", "tsc", "esbuild", "vite", "rollup", "pytest", "tox",
-    "dpkg", "apt", "apt-get", "unattended-upgr", "snap", "flatpak",
+    "cargo",
+    "rustc",
+    "gcc",
+    "cc1",
+    "cc1plus",
+    "g++",
+    "clang",
+    "clang++",
+    "ld",
+    "make",
+    "ninja",
+    "cmake",
+    "gradle",
+    "javac",
+    "kotlinc",
+    "go",
+    "webpack",
+    "tsc",
+    "esbuild",
+    "vite",
+    "rollup",
+    "pytest",
+    "tox",
+    "dpkg",
+    "apt",
+    "apt-get",
+    "unattended-upgr",
+    "snap",
+    "flatpak",
 ];
 
 /// Suspending mid-transfer can corrupt remote state.
 const SYNC: &[&str] = &[
-    "syncthing", "dropbox", "nextcloud", "insync", "rclone", "rsync",
-    "megasync", "onedrive", "restic", "borg", "duplicity", "timeshift",
+    "syncthing",
+    "dropbox",
+    "nextcloud",
+    "insync",
+    "rclone",
+    "rsync",
+    "megasync",
+    "onedrive",
+    "restic",
+    "borg",
+    "duplicity",
+    "timeshift",
 ];
 
 const SYSTEM_NAMES: &[&str] = &[
     // macOS. Tailscale is the user's VPN and network extension: suspending it drops
     // the connection, so it is never touched even if a watchlist names it.
-    "tailscale", "ipnextension", "io.tailscale.ipn.macsys.network-extension", "tailscale-ipn",
-    "kernel_task", "launchd", "windowserver", "loginwindow", "dock", "finder",
-    "systemuiserver", "controlcenter", "notificationcenter", "coreaudiod", "coreservicesd",
-    "configd", "mds", "mds_stores", "trustd", "securityd", "cfprefsd", "distnoted", "logd",
-    "powerd", "usereventagent", "airportd", "sharingd", "universalaccessd", "wifiagent",
-    "networkserviceproxy", "nsurlsessiond", "lsd", "diskarbitrationd", "fseventsd",
-    "systemd", "init", "kthreadd", "pipewire", "pipewire-pulse", "wireplumber",
-    "pulseaudio", "dbus-daemon", "dbus-broker", "networkmanager",
-    "wpa_supplicant", "avahi-daemon", "polkitd", "udisksd", "upowerd",
-    "bluetoothd", "cupsd", "gvfsd", "gnome-keyring-d", "gnome-keyring-daemon",
-    "systemd-resolved", "systemd-udevd", "systemd-journald", "systemd-logind",
-    "tailscaled", "wireguard", "openvpn", "sshd", "cron", "crond", "atd",
-    "accounts-daemon", "rtkit-daemon", "irqbalance", "thermald", "power-profiles-",
+    "tailscale",
+    "ipnextension",
+    "io.tailscale.ipn.macsys.network-extension",
+    "tailscale-ipn",
+    "kernel_task",
+    "launchd",
+    "windowserver",
+    "loginwindow",
+    "dock",
+    "finder",
+    "systemuiserver",
+    "controlcenter",
+    "notificationcenter",
+    "coreaudiod",
+    "coreservicesd",
+    "configd",
+    "mds",
+    "mds_stores",
+    "trustd",
+    "securityd",
+    "cfprefsd",
+    "distnoted",
+    "logd",
+    "powerd",
+    "usereventagent",
+    "airportd",
+    "sharingd",
+    "universalaccessd",
+    "wifiagent",
+    "networkserviceproxy",
+    "nsurlsessiond",
+    "lsd",
+    "diskarbitrationd",
+    "fseventsd",
+    "systemd",
+    "init",
+    "kthreadd",
+    "pipewire",
+    "pipewire-pulse",
+    "wireplumber",
+    "pulseaudio",
+    "dbus-daemon",
+    "dbus-broker",
+    "networkmanager",
+    "wpa_supplicant",
+    "avahi-daemon",
+    "polkitd",
+    "udisksd",
+    "upowerd",
+    "bluetoothd",
+    "cupsd",
+    "gvfsd",
+    "gnome-keyring-d",
+    "gnome-keyring-daemon",
+    "systemd-resolved",
+    "systemd-udevd",
+    "systemd-journald",
+    "systemd-logind",
+    "tailscaled",
+    "wireguard",
+    "openvpn",
+    "sshd",
+    "cron",
+    "crond",
+    "atd",
+    "accounts-daemon",
+    "rtkit-daemon",
+    "irqbalance",
+    "thermald",
+    "power-profiles-",
 ];
 
 // ── Windows ─────────────────────────────────────────────────────────────────
@@ -208,27 +382,65 @@ const SYSTEM_NAMES: &[&str] = &[
 
 /// The desktop shell and the pieces of it that freeze the session if stopped.
 const WIN_SHELL: &[&str] = &[
-    "dwm", "explorer", "sihost", "shellexperiencehost", "startmenuexperiencehost",
-    "searchhost", "textinputhost", "applicationframehost", "lockapp", "ctfmon",
-    "fontdrvhost", "logonui",
+    "dwm",
+    "explorer",
+    "sihost",
+    "shellexperiencehost",
+    "startmenuexperiencehost",
+    "searchhost",
+    "textinputhost",
+    "applicationframehost",
+    "lockapp",
+    "ctfmon",
+    "fontdrvhost",
+    "logonui",
 ];
 
 /// Core system processes and the security stack. Most run in session 0 and are
 /// already classified as system by owner; these are the ones that also run in
 /// the user's session, or must never depend on owner lookup succeeding.
 const WIN_SYSTEM: &[&str] = &[
-    "system", "idle", "registry", "secure system", "memory compression", "smss", "csrss",
-    "wininit", "winlogon", "services", "lsass", "lsaiso", "svchost", "taskhostw",
-    "runtimebroker", "dllhost", "audiodg", "spoolsv", "wudfhost", "wmiprvse",
-    "msmpeng", "nissrv", "mpdefendercoreservice", "securityhealthservice",
-    "securityhealthsystray", "smartscreen", "nvcontainer", "nvdisplay.container",
+    "system",
+    "idle",
+    "registry",
+    "secure system",
+    "memory compression",
+    "smss",
+    "csrss",
+    "wininit",
+    "winlogon",
+    "services",
+    "lsass",
+    "lsaiso",
+    "svchost",
+    "taskhostw",
+    "runtimebroker",
+    "dllhost",
+    "audiodg",
+    "spoolsv",
+    "wudfhost",
+    "wmiprvse",
+    "msmpeng",
+    "nissrv",
+    "mpdefendercoreservice",
+    "securityhealthservice",
+    "securityhealthsystray",
+    "smartscreen",
+    "nvcontainer",
+    "nvdisplay.container",
 ];
 
 /// Hyper-V and WSL2 guests live in these.
 const WIN_HYPERVISOR_PREFIXES: &[&str] = &["vmmem", "vmwp", "vmcompute", "virtualboxvm"];
 
 /// Docker Desktop and the WSL plumbing a running distro depends on.
-const WIN_CONTAINER_PREFIXES: &[&str] = &["com.docker", "docker desktop", "wslservice", "wslhost", "wslrelay"];
+const WIN_CONTAINER_PREFIXES: &[&str] = &[
+    "com.docker",
+    "docker desktop",
+    "wslservice",
+    "wslhost",
+    "wslrelay",
+];
 
 const WIN_TERMINALS: &[&str] = &["windowsterminal", "openconsole", "conhost"];
 
@@ -239,16 +451,34 @@ const WIN_MEDIA: &[&str] = &["obs64", "obs32", "mpc-hc64", "potplayermini64"];
 /// Compilers, and installers mid-flight: interrupting Windows Update or an MSI
 /// can leave the system half-patched.
 const WIN_BUILD: &[&str] = &[
-    "cl", "link", "msbuild", "mspdbsrv", "vctip", "nvcc", "msiexec", "trustedinstaller",
-    "tiworker", "wuauclt", "wuaucltcore", "mousocoreworker", "usoclient",
+    "cl",
+    "link",
+    "msbuild",
+    "mspdbsrv",
+    "vctip",
+    "nvcc",
+    "msiexec",
+    "trustedinstaller",
+    "tiworker",
+    "wuauclt",
+    "wuaucltcore",
+    "mousocoreworker",
+    "usoclient",
 ];
 
 const WIN_SYNC: &[&str] = &["googledrivefs", "icloudservices"];
 
 /// Anti-cheat services and clients. Never opened, never trimmed.
 const ANTI_CHEAT: &[&str] = &[
-    "vgc", "vgtray", "easyanticheat", "easyanticheat_eos", "beservice",
-    "eaanticheat.gameservice", "faceit", "faceitservice", "gameguard",
+    "vgc",
+    "vgtray",
+    "easyanticheat",
+    "easyanticheat_eos",
+    "beservice",
+    "eaanticheat.gameservice",
+    "faceit",
+    "faceitservice",
+    "gameguard",
 ];
 
 /// The security stack's own agents, on every platform. A memory manager that
@@ -259,20 +489,36 @@ const ANTI_CHEAT: &[&str] = &[
 /// ThreatWarden's other engines (ClamAV, Suricata, ntopng) are protected the
 /// same way; see `docs/specs/threatwarden.md`.
 const SECURITY_AGENT_PREFIXES: &[&str] = &[
-    "wazuh-", "wazuhsvc", "ossec-", "ossec_", "clamd", "clamscan", "freshclam", "suricata", "ntopng",
+    "wazuh-",
+    "wazuhsvc",
+    "ossec-",
+    "ossec_",
+    "clamd",
+    "clamscan",
+    "freshclam",
+    "suricata",
+    "ntopng",
 ];
 
 /// Games recognised by name. Most Unreal titles are also caught by the
 /// `-shipping` suffix their builds carry.
 const GAMES: &[&str] = &[
-    "league of legends", "valorant", "cs2", "dota2", "rocketleague", "r5apex",
-    "overwatch", "eldenring", "gta5", "gtav", "minecraft", "javaw",
+    "league of legends",
+    "valorant",
+    "cs2",
+    "dota2",
+    "rocketleague",
+    "r5apex",
+    "overwatch",
+    "eldenring",
+    "gta5",
+    "gtav",
+    "minecraft",
+    "javaw",
 ];
 
 fn is_game(lower: &str) -> bool {
-    lower.ends_with("-shipping")
-        || GAMES.contains(&lower)
-        || ANTI_CHEAT.contains(&lower)
+    lower.ends_with("-shipping") || GAMES.contains(&lower) || ANTI_CHEAT.contains(&lower)
 }
 
 fn starts_with_any(s: &str, prefixes: &[&str]) -> bool {
@@ -299,10 +545,14 @@ pub fn classify(name: &str, cmdline: &str, uid: Option<u32>) -> Role {
     {
         return Role::Compositor;
     }
-    if starts_with_any(&lower, HYPERVISOR_PREFIXES) || starts_with_any(&lower, WIN_HYPERVISOR_PREFIXES) {
+    if starts_with_any(&lower, HYPERVISOR_PREFIXES)
+        || starts_with_any(&lower, WIN_HYPERVISOR_PREFIXES)
+    {
         return Role::Hypervisor;
     }
-    if starts_with_any(&lower, CONTAINER_PREFIXES) || starts_with_any(&lower, WIN_CONTAINER_PREFIXES) {
+    if starts_with_any(&lower, CONTAINER_PREFIXES)
+        || starts_with_any(&lower, WIN_CONTAINER_PREFIXES)
+    {
         return Role::Container;
     }
     // Before agents and browsers: a game is never something to reclaim from,
@@ -313,7 +563,10 @@ pub fn classify(name: &str, cmdline: &str, uid: Option<u32>) -> Role {
     if AGENT_NAMES.contains(&lower.as_str()) || AGENT_CMDLINE.iter().any(|a| cmd.contains(a)) {
         return Role::Agent;
     }
-    if BROWSERS.contains(&name) || starts_with_any(&lower, BROWSER_PREFIXES) || WIN_BROWSERS.contains(&name) {
+    if BROWSERS.contains(&name)
+        || starts_with_any(&lower, BROWSER_PREFIXES)
+        || WIN_BROWSERS.contains(&name)
+    {
         return Role::Browser;
     }
     if MEDIA.contains(&name) || WIN_MEDIA.contains(&name) {
@@ -373,10 +626,25 @@ mod tests {
     #[test]
     fn threatwardens_engines_are_structural() {
         for name in [
-            "wazuh-agentd", "wazuh-execd", "wazuh-logcollec", "wazuh-modulesd", "wazuh-syscheckd",
-            "wazuh-analysisd", "wazuh-remoted", "wazuh-db", "wazuh-apid",
-            "wazuh-agent", "WazuhSvc", "ossec-agent", "ossec-agentd",
-            "clamd", "clamscan", "freshclam", "Suricata-Main", "suricata", "ntopng",
+            "wazuh-agentd",
+            "wazuh-execd",
+            "wazuh-logcollec",
+            "wazuh-modulesd",
+            "wazuh-syscheckd",
+            "wazuh-analysisd",
+            "wazuh-remoted",
+            "wazuh-db",
+            "wazuh-apid",
+            "wazuh-agent",
+            "WazuhSvc",
+            "ossec-agent",
+            "ossec-agentd",
+            "clamd",
+            "clamscan",
+            "freshclam",
+            "Suricata-Main",
+            "suricata",
+            "ntopng",
         ] {
             let role = role_of(name);
             assert_eq!(role, Role::System, "{name}");
@@ -437,7 +705,10 @@ mod tests {
 
     #[test]
     fn an_agent_is_recognised_from_its_command_line() {
-        assert_eq!(classify("node", "/usr/bin/claude-code --resume", None), Role::Agent);
+        assert_eq!(
+            classify("node", "/usr/bin/claude-code --resume", None),
+            Role::Agent
+        );
         assert_eq!(classify("sh", "ollama serve", None), Role::Agent);
         // `ollama list` exits in a moment and is not a session to protect...
         // but the bare name is on the agent list, so it is protected anyway.
@@ -459,12 +730,24 @@ mod tests {
     #[test]
     fn every_role_has_a_reason_the_user_can_read() {
         for r in [
-            Role::Compositor, Role::Hypervisor, Role::Container, Role::Agent,
-            Role::Terminal, Role::System, Role::Browser, Role::Media,
-            Role::Build, Role::Sync, Role::Game, Role::App,
+            Role::Compositor,
+            Role::Hypervisor,
+            Role::Container,
+            Role::Agent,
+            Role::Terminal,
+            Role::System,
+            Role::Browser,
+            Role::Media,
+            Role::Build,
+            Role::Sync,
+            Role::Game,
+            Role::App,
         ] {
             let reason = r.protection_reason();
-            assert!(reason.len() > 5, "{r}: {reason:?} is too terse to be useful");
+            assert!(
+                reason.len() > 5,
+                "{r}: {reason:?} is too terse to be useful"
+            );
         }
     }
 
@@ -473,7 +756,13 @@ mod tests {
     /// "compositor". This is what stops the UI reading as an arbitrary refusal.
     #[test]
     fn structural_reasons_name_a_consequence() {
-        for r in [Role::Compositor, Role::Hypervisor, Role::Container, Role::Terminal, Role::Game] {
+        for r in [
+            Role::Compositor,
+            Role::Hypervisor,
+            Role::Container,
+            Role::Terminal,
+            Role::Game,
+        ] {
             let reason = r.protection_reason();
             assert!(
                 reason.contains('—') || reason.contains("in progress"),
@@ -487,8 +776,16 @@ mod tests {
         assert!(!Role::App.is_structural());
         assert!(!Role::Browser.is_structural());
         for r in [
-            Role::Compositor, Role::Hypervisor, Role::Container, Role::Agent,
-            Role::Terminal, Role::System, Role::Media, Role::Build, Role::Sync, Role::Game,
+            Role::Compositor,
+            Role::Hypervisor,
+            Role::Container,
+            Role::Agent,
+            Role::Terminal,
+            Role::System,
+            Role::Media,
+            Role::Build,
+            Role::Sync,
+            Role::Game,
         ] {
             assert!(r.is_structural(), "{r}");
         }
@@ -569,14 +866,28 @@ mod tests {
 
     #[test]
     fn macos_system_processes_tailscale_and_terminals_are_protected() {
-        for name in ["Tailscale", "IPNExtension", "WindowServer", "kernel_task", "launchd", "Finder", "Dock"] {
+        for name in [
+            "Tailscale",
+            "IPNExtension",
+            "WindowServer",
+            "kernel_task",
+            "launchd",
+            "Finder",
+            "Dock",
+        ] {
             assert_eq!(classify(name, "", Some(501)), Role::System, "{name}");
         }
         for name in ["Terminal", "iTerm2", "Warp"] {
             assert_eq!(classify(name, "", Some(501)), Role::Terminal, "{name}");
         }
         // The apps the user opted in stay ordinary apps.
-        for name in ["node", "python3.13", "Arabesque", "Codex (Renderer)", "Cursor Helper (Renderer)"] {
+        for name in [
+            "node",
+            "python3.13",
+            "Arabesque",
+            "Codex (Renderer)",
+            "Cursor Helper (Renderer)",
+        ] {
             assert_eq!(classify(name, "", Some(501)), Role::App, "{name}");
         }
     }

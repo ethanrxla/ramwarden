@@ -18,8 +18,8 @@
 
 use std::time::Duration;
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -45,7 +45,12 @@ enum ClientMessage {
         tab_ids: Vec<i64>,
     },
     #[serde(rename = "tabs_closed_safe")]
-    TabsClosedSafe { #[serde(rename = "requestId")] request_id:String, #[serde(default,rename = "tabIds")] tab_ids:Vec<i64> },
+    TabsClosedSafe {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        #[serde(default, rename = "tabIds")]
+        tab_ids: Vec<i64>,
+    },
     #[serde(rename = "tabs_discarded")]
     TabsDiscarded {
         #[serde(rename = "requestId")]
@@ -119,11 +124,23 @@ async fn connection(socket: WebSocket, st: AppState) {
                 tracing::info!("[{conn_id}] confirmed {} tab(s) closed", tab_ids.len());
                 st.hub.lock().unwrap().deliver_close(&conn_id, tab_ids);
             }
-            Ok(ClientMessage::TabsClosedSafe { request_id, tab_ids }) => {
-                st.hub.lock().unwrap().deliver_discard(&conn_id, &request_id, tab_ids);
+            Ok(ClientMessage::TabsClosedSafe {
+                request_id,
+                tab_ids,
+            }) => {
+                st.hub
+                    .lock()
+                    .unwrap()
+                    .deliver_discard(&conn_id, &request_id, tab_ids);
             }
-            Ok(ClientMessage::TabsDiscarded { request_id, tab_ids }) => {
-                st.hub.lock().unwrap().deliver_discard(&conn_id, &request_id, tab_ids);
+            Ok(ClientMessage::TabsDiscarded {
+                request_id,
+                tab_ids,
+            }) => {
+                st.hub
+                    .lock()
+                    .unwrap()
+                    .deliver_discard(&conn_id, &request_id, tab_ids);
             }
             Ok(ClientMessage::Pong) => {}
             Ok(ClientMessage::Ping) => {
@@ -191,7 +208,9 @@ mod tests {
         for (field, expected) in [("", false), (r#","safeCloseSupported":true"#, true)] {
             let message = format!(r#"{{"action":"tab_report","tabs":[{{"id":7{field}}}]}}"#);
             match parse(&message).unwrap() {
-                ClientMessage::TabReport {tabs} => assert_eq!(tabs[0].safe_close_supported, expected),
+                ClientMessage::TabReport { tabs } => {
+                    assert_eq!(tabs[0].safe_close_supported, expected)
+                }
                 _ => panic!("wrong variant"),
             }
         }
@@ -199,8 +218,12 @@ mod tests {
 
     #[test]
     fn parses_the_correlated_safe_close_ack() {
-        match parse(r#"{"action":"tabs_closed_safe","requestId":"close-42","tabIds":[7]}"#).unwrap() {
-            ClientMessage::TabsClosedSafe {request_id, tab_ids} => {
+        match parse(r#"{"action":"tabs_closed_safe","requestId":"close-42","tabIds":[7]}"#).unwrap()
+        {
+            ClientMessage::TabsClosedSafe {
+                request_id,
+                tab_ids,
+            } => {
                 assert_eq!(request_id, "close-42");
                 assert_eq!(tab_ids, vec![7]);
             }

@@ -108,9 +108,27 @@ const ACCOUNT_HOSTS: &[&str] = &[
 /// `/accounting-tips` do not count. The Agensi tab closed on 2026-11-02 was a
 /// "submit a skill" form.
 const WORK_SEGMENTS: &[&str] = &[
-    "submit", "new", "create", "edit", "compose", "upload", "publish", "apply",
-    "checkout", "cart", "shoppingcart", "basket", "signup", "register", "onboarding",
-    "settings", "account", "billing", "admin", "dashboard", "console",
+    "submit",
+    "new",
+    "create",
+    "edit",
+    "compose",
+    "upload",
+    "publish",
+    "apply",
+    "checkout",
+    "cart",
+    "shoppingcart",
+    "basket",
+    "signup",
+    "register",
+    "onboarding",
+    "settings",
+    "account",
+    "billing",
+    "admin",
+    "dashboard",
+    "console",
 ];
 /// Segments that also count as a prefix (`submit-a-skill`, `create_project`).
 const WORK_PREFIXES: &[&str] = &["submit", "create", "checkout", "upload", "publish", "apply"];
@@ -121,8 +139,16 @@ const WORK_PREFIXES: &[&str] = &["submit", "create", "checkout", "upload", "publ
 /// (`chrome-extension://`) are not on this list: a password manager or wallet
 /// popup can hold state.
 const DISPOSABLE_BROWSER_PAGES: &[&str] = &[
-    "extensions", "settings", "history", "downloads", "newtab", "new-tab-page",
-    "bookmarks", "version", "help", "flags",
+    "extensions",
+    "settings",
+    "history",
+    "downloads",
+    "newtab",
+    "new-tab-page",
+    "bookmarks",
+    "version",
+    "help",
+    "flags",
 ];
 
 /// How long every other protection lasts once a tab is left alone (4 h).
@@ -149,23 +175,64 @@ const STALE_DOMAINS: &[&str] = &[
 
 /// Whether this URL must never be closed automatically.
 pub fn is_protected(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else { return true; };
-    if !matches!(parsed.scheme(), "http" | "https") { return true; }
-    let host = parsed.host_str().unwrap_or("").trim_matches(['[',']']).to_lowercase();
-    if host.is_empty() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") { return true; }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return true;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return true;
+    }
+    let host = parsed
+        .host_str()
+        .unwrap_or("")
+        .trim_matches(['[', ']'])
+        .to_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+    {
+        return true;
+    }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let private = match ip {
-            std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified(),
-            std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local(),
+            std::net::IpAddr::V4(ip) => {
+                ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+            }
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_unique_local()
+                    || ip.is_unicast_link_local()
+            }
         };
-        if private { return true; }
+        if private {
+            return true;
+        }
     }
-    if NEVER_CLOSE.iter().any(|p| host.contains(p)) || EDITOR_HOSTS.iter().any(|h| domain_matches(&host,h)) { return true; }
-    if is_work_page(url) { return true; }
+    if NEVER_CLOSE.iter().any(|p| host.contains(p))
+        || EDITOR_HOSTS.iter().any(|h| domain_matches(&host, h))
+    {
+        return true;
+    }
+    if is_work_page(url) {
+        return true;
+    }
     let path = parsed.path().to_lowercase();
-    if ["/login", "/signin", "/auth", "/oauth", "/callback", "/session"].iter().any(|p|path.starts_with(p)) { return true; }
-    (domain_matches(&host,"github.com") || domain_matches(&host,"gitlab.com"))
-        && NEVER_CLOSE_PATHS.iter().any(|p|path.contains(p))
+    if [
+        "/login",
+        "/signin",
+        "/auth",
+        "/oauth",
+        "/callback",
+        "/session",
+    ]
+    .iter()
+    .any(|p| path.starts_with(p))
+    {
+        return true;
+    }
+    (domain_matches(&host, "github.com") || domain_matches(&host, "gitlab.com"))
+        && NEVER_CLOSE_PATHS.iter().any(|p| path.contains(p))
 }
 
 /// A signed-in console, account or registrar page, or a page in the middle of a
@@ -173,40 +240,80 @@ pub fn is_protected(url: &str) -> bool {
 /// protected like any soft protection, are never closed automatically, and are
 /// described to Jev as work so its "unsaved work" answer can see them.
 pub fn is_work_page(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else { return false; };
-    if !matches!(parsed.scheme(), "http" | "https") { return false; }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
     let host = parsed.host_str().unwrap_or("").to_lowercase();
-    if ACCOUNT_HOSTS.iter().any(|h| domain_matches(&host, h)) { return true; }
+    if ACCOUNT_HOSTS.iter().any(|h| domain_matches(&host, h)) {
+        return true;
+    }
     parsed.path_segments().into_iter().flatten().any(|seg| {
         let seg = seg.to_ascii_lowercase();
         WORK_SEGMENTS.contains(&seg.as_str())
-            || WORK_PREFIXES.iter().any(|p| seg.strip_prefix(p).is_some_and(|rest| rest.starts_with(['-', '_'])))
+            || WORK_PREFIXES.iter().any(|p| {
+                seg.strip_prefix(p)
+                    .is_some_and(|rest| rest.starts_with(['-', '_']))
+            })
     })
 }
 
 /// A browser settings page (`chrome://extensions`, `edge://settings`, ...): no
 /// work lives there, so it should leave before any page the user is using.
 pub fn is_disposable_browser_page(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else { return false; };
-    matches!(parsed.scheme(), "chrome" | "edge" | "brave" | "vivaldi" | "opera")
-        && parsed.host_str().is_some_and(|h| DISPOSABLE_BROWSER_PAGES.contains(&h.to_ascii_lowercase().as_str()))
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    matches!(
+        parsed.scheme(),
+        "chrome" | "edge" | "brave" | "vivaldi" | "opera"
+    ) && parsed
+        .host_str()
+        .is_some_and(|h| DISPOSABLE_BROWSER_PAGES.contains(&h.to_ascii_lowercase().as_str()))
 }
 
 /// Protections that hold however long the tab sits: non-web pages, private
 /// hosts (dev servers, the router) and editors whose state lives in the tab.
 pub fn is_hard_protected(url: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else { return true; };
-    if !matches!(parsed.scheme(), "http" | "https") { return true; }
-    let host = parsed.host_str().unwrap_or("").trim_matches(['[',']']).to_lowercase();
-    if host.is_empty() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") { return true; }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return true;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return true;
+    }
+    let host = parsed
+        .host_str()
+        .unwrap_or("")
+        .trim_matches(['[', ']'])
+        .to_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+    {
+        return true;
+    }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let private = match ip {
-            std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified(),
-            std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local(),
+            std::net::IpAddr::V4(ip) => {
+                ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+            }
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_unique_local()
+                    || ip.is_unicast_link_local()
+            }
         };
-        if private { return true; }
+        if private {
+            return true;
+        }
     }
-    LOCAL_STATE_EDITORS.iter().any(|h| domain_matches(&host, h) || host.contains(h))
+    LOCAL_STATE_EDITORS
+        .iter()
+        .any(|h| domain_matches(&host, h) || host.contains(h))
 }
 
 /// [`is_protected`], with every protection except the hard ones
@@ -224,8 +331,10 @@ fn domain_matches(host: &str, domain: &str) -> bool {
     host == domain || host.ends_with(&format!(".{domain}"))
 }
 pub fn is_stale_domain(url: &str) -> bool {
-    url::Url::parse(url).ok().and_then(|u|u.host_str().map(str::to_owned))
-        .is_some_and(|host|STALE_DOMAINS.iter().any(|d|domain_matches(&host,d)))
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .is_some_and(|host| STALE_DOMAINS.iter().any(|d| domain_matches(&host, d)))
 }
 
 /// Tabs worth closing, most-stale first.
@@ -452,7 +561,10 @@ mod tests {
             tab(2, "https://example.com/", 0),
         ];
         let stale = stale_tabs(&tabs, 0);
-        assert!(!stale.iter().any(|t| t.id == 1), "localhost stays protected");
+        assert!(
+            !stale.iter().any(|t| t.id == 1),
+            "localhost stays protected"
+        );
         assert_eq!(stale.len(), 1);
     }
 
@@ -482,8 +594,14 @@ mod tests {
             "https://canvas.instructure.com/courses/1",
         ] {
             assert!(is_protected_for(url, 60), "{url} is protected while recent");
-            assert!(is_protected_for(url, PROTECTION_RELEASE_MINUTES - 1), "{url}");
-            assert!(!is_protected_for(url, PROTECTION_RELEASE_MINUTES), "{url} is released once left alone");
+            assert!(
+                is_protected_for(url, PROTECTION_RELEASE_MINUTES - 1),
+                "{url}"
+            );
+            assert!(
+                !is_protected_for(url, PROTECTION_RELEASE_MINUTES),
+                "{url} is released once left alone"
+            );
         }
     }
 
@@ -534,7 +652,9 @@ mod tests {
         assert!(is_disposable_browser_page("chrome://extensions/"));
         assert!(is_disposable_browser_page("edge://settings/privacy"));
         assert!(is_disposable_browser_page("chrome://newtab/"));
-        assert!(!is_disposable_browser_page("chrome-extension://abcdef/popup.html"));
+        assert!(!is_disposable_browser_page(
+            "chrome-extension://abcdef/popup.html"
+        ));
         assert!(!is_disposable_browser_page("chrome://inspect/"));
         assert!(!is_disposable_browser_page("https://example.com/settings"));
         // Still protected from unloading: discarding a browser page saves nothing.

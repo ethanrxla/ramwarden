@@ -67,7 +67,10 @@ pub fn request(intent: Intent, candidates: &[Candidate]) -> (String, Vec<Questio
     for (i, c) in candidates.iter().enumerate() {
         questions.push(Question::new(
             &format!("return_{i}"),
-            &format!("The user will come back to {} (candidate {i}) within the next hour", c.name),
+            &format!(
+                "The user will come back to {} (candidate {i}) within the next hour",
+                c.name
+            ),
         ));
         questions.push(Question::choice(
             &format!("kind_{i}"),
@@ -83,13 +86,21 @@ pub fn request(intent: Intent, candidates: &[Candidate]) -> (String, Vec<Questio
 /// A missing answer for a candidate is a veto, never a pass: closing on the
 /// strength of an answer that was not given is the failure this whole step
 /// exists to prevent.
-pub fn decide(answers: &Answers, intent: Intent, candidates: &[Candidate], threshold: f64) -> Vec<Judgement> {
+pub fn decide(
+    answers: &Answers,
+    intent: Intent,
+    candidates: &[Candidate],
+    threshold: f64,
+) -> Vec<Judgement> {
     candidates
         .iter()
         .enumerate()
         .map(|(i, c)| {
             let returning = answers.noul.get(&format!("return_{i}")).copied();
-            let kind = answers.choice.get(&format!("kind_{i}")).map(|k| k.choice.as_str());
+            let kind = answers
+                .choice
+                .get(&format!("kind_{i}"))
+                .map(|k| k.choice.as_str());
             let (close, confidence, reason) = match (returning, kind) {
                 (Some(back), Some(kind)) => {
                     let away = (1.0 - back).clamp(0.0, 1.0);
@@ -99,18 +110,35 @@ pub fn decide(answers: &Answers, intent: Intent, candidates: &[Candidate], thres
                     } else if away < threshold {
                         (false, away, format!("Jev is not convinced ({pct}%)"))
                     } else {
-                        (true, away, format!("Jev: not coming back soon ({pct}%), ok to {}", intent.as_str()))
+                        (
+                            true,
+                            away,
+                            format!(
+                                "Jev: not coming back soon ({pct}%), ok to {}",
+                                intent.as_str()
+                            ),
+                        )
                     }
                 }
                 _ => (false, 0.0, "Jev gave no answer for it".to_string()),
             };
-            Judgement { name: c.name.clone(), close, confidence, reason }
+            Judgement {
+                name: c.name.clone(),
+                close,
+                confidence,
+                reason,
+            }
         })
         .collect()
 }
 
 /// Ask about every candidate in one request and decide at `threshold`.
-pub async fn judge(jev: &Jev, intent: Intent, candidates: &[Candidate], threshold: f64) -> Result<Vec<Judgement>> {
+pub async fn judge(
+    jev: &Jev,
+    intent: Intent,
+    candidates: &[Candidate],
+    threshold: f64,
+) -> Result<Vec<Judgement>> {
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
@@ -151,9 +179,15 @@ mod tests {
         assert_eq!(q["return_0"]["type"], "noul");
         assert_eq!(q["kind_1"]["type"], "choice");
         assert!(q["kind_1"]["criteria"]["routine"].is_string());
-        assert!(q["return_1"]["instructions"].as_str().unwrap().contains("Slack"));
+        assert!(
+            q["return_1"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("Slack")
+        );
 
-        let state: serde_json::Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
+        let state: serde_json::Value =
+            serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         assert_eq!(state["candidates"][0]["name"], "Discord");
         assert_eq!(state["candidates"][0]["memory_mb"], 600);
         assert_eq!(state["candidates"][0]["minutes_since_used"], 42.0);
@@ -197,7 +231,9 @@ mod tests {
 
     #[test]
     fn a_missing_answer_is_a_veto() {
-        let a = answers(r#"{"answers":{"return_0":{"type":"noul","noul":0.0},"kind_0":{"type":"choice","choice":"routine"}}}"#);
+        let a = answers(
+            r#"{"answers":{"return_0":{"type":"noul","noul":0.0},"kind_0":{"type":"choice","choice":"routine"}}}"#,
+        );
         let j = decide(&a, Intent::Suspend, &[cand("A", 0), cand("B", 1)], 0.5);
         assert!(j[0].close);
         assert!(!j[1].close);

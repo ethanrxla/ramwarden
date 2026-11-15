@@ -12,7 +12,7 @@ use crate::wardens::{Level, PaneAction};
 /// View state that survives between frames.
 #[derive(Default)]
 pub struct UiState {
-    pub network_filter:String,
+    pub network_filter: String,
     pub filter: String,
     /// A command waiting for the user to confirm it, with the question.
     pub confirm: Option<(Command, String)>,
@@ -80,10 +80,17 @@ pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<
                     if let Some(b) = bubble
                         && ui.small_button("🗙").on_hover_text("Dismiss").clicked()
                     {
-                        command = Some(Command::Answer { id: b.id.clone(), choice: "dismiss".into() });
+                        command = Some(Command::Answer {
+                            id: b.id.clone(),
+                            choice: "dismiss".into(),
+                        });
                     }
                     if speech.muted {
-                        if ui.small_button("🔇 Unmute").on_hover_text("Your warden is quiet. Let it talk again.").clicked() {
+                        if ui
+                            .small_button("🔇 Unmute")
+                            .on_hover_text("Your warden is quiet. Let it talk again.")
+                            .clicked()
+                        {
                             command = Some(Command::Unmute);
                         }
                     } else {
@@ -106,8 +113,14 @@ pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<
                 if buttons.peek().is_some() {
                     ui.horizontal_wrapped(|ui| {
                         for c in buttons {
-                            if ui.add_enabled(!snap.busy, egui::Button::new(&c.label)).clicked() {
-                                command = Some(Command::Answer { id: b.id.clone(), choice: c.id.clone() });
+                            if ui
+                                .add_enabled(!snap.busy, egui::Button::new(&c.label))
+                                .clicked()
+                            {
+                                command = Some(Command::Answer {
+                                    id: b.id.clone(),
+                                    choice: c.id.clone(),
+                                });
                             }
                         }
                     });
@@ -116,9 +129,15 @@ pub fn bubble(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<
             if let Some(c) = said(ui, snap, view) {
                 command = Some(c);
             }
-            if let Some(c) = talk(ui, snap, view, bubble.is_some_and(|b| b.asks_focus()),
-                bubble.map(|b| b.placeholder()).unwrap_or(crate::voice::TALK_PLACEHOLDER))
-            {
+            if let Some(c) = talk(
+                ui,
+                snap,
+                view,
+                bubble.is_some_and(|b| b.asks_focus()),
+                bubble
+                    .map(|b| b.placeholder())
+                    .unwrap_or(crate::voice::TALK_PLACEHOLDER),
+            ) {
                 command = Some(c);
             }
         });
@@ -134,41 +153,72 @@ fn said(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<Comman
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("You: {}", said.you)).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if ui.small_button("🗙").on_hover_text("Put this away").clicked() {
+            if ui
+                .small_button("🗙")
+                .on_hover_text("Put this away")
+                .clicked()
+            {
                 command = Some(Command::ForgetSaid);
             }
         });
     });
     // Long replies scroll inside the bubble instead of pushing the window.
-    egui::ScrollArea::vertical().id_salt("warden-said").max_height(160.0).show(ui, |ui| {
-        ui.add(egui::Label::new(&said.reply).wrap().selectable(true));
-        if let Some(list) = view.checklist.as_mut() {
-            ui.add_space(4.0);
-            ui.label(RichText::new("Relevant to this task").strong().small());
-            for tab in &mut list.tabs {
-                let title = if tab.title.is_empty() { "Web page" } else { tab.title.as_str() };
-                ui.checkbox(&mut tab.selected, title).on_hover_text(&tab.url);
+    egui::ScrollArea::vertical()
+        .id_salt("warden-said")
+        .max_height(160.0)
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(&said.reply).wrap().selectable(true));
+            if let Some(list) = view.checklist.as_mut() {
+                ui.add_space(4.0);
+                ui.label(RichText::new("Relevant to this task").strong().small());
+                for tab in &mut list.tabs {
+                    let title = if tab.title.is_empty() {
+                        "Web page"
+                    } else {
+                        tab.title.as_str()
+                    };
+                    ui.checkbox(&mut tab.selected, title)
+                        .on_hover_text(&tab.url);
+                }
             }
-        }
-    });
+        });
     if let Some(list) = &view.checklist
-        && ui.add_enabled(!snap.busy, egui::Button::new("Use these preferences")).clicked()
+        && ui
+            .add_enabled(!snap.busy, egui::Button::new("Use these preferences"))
+            .clicked()
     {
-        command = Some(Command::FocusKeep { token: list.token.clone(), tabs: list.tabs.clone() });
+        command = Some(Command::FocusKeep {
+            token: list.token.clone(),
+            tabs: list.tabs.clone(),
+        });
     }
     if let Some(p) = &said.proposed
-        && ui.add_enabled(!snap.busy, egui::Button::new("Review fix…")).on_hover_text(&p.label).clicked()
+        && ui
+            .add_enabled(!snap.busy, egui::Button::new("Review fix…"))
+            .on_hover_text(&p.label)
+            .clicked()
     {
         view.confirm = Some((
-            Command::Act { token: p.token.clone() },
-            format!("{}\n\nApply this change? Nothing else will be changed.", p.label),
+            Command::Act {
+                token: p.token.clone(),
+            },
+            format!(
+                "{}\n\nApply this change? Nothing else will be changed.",
+                p.label
+            ),
         ));
     }
     command
 }
 
 /// The always-visible text box. Enter sends; the arrow does the same.
-fn talk(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState, focus: bool, hint: &str) -> Option<Command> {
+fn talk(
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    view: &mut UiState,
+    focus: bool,
+    hint: &str,
+) -> Option<Command> {
     let mut command = None;
     ui.horizontal(|ui| {
         let send_width = 28.0;
@@ -180,7 +230,10 @@ fn talk(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState, focus: bool, hin
         );
         let entered = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let ready = !snap.busy && !view.say.trim().is_empty();
-        let clicked = ui.add_enabled(ready, egui::Button::new("➤")).on_hover_text("Send (Enter)").clicked();
+        let clicked = ui
+            .add_enabled(ready, egui::Button::new("➤"))
+            .on_hover_text("Send (Enter)")
+            .clicked();
         if ready && (entered || clicked) {
             let text = view.say.trim().to_string();
             match crate::voice::too_long(&text, focus) {
@@ -214,36 +267,51 @@ pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {
         return;
     };
     let fraction = (st.percent / 100.0) as f32;
-    ui.add(
-        egui::ProgressBar::new(fraction)
-            .text(format!("{} of {} in use ({:.0}%)", mb(st.used_mb), mb(st.total_mb), st.percent)),
-    );
+    ui.add(egui::ProgressBar::new(fraction).text(format!(
+        "{} of {} in use ({:.0}%)",
+        mb(st.used_mb),
+        mb(st.total_mb),
+        st.percent
+    )));
     ui.add_space(6.0);
-    egui::Grid::new("overview").num_columns(2).spacing([24.0, 4.0]).show(ui, |ui| {
-        let pressure = if st.pressure_estimated { " (estimated)" } else { "" };
-        ui.label("Memory pressure");
-        ui.label(format!("{:.1}% some · {:.1}% full{pressure}", st.psi_some, st.psi_full));
-        ui.end_row();
-        ui.label("Protected / in use / idle");
-        ui.label(format!(
-            "{} / {} / {}",
-            mb(st.totals_mb.protected),
-            mb(st.totals_mb.in_use),
-            mb(st.totals_mb.idle)
-        ));
-        ui.end_row();
-        ui.label("Saved by compression");
-        ui.label(mb(st.zram_saved_mb));
-        ui.end_row();
-        ui.label("Browsers connected");
-        ui.label(st.browsers_connected.to_string());
-        ui.end_row();
-        if !st.warm {
-            ui.label("");
-            ui.colored_label(colour("#facc15"), "Still sampling — nothing is called idle yet.");
+    egui::Grid::new("overview")
+        .num_columns(2)
+        .spacing([24.0, 4.0])
+        .show(ui, |ui| {
+            let pressure = if st.pressure_estimated {
+                " (estimated)"
+            } else {
+                ""
+            };
+            ui.label("Memory pressure");
+            ui.label(format!(
+                "{:.1}% some · {:.1}% full{pressure}",
+                st.psi_some, st.psi_full
+            ));
             ui.end_row();
-        }
-    });
+            ui.label("Protected / in use / idle");
+            ui.label(format!(
+                "{} / {} / {}",
+                mb(st.totals_mb.protected),
+                mb(st.totals_mb.in_use),
+                mb(st.totals_mb.idle)
+            ));
+            ui.end_row();
+            ui.label("Saved by compression");
+            ui.label(mb(st.zram_saved_mb));
+            ui.end_row();
+            ui.label("Browsers connected");
+            ui.label(st.browsers_connected.to_string());
+            ui.end_row();
+            if !st.warm {
+                ui.label("");
+                ui.colored_label(
+                    colour("#facc15"),
+                    "Still sampling — nothing is called idle yet.",
+                );
+                ui.end_row();
+            }
+        });
 
     ui.separator();
     match &snap.tidy {
@@ -256,20 +324,23 @@ pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {
             if t.tracking.is_empty() {
                 ui.label("Nothing quiet enough yet.");
             }
-            egui::Grid::new("tidy").striped(true).num_columns(4).show(ui, |ui| {
-                for e in t.tracking.iter().take(12) {
-                    ui.label(&e.name);
-                    ui.label(mb(e.pss_mb));
-                    ui.label(format!("quiet {:.0} min", e.quiet_minutes));
-                    ui.label(match (e.hinted, e.trimmed) {
-                        (true, true) => "background · trimmed",
-                        (true, false) => "background",
-                        (false, true) => "trimmed",
-                        _ => "waiting",
-                    });
-                    ui.end_row();
-                }
-            });
+            egui::Grid::new("tidy")
+                .striped(true)
+                .num_columns(4)
+                .show(ui, |ui| {
+                    for e in t.tracking.iter().take(12) {
+                        ui.label(&e.name);
+                        ui.label(mb(e.pss_mb));
+                        ui.label(format!("quiet {:.0} min", e.quiet_minutes));
+                        ui.label(match (e.hinted, e.trimmed) {
+                            (true, true) => "background · trimmed",
+                            (true, false) => "background",
+                            (false, true) => "trimmed",
+                            _ => "waiting",
+                        });
+                        ui.end_row();
+                    }
+                });
         }
         Some(_) => {
             ui.label("Tidy is disabled in the config.");
@@ -281,7 +352,12 @@ pub fn overview(ui: &mut egui::Ui, snap: &Snapshot) {
         ui.separator();
         ui.heading("Suspended by RamWarden");
         for s in &st.suspended {
-            ui.label(format!("{} — {} for {:.0} min", s.name, mb(s.rss_mb), s.minutes));
+            ui.label(format!(
+                "{} — {} for {:.0} min",
+                s.name,
+                mb(s.rss_mb),
+                s.minutes
+            ));
         }
     }
 }
@@ -302,51 +378,66 @@ pub fn processes(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Opti
 
     let mut out = None;
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("procs").striped(true).num_columns(5).show(ui, |ui| {
-            for h in ["Process", "RAM", "Status", "Role", "Why"] {
-                ui.strong(h);
-            }
-            ui.end_row();
-            for row in &rows {
-                let name = ui.add(egui::Label::new(&row.name).sense(egui::Sense::click()));
-                ui.label(mb(row.pss_mb));
-                ui.colored_label(colour(model::verdict_colour(&row.verdict)), &row.verdict);
-                ui.label(&row.role);
-                ui.label(row.reason());
+        egui::Grid::new("procs")
+            .striped(true)
+            .num_columns(5)
+            .show(ui, |ui| {
+                for h in ["Process", "RAM", "Status", "Role", "Why"] {
+                    ui.strong(h);
+                }
                 ui.end_row();
+                for row in &rows {
+                    let name = ui.add(egui::Label::new(&row.name).sense(egui::Sense::click()));
+                    ui.label(mb(row.pss_mb));
+                    ui.colored_label(colour(model::verdict_colour(&row.verdict)), &row.verdict);
+                    ui.label(&row.role);
+                    ui.label(row.reason());
+                    ui.end_row();
 
-                name.context_menu(|ui| {
-                    for item in model::menu_for(row, false) {
-                        let cmd = match item.action {
-                            Action::Reclaim => row.scope.clone().map(Command::Reclaim),
-                            Action::Suspend => Some(Command::Suspend { name: row.name.clone(), force: true }),
-                            Action::Resume => Some(Command::Resume(row.name.clone())),
-                            Action::Kill => Some(Command::Kill { name: row.name.clone(), force: true }),
-                            Action::CopyPid => {
-                                if ui.button(item.label()).clicked() {
-                                    ui.ctx().copy_text(row.pid.to_string());
-                                    ui.close();
+                    name.context_menu(|ui| {
+                        for item in model::menu_for(row, false) {
+                            let cmd = match item.action {
+                                Action::Reclaim => row.scope.clone().map(Command::Reclaim),
+                                Action::Suspend => Some(Command::Suspend {
+                                    name: row.name.clone(),
+                                    force: true,
+                                }),
+                                Action::Resume => Some(Command::Resume(row.name.clone())),
+                                Action::Kill => Some(Command::Kill {
+                                    name: row.name.clone(),
+                                    force: true,
+                                }),
+                                Action::CopyPid => {
+                                    if ui.button(item.label()).clicked() {
+                                        ui.ctx().copy_text(row.pid.to_string());
+                                        ui.close();
+                                    }
+                                    None
                                 }
-                                None
+                                // Watchlist edits belong in the config file.
+                                Action::Watch | Action::Spare => None,
+                            };
+                            if let Some(cmd) = cmd
+                                && ui.button(item.label()).clicked()
+                            {
+                                if item.needs_confirmation() {
+                                    let why = item
+                                        .warning
+                                        .clone()
+                                        .unwrap_or_else(|| "Unsaved work is lost.".into());
+                                    view.confirm = Some((
+                                        cmd,
+                                        format!("{} {}? {why}", item.label(), row.name),
+                                    ));
+                                } else {
+                                    out = Some(cmd);
+                                }
+                                ui.close();
                             }
-                            // Watchlist edits belong in the config file.
-                            Action::Watch | Action::Spare => None,
-                        };
-                        if let Some(cmd) = cmd
-                            && ui.button(item.label()).clicked()
-                        {
-                            if item.needs_confirmation() {
-                                let why = item.warning.clone().unwrap_or_else(|| "Unsaved work is lost.".into());
-                                view.confirm = Some((cmd, format!("{} {}? {why}", item.label(), row.name)));
-                            } else {
-                                out = Some(cmd);
-                            }
-                            ui.close();
                         }
-                    }
-                });
-            }
-        });
+                    });
+                }
+            });
     });
     out
 }
@@ -359,7 +450,11 @@ pub fn debloat(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option
         return None;
     };
     if !d.available {
-        ui.label(d.error.clone().unwrap_or_else(|| "Profiles are unavailable on this platform.".into()));
+        ui.label(
+            d.error
+                .clone()
+                .unwrap_or_else(|| "Profiles are unavailable on this platform.".into()),
+        );
         return None;
     }
     if !d.service_present && !d.elevated {
@@ -385,36 +480,52 @@ pub fn debloat(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option
                     }
                 }
                 if ui.button("Apply").clicked() {
-                    out = Some(Command::DebloatApply { name: p.name.clone(), include_optional: with });
+                    out = Some(Command::DebloatApply {
+                        name: p.name.clone(),
+                        include_optional: with,
+                    });
                 }
                 if ui.button("Revert").clicked() {
                     out = Some(Command::DebloatRevert(p.name.clone()));
                 }
             });
             ui.label(&p.description);
-            egui::Grid::new(&p.name).striped(true).num_columns(3).show(ui, |ui| {
-                for t in &p.tweaks {
-                    let (text, c) = match (t.state.as_str(), t.recorded, t.drifted) {
-                        (_, _, true) => ("drifted", "#f87171"),
-                        ("applied", true, _) => ("applied", "#4ade80"),
-                        ("applied", false, _) => ("already set", "#60a5fa"),
-                        ("missing", _, _) => ("not present", "#9ca3af"),
-                        _ => ("default", "#9ca3af"),
-                    };
-                    ui.colored_label(colour(c), text);
-                    let label = if t.optional { format!("{} (optional)", t.description) } else { t.description.clone() };
-                    ui.label(label).on_hover_text(&t.target);
-                    ui.horizontal(|ui| {
-                        if t.state != "applied" && t.state != "missing" && ui.small_button("apply").clicked() {
-                            out = Some(Command::DebloatApply { name: t.id.clone(), include_optional: true });
-                        }
-                        if t.recorded && ui.small_button("revert").clicked() {
-                            out = Some(Command::DebloatRevert(t.id.clone()));
-                        }
-                    });
-                    ui.end_row();
-                }
-            });
+            egui::Grid::new(&p.name)
+                .striped(true)
+                .num_columns(3)
+                .show(ui, |ui| {
+                    for t in &p.tweaks {
+                        let (text, c) = match (t.state.as_str(), t.recorded, t.drifted) {
+                            (_, _, true) => ("drifted", "#f87171"),
+                            ("applied", true, _) => ("applied", "#4ade80"),
+                            ("applied", false, _) => ("already set", "#60a5fa"),
+                            ("missing", _, _) => ("not present", "#9ca3af"),
+                            _ => ("default", "#9ca3af"),
+                        };
+                        ui.colored_label(colour(c), text);
+                        let label = if t.optional {
+                            format!("{} (optional)", t.description)
+                        } else {
+                            t.description.clone()
+                        };
+                        ui.label(label).on_hover_text(&t.target);
+                        ui.horizontal(|ui| {
+                            if t.state != "applied"
+                                && t.state != "missing"
+                                && ui.small_button("apply").clicked()
+                            {
+                                out = Some(Command::DebloatApply {
+                                    name: t.id.clone(),
+                                    include_optional: true,
+                                });
+                            }
+                            if t.recorded && ui.small_button("revert").clicked() {
+                                out = Some(Command::DebloatRevert(t.id.clone()));
+                            }
+                        });
+                        ui.end_row();
+                    }
+                });
         }
     });
     out
@@ -431,17 +542,24 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
     match &g.gpu {
         Some(card) => {
             ui.heading(&card.name);
-            ui.add(egui::ProgressBar::new((card.percent_used / 100.0) as f32).text(format!(
-                "{} / {} MB VRAM ({:.0}%)",
-                card.used_mb, card.total_mb, card.percent_used
-            )));
+            ui.add(
+                egui::ProgressBar::new((card.percent_used / 100.0) as f32).text(format!(
+                    "{} / {} MB VRAM ({:.0}%)",
+                    card.used_mb, card.total_mb, card.percent_used
+                )),
+            );
         }
         None => {
             ui.label("No NVIDIA GPU detected.");
         }
     }
     if let Some(game) = &g.game {
-        ui.label(RichText::new(format!("Game running: {game} — idle local models are unloaded if VRAM runs short.")).italics());
+        ui.label(
+            RichText::new(format!(
+                "Game running: {game} — idle local models are unloaded if VRAM runs short."
+            ))
+            .italics(),
+        );
     }
 
     ui.separator();
@@ -460,7 +578,9 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
                 "{} · {}{}",
                 m.host,
                 m.name,
-                m.bytes.map(|b| format!(" · {} MB", b / 1_000_000)).unwrap_or_default()
+                m.bytes
+                    .map(|b| format!(" · {} MB", b / 1_000_000))
+                    .unwrap_or_default()
             ));
             if ui.small_button("unload").clicked() {
                 out = Some(Command::GpuUnload(Some(m.name.clone())));
@@ -470,18 +590,26 @@ pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
 
     ui.separator();
     ui.heading("VRAM by process");
-    egui::Grid::new("vram").striped(true).num_columns(2).show(ui, |ui| {
-        for p in &g.processes {
-            ui.label(p.name.clone().unwrap_or_else(|| format!("pid {}", p.pid)));
-            ui.label(format!("{} MB", p.vram_mb));
-            ui.end_row();
-        }
-    });
+    egui::Grid::new("vram")
+        .striped(true)
+        .num_columns(2)
+        .show(ui, |ui| {
+            for p in &g.processes {
+                ui.label(p.name.clone().unwrap_or_else(|| format!("pid {}", p.pid)));
+                ui.label(format!("{} MB", p.vram_mb));
+                ui.end_row();
+            }
+        });
     out
 }
 /// The ThreatWarden pane. Layout only: the words and the button come from
 /// [`ThreatPane`], shared with the Linux window.
-pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHandle>, view:&mut UiState) -> Option<Command> {
+pub fn threat(
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    icon: Option<&egui::TextureHandle>,
+    view: &mut UiState,
+) -> Option<Command> {
     let Some(p) = &snap.threat else {
         ui.label("Loading ThreatWarden…");
         return None;
@@ -602,4 +730,3 @@ pub fn threat(ui: &mut egui::Ui, snap: &Snapshot, icon: Option<&egui::TextureHan
 pub fn level_colour(l: Level) -> Color32 {
     colour(l.colour())
 }
-

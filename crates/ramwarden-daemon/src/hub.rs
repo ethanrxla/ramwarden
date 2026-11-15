@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use ramwarden_ai::models::ModelHosts;
+use ramwarden_ai::provider::Provider;
 use ramwarden_core::actuator::Outcome;
 use ramwarden_core::config::Config;
 use ramwarden_core::detector::Detector;
 use ramwarden_core::history::History;
 use ramwarden_core::ladder::Ladder;
-use ramwarden_ai::models::ModelHosts;
-use ramwarden_ai::provider::Provider;
 use ramwarden_platform::{MemoryStatus, Platform, Pressure};
 use tokio::sync::{mpsc, oneshot};
 
@@ -68,7 +68,9 @@ impl Hub {
         self.senders.remove(conn_id);
         self.reg.disconnect_socket(conn_id);
         if let Some(waiters) = self.tab_waiters.remove(conn_id) {
-            for w in waiters { let _ = w.send(Vec::new()); }
+            for w in waiters {
+                let _ = w.send(Vec::new());
+            }
         }
         if let Some(w) = self.close_waiters.remove(conn_id) {
             let _ = w.send(Vec::new());
@@ -85,15 +87,23 @@ impl Hub {
 
     pub fn expect_tabs(&mut self, conn_id: &str) -> oneshot::Receiver<Vec<Tab>> {
         let (tx, rx) = oneshot::channel();
-        self.tab_waiters.entry(conn_id.to_string()).or_default().retain(|w| !w.is_closed());
-        self.tab_waiters.entry(conn_id.to_string()).or_default().push(tx);
+        self.tab_waiters
+            .entry(conn_id.to_string())
+            .or_default()
+            .retain(|w| !w.is_closed());
+        self.tab_waiters
+            .entry(conn_id.to_string())
+            .or_default()
+            .push(tx);
         rx
     }
 
     pub fn deliver_tabs(&mut self, conn_id: &str, tabs: Vec<Tab>) {
         self.reg.report(conn_id, Transport::Socket, tabs.clone());
         if let Some(waiters) = self.tab_waiters.remove(conn_id) {
-            for w in waiters { let _ = w.send(tabs.clone()); }
+            for w in waiters {
+                let _ = w.send(tabs.clone());
+            }
         }
     }
 
@@ -111,8 +121,12 @@ impl Hub {
     }
 
     pub fn deliver_discard(&mut self, browser: &str, request: &str, ids: Vec<i64>) {
-        if self.discard_waiters.get(request).is_some_and(|(owner,_)| owner == browser)
-            && let Some((_, waiter)) = self.discard_waiters.remove(request) {
+        if self
+            .discard_waiters
+            .get(request)
+            .is_some_and(|(owner, _)| owner == browser)
+            && let Some((_, waiter)) = self.discard_waiters.remove(request)
+        {
             let _ = waiter.send(ids);
         }
     }
@@ -161,7 +175,10 @@ impl AppState {
 
     /// Whether freezing is on hold right now.
     pub fn on_hold(&self) -> bool {
-        self.hold_until.lock().unwrap().is_some_and(|t| Instant::now() < t)
+        self.hold_until
+            .lock()
+            .unwrap()
+            .is_some_and(|t| Instant::now() < t)
     }
 
     /// Hold for `secs` (clamped to 1-600), or release with 0.
@@ -216,12 +233,17 @@ impl AppState {
             }
         }
 
-        let reports = futures::future::join_all(waiters.into_iter().map(|(conn_id,rx)| async move {
-            match tokio::time::timeout(TAB_REPORT_TIMEOUT, rx).await {
-                Ok(Ok(tabs)) => tabs,
-                _ => { tracing::warn!("tab report timed out for [{conn_id}]"); Vec::new() }
-            }
-        })).await;
+        let reports =
+            futures::future::join_all(waiters.into_iter().map(|(conn_id, rx)| async move {
+                match tokio::time::timeout(TAB_REPORT_TIMEOUT, rx).await {
+                    Ok(Ok(tabs)) => tabs,
+                    _ => {
+                        tracing::warn!("tab report timed out for [{conn_id}]");
+                        Vec::new()
+                    }
+                }
+            }))
+            .await;
         let mut out: Vec<Tab> = reports.into_iter().flatten().collect();
 
         // Polling browsers have already reported whatever they have.
@@ -240,8 +262,13 @@ impl AppState {
         let mut decided: HashMap<crate::browser::Target, crate::browser::Row> = HashMap::new();
         {
             let mut hub = self.hub.lock().unwrap();
-            hub.discard_attempts.retain(|_, at| at.elapsed() < Duration::from_secs(90));
-            let available: Vec<_> = requested.iter().filter(|t| !hub.discard_attempts.contains_key(t)).cloned().collect();
+            hub.discard_attempts
+                .retain(|_, at| at.elapsed() < Duration::from_secs(90));
+            let available: Vec<_> = requested
+                .iter()
+                .filter(|t| !hub.discard_attempts.contains_key(t))
+                .cloned()
+                .collect();
             let selected = crate::browser::select(&hub.reg, threshold, &available);
             // The numbers behind each decision, kept to label its outcome later.
             for row in crate::browser::snapshot(&hub.reg, threshold) {
@@ -249,16 +276,28 @@ impl AppState {
                     decided.insert(row.target.clone(), row);
                 }
             }
-            for target in &selected { hub.discard_attempts.insert(target.clone(), Instant::now()); }
-            result.refused = requested.iter().filter(|t| !selected.contains(t)).cloned().collect();
+            for target in &selected {
+                hub.discard_attempts.insert(target.clone(), Instant::now());
+            }
+            result.refused = requested
+                .iter()
+                .filter(|t| !selected.contains(t))
+                .cloned()
+                .collect();
             let mut groups: HashMap<String, Vec<crate::browser::Target>> = HashMap::new();
-            for target in selected { groups.entry(target.browser.clone()).or_default().push(target); }
+            for target in selected {
+                groups
+                    .entry(target.browser.clone())
+                    .or_default()
+                    .push(target);
+            }
             for (browser, targets) in groups {
                 let request = uuid::Uuid::new_v4().to_string();
                 let cmd = Command::discard(request.clone(), targets.clone(), threshold);
                 if hub.reg.is_socket(&browser) {
                     let (tx, rx) = oneshot::channel();
-                    hub.discard_waiters.insert(request.clone(), (browser.clone(),tx));
+                    hub.discard_waiters
+                        .insert(request.clone(), (browser.clone(), tx));
                     if hub.send(&browser, &serde_json::to_value(cmd).unwrap()) {
                         waiters.push((browser, request, targets, rx));
                     } else {
@@ -271,27 +310,44 @@ impl AppState {
                 }
             }
         }
-        let replies = futures::future::join_all(waiters.into_iter().map(|(browser, request, targets, rx)| async move {
-            let ids = tokio::time::timeout(CLOSE_TIMEOUT,rx).await.ok().and_then(Result::ok).unwrap_or_default();
-            (browser,request,targets,ids)
-        })).await;
+        let replies = futures::future::join_all(waiters.into_iter().map(
+            |(browser, request, targets, rx)| async move {
+                let ids = tokio::time::timeout(CLOSE_TIMEOUT, rx)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
+                (browser, request, targets, ids)
+            },
+        ))
+        .await;
         let mut hub = self.hub.lock().unwrap();
         let mut to_record: Vec<crate::browser::Row> = Vec::new();
-        for (browser,request,targets,ids) in replies {
+        for (browser, request, targets, ids) in replies {
             hub.discard_waiters.remove(&request);
-            let confirmed: Vec<i64> = targets.iter().filter(|t|ids.contains(&t.id)).map(|t|t.id).collect();
-            hub.reg.mark_discarded(&browser,&confirmed);
+            let confirmed: Vec<i64> = targets
+                .iter()
+                .filter(|t| ids.contains(&t.id))
+                .map(|t| t.id)
+                .collect();
+            hub.reg.mark_discarded(&browser, &confirmed);
             for target in targets {
                 if confirmed.contains(&target.id) {
-                    if let Some(row) = decided.remove(&target) { to_record.push(row); }
+                    if let Some(row) = decided.remove(&target) {
+                        to_record.push(row);
+                    }
                     result.confirmed.push(target);
-                } else { result.refused.push(target); }
+                } else {
+                    result.refused.push(target);
+                }
             }
         }
         drop(hub);
         // After the hub lock is released: history has its own lock, and nothing
         // else takes the two in the opposite order.
-        if !to_record.is_empty() && let Ok(h) = self.history.lock() {
+        if !to_record.is_empty()
+            && let Ok(h) = self.history.lock()
+        {
             let refs: Vec<&crate::browser::Row> = to_record.iter().collect();
             crate::outcomes::record(&h, &refs, ramwarden_core::history::unix_now() as i64);
         }
@@ -299,56 +355,89 @@ impl AppState {
     }
 
     /// Safe, identity-scoped close protocol. Older extensions cannot execute it.
-    pub async fn close_safe(&self, requested: &[crate::browser::Target], approved: bool) -> DiscardResult {
+    pub async fn close_safe(
+        &self,
+        requested: &[crate::browser::Target],
+        approved: bool,
+    ) -> DiscardResult {
         let requested_at = std::time::Instant::now();
         self.request_all_tabs().await;
         let rows = crate::tabreview::snapshot(self);
         let auto = crate::browser::close_candidates(&rows, &self.tabs_config());
         let mut result = DiscardResult::default();
         for target in requested {
-            if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {
-                result.refused.push(target.clone()); continue;
+            if !approved
+                && self
+                    .voice
+                    .holds(&self.cfg.voice, target, std::time::Instant::now())
+            {
+                result.refused.push(target.clone());
+                continue;
             }
             // Approved closes (the review checklist) need only what a manual close
             // needs; unattended ones must pass every automatic guard.
-            let valid = rows.iter().any(|r| &r.target==target
-                && if approved { r.closeable } else { r.auto_closeable }
-                && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
-                && (approved || auto.contains(target)));
-            if !valid { result.refused.push(target.clone()); continue; }
+            let valid = rows.iter().any(|r| {
+                &r.target == target
+                    && if approved {
+                        r.closeable
+                    } else {
+                        r.auto_closeable
+                    }
+                    && matches!(
+                        r.status,
+                        "candidate" | "unloaded" | "retained" | "browser page"
+                    )
+                    && (approved || auto.contains(target))
+            });
+            if !valid {
+                result.refused.push(target.clone());
+                continue;
+            }
             // Never infer command support from discard support or files on disk:
             // Chrome may still run the pre-update cached service worker.
-            if !rows.iter().any(|r| &r.target == target && r.safe_close_supported) {
+            if !rows
+                .iter()
+                .any(|r| &r.target == target && r.safe_close_supported)
+            {
                 tracing::warn!(browser = %target.browser, "safe close unavailable: reload the RamWarden browser extension");
                 result.extension_update_required.push(target.clone());
-                result.refused.push(target.clone()); continue;
+                result.refused.push(target.clone());
+                continue;
             }
-            let request=uuid::Uuid::new_v4().to_string();
+            let request = uuid::Uuid::new_v4().to_string();
             let rx = {
-                let mut hub=self.hub.lock().unwrap();
+                let mut hub = self.hub.lock().unwrap();
                 // Polling delivery is deferred until it supports correlated close acknowledgements.
-                if !hub.reg.is_socket(&target.browser) || !hub.reg.reported_since(&target.browser,requested_at) {
-                    result.refused.push(target.clone()); continue;
+                if !hub.reg.is_socket(&target.browser)
+                    || !hub.reg.reported_since(&target.browser, requested_at)
+                {
+                    result.refused.push(target.clone());
+                    continue;
                 }
-                let (tx,rx)=oneshot::channel();
-                hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
-                let message=serde_json::json!({"action":"close_safe","requestId":request,
+                let (tx, rx) = oneshot::channel();
+                hub.discard_waiters
+                    .insert(request.clone(), (target.browser.clone(), tx));
+                let message = serde_json::json!({"action":"close_safe","requestId":request,
                     "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {1440},
                     "expiresAt":ramwarden_core::history::unix_now()*1000+10000});
-                hub.send(&target.browser,&message);
+                hub.send(&target.browser, &message);
                 rx
             };
-            self.note_tab(&target.url,"requested");
-            let confirmed=matches!(tokio::time::timeout(CLOSE_TIMEOUT,rx).await,Ok(Ok(ids)) if ids.contains(&target.id));
+            self.note_tab(&target.url, "requested");
+            let confirmed = matches!(tokio::time::timeout(CLOSE_TIMEOUT,rx).await,Ok(Ok(ids)) if ids.contains(&target.id));
             self.hub.lock().unwrap().discard_waiters.remove(&request);
-            self.note_tab(&target.url,if confirmed {"confirmed"} else {"refused"});
-            if confirmed { result.confirmed.push(target.clone()); } else { result.refused.push(target.clone()); }
+            self.note_tab(&target.url, if confirmed { "confirmed" } else { "refused" });
+            if confirmed {
+                result.confirmed.push(target.clone());
+            } else {
+                result.refused.push(target.clone());
+            }
         }
         result
     }
-    pub fn note_tab(&self,url:&str,kind:&str) {
-        if let Ok(h)=self.history.lock()
-            && let Err(e)=h.tab_feedback(url,kind,ramwarden_core::history::unix_now() as i64)
+    pub fn note_tab(&self, url: &str, kind: &str) {
+        if let Ok(h) = self.history.lock()
+            && let Err(e) = h.tab_feedback(url, kind, ramwarden_core::history::unix_now() as i64)
         {
             tracing::warn!("could not save tab feedback: {e}");
         }
@@ -357,25 +446,36 @@ impl AppState {
     /// Explicit close, validated against a freshly requested report. Legacy
     /// commands carry bare IDs, so ambiguity is refused instead of guessed.
     pub async fn close_selected_tabs(&self, requested: &[crate::browser::Target]) -> DiscardResult {
-        let mut result=DiscardResult::default();
+        let mut result = DiscardResult::default();
         let selected = {
-            let hub=self.hub.lock().unwrap();
-            let mut selected=Vec::new();
+            let hub = self.hub.lock().unwrap();
+            let mut selected = Vec::new();
             for target in requested {
-                let valid=hub.reg.fresh(&target.browser)
-                    && hub.reg.owner_of(target.id)==Some(target.browser.as_str())
-                    && hub.reg.tabs_for(&target.browser).iter().any(|t|t.id==target.id && t.url==target.url && crate::browser::can_close(t));
-                if valid { if !selected.contains(target) { selected.push(target.clone()); } }
-                else { result.refused.push(target.clone()); }
+                let valid = hub.reg.fresh(&target.browser)
+                    && hub.reg.owner_of(target.id) == Some(target.browser.as_str())
+                    && hub.reg.tabs_for(&target.browser).iter().any(|t| {
+                        t.id == target.id && t.url == target.url && crate::browser::can_close(t)
+                    });
+                if valid {
+                    if !selected.contains(target) {
+                        selected.push(target.clone());
+                    }
+                } else {
+                    result.refused.push(target.clone());
+                }
             }
             selected
         };
-        let ids:Vec<_>=selected.iter().map(|t|t.id).collect();
-        let closed=self.close_tabs(&ids).await;
+        let ids: Vec<_> = selected.iter().map(|t| t.id).collect();
+        let closed = self.close_tabs(&ids).await;
         for target in selected {
-            if closed.confirmed.contains(&target.id) {result.confirmed.push(target);}
-            else if closed.queued.contains(&target.id) {result.queued.push(target);}
-            else {result.refused.push(target);}
+            if closed.confirmed.contains(&target.id) {
+                result.confirmed.push(target);
+            } else if closed.queued.contains(&target.id) {
+                result.queued.push(target);
+            } else {
+                result.refused.push(target);
+            }
         }
         result
     }
@@ -421,7 +521,8 @@ impl AppState {
             if let Ok(Ok(confirmed)) = tokio::time::timeout(CLOSE_TIMEOUT, rx).await {
                 out.confirmed.extend(confirmed);
             } else {
-                out.notes.push("a browser did not confirm its closes".into());
+                out.notes
+                    .push("a browser did not confirm its closes".into());
             }
         }
 
@@ -488,22 +589,36 @@ mod tests {
 
     #[test]
     fn concurrent_analysis_requests_both_receive_the_report() {
-        let (mut hub,_)=hub_with_socket();
-        let a=hub.expect_tabs("brave01");let b=hub.expect_tabs("brave01");
-        hub.deliver_tabs("brave01",vec![Tab {id:1,..Default::default()}]);
-        assert_eq!(a.blocking_recv().unwrap().len(),1);
-        assert_eq!(b.blocking_recv().unwrap().len(),1);
+        let (mut hub, _) = hub_with_socket();
+        let a = hub.expect_tabs("brave01");
+        let b = hub.expect_tabs("brave01");
+        hub.deliver_tabs(
+            "brave01",
+            vec![Tab {
+                id: 1,
+                ..Default::default()
+            }],
+        );
+        assert_eq!(a.blocking_recv().unwrap().len(), 1);
+        assert_eq!(b.blocking_recv().unwrap().len(), 1);
     }
 
     #[test]
     fn safe_close_ack_is_correlated_and_only_accepted_from_its_owner() {
         let (mut hub, _) = hub_with_socket();
         let (tx, mut rx) = oneshot::channel();
-        hub.discard_waiters.insert("request-7".into(), ("brave01".into(), tx));
+        hub.discard_waiters
+            .insert("request-7".into(), ("brave01".into(), tx));
         hub.deliver_discard("different-browser", "request-7", vec![7]);
-        assert!(matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
         hub.deliver_discard("brave01", "different-request", vec![7]);
-        assert!(matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
         hub.deliver_discard("brave01", "request-7", vec![7]);
         assert_eq!(rx.try_recv().unwrap(), vec![7]);
         assert!(!hub.discard_waiters.contains_key("request-7"));

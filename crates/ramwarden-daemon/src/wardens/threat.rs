@@ -18,7 +18,9 @@ use std::time::Duration;
 use ramwarden_core::config;
 use ramwarden_core::wardens::{self, AgentHealth, Level, Status, ThreatThresholds};
 use ramwarden_platform::Secret;
-use ramwarden_wazuh::{Alert, Client, Cloud, EnrollRequest, Endpoints, Error, LocalAgent, ManagerAgent};
+use ramwarden_wazuh::{
+    Alert, Client, Cloud, Endpoints, EnrollRequest, Error, LocalAgent, ManagerAgent,
+};
 use serde::Serialize;
 
 /// What ThreatWarden last saw.
@@ -54,8 +56,18 @@ pub struct Engine {
 }
 
 impl Engine {
-    fn new(id: &'static str, name: &'static str, state: &'static str, detail: impl Into<String>) -> Engine {
-        Engine { id, name, state, detail: ramwarden_core::branding::service_detail(&detail.into()) }
+    fn new(
+        id: &'static str,
+        name: &'static str,
+        state: &'static str,
+        detail: impl Into<String>,
+    ) -> Engine {
+        Engine {
+            id,
+            name,
+            state,
+            detail: ramwarden_core::branding::service_detail(&detail.into()),
+        }
     }
 }
 
@@ -64,16 +76,46 @@ impl WazuhReport {
     pub fn engine_lines(&self) -> Vec<Engine> {
         let wazuh = match self.health() {
             AgentHealth::Connected => Engine::new("wazuh", "Sentinel", "on", "Connected"),
-            AgentHealth::Disconnected => Engine::new("wazuh", "Sentinel", "error", "Installed, not connected"),
-            AgentHealth::Unknown => Engine::new("wazuh", "Sentinel", "error", "Installed; connection not confirmed"),
+            AgentHealth::Disconnected => {
+                Engine::new("wazuh", "Sentinel", "error", "Installed, not connected")
+            }
+            AgentHealth::Unknown => Engine::new(
+                "wazuh",
+                "Sentinel",
+                "error",
+                "Installed; connection not confirmed",
+            ),
             AgentHealth::Missing => Engine::new("wazuh", "Sentinel", "off", "Not installed"),
         };
         vec![
             wazuh,
-            Engine::new("clamav", "Antivirus", self.sensors.clamav.state, &self.sensors.clamav.detail),
-            Engine::new("suricata", "Threat detection", self.sensors.suricata.state, &self.sensors.suricata.detail),
-            Engine::new("network", "Network view", if self.sensors.network.checked_at == 0 || self.sensors.network.problem.is_some() { "unknown" } else { "on" },
-                self.sensors.network.problem.clone().unwrap_or_else(|| format!("{} established TCP connections visible to this user", self.sensors.network.connections.len()))),
+            Engine::new(
+                "clamav",
+                "Antivirus",
+                self.sensors.clamav.state,
+                &self.sensors.clamav.detail,
+            ),
+            Engine::new(
+                "suricata",
+                "Threat detection",
+                self.sensors.suricata.state,
+                &self.sensors.suricata.detail,
+            ),
+            Engine::new(
+                "network",
+                "Network view",
+                if self.sensors.network.checked_at == 0 || self.sensors.network.problem.is_some() {
+                    "unknown"
+                } else {
+                    "on"
+                },
+                self.sensors.network.problem.clone().unwrap_or_else(|| {
+                    format!(
+                        "{} established TCP connections visible to this user",
+                        self.sensors.network.connections.len()
+                    )
+                }),
+            ),
         ]
     }
 
@@ -133,13 +175,20 @@ impl ThreatWarden {
     }
 
     fn thresholds(&self) -> ThreatThresholds {
-        ThreatThresholds { min_level: self.cfg.min_level, alert_level: self.cfg.alert_level }
+        ThreatThresholds {
+            min_level: self.cfg.min_level,
+            alert_level: self.cfg.alert_level,
+        }
     }
 
     /// The status the UI shows. A running setup outranks the last poll.
     pub fn status(&self) -> Status {
         if !self.cfg.enabled {
-            return Status::off("Turned off", "Set [wardens.threat] enabled = true to use it.", 0);
+            return Status::off(
+                "Turned off",
+                "Set [wardens.threat] enabled = true to use it.",
+                0,
+            );
         }
         match &*self.setup.lock().unwrap() {
             Setup::Running => Status::new(
@@ -148,7 +197,11 @@ impl ThreatWarden {
                 "Installing the security agent. Approve the permission prompt if your computer shows one.",
                 wardens::now(),
             ),
-            Setup::Failed(why) => Status::off("Setup didn't finish", format!("{why} Check the installer's result before trying again."), wardens::now()),
+            Setup::Failed(why) => Status::off(
+                "Setup didn't finish",
+                format!("{why} Check the installer's result before trying again."),
+                wardens::now(),
+            ),
             Setup::Idle => self.view.read().unwrap().0.clone(),
         }
     }
@@ -166,7 +219,10 @@ impl ThreatWarden {
     }
 
     fn enrolled_name(&self) -> Option<String> {
-        std::fs::read_to_string(&self.name_file).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        std::fs::read_to_string(&self.name_file)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     fn cloud(&self) -> std::result::Result<Cloud, Status> {
@@ -177,17 +233,47 @@ impl ThreatWarden {
                 wardens::now(),
             ));
         };
-        Cloud::new(&self.cfg.cloud_url, Secret::new(token), Duration::from_secs(self.cfg.timeout_seconds))
-            .map_err(|e| Status::off("RamWarden's address is misconfigured", e.to_string(), wardens::now()))
+        Cloud::new(
+            &self.cfg.cloud_url,
+            Secret::new(token),
+            Duration::from_secs(self.cfg.timeout_seconds),
+        )
+        .map_err(|e| {
+            Status::off(
+                "RamWarden's address is misconfigured",
+                e.to_string(),
+                wardens::now(),
+            )
+        })
     }
 
-    pub async fn events(&self,rule:Option<&str>,group:Option<&str>)->std::result::Result<Vec<Alert>,String>{
-        if !self.hosted(){return Err("Indexed-event search is not configured for this self-hosted connection".into());}
-        self.cloud().map_err(|_|"Sign in to read this computer’s evidence".to_string())?.events(rule,group).await.map_err(|_|"Source-event search is unavailable".into())
+    pub async fn events(
+        &self,
+        rule: Option<&str>,
+        group: Option<&str>,
+    ) -> std::result::Result<Vec<Alert>, String> {
+        if !self.hosted() {
+            return Err(
+                "Indexed-event search is not configured for this self-hosted connection".into(),
+            );
+        }
+        self.cloud()
+            .map_err(|_| "Sign in to read this computer’s evidence".to_string())?
+            .events(rule, group)
+            .await
+            .map_err(|_| "Source-event search is unavailable".into())
     }
-    pub async fn event(&self,id:&str)->std::result::Result<serde_json::Value,String>{
-        if !self.hosted(){return Err("Source-event retrieval is not configured for this self-hosted connection".into());}
-        self.cloud().map_err(|_|"Sign in on this computer to read its security evidence".to_string())?.event(id).await.map_err(|_|"The source event is unavailable or access changed".into())
+    pub async fn event(&self, id: &str) -> std::result::Result<serde_json::Value, String> {
+        if !self.hosted() {
+            return Err(
+                "Source-event retrieval is not configured for this self-hosted connection".into(),
+            );
+        }
+        self.cloud()
+            .map_err(|_| "Sign in on this computer to read its security evidence".to_string())?
+            .event(id)
+            .await
+            .map_err(|_| "The source event is unavailable or access changed".into())
     }
     /// One poll. The caller has checked the warden is unlocked.
     pub async fn poll(&self, self_hosted: Option<&Client>) {
@@ -219,20 +305,33 @@ impl ThreatWarden {
             Ok(s) => s,
             Err(Error::SignedOut) => {
                 return self.set(
-                    Status::off("Sign in to RamWarden again", "This computer's sign-in has expired.", now),
+                    Status::off(
+                        "Sign in to RamWarden again",
+                        "This computer's sign-in has expired.",
+                        now,
+                    ),
                     Some(report),
                 );
             }
             Err(Error::NoPass) => {
                 return self.set(
-                    Status::off("Your ThreatWarden pass isn't active", "Renew your ThreatWarden pass, or a bundle that includes it.", now),
+                    Status::off(
+                        "Your ThreatWarden pass isn't active",
+                        "Renew your ThreatWarden pass, or a bundle that includes it.",
+                        now,
+                    ),
                     Some(report),
                 );
             }
             Err(e) => {
                 report.problems.push(e.to_string());
                 let status = if report.local.is_connected() {
-                    Status::new(Level::Watch, "Can't reach ThreatWarden's service", e.to_string(), now)
+                    Status::new(
+                        Level::Watch,
+                        "Can't reach ThreatWarden's service",
+                        e.to_string(),
+                        now,
+                    )
                 } else {
                     Status::off("Can't reach ThreatWarden's service", e.to_string(), now)
                 };
@@ -283,7 +382,9 @@ impl ThreatWarden {
         };
         let mut levels = Vec::new();
         match client {
-            None => report.problems.push("No Wazuh manager configured; showing this computer's agent only.".into()),
+            None => report
+                .problems
+                .push("No Wazuh manager configured; showing this computer's agent only.".into()),
             Some(client) => {
                 if client.has_manager() {
                     match client.agent(&report.agent_name).await {
@@ -296,7 +397,10 @@ impl ThreatWarden {
                     }
                 }
                 if client.has_indexer() {
-                    match client.alerts(&report.agent_name, c.min_level, c.lookback_hours).await {
+                    match client
+                        .alerts(&report.agent_name, c.min_level, c.lookback_hours)
+                        .await
+                    {
                         Ok(a) => {
                             levels = a.iter().map(|x| x.level).collect();
                             report.alerts = a;
@@ -304,11 +408,14 @@ impl ThreatWarden {
                         Err(e) => report.problems.push(e.to_string()),
                     }
                 } else {
-                    report.problems.push("No indexer configured, so alerts are not shown.".into());
+                    report
+                        .problems
+                        .push("No indexer configured, so alerts are not shown.".into());
                 }
             }
         }
-        let mut status = wardens::assess_threats(report.health(), &levels, self.thresholds(), wardens::now());
+        let mut status =
+            wardens::assess_threats(report.health(), &levels, self.thresholds(), wardens::now());
         // "Clear" must not hide that part of the picture is missing.
         if status.level == Level::Clear && !report.problems.is_empty() {
             let why = report.problems.join(" ");
@@ -324,12 +431,18 @@ impl ThreatWarden {
     /// Start the one-click setup: enrol with the hosted API, then install
     /// Wazuh's agent behind one OS admin prompt. Returns at once; progress is
     /// the warden's status. The caller has checked the warden is unlocked.
-    pub fn start_setup(self: &Arc<Self>, handle: &tokio::runtime::Handle) -> std::result::Result<(), String> {
+    pub fn start_setup(
+        self: &Arc<Self>,
+        handle: &tokio::runtime::Handle,
+    ) -> std::result::Result<(), String> {
         if !self.cfg.enabled {
             return Err("ThreatWarden is turned off in the config.".into());
         }
         if !self.hosted() {
-            return Err("Self-hosted Wazuh is set up by hand; see docs/threatwarden-self-hosting.md.".into());
+            return Err(
+                "Self-hosted Wazuh is set up by hand; see docs/threatwarden-self-hosting.md."
+                    .into(),
+            );
         }
         let cloud = self.cloud().map_err(|s| s.headline)?;
         {
@@ -344,8 +457,11 @@ impl ThreatWarden {
             let outcome = async {
                 let e = cloud.enroll(&EnrollRequest::here()).await?;
                 ramwarden_wazuh::install::install(&e).await?;
-                std::fs::write(&me.name_file, &e.agent_name)
-                    .map_err(|err| Error::Install(format!("Agent installed, but saving its enrollment failed: {err}")))?;
+                std::fs::write(&me.name_file, &e.agent_name).map_err(|err| {
+                    Error::Install(format!(
+                        "Agent installed, but saving its enrollment failed: {err}"
+                    ))
+                })?;
                 Ok::<_, Error>(e.agent_name)
             }
             .await;
@@ -369,7 +485,11 @@ impl ThreatWarden {
     /// Poll forever. A self-hosted configuration error is reported as the
     /// warden's status, once, and the poller stops. `unlocked` is asked before
     /// every poll, so a locked warden never contacts anything.
-    pub fn spawn(self: Arc<Self>, handle: &tokio::runtime::Handle, unlocked: impl Fn() -> bool + Send + 'static) {
+    pub fn spawn(
+        self: Arc<Self>,
+        handle: &tokio::runtime::Handle,
+        unlocked: impl Fn() -> bool + Send + 'static,
+    ) {
         if !self.cfg.enabled {
             return;
         }
@@ -381,13 +501,20 @@ impl ThreatWarden {
                     Ok(c) => c,
                     Err(e) => {
                         tracing::warn!("threatwarden off: {e}");
-                        self.set(Status::off("Wazuh settings need fixing", e, wardens::now()), None);
+                        self.set(
+                            Status::off("Wazuh settings need fixing", e, wardens::now()),
+                            None,
+                        );
                         return;
                     }
                 }
             };
             let every = Duration::from_secs(self.cfg.poll_seconds.max(30));
-            tracing::info!("threatwarden ({}): polling every {}s", self.cfg.mode, every.as_secs());
+            tracing::info!(
+                "threatwarden ({}): polling every {}s",
+                self.cfg.mode,
+                every.as_secs()
+            );
             loop {
                 if unlocked() {
                     self.poll(client.as_ref()).await;
@@ -415,7 +542,9 @@ pub fn self_hosted_client(c: &config::Wazuh) -> std::result::Result<Option<Clien
         return Ok(None);
     }
     let ca_pem = match &c.ca_file {
-        Some(p) => Some(std::fs::read(p).map_err(|e| format!("cannot read ca_file {}: {e}", p.display()))?),
+        Some(p) => Some(
+            std::fs::read(p).map_err(|e| format!("cannot read ca_file {}: {e}", p.display()))?,
+        ),
         None => None,
     };
     Client::new(Endpoints {
@@ -438,7 +567,11 @@ mod tests {
 
     fn report(installed: bool, local: Option<&str>, manager: Option<&str>) -> WazuhReport {
         WazuhReport {
-            local: LocalAgent { installed, status: local.map(str::to_string), last_keepalive: None },
+            local: LocalAgent {
+                installed,
+                status: local.map(str::to_string),
+                last_keepalive: None,
+            },
             manager: manager.map(|s| ManagerAgent {
                 id: "001".into(),
                 name: "desk".into(),
@@ -454,35 +587,73 @@ mod tests {
     fn health_combines_the_local_and_manager_views() {
         assert_eq!(report(false, None, None).health(), AgentHealth::Missing);
         assert_eq!(report(true, None, None).health(), AgentHealth::Unknown);
-        assert_eq!(report(true, Some("connected"), None).health(), AgentHealth::Connected);
-        assert_eq!(report(true, None, Some("active")).health(), AgentHealth::Connected);
-        assert_eq!(report(true, None, Some("disconnected")).health(), AgentHealth::Disconnected);
-        assert_eq!(report(true, Some("pending"), None).health(), AgentHealth::Disconnected);
-        assert_eq!(report(false, None, Some("never_connected")).health(), AgentHealth::Disconnected);
+        assert_eq!(
+            report(true, Some("connected"), None).health(),
+            AgentHealth::Connected
+        );
+        assert_eq!(
+            report(true, None, Some("active")).health(),
+            AgentHealth::Connected
+        );
+        assert_eq!(
+            report(true, None, Some("disconnected")).health(),
+            AgentHealth::Disconnected
+        );
+        assert_eq!(
+            report(true, Some("pending"), None).health(),
+            AgentHealth::Disconnected
+        );
+        assert_eq!(
+            report(false, None, Some("never_connected")).health(),
+            AgentHealth::Disconnected
+        );
     }
 
     #[test]
     fn engines_do_not_assume_sensor_coverage_from_agent_health() {
-        let state = |r: WazuhReport| r.engine_lines().iter().map(|e| (e.id, e.state)).collect::<Vec<_>>();
+        let state = |r: WazuhReport| {
+            r.engine_lines()
+                .iter()
+                .map(|e| (e.id, e.state))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
             state(report(true, Some("connected"), None)),
-            [("wazuh", "on"), ("clamav", "unknown"), ("suricata", "unknown"), ("network", "unknown")]
+            [
+                ("wazuh", "on"),
+                ("clamav", "unknown"),
+                ("suricata", "unknown"),
+                ("network", "unknown")
+            ]
         );
         assert_eq!(state(report(false, None, None))[0], ("wazuh", "off"));
-        assert_eq!(state(report(true, None, Some("disconnected")))[0], ("wazuh", "error"));
+        assert_eq!(
+            state(report(true, None, Some("disconnected")))[0],
+            ("wazuh", "error")
+        );
     }
 
     #[test]
     fn a_misconfigured_manager_url_is_reported_not_fatal() {
-        let c = config::Wazuh { manager_url: "http://wazuh.lan:55000".into(), ..Default::default() };
+        let c = config::Wazuh {
+            manager_url: "http://wazuh.lan:55000".into(),
+            ..Default::default()
+        };
         let e = self_hosted_client(&c).err().unwrap();
         assert!(e.contains("https"), "{e}");
-        assert!(self_hosted_client(&config::Wazuh::default()).unwrap().is_none());
+        assert!(
+            self_hosted_client(&config::Wazuh::default())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn errors_read_as_sentences() {
-        assert_eq!(sentence("the agent was not installed"), "The agent was not installed.");
+        assert_eq!(
+            sentence("the agent was not installed"),
+            "The agent was not installed."
+        );
         assert_eq!(sentence("Done."), "Done.");
     }
 }

@@ -44,7 +44,11 @@ pub fn bar(client: Client) -> gtk4::Box {
     if let Some(display) = gtk4::gdk::Display::default() {
         let css = gtk4::CssProvider::new();
         css.load_from_data(CSS);
-        gtk4::style_context_add_provider_for_display(&display, &css, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
     let client = Rc::new(client);
     let root = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -56,12 +60,24 @@ pub fn bar(client: Client) -> gtk4::Box {
     bubble.add_css_class("warden-bubble");
     bubble.set_hexpand(true);
     let head = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    let text = gtk4::Label::builder().xalign(0.0).wrap(true).hexpand(true).selectable(true).build();
-    let mute = gtk4::MenuButton::builder().icon_name("audio-volume-high-symbolic").tooltip_text("Quiet, please").build();
+    let text = gtk4::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .hexpand(true)
+        .selectable(true)
+        .build();
+    let mute = gtk4::MenuButton::builder()
+        .icon_name("audio-volume-high-symbolic")
+        .tooltip_text("Quiet, please")
+        .build();
     let unmute = gtk4::Button::with_label("Unmute");
     let close = gtk4::Button::from_icon_name("window-close-symbolic");
     close.set_tooltip_text(Some("Dismiss"));
-    for b in [mute.upcast_ref::<gtk4::Widget>(), unmute.upcast_ref(), close.upcast_ref()] {
+    for b in [
+        mute.upcast_ref::<gtk4::Widget>(),
+        unmute.upcast_ref(),
+        close.upcast_ref(),
+    ] {
         b.add_css_class("flat");
         b.set_valign(gtk4::Align::Start);
     }
@@ -87,8 +103,16 @@ pub fn bar(client: Client) -> gtk4::Box {
     root.set_visible(false);
 
     let ui = Rc::new(Ui {
-        root: root.clone(), text, choices, mute, unmute, close, shown: RefCell::new(None),
-        entry: entry.clone(), said, talking: RefCell::new(false),
+        root: root.clone(),
+        text,
+        choices,
+        mute,
+        unmute,
+        close,
+        shown: RefCell::new(None),
+        entry: entry.clone(),
+        said,
+        talking: RefCell::new(false),
     });
     {
         let (c, u) = (client.clone(), ui.clone());
@@ -110,7 +134,9 @@ pub fn bar(client: Client) -> gtk4::Box {
     {
         let (c, u) = (client.clone(), ui.clone());
         ui.close.connect_clicked(move |_| {
-            let Some(b) = u.shown.borrow().clone() else { return };
+            let Some(b) = u.shown.borrow().clone() else {
+                return;
+            };
             answer(&c, &u, b.id, "dismiss");
         });
     }
@@ -169,7 +195,15 @@ fn send(client: &Rc<Client>, ui: &Rc<Ui>) {
     }
     let focus = ui.shown.borrow().as_ref().is_some_and(|b| b.asks_focus());
     if let Some(why) = crate::voice::too_long(&text, focus) {
-        show_said(client, ui, Said { you: text, reply: why.into(), ..Said::default() });
+        show_said(
+            client,
+            ui,
+            Said {
+                you: text,
+                reply: why.into(),
+                ..Said::default()
+            },
+        );
         return;
     }
     ui.entry.set_text("");
@@ -193,7 +227,12 @@ fn show_said(client: &Rc<Client>, ui: &Rc<Ui>, said: Said) {
     }
     *ui.talking.borrow_mut() = true;
     let head = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    let you = gtk4::Label::builder().label(format!("You: {}", said.you)).xalign(0.0).wrap(true).hexpand(true).build();
+    let you = gtk4::Label::builder()
+        .label(format!("You: {}", said.you))
+        .xalign(0.0)
+        .wrap(true)
+        .hexpand(true)
+        .build();
     you.add_css_class("warden-you");
     let away = gtk4::Button::from_icon_name("window-close-symbolic");
     away.add_css_class("flat");
@@ -205,7 +244,12 @@ fn show_said(client: &Rc<Client>, ui: &Rc<Ui>, said: Said) {
     head.append(&you);
     head.append(&away);
     ui.said.append(&head);
-    let reply = gtk4::Label::builder().label(&said.reply).xalign(0.0).wrap(true).selectable(true).build();
+    let reply = gtk4::Label::builder()
+        .label(&said.reply)
+        .xalign(0.0)
+        .wrap(true)
+        .selectable(true)
+        .build();
     // Long replies scroll inside the bubble instead of growing the window.
     let body = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
     body.append(&reply);
@@ -238,16 +282,27 @@ fn hide_said(ui: &Ui) {
 
 /// The tabs the warden thinks belong to your focus, as checkboxes.
 fn checklist(client: &Rc<Client>, ui: &Rc<Ui>, body: &gtk4::Box, list: FocusProposal) {
-    let title = gtk4::Label::builder().label("Relevant to this task").xalign(0.0).build();
+    let title = gtk4::Label::builder()
+        .label("Relevant to this task")
+        .xalign(0.0)
+        .build();
     title.add_css_class("heading");
     body.append(&title);
-    let ticks: Vec<gtk4::CheckButton> = list.tabs.iter().map(|t| {
-        let b = gtk4::CheckButton::with_label(if t.title.is_empty() { "Web page" } else { &t.title });
-        b.set_active(t.selected);
-        b.set_tooltip_text(Some(&t.url));
-        body.append(&b);
-        b
-    }).collect();
+    let ticks: Vec<gtk4::CheckButton> = list
+        .tabs
+        .iter()
+        .map(|t| {
+            let b = gtk4::CheckButton::with_label(if t.title.is_empty() {
+                "Web page"
+            } else {
+                &t.title
+            });
+            b.set_active(t.selected);
+            b.set_tooltip_text(Some(&t.url));
+            body.append(&b);
+            b
+        })
+        .collect();
     let keep = gtk4::Button::with_label("Use these preferences");
     keep.set_halign(gtk4::Align::Start);
     body.append(&keep);
@@ -261,8 +316,13 @@ fn checklist(client: &Rc<Client>, ui: &Rc<Ui>, body: &gtk4::Box, list: FocusProp
         let (c, u, token) = (c.clone(), u.clone(), list.token.clone());
         glib::spawn_future_local(async move {
             let text = match c.focus_feedback(&token, &tabs).await {
-                Ok(_) => format!("Preferences updated · {} tabs marked relevant", tabs.iter().filter(|t| t.selected).count()),
-                Err(e) => format!("That tab list expired or changed. Tell me your focus again. ({e})"),
+                Ok(_) => format!(
+                    "Preferences updated · {} tabs marked relevant",
+                    tabs.iter().filter(|t| t.selected).count()
+                ),
+                Err(e) => {
+                    format!("That tab list expired or changed. Tell me your focus again. ({e})")
+                }
             };
             hide_said(&u);
             say(&u, &text);
@@ -291,7 +351,9 @@ fn confirm(client: &Rc<Client>, ui: &Rc<Ui>, button: &gtk4::Button, p: crate::vo
             let text = match c.chat_action(&p.token).await {
                 Ok(r) if r.reply.is_empty() => "The action finished without a report.".to_string(),
                 Ok(r) => r.reply,
-                Err(e) => format!("That proposal expired or the computer changed; nothing was applied. ({e})"),
+                Err(e) => format!(
+                    "That proposal expired or the computer changed; nothing was applied. ({e})"
+                ),
             };
             hide_said(&u);
             say(&u, &text);
@@ -341,7 +403,12 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, speech: Speech) {
         return;
     };
     ui.close.set_visible(true);
-    if ui.shown.borrow().as_ref().is_some_and(|b| b.id == bubble.id) {
+    if ui
+        .shown
+        .borrow()
+        .as_ref()
+        .is_some_and(|b| b.id == bubble.id)
+    {
         return; // already showing it; keep the buttons the user may be reaching for
     }
     say(ui, &bubble.text);
@@ -353,7 +420,12 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, speech: Speech) {
         } else if choice.id == "keep" {
             b.add_css_class("suggested-action");
         }
-        let (c, u, id, pick) = (client.clone(), ui.clone(), bubble.id.clone(), choice_id(&choice.id));
+        let (c, u, id, pick) = (
+            client.clone(),
+            ui.clone(),
+            bubble.id.clone(),
+            choice_id(&choice.id),
+        );
         b.connect_clicked(move |_| answer(&c, &u, id.clone(), pick));
         ui.choices.append(&b);
     }

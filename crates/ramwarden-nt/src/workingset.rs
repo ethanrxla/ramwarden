@@ -13,12 +13,12 @@
 //! touched again are not claimed as freed.
 
 use ramwarden_platform::{Error, Result};
-use windows::Win32::System::ProcessStatus::{
-    EmptyWorkingSet, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
-};
 use windows::Win32::System::Memory::{
     GetProcessWorkingSetSizeEx, QUOTA_LIMITS_HARDWS_MAX_DISABLE, QUOTA_LIMITS_HARDWS_MAX_ENABLE,
     QUOTA_LIMITS_HARDWS_MIN_DISABLE, SETPROCESSWORKINGSETSIZEEX_FLAGS, SetProcessWorkingSetSizeEx,
+};
+use windows::Win32::System::ProcessStatus::{
+    EmptyWorkingSet, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
 };
 
 use crate::handle::Handle;
@@ -87,7 +87,13 @@ pub fn cap(pid: u32, max_bytes: u64) -> Result<()> {
     let h = open(pid, MEMORY_ACCESS)?;
     let current = limits(pid)?;
     let max = (max_bytes as usize).max(current.min + 4 * 1024 * 1024);
-    set(&h, pid, current.min.min(max), max, QUOTA_LIMITS_HARDWS_MIN_DISABLE.0 | QUOTA_LIMITS_HARDWS_MAX_ENABLE.0)
+    set(
+        &h,
+        pid,
+        current.min.min(max),
+        max,
+        QUOTA_LIMITS_HARDWS_MIN_DISABLE.0 | QUOTA_LIMITS_HARDWS_MAX_ENABLE.0,
+    )
 }
 
 /// Put back the limits recorded before the first cap.
@@ -105,8 +111,10 @@ pub fn restore(pid: u32, previous: Limits) -> Result<()> {
 
 fn set(h: &Handle, pid: u32, min: usize, max: usize, flags: u32) -> Result<()> {
     // SAFETY: the handle is open with PROCESS_SET_QUOTA.
-    unsafe { SetProcessWorkingSetSizeEx(h.raw(), min, max, SETPROCESSWORKINGSETSIZEEX_FLAGS(flags)) }
-        .map_err(|e| Error::os(format!("SetProcessWorkingSetSizeEx(pid {pid}): {e}")))
+    unsafe {
+        SetProcessWorkingSetSizeEx(h.raw(), min, max, SETPROCESSWORKINGSETSIZEEX_FLAGS(flags))
+    }
+    .map_err(|e| Error::os(format!("SetProcessWorkingSetSizeEx(pid {pid}): {e}")))
 }
 
 #[cfg(test)]
@@ -138,12 +146,18 @@ mod tests {
         }
     }
     fn hog() -> Hog {
-        Hog(Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", "workingset::tests::memory_hog_fixture", "--ignored"])
-            .env("RAMWARDEN_TEST_MEMORY_HOG", "1")
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn native memory fixture"))
+        Hog(
+            Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "workingset::tests::memory_hog_fixture",
+                    "--ignored",
+                ])
+                .env("RAMWARDEN_TEST_MEMORY_HOG", "1")
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn native memory fixture"),
+        )
     }
 
     fn wait_for_ws(pid: u32, at_least: u64) -> u64 {
@@ -169,7 +183,6 @@ mod tests {
         let moved = trim(pid).unwrap();
         assert!(moved > 100 * 1024 * 1024, "only {moved} bytes moved");
         assert!(private_working_set_of(pid).unwrap() < before);
-
     }
 
     #[test]
@@ -184,7 +197,11 @@ mod tests {
 
         cap(pid, 64 * 1024 * 1024).unwrap();
         let capped = limits(pid).unwrap();
-        assert_ne!(capped.flags & QUOTA_LIMITS_HARDWS_MAX_ENABLE.0, 0, "max must be hard");
+        assert_ne!(
+            capped.flags & QUOTA_LIMITS_HARDWS_MAX_ENABLE.0,
+            0,
+            "max must be hard"
+        );
 
         restore(pid, original).unwrap();
         assert_eq!(limits(pid).unwrap(), original);

@@ -19,7 +19,10 @@ pub struct MacDesktop {
 
 impl MacDesktop {
     pub fn new() -> Self {
-        MacDesktop { slow: None, focus: None }
+        MacDesktop {
+            slow: None,
+            focus: None,
+        }
     }
 }
 
@@ -40,7 +43,14 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
 pub fn foreground_pids(list: &str) -> HashSet<i32> {
     list.lines()
         .filter(|l| l.contains("type=\"Foreground\""))
-        .filter_map(|l| l.split("pid =").nth(1)?.split_whitespace().next()?.parse().ok())
+        .filter_map(|l| {
+            l.split("pid =")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()
+        })
         .collect()
 }
 
@@ -76,24 +86,38 @@ pub fn audio_pids(assertions: &str) -> HashSet<i32> {
 
 fn frontmost_pid() -> Option<i32> {
     let front = run("lsappinfo", &["front"])?;
-    run("lsappinfo", &["info", "-only", "pid", front.trim()])?.split('=').nth(1)?.trim().parse().ok()
+    run("lsappinfo", &["info", "-only", "pid", front.trim()])?
+        .split('=')
+        .nth(1)?
+        .trim()
+        .parse()
+        .ok()
 }
 
 impl DesktopSource for MacDesktop {
     fn sample(&mut self) -> Desktop {
-        if self.slow.as_ref().is_none_or(|(at, ..)| at.elapsed() >= Duration::from_secs(5)) {
+        if self
+            .slow
+            .as_ref()
+            .is_none_or(|(at, ..)| at.elapsed() >= Duration::from_secs(5))
+        {
             // A probe that times out keeps the last good answer instead of
             // reporting "nothing is playing / no windows".
-            let (old_audio, old_windows) = self
-                .slow
-                .take()
-                .map(|(_, a, w)| (a, w))
-                .unwrap_or_default();
-            let audio = run("pmset", &["-g", "assertions"]).map(|o| audio_pids(&o)).unwrap_or(old_audio);
-            let windows = run("lsappinfo", &["list"]).map(|o| foreground_pids(&o)).unwrap_or(old_windows);
+            let (old_audio, old_windows) =
+                self.slow.take().map(|(_, a, w)| (a, w)).unwrap_or_default();
+            let audio = run("pmset", &["-g", "assertions"])
+                .map(|o| audio_pids(&o))
+                .unwrap_or(old_audio);
+            let windows = run("lsappinfo", &["list"])
+                .map(|o| foreground_pids(&o))
+                .unwrap_or(old_windows);
             self.slow = Some((Instant::now(), audio, windows));
         }
-        if self.focus.as_ref().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(1)) {
+        if self
+            .focus
+            .as_ref()
+            .is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(1))
+        {
             let last = self.focus.as_ref().and_then(|(_, p)| *p);
             self.focus = Some((Instant::now(), frontmost_pid().or(last)));
         }
@@ -121,5 +145,4 @@ mod tests {
         let s = "   pid 61(coreaudiod): [0x1] 00:00:01 PreventUserIdleSystemSleep named: \"com.apple.audio.context\"\n\tCreated for PID: 777.\n   pid 343(powerd): [0x2] 00:15:18 UserIsActive named: \"x\"\n";
         assert_eq!(audio_pids(s), HashSet::from([777]));
     }
-
 }

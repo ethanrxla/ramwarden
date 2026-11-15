@@ -47,7 +47,11 @@ pub struct Tab {
     pub title: String,
     /// How long since the user last looked at it. Computed by the extension,
     /// which is the only thing that can see it.
-    #[serde(default, rename = "inactiveMinutes", deserialize_with = "lenient_i64_opt")]
+    #[serde(
+        default,
+        rename = "inactiveMinutes",
+        deserialize_with = "lenient_i64_opt"
+    )]
     pub inactive_minutes: i64,
     /// A JavaScript millisecond timestamp, which is a float.
     #[serde(default, rename = "lastActiveMs")]
@@ -138,12 +142,20 @@ impl Command {
     pub fn close(tab_ids: Vec<i64>) -> Self {
         Command {
             action: "close",
-            tab_ids, request_id: None, tabs: Vec::new(), min_inactive_minutes: None,
+            tab_ids,
+            request_id: None,
+            tabs: Vec::new(),
+            min_inactive_minutes: None,
         }
     }
     pub fn discard(request_id: String, tabs: Vec<crate::browser::Target>, threshold: i64) -> Self {
-        Self { action: "discard", tab_ids: tabs.iter().map(|t|t.id).collect(),
-            request_id: Some(request_id), tabs, min_inactive_minutes: Some(threshold.max(5)) }
+        Self {
+            action: "discard",
+            tab_ids: tabs.iter().map(|t| t.id).collect(),
+            request_id: Some(request_id),
+            tabs,
+            min_inactive_minutes: Some(threshold.max(5)),
+        }
     }
 }
 
@@ -196,7 +208,8 @@ impl Registry {
     /// Replacing rather than merging is what makes an extension reload safe: it
     /// arrives as the same id with a complete fresh list.
     pub fn report(&mut self, browser: &str, transport: Transport, tabs: Vec<Tab>) {
-        self.reported_at.insert(browser.to_string(), std::time::Instant::now());
+        self.reported_at
+            .insert(browser.to_string(), std::time::Instant::now());
         // Drop ownership of tabs this browser no longer has, so a closed tab
         // does not keep a stale owner forever.
         self.owners.retain(|_, owner| owner != browser);
@@ -214,7 +227,11 @@ impl Registry {
         for id in ids {
             self.owners.remove(id);
         }
-        for tabs in self.socket_tabs.values_mut().chain(self.poll_tabs.values_mut()) {
+        for tabs in self
+            .socket_tabs
+            .values_mut()
+            .chain(self.poll_tabs.values_mut())
+        {
             tabs.retain(|t| !ids.contains(&t.id));
         }
     }
@@ -267,10 +284,18 @@ impl Registry {
     }
 
     pub fn owner_of(&self, tab_id: i64) -> Option<&str> {
-        let mut owners = self.socket_tabs.iter().chain(self.poll_tabs.iter())
-            .filter(|(_, tabs)| tabs.iter().any(|t| t.id == tab_id)).map(|(b, _)| b.as_str());
+        let mut owners = self
+            .socket_tabs
+            .iter()
+            .chain(self.poll_tabs.iter())
+            .filter(|(_, tabs)| tabs.iter().any(|t| t.id == tab_id))
+            .map(|(b, _)| b.as_str());
         let first = owners.next()?;
-        if owners.next().is_some() { None } else { Some(first) }
+        if owners.next().is_some() {
+            None
+        } else {
+            Some(first)
+        }
     }
 
     /// Group tab ids by the browser that owns them.
@@ -300,18 +325,32 @@ impl Registry {
     }
 
     pub fn fresh(&self, browser: &str) -> bool {
-        self.reported_at.get(browser).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(90))
+        self.reported_at
+            .get(browser)
+            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(90))
     }
 
     pub fn forget_tabs_for(&mut self, browser: &str, ids: &[i64]) {
-        if let Some(tabs) = self.socket_tabs.get_mut(browser).or_else(|| self.poll_tabs.get_mut(browser)) {
+        if let Some(tabs) = self
+            .socket_tabs
+            .get_mut(browser)
+            .or_else(|| self.poll_tabs.get_mut(browser))
+        {
             tabs.retain(|t| !ids.contains(&t.id));
         }
     }
 
     pub fn mark_discarded(&mut self, browser: &str, ids: &[i64]) {
-        if let Some(tabs) = self.socket_tabs.get_mut(browser).or_else(|| self.poll_tabs.get_mut(browser)) {
-            for tab in tabs { if ids.contains(&tab.id) { tab.discarded = Some(true); } }
+        if let Some(tabs) = self
+            .socket_tabs
+            .get_mut(browser)
+            .or_else(|| self.poll_tabs.get_mut(browser))
+        {
+            for tab in tabs {
+                if ids.contains(&tab.id) {
+                    tab.discarded = Some(true);
+                }
+            }
         }
     }
 
@@ -323,7 +362,10 @@ impl Registry {
 
     /// Queue a command for a polling browser to collect.
     pub fn enqueue(&mut self, browser: &str, cmd: Command) {
-        self.poll_queue.entry(browser.to_string()).or_default().push(cmd);
+        self.poll_queue
+            .entry(browser.to_string())
+            .or_default()
+            .push(cmd);
     }
 
     /// Hand over and clear everything queued for a browser.
@@ -376,7 +418,11 @@ mod tests {
     fn tabs_from_both_transports_are_merged() {
         let mut r = Registry::new();
         r.connect_socket("brave01");
-        r.report("brave01", Transport::Socket, vec![tab(10, "https://brave/", 100)]);
+        r.report(
+            "brave01",
+            Transport::Socket,
+            vec![tab(10, "https://brave/", 100)],
+        );
         r.report("firefox-abc", Transport::Poll, firefox_tabs());
 
         let all = r.all_tabs();
@@ -414,10 +460,16 @@ mod tests {
 
     #[test]
     fn a_report_expires_and_a_new_report_renews_it() {
-        let mut reg=Registry::new();reg.report("b",Transport::Poll,vec![]);
+        let mut reg = Registry::new();
+        reg.report("b", Transport::Poll, vec![]);
         assert!(reg.fresh("b"));
-        reg.reported_at.insert("b".into(),std::time::Instant::now()-std::time::Duration::from_secs(91));
-        assert!(!reg.fresh("b"));reg.report("b",Transport::Poll,vec![]);assert!(reg.fresh("b"));
+        reg.reported_at.insert(
+            "b".into(),
+            std::time::Instant::now() - std::time::Duration::from_secs(91),
+        );
+        assert!(!reg.fresh("b"));
+        reg.report("b", Transport::Poll, vec![]);
+        assert!(reg.fresh("b"));
     }
 
     // ── Routing ─────────────────────────────────────────────────────────────
@@ -428,8 +480,16 @@ mod tests {
     fn close_commands_are_addressed_to_the_owning_browser() {
         let mut r = Registry::new();
         r.connect_socket("brave01");
-        r.report("brave01", Transport::Socket, vec![tab(1, "https://brave/", 10)]);
-        r.report("firefox-abc", Transport::Poll, vec![tab(2, "https://ff/", 10)]);
+        r.report(
+            "brave01",
+            Transport::Socket,
+            vec![tab(1, "https://brave/", 10)],
+        );
+        r.report(
+            "firefox-abc",
+            Transport::Poll,
+            vec![tab(2, "https://ff/", 10)],
+        );
 
         let (by_owner, orphans) = r.route(&[1, 2]);
         assert_eq!(by_owner["brave01"], vec![1]);
@@ -441,12 +501,12 @@ mod tests {
     #[test]
     fn ambiguous_legacy_ids_are_refused() {
         let mut r = Registry::new();
-        r.report("brave", Transport::Socket, vec![tab(1,"https://a/",100)]);
-        r.report("firefox", Transport::Poll, vec![tab(1,"https://b/",100)]);
+        r.report("brave", Transport::Socket, vec![tab(1, "https://a/", 100)]);
+        r.report("firefox", Transport::Poll, vec![tab(1, "https://b/", 100)]);
         let (routes, orphans) = r.route(&[1]);
         assert!(routes.is_empty());
         assert_eq!(orphans, vec![1]);
-        assert_eq!(r.all_tabs().len(),2);
+        assert_eq!(r.all_tabs().len(), 2);
     }
 
     #[test]
@@ -461,7 +521,11 @@ mod tests {
     fn disconnecting_a_socket_browser_releases_its_tabs() {
         let mut r = Registry::new();
         r.connect_socket("brave01");
-        r.report("brave01", Transport::Socket, vec![tab(1, "https://brave/", 10)]);
+        r.report(
+            "brave01",
+            Transport::Socket,
+            vec![tab(1, "https://brave/", 10)],
+        );
         assert_eq!(r.owner_of(1), Some("brave01"));
 
         r.disconnect_socket("brave01");

@@ -17,9 +17,9 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Router, response::IntoResponse};
 
+use ramwarden_ai::vram;
 use ramwarden_core::signals::Verdict;
 use ramwarden_core::{ladder, workspaces};
-use ramwarden_ai::vram;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -30,7 +30,9 @@ use crate::tabs::{Tab, Transport};
 pub fn router(state: AppState) -> Router {
     let policy = crate::guard::Policy::for_bind(&state.cfg.server.host, state.cfg.server.port);
     let router = Router::new()
-        .merge(crate::agent_network::routes(state.cfg.db_path.with_file_name("agent-network")))
+        .merge(crate::agent_network::routes(
+            state.cfg.db_path.with_file_name("agent-network"),
+        ))
         .merge(crate::settings::routes())
         .merge(crate::tabreview::routes())
         .merge(crate::decisionlog::routes())
@@ -93,24 +95,38 @@ pub fn router(state: AppState) -> Router {
         .route("/wardens/{id}/setup", post(crate::wardens::setup))
         .merge(crate::desktop::routes())
         // The warden's speech bubble. See docs/specs/warden-voice.md.
-        .merge(crate::voice::routes::routes())
-        ;
+        .merge(crate::voice::routes::routes());
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {
-        router.route("/companion/state", get(crate::companion::status))
+        router
+            .route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
-            .route("/wardens/threat/events/{id}",get(crate::wardens::event))
+            .route("/wardens/threat/events/{id}", get(crate::wardens::event))
             .route("/assistant/action", post(crate::assistant::act))
-            .route("/assistant/action/stream", post(crate::assistant::act_stream))
-            .route("/assistant/workspace",get(crate::assistant::workspace_status).post(crate::assistant::choose_workspace))
+            .route(
+                "/assistant/action/stream",
+                post(crate::assistant::act_stream),
+            )
+            .route(
+                "/assistant/workspace",
+                get(crate::assistant::workspace_status).post(crate::assistant::choose_workspace),
+            )
             // "Analyze now" in the extension: the warden's read of the tabs.
             .route("/browser/explain", post(crate::tab_analysis::explain))
-            .layer(axum::Extension(std::sync::Arc::new(crate::assistant::Service::with_config(&state.cfg))))
-    } else { router };
-    router.with_state(state)
+            .layer(axum::Extension(std::sync::Arc::new(
+                crate::assistant::Service::with_config(&state.cfg),
+            )))
+    } else {
+        router
+    };
+    router
+        .with_state(state)
         // Outermost last: CORS answers allowed preflights, the guard refuses
         // everything a web page might send. See `guard` for why both.
-        .layer(axum::middleware::from_fn_with_state(policy.clone(), crate::guard::enforce))
+        .layer(axum::middleware::from_fn_with_state(
+            policy.clone(),
+            crate::guard::enforce,
+        ))
         .layer(policy.cors())
 }
 
@@ -432,7 +448,9 @@ async fn kill(
 ) -> impl IntoResponse {
     let det = st.det.read().unwrap();
     let mut ladder = st.ladder.lock().unwrap();
-    let outcome = ladder.actuator().kill(&name, &det, &st.cfg.watchlist, q.force);
+    let outcome = ladder
+        .actuator()
+        .kill(&name, &det, &st.cfg.watchlist, q.force);
     let code = if outcome.did_nothing() {
         StatusCode::CONFLICT
     } else {
@@ -607,13 +625,15 @@ async fn ai_status(State(st): State<AppState>) -> Json<Value> {
         None => json!({"configured": false}),
     };
 
-    let gpu = vram::primary().map(|g| json!({
-        "name": g.name,
-        "used_mb": mb(g.used), "total_mb": mb(g.total),
-        "percent_used": (g.percent_used() * 10.0).round() / 10.0,
-        "utilisation": g.utilisation,
-        "room_for_local_model": g.has_room_for(vram::NEMOTRON_4B_BYTES, vram::MODEL_MARGIN),
-    }));
+    let gpu = vram::primary().map(|g| {
+        json!({
+            "name": g.name,
+            "used_mb": mb(g.used), "total_mb": mb(g.total),
+            "percent_used": (g.percent_used() * 10.0).round() / 10.0,
+            "utilisation": g.utilisation,
+            "room_for_local_model": g.has_room_for(vram::NEMOTRON_4B_BYTES, vram::MODEL_MARGIN),
+        })
+    });
 
     let page_out = {
         let mut ladder = st.ladder.lock().unwrap();
@@ -663,7 +683,13 @@ async fn close_tabs_route(
 
 async fn reclaim_scope(State(st): State<AppState>, Path(scope): Path<String>) -> impl IntoResponse {
     let Some(groups) = st.platform.ready_groups() else {
-        let why = st.platform.groups.ready().err().map(|e| e.to_string()).unwrap_or_default();
+        let why = st
+            .platform
+            .groups
+            .ready()
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": format!("group reclaim unavailable: {why}")})),
@@ -718,7 +744,10 @@ async fn gpu_report(State(st): State<AppState>) -> Json<Value> {
     let det = {
         // Clone the names out so the lock is not held across the awaits.
         let det = st.det.read().unwrap();
-        ramwarden_core::detector::Detector::preloaded(det.is_warm(), det.snapshot().values().cloned().collect())
+        ramwarden_core::detector::Detector::preloaded(
+            det.is_warm(),
+            det.snapshot().values().cloned().collect(),
+        )
     };
     Json(crate::gpu::report(&det, &st.models).await)
 }
@@ -754,14 +783,20 @@ struct DebloatBody {
 
 /// Every shipped tweak and its state on this machine.
 async fn debloat_status() -> Json<Value> {
-    Json(tokio::task::spawn_blocking(extras::debloat::status).await.unwrap_or_default())
+    Json(
+        tokio::task::spawn_blocking(extras::debloat::status)
+            .await
+            .unwrap_or_default(),
+    )
 }
 
 async fn debloat_apply(Json(body): Json<DebloatBody>) -> Json<Value> {
     Json(
-        tokio::task::spawn_blocking(move || extras::debloat::apply(&body.name, body.include_optional))
-            .await
-            .unwrap_or_default(),
+        tokio::task::spawn_blocking(move || {
+            extras::debloat::apply(&body.name, body.include_optional)
+        })
+        .await
+        .unwrap_or_default(),
     )
 }
 
@@ -873,7 +908,14 @@ async fn cancel_kill(State(st): State<AppState>) -> Json<Value> {
 async fn hold(State(st): State<AppState>, Path(secs): Path<u64>) -> Json<Value> {
     st.set_hold(secs);
     // Thaw now rather than waiting for the monitor's next tick.
-    let thawed: Vec<String> = st.ladder.lock().unwrap().thaw_all().into_iter().map(|(n, _)| n).collect();
+    let thawed: Vec<String> = st
+        .ladder
+        .lock()
+        .unwrap()
+        .thaw_all()
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     tracing::info!("hold {secs}s; thawed {} group(s)", thawed.len());
     Json(json!({"hold_seconds": secs.min(600), "thawed": thawed}))
 }
@@ -1063,8 +1105,11 @@ fn browser_snapshot(st: &AppState) -> Value {
 }
 async fn browser_tabs(State(st): State<AppState>) -> Json<Value> {
     // Older extensions only report when asked; don't let their visible list expire.
-    { let hub=st.hub.lock().unwrap();
-      for browser in hub.reg.socket_ids() { hub.send(&browser,&json!({"action":"get_tabs"})); }
+    {
+        let hub = st.hub.lock().unwrap();
+        for browser in hub.reg.socket_ids() {
+            hub.send(&browser, &json!({"action":"get_tabs"}));
+        }
     }
     Json(browser_snapshot(&st))
 }
@@ -1073,36 +1118,60 @@ async fn browser_analyze(State(st): State<AppState>) -> Json<Value> {
     Json(browser_snapshot(&st))
 }
 #[derive(Deserialize)]
-struct DiscardBody { targets: Vec<crate::browser::Target> }
-async fn browser_discard(State(st): State<AppState>, Json(body): Json<DiscardBody>) -> Json<crate::hub::DiscardResult> {
+struct DiscardBody {
+    targets: Vec<crate::browser::Target>,
+}
+async fn browser_discard(
+    State(st): State<AppState>,
+    Json(body): Json<DiscardBody>,
+) -> Json<crate::hub::DiscardResult> {
     // A fresh socket report can veto a stale selection before dispatch.
     st.request_all_tabs().await;
     let rows = crate::decisionlog::rows_by_target(&st);
     let result = st.discard_tabs(&body.targets).await;
     crate::decisionlog::record_manual(&st, &rows, &result, "unload");
-    let notes = format!("{} unloaded, {} queued (not confirmed), {} refused; tabs remain open",
-        result.confirmed.len(),result.queued.len(),result.refused.len());
+    let notes = format!(
+        "{} unloaded, {} queued (not confirmed), {} refused; tabs remain open",
+        result.confirmed.len(),
+        result.queued.len(),
+        result.refused.len()
+    );
     tracing::info!("browser unload: {notes}");
     if let Ok(history) = st.history.lock() {
         let _ = history.log(&ramwarden_core::history::NewAction {
-            rung: -1, trigger: "manual".into(), action: "discard_tab".into(), target: "selected browser tabs".into(),
-            succeeded: !result.confirmed.is_empty(), notes, ..Default::default()
+            rung: -1,
+            trigger: "manual".into(),
+            action: "discard_tab".into(),
+            target: "selected browser tabs".into(),
+            succeeded: !result.confirmed.is_empty(),
+            notes,
+            ..Default::default()
         });
     }
     Json(result)
 }
 
-async fn browser_close(State(st): State<AppState>, Json(body): Json<DiscardBody>) -> Json<crate::hub::DiscardResult> {
-    let requested_at=std::time::Instant::now();
+async fn browser_close(
+    State(st): State<AppState>,
+    Json(body): Json<DiscardBody>,
+) -> Json<crate::hub::DiscardResult> {
+    let requested_at = std::time::Instant::now();
     st.request_all_tabs().await;
-    let (fresh, stale): (Vec<_>,Vec<_>) = {
-        let hub=st.hub.lock().unwrap();
-        body.targets.into_iter().partition(|t| !hub.reg.is_socket(&t.browser) || hub.reg.reported_since(&t.browser,requested_at))
+    let (fresh, stale): (Vec<_>, Vec<_>) = {
+        let hub = st.hub.lock().unwrap();
+        body.targets.into_iter().partition(|t| {
+            !hub.reg.is_socket(&t.browser) || hub.reg.reported_since(&t.browser, requested_at)
+        })
     };
     let rows = crate::decisionlog::rows_by_target(&st);
-    let mut result=st.close_selected_tabs(&fresh).await;
+    let mut result = st.close_selected_tabs(&fresh).await;
     result.refused.extend(stale);
     crate::decisionlog::record_manual(&st, &rows, &result, "close");
-    tracing::info!(confirmed=result.confirmed.len(),queued=result.queued.len(),refused=result.refused.len(),"manual tab close completed");
+    tracing::info!(
+        confirmed = result.confirmed.len(),
+        queued = result.queued.len(),
+        refused = result.refused.len(),
+        "manual tab close completed"
+    );
     Json(result)
 }

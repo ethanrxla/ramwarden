@@ -103,7 +103,11 @@ mod tests {
         assert!(!printed.contains(KEY), "{printed}");
         assert!(printed.contains("nemotron"), "the rest must still print");
         assert_eq!(c.model, "nemotron");
-        assert_eq!(c.key.expose(), KEY, "the value is still reachable deliberately");
+        assert_eq!(
+            c.key.expose(),
+            KEY,
+            "the value is still reachable deliberately"
+        );
     }
 
     #[test]

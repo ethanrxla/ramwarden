@@ -23,11 +23,17 @@ pub enum Request {
     PurgeLowPriorityStandby,
     /// Trim a process the user's own token cannot open (an elevated app in
     /// their session). Refused for protected and session-0 processes.
-    Trim { pid: u32 },
+    Trim {
+        pid: u32,
+    },
     /// Apply one machine-wide tweak from a shipped profile, by id.
-    TweakApply { id: String },
+    TweakApply {
+        id: String,
+    },
     /// Revert one machine-wide tweak from its recorded snapshot.
-    TweakRevert { id: String },
+    TweakRevert {
+        id: String,
+    },
     /// State of every machine-wide tweak.
     TweakStatus,
 }
@@ -123,16 +129,25 @@ pub fn present() -> bool {
 fn open_with_retry() -> Result<std::fs::File> {
     const ERROR_PIPE_BUSY: i32 = 231;
     for _ in 0..20 {
-        match std::fs::OpenOptions::new().read(true).write(true).open(PIPE_NAME) {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(PIPE_NAME)
+        {
             Ok(f) => return Ok(f),
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::Unsupported("ramwarden-service (not installed or not running)"));
+                return Err(Error::Unsupported(
+                    "ramwarden-service (not installed or not running)",
+                ));
             }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                return Err(Error::denied(PIPE_NAME, "only the interactive user may use the service"));
+                return Err(Error::denied(
+                    PIPE_NAME,
+                    "only the interactive user may use the service",
+                ));
             }
             Err(e) => return Err(Error::os(format!("{PIPE_NAME}: {e}"))),
         }
@@ -148,13 +163,19 @@ mod tests {
     /// another version; pin it.
     #[test]
     fn the_wire_format_is_stable() {
-        assert_eq!(serde_json::to_string(&Request::Ping).unwrap(), r#"{"op":"ping"}"#);
+        assert_eq!(
+            serde_json::to_string(&Request::Ping).unwrap(),
+            r#"{"op":"ping"}"#
+        );
         assert_eq!(
             serde_json::to_string(&Request::Trim { pid: 42 }).unwrap(),
             r#"{"op":"trim","pid":42}"#
         );
         assert_eq!(
-            serde_json::to_string(&Request::TweakApply { id: "privacy.diagtrack".into() }).unwrap(),
+            serde_json::to_string(&Request::TweakApply {
+                id: "privacy.diagtrack".into()
+            })
+            .unwrap(),
             r#"{"op":"tweak_apply","id":"privacy.diagtrack"}"#
         );
         let r: Response = serde_json::from_str(r#"{"status":"ok","bytes":5}"#).unwrap();

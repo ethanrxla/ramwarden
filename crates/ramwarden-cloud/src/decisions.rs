@@ -172,7 +172,10 @@ impl Db {
     /// works, only `similar`, `why` and `recall` do not.
     pub async fn ensure_decision_indexes(&self, text_dims: i32) -> Result<()> {
         let index = |keys: Document, name: &str| {
-            IndexModel::builder().keys(keys).options(IndexOptions::builder().name(name.to_string()).build()).build()
+            IndexModel::builder()
+                .keys(keys)
+                .options(IndexOptions::builder().name(name.to_string()).build())
+                .build()
         };
         self.decisions()
             .create_indexes([
@@ -191,16 +194,27 @@ impl Db {
                 .filter_map(|d| d.get_str("name").ok().map(str::to_string))
                 .collect(),
             Err(e) => {
-                tracing::warn!("no Atlas Search on this deployment, vector search unavailable: {e}");
+                tracing::warn!(
+                    "no Atlas Search on this deployment, vector search unavailable: {e}"
+                );
                 return Ok(());
             }
         };
-        for (name, path, dims) in [(FEATURE_INDEX, "vector", FEATURE_DIMS), (TEXT_INDEX, "text_vector", text_dims)] {
+        for (name, path, dims) in [
+            (FEATURE_INDEX, "vector", FEATURE_DIMS),
+            (TEXT_INDEX, "text_vector", text_dims),
+        ] {
             if existing.iter().any(|n| n == name) {
                 continue;
             }
-            match self.decisions().create_search_index(vector_index(name, path, dims)).await {
-                Ok(_) => tracing::info!("created vector index {name} ({dims} dims); Atlas builds it in the background"),
+            match self
+                .decisions()
+                .create_search_index(vector_index(name, path, dims))
+                .await
+            {
+                Ok(_) => tracing::info!(
+                    "created vector index {name} ({dims} dims); Atlas builds it in the background"
+                ),
                 Err(e) => tracing::warn!("could not create vector index {name}: {e}"),
             }
         }
@@ -228,8 +242,18 @@ impl Db {
 
     /// The `k` nearest decisions to `vector` in `index`, restricted by `filter`
     /// (an Atlas Vector Search pre-filter on the indexed filter fields).
-    pub async fn similar_decisions(&self, index: &str, vector: &[f32], k: u32, filter: Document) -> Result<Vec<Neighbour>> {
-        let path = if index == TEXT_INDEX { "text_vector" } else { "vector" };
+    pub async fn similar_decisions(
+        &self,
+        index: &str,
+        vector: &[f32],
+        k: u32,
+        filter: Document,
+    ) -> Result<Vec<Neighbour>> {
+        let path = if index == TEXT_INDEX {
+            "text_vector"
+        } else {
+            "vector"
+        };
         let mut stage = doc! {
             "index": index,
             "path": path,
@@ -245,12 +269,24 @@ impl Db {
             doc! { "$set": { "score": { "$meta": "vectorSearchScore" } } },
             doc! { "$unset": ["text_vector"] },
         ];
-        let docs: Vec<Document> = self.decisions().aggregate(pipeline).await?.try_collect().await?;
-        Ok(docs.into_iter().filter_map(|d| bson::from_document(d).ok()).collect())
+        let docs: Vec<Document> = self
+            .decisions()
+            .aggregate(pipeline)
+            .await?
+            .try_collect()
+            .await?;
+        Ok(docs
+            .into_iter()
+            .filter_map(|d| bson::from_document(d).ok())
+            .collect())
     }
 
     /// Newest first, optionally only one subject (host or app).
-    pub async fn recent_decisions(&self, subject: Option<&str>, limit: i64) -> Result<Vec<DecisionDoc>> {
+    pub async fn recent_decisions(
+        &self,
+        subject: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<DecisionDoc>> {
         let filter = subject.map(|s| doc! { "subject": s }).unwrap_or_default();
         let found = self
             .decisions()
@@ -280,7 +316,11 @@ mod tests {
 
     #[test]
     fn the_embed_text_falls_back_to_the_host() {
-        let mut d = DecisionDoc { subject: "docs.google.com".into(), title: Some("  Q3 plan ".into()), ..Default::default() };
+        let mut d = DecisionDoc {
+            subject: "docs.google.com".into(),
+            title: Some("  Q3 plan ".into()),
+            ..Default::default()
+        };
         assert_eq!(d.embed_text(), "Q3 plan · docs.google.com");
         d.title = None;
         assert_eq!(d.embed_text(), "docs.google.com");
@@ -290,13 +330,19 @@ mod tests {
     fn a_vector_index_declares_every_filter_field_recall_uses() {
         let m = vector_index(TEXT_INDEX, "text_vector", 1024);
         let fields = m.definition.get_array("fields").unwrap();
-        let paths: Vec<&str> = fields.iter().filter_map(|f| f.as_document()?.get_str("path").ok()).collect();
+        let paths: Vec<&str> = fields
+            .iter()
+            .filter_map(|f| f.as_document()?.get_str("path").ok())
+            .collect();
         for needed in ["text_vector", "kind", "action", "result", "outcome", "at"] {
             assert!(paths.contains(&needed), "missing {needed}");
         }
         let filter = settled_closes(DateTime::from_millis(0));
         for key in filter.keys() {
-            assert!(key == "$or" || paths.contains(&key.as_str()), "{key} is not a filter field");
+            assert!(
+                key == "$or" || paths.contains(&key.as_str()),
+                "{key} is not a filter field"
+            );
         }
     }
 

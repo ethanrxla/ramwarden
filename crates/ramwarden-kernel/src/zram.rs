@@ -161,8 +161,7 @@ mod tests {
     use super::*;
 
     /// Verbatim from /sys/block/zram0 on the target machine.
-    const MM_STAT: &str =
-        "5206700032 1135610704 1166180352        0 1166180352     3858    17579    31616    32229\n";
+    const MM_STAT: &str = "5206700032 1135610704 1166180352        0 1166180352     3858    17579    31616    32229\n";
 
     fn fixture(mm_stat: &str) -> (tempfile::TempDir, Root) {
         let dir = tempfile::tempdir().unwrap();
@@ -227,7 +226,10 @@ mod tests {
     #[test]
     fn reads_the_bracketed_active_algorithm() {
         let (_d, root) = fixture(MM_STAT);
-        assert_eq!(Device::discover(&root).unwrap()[0].algorithm().unwrap(), "zstd");
+        assert_eq!(
+            Device::discover(&root).unwrap()[0].algorithm().unwrap(),
+            "zstd"
+        );
     }
 
     #[test]
@@ -250,6 +252,9 @@ mod tests {
     #[test]
     fn ratio_of_an_empty_device_does_not_divide_by_zero() {
         let (_d, root) = fixture("0 0 0 0 0 0 0 0 0\n");
-        assert_eq!(Device::discover(&root).unwrap()[0].stats().unwrap().ratio(), 1.0);
+        assert_eq!(
+            Device::discover(&root).unwrap()[0].stats().unwrap().ratio(),
+            1.0
+        );
     }
 }

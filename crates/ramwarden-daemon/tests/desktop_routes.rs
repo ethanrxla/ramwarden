@@ -10,12 +10,16 @@ use axum::{
     body::{Body, to_bytes},
     http::Request,
 };
-use ramwarden_core::{actuator::Actuator, config::Config, detector::Detector, history::History, ladder::Ladder};
+use ramwarden_core::{
+    actuator::Actuator, config::Config, detector::Detector, history::History, ladder::Ladder,
+};
 use ramwarden_daemon::{
     desktop::DesktopCtl,
     hub::{AppState, Hub},
 };
-use ramwarden_platform::{Result, WindowManager, WmCommand, WmKind, WmState, WmWindow, WmWorkspace, fake};
+use ramwarden_platform::{
+    Result, WindowManager, WmCommand, WmKind, WmState, WmWindow, WmWorkspace, fake,
+};
 use ramwarden_wm::ConfigBackups;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -55,10 +59,15 @@ fn state(desktop: DesktopCtl) -> AppState {
     AppState {
         cfg: Arc::new(cfg.clone()),
         det: Arc::new(RwLock::new(Detector::new(platform.processes()))),
-        ladder: Arc::new(Mutex::new(Ladder::new(cfg.ladder.clone(), Actuator::for_platform(&platform)))),
+        ladder: Arc::new(Mutex::new(Ladder::new(
+            cfg.ladder.clone(),
+            Actuator::for_platform(&platform),
+        ))),
         platform,
         hub: Arc::new(Mutex::new(Hub::new())),
-        history: Arc::new(Mutex::new(History::open(std::path::Path::new(":memory:")).unwrap())),
+        history: Arc::new(Mutex::new(
+            History::open(std::path::Path::new(":memory:")).unwrap(),
+        )),
         ai: Arc::new(ramwarden_daemon::ai::provider(&cfg)),
         models: Arc::new(Default::default()),
         predictor: Arc::new(ramwarden_daemon::predict::LivePredictor::new(
@@ -85,7 +94,10 @@ async fn call(st: AppState, method: &str, path: &str, body: Value) -> (u16, Valu
         .unwrap();
     let status = response.status().as_u16();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 fn desktop() -> (Arc<Mutex<WmState>>, DesktopCtl, tempfile::TempDir) {
@@ -99,7 +111,11 @@ fn desktop() -> (Arc<Mutex<WmState>>, DesktopCtl, tempfile::TempDir) {
             pid: Some(1),
             focused: true,
         }],
-        workspaces: vec![WmWorkspace { name: "1".into(), monitor: None, focused: true }],
+        workspaces: vec![WmWorkspace {
+            name: "1".into(),
+            monitor: None,
+            focused: true,
+        }],
         monitors: vec![],
     }));
     let tmp = tempfile::tempdir().unwrap();
@@ -124,14 +140,27 @@ async fn a_plan_moves_nothing_until_it_is_applied_and_applies_once() {
     )
     .await;
     assert_eq!(code, 200);
-    assert_eq!(wm.lock().unwrap().windows[0].workspace, "1", "planning must not move anything");
+    assert_eq!(
+        wm.lock().unwrap().windows[0].workspace,
+        "1",
+        "planning must not move anything"
+    );
     let id = body["plan"]["id"].as_str().unwrap().to_string();
-    assert_eq!(body["plan"]["steps"][0]["describe"], "Move Slack \u{2014} general to workspace 3");
+    assert_eq!(
+        body["plan"]["steps"][0]["describe"],
+        "Move Slack \u{2014} general to workspace 3"
+    );
 
     let (_, status) = call(st.clone(), "GET", "/desktop", json!(null)).await;
     assert_eq!(status["pending"].as_array().unwrap().len(), 1);
 
-    let (code, applied) = call(st.clone(), "POST", &format!("/desktop/apply/{id}"), json!(null)).await;
+    let (code, applied) = call(
+        st.clone(),
+        "POST",
+        &format!("/desktop/apply/{id}"),
+        json!(null),
+    )
+    .await;
     assert_eq!(code, 200);
     assert_eq!(applied["applied"]["steps"][0]["status"], "done");
     assert_eq!(applied["applied"]["changed"], true);
@@ -175,7 +204,13 @@ async fn asking_without_any_model_returns_notes_and_no_plan() {
     let mut provider = ramwarden_daemon::ai::provider(&Config::default());
     provider.ollama = None;
     st.ai = Arc::new(provider);
-    let (code, body) = call(st, "POST", "/desktop/ask", json!({"request": "put slack on 3"})).await;
+    let (code, body) = call(
+        st,
+        "POST",
+        "/desktop/ask",
+        json!({"request": "put slack on 3"}),
+    )
+    .await;
     assert_eq!(code, 200);
     assert!(body["plan"].is_null());
     assert!(!body["notes"].as_array().unwrap().is_empty());

@@ -6,7 +6,10 @@ use ramwarden_ui::model::{self, Direction, SortKey};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port: u16 = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(7824);
+    let port: u16 = std::env::args()
+        .nth(1)
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(7824);
     let c = Client::new("127.0.0.1", port)?;
 
     match c.verify().await {
@@ -55,10 +58,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The table, rendered the way the window will.
     model::sort(&mut st.processes, SortKey::Memory, Direction::Descending);
     let widths: Vec<i32> = model::COLUMNS.iter().map(|c| c.min_width).collect();
-    println!("\ncolumn min-widths: {widths:?}  (all resizable: {})",
-        model::COLUMNS.iter().filter(|c| !c.title.is_empty()).all(|c| c.resizable));
+    println!(
+        "\ncolumn min-widths: {widths:?}  (all resizable: {})",
+        model::COLUMNS
+            .iter()
+            .filter(|c| !c.title.is_empty())
+            .all(|c| c.resizable)
+    );
 
-    println!("\n{:<26} {:>8} {:>10} {:<10} {:<24} WHY", "PROCESS", "PID", "RAM", "STATUS", "SCOPE");
+    println!(
+        "\n{:<26} {:>8} {:>10} {:<10} {:<24} WHY",
+        "PROCESS", "PID", "RAM", "STATUS", "SCOPE"
+    );
     println!("{}", "-".repeat(120));
     for r in st.processes.iter().take(12) {
         println!(
@@ -90,17 +101,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Filtering, which is how a user finds anything in 40 rows.
     for f in ["brave", "idle", "4886"] {
-        println!("filter {f:?} -> {} row(s)", model::filter(&st.processes, f).len());
+        println!(
+            "filter {f:?} -> {} row(s)",
+            model::filter(&st.processes, f).len()
+        );
     }
 
     let plan = c.plan().await?;
-    println!("\nladder rung: {:?}  blocked: {:?}", plan.rung, plan.blocked);
+    println!(
+        "\nladder rung: {:?}  blocked: {:?}",
+        plan.rung, plan.blocked
+    );
     if let Some(p) = plan.kill_pending {
-        println!("  KILL ARMED on {:?} in {}s", p.targets, p.seconds_remaining);
+        println!(
+            "  KILL ARMED on {:?} in {}s",
+            p.targets, p.seconds_remaining
+        );
     }
 
     let log = c.actions().await?;
-    println!("action log: {} row(s), {} reclaimed in total",
-        log.actions.len(), model::fmt_mb(log.total_reclaimed_mb));
+    println!(
+        "action log: {} row(s), {} reclaimed in total",
+        log.actions.len(),
+        model::fmt_mb(log.total_reclaimed_mb)
+    );
     Ok(())
 }

@@ -28,8 +28,8 @@ use ramwarden_core::decisions::Decision;
 use ramwarden_core::history::{Action, History};
 use serde::{Deserialize, Serialize};
 
-use crate::mongo::MongoStore as Db;
 use crate::decisions::{DecisionDoc, Neighbour, TEXT_INDEX, settled_closes, to_document};
+use crate::mongo::MongoStore as Db;
 
 /// Decision rows per round trip; each batch is also one Ollama request.
 const BATCH: u32 = 200;
@@ -56,10 +56,16 @@ impl Cursor {
         history.with_file_name("decisions-sync.json")
     }
     pub fn load(history: &Path) -> Cursor {
-        std::fs::read_to_string(Self::path(history)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        std::fs::read_to_string(Self::path(history))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
     }
     pub fn save(&self, history: &Path) -> std::io::Result<()> {
-        write_atomic(&Self::path(history), &serde_json::to_vec_pretty(self).unwrap_or_default())
+        write_atomic(
+            &Self::path(history),
+            &serde_json::to_vec_pretty(self).unwrap_or_default(),
+        )
     }
 }
 
@@ -127,7 +133,11 @@ pub fn action_doc(device: &str, a: &Action) -> DecisionDoc {
         at,
         kind: "ladder".into(),
         action: a.action.clone(),
-        result: if a.succeeded { "confirmed".into() } else { "refused".into() },
+        result: if a.succeeded {
+            "confirmed".into()
+        } else {
+            "refused".into()
+        },
         subject: a.target.clone(),
         trigger: a.trigger.clone(),
         reason: a.notes.clone(),
@@ -156,7 +166,10 @@ pub struct Embedder {
 impl Embedder {
     pub fn new(host: &str, model: &str) -> Self {
         Embedder {
-            http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build().unwrap_or_default(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default(),
             url: format!("{}/api/embed", host.trim_end_matches('/')),
             model: model.into(),
         }
@@ -177,7 +190,12 @@ impl Embedder {
             .json()
             .await?;
         if reply.embeddings.len() != texts.len() {
-            return Err(format!("asked for {} embeddings, got {}", texts.len(), reply.embeddings.len()).into());
+            return Err(format!(
+                "asked for {} embeddings, got {}",
+                texts.len(),
+                reply.embeddings.len()
+            )
+            .into());
         }
         Ok(reply.embeddings)
     }
@@ -185,7 +203,9 @@ impl Embedder {
     /// Fill `text_vector` on tab and app documents. On failure the documents
     /// are left without one and the error is returned for the caller to report.
     pub async fn attach(&self, docs: &mut [DecisionDoc]) -> Result<usize, BoxError> {
-        let idx: Vec<usize> = (0..docs.len()).filter(|&i| docs[i].kind != "ladder").collect();
+        let idx: Vec<usize> = (0..docs.len())
+            .filter(|&i| docs[i].kind != "ladder")
+            .collect();
         if idx.is_empty() {
             return Ok(0);
         }
@@ -225,8 +245,13 @@ impl Syncer<'_> {
         let mut report = SyncReport::default();
         loop {
             let rows = history.decisions_since(cursor.decision_rev, BATCH)?;
-            let Some(last) = rows.last().map(|d| d.rev) else { break };
-            let mut docs: Vec<DecisionDoc> = rows.iter().map(|d| decision_doc(&self.device, d, self.titles)).collect();
+            let Some(last) = rows.last().map(|d| d.rev) else {
+                break;
+            };
+            let mut docs: Vec<DecisionDoc> = rows
+                .iter()
+                .map(|d| decision_doc(&self.device, d, self.titles))
+                .collect();
             if let Some(e) = &self.embedder {
                 match e.attach(&mut docs).await {
                     Ok(n) => report.embedded += n,
@@ -239,7 +264,9 @@ impl Syncer<'_> {
         }
         loop {
             let rows = history.actions_after(cursor.action_id, ACTION_BATCH)?;
-            let Some(last) = rows.last().map(|a| a.id) else { break };
+            let Some(last) = rows.last().map(|a| a.id) else {
+                break;
+            };
             let docs: Vec<DecisionDoc> = rows.iter().map(|a| action_doc(&self.device, a)).collect();
             report.actions += self.db.upsert_decisions(&docs).await?;
             cursor.action_id = last;
@@ -294,41 +321,81 @@ pub struct OpenTab {
 
 impl OpenTab {
     fn host(&self) -> String {
-        let rest = self.url.split_once("://").map(|(_, r)| r).unwrap_or(&self.url);
-        let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
-        let host = host.rsplit_once('@').map(|(_, h)| h.to_string()).unwrap_or(host);
+        let rest = self
+            .url
+            .split_once("://")
+            .map(|(_, r)| r)
+            .unwrap_or(&self.url);
+        let host = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let host = host
+            .rsplit_once('@')
+            .map(|(_, h)| h.to_string())
+            .unwrap_or(host);
         let host = host.split(':').next().unwrap_or("").to_string();
-        host.strip_prefix("www.").map(str::to_string).unwrap_or(host)
+        host.strip_prefix("www.")
+            .map(str::to_string)
+            .unwrap_or(host)
     }
 
     /// Only tabs the sweep could close are worth a query.
     fn closeable_now(&self) -> bool {
-        self.auto_closeable.unwrap_or(self.closeable) && matches!(self.status.as_str(), "candidate" | "unloaded")
+        self.auto_closeable.unwrap_or(self.closeable)
+            && matches!(self.status.as_str(), "candidate" | "unloaded")
     }
 }
 
 /// Query Atlas for every closeable open tab and write `recall.json`.
-pub async fn write_recall(db: &Db, embedder: &Embedder, daemon: &str, history_path: &Path) -> Result<usize, BoxError> {
+pub async fn write_recall(
+    db: &Db,
+    embedder: &Embedder,
+    daemon: &str,
+    history_path: &Path,
+) -> Result<usize, BoxError> {
     #[derive(Deserialize)]
     struct Snapshot {
         #[serde(default)]
         tabs: Vec<OpenTab>,
     }
-    let snap: Snapshot = reqwest::get(format!("{}/browser/tabs", daemon.trim_end_matches('/'))).await?.error_for_status()?.json().await?;
+    let snap: Snapshot = reqwest::get(format!("{}/browser/tabs", daemon.trim_end_matches('/')))
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     let tabs: Vec<&OpenTab> = snap.tabs.iter().filter(|t| t.closeable_now()).collect();
     let mut hints = Vec::new();
     if !tabs.is_empty() {
         let texts: Vec<String> = tabs
             .iter()
-            .map(|t| DecisionDoc { subject: t.host(), title: Some(t.title.clone()), ..Default::default() }.embed_text())
+            .map(|t| {
+                DecisionDoc {
+                    subject: t.host(),
+                    title: Some(t.title.clone()),
+                    ..Default::default()
+                }
+                .embed_text()
+            })
             .collect();
         let vectors = embedder.embed(&texts).await?;
-        let settled = DateTime::from_millis(DateTime::now().timestamp_millis() - SETTLE_SECS * 1000);
+        let settled =
+            DateTime::from_millis(DateTime::now().timestamp_millis() - SETTLE_SECS * 1000);
         for (t, v) in tabs.iter().zip(vectors) {
-            let near = db.similar_decisions(TEXT_INDEX, &v, NEIGHBOURS, settled_closes(settled)).await?;
+            let near = db
+                .similar_decisions(TEXT_INDEX, &v, NEIGHBOURS, settled_closes(settled))
+                .await?;
             let (similar, reopened, examples) = summarise(&near);
             if similar > 0 {
-                hints.push(Hint { browser: t.browser.clone(), tab_id: t.id, url: t.url.clone(), similar, reopened, examples });
+                hints.push(Hint {
+                    browser: t.browser.clone(),
+                    tab_id: t.id,
+                    url: t.url.clone(),
+                    similar,
+                    reopened,
+                    examples,
+                });
             }
         }
     }
@@ -337,7 +404,10 @@ pub async fn write_recall(db: &Db, embedder: &Embedder, daemon: &str, history_pa
         "model": embedder.model,
         "tabs": hints,
     });
-    write_atomic(&history_path.with_file_name("recall.json"), &serde_json::to_vec_pretty(&body)?)?;
+    write_atomic(
+        &history_path.with_file_name("recall.json"),
+        &serde_json::to_vec_pretty(&body)?,
+    )?;
     Ok(hints.len())
 }
 
@@ -395,33 +465,57 @@ mod tests {
         let d = action_doc("mac", &a);
         assert_eq!(d.id, "mac:a3");
         assert_eq!(d.kind, "ladder");
-        assert_eq!(d.at.try_to_rfc3339_string().unwrap(), "2026-10-01T12:34:56.123Z");
+        assert_eq!(
+            d.at.try_to_rfc3339_string().unwrap(),
+            "2026-10-01T12:34:56.123Z"
+        );
     }
 
     #[test]
     fn only_close_enough_neighbours_count_and_reopens_are_listed() {
         let n = |id: &str, score: f64, outcome: Option<&str>| Neighbour {
-            doc: DecisionDoc { id: id.into(), outcome: outcome.map(str::to_string), ..Default::default() },
+            doc: DecisionDoc {
+                id: id.into(),
+                outcome: outcome.map(str::to_string),
+                ..Default::default()
+            },
             score,
         };
-        let (similar, reopened, examples) =
-            summarise(&[n("a", 0.95, Some("reopened")), n("b", 0.9, None), n("c", 0.5, Some("reopened"))]);
+        let (similar, reopened, examples) = summarise(&[
+            n("a", 0.95, Some("reopened")),
+            n("b", 0.9, None),
+            n("c", 0.5, Some("reopened")),
+        ]);
         assert_eq!((similar, reopened), (2, 1));
         assert_eq!(examples, vec!["a".to_string()]);
     }
 
     #[test]
     fn hosts_are_read_without_credentials_ports_or_www() {
-        let t = |url: &str| OpenTab { browser: "b".into(), id: 1, url: url.into(), title: String::new(), status: String::new(), closeable: true, auto_closeable: None };
+        let t = |url: &str| OpenTab {
+            browser: "b".into(),
+            id: 1,
+            url: url.into(),
+            title: String::new(),
+            status: String::new(),
+            closeable: true,
+            auto_closeable: None,
+        };
         assert_eq!(t("https://www.Example.com/a?b").host(), "example.com");
-        assert_eq!(t("https://user:pw@docs.example.com:8443/x").host(), "docs.example.com");
+        assert_eq!(
+            t("https://user:pw@docs.example.com:8443/x").host(),
+            "docs.example.com"
+        );
     }
 
     #[test]
     fn recall_asks_only_about_tabs_the_sweep_could_close_unattended() {
         let tab = |v: serde_json::Value| serde_json::from_value::<OpenTab>(v).unwrap();
         let base = serde_json::json!({"browser":"b","id":1,"url":"https://x.test/","status":"candidate","closeable":true});
-        assert!(tab(base.clone()).closeable_now(), "an older daemon reports only closeable");
+        assert!(
+            tab(base.clone()).closeable_now(),
+            "an older daemon reports only closeable"
+        );
         let mut manual_only = base.clone();
         manual_only["auto_closeable"] = false.into();
         assert!(!tab(manual_only).closeable_now());
@@ -435,7 +529,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("history.db");
         assert_eq!(Cursor::load(&db), Cursor::default());
-        Cursor { decision_rev: 9, action_id: 4 }.save(&db).unwrap();
-        assert_eq!(Cursor::load(&db), Cursor { decision_rev: 9, action_id: 4 });
+        Cursor {
+            decision_rev: 9,
+            action_id: 4,
+        }
+        .save(&db)
+        .unwrap();
+        assert_eq!(
+            Cursor::load(&db),
+            Cursor {
+                decision_rev: 9,
+                action_id: 4
+            }
+        );
     }
 }

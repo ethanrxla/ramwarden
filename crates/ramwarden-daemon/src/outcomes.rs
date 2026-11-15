@@ -43,15 +43,21 @@ pub fn record(h: &History, rows: &[&Row], now: i64) -> usize {
 ///
 /// Cost: one query for the pending set, then a hash lookup per reported tab.
 pub fn reconcile(h: &History, browser: &str, tabs: &[Tab], now: i64) -> usize {
-    let Ok(pending) = h.pending_unloads(browser) else { return 0 };
+    let Ok(pending) = h.pending_unloads(browser) else {
+        return 0;
+    };
     if pending.is_empty() {
         return 0;
     }
-    let by_id: std::collections::HashMap<i64, (&str, i64)> =
-        pending.iter().map(|(id, host, at)| (*id, (host.as_str(), *at))).collect();
+    let by_id: std::collections::HashMap<i64, (&str, i64)> = pending
+        .iter()
+        .map(|(id, host, at)| (*id, (host.as_str(), *at)))
+        .collect();
     let mut returned = 0;
     for t in tabs {
-        let Some(&(host, unloaded_at)) = by_id.get(&t.id) else { continue };
+        let Some(&(host, unloaded_at)) = by_id.get(&t.id) else {
+            continue;
+        };
         let loaded_again = t.discarded == Some(false);
         let used_since = t.inactive_minutes <= RECENT_MINUTES;
         // Tab ids restart with the browser; the host guards against a new tab
@@ -72,7 +78,11 @@ mod tests {
 
     fn row(id: i64, url: &str) -> Row {
         Row {
-            target: Target { browser: "b".into(), id, url: url.into() },
+            target: Target {
+                browser: "b".into(),
+                id,
+                url: url.into(),
+            },
             title: "t".into(),
             inactive_minutes: 300,
             eligible: true,
@@ -95,21 +105,33 @@ mod tests {
     }
 
     fn tab(id: i64, url: &str, discarded: bool, idle: i64) -> Tab {
-        serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":idle,"discarded":discarded})).unwrap()
+        serde_json::from_value(
+            serde_json::json!({"id":id,"url":url,"inactiveMinutes":idle,"discarded":discarded}),
+        )
+        .unwrap()
     }
 
     #[test]
     fn a_returned_tab_is_marked_and_a_still_unloaded_one_is_not() {
         let h = History::in_memory().unwrap();
-        let (a, b) = (row(1, "https://news.example.com/a"), row(2, "https://shop.example.org/b"));
+        let (a, b) = (
+            row(1, "https://news.example.com/a"),
+            row(2, "https://shop.example.org/b"),
+        );
         assert_eq!(record(&h, &[&a, &b], 1_000), 2);
 
         // Both still discarded: nothing changes.
-        let still = [tab(1, a.target.url.as_str(), true, 400), tab(2, b.target.url.as_str(), true, 400)];
+        let still = [
+            tab(1, a.target.url.as_str(), true, 400),
+            tab(2, b.target.url.as_str(), true, 400),
+        ];
         assert_eq!(reconcile(&h, "b", &still, 2_000), 0);
 
         // Tab 1 is loaded again and in use; tab 2 stays unloaded.
-        let back = [tab(1, a.target.url.as_str(), false, 0), tab(2, b.target.url.as_str(), true, 400)];
+        let back = [
+            tab(1, a.target.url.as_str(), false, 0),
+            tab(2, b.target.url.as_str(), true, 400),
+        ];
         assert_eq!(reconcile(&h, "b", &back, 2_000), 1);
         assert_eq!(h.pending_unloads("b").unwrap().len(), 1);
     }
@@ -119,7 +141,11 @@ mod tests {
         let h = History::in_memory().unwrap();
         record(&h, &[&row(1, "https://news.example.com/a")], 1_000);
         let loaded = [tab(1, "https://news.example.com/a", false, 0)];
-        assert_eq!(reconcile(&h, "b", &loaded, 1_005), 0, "within the settle window");
+        assert_eq!(
+            reconcile(&h, "b", &loaded, 1_005),
+            0,
+            "within the settle window"
+        );
         // Same id, different site: a new tab that took the number.
         let impostor = [tab(1, "https://elsewhere.net/", false, 0)];
         assert_eq!(reconcile(&h, "b", &impostor, 5_000), 0);

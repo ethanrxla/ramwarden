@@ -190,7 +190,10 @@ pub fn close_idle(terminals: &[Terminal]) -> Vec<i32> {
         } else {
             // Unkillable means stuck in uninterruptible sleep. Reporting it
             // closed is the exact lie v1 used to tell.
-            tracing::warn!("PID {} survived SIGKILL — not reporting it closed", fd.pid());
+            tracing::warn!(
+                "PID {} survived SIGKILL — not reporting it closed",
+                fd.pid()
+            );
         }
     }
 
@@ -391,8 +394,14 @@ mod tests {
     /// the busy shell must not even be signalled.
     #[test]
     fn closing_skips_busy_shells_entirely() {
-        let mut idle = std::process::Command::new("sleep").arg("60").spawn().unwrap();
-        let mut busy = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let mut idle = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let mut busy = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let (idle_pid, busy_pid) = (idle.id() as i32, busy.id() as i32);
 
         let terms = vec![
@@ -487,7 +496,10 @@ mod tests {
 
     #[test]
     fn a_shell_that_exited_before_being_closed_is_not_reported() {
-        let mut child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
         let pid = child.id() as i32;
         child.kill().unwrap();
         child.wait().unwrap();

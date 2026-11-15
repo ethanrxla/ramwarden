@@ -20,10 +20,10 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
+use candle_core::Device;
 use ramwarden_core::history::{History, SignalSample};
 use ramwarden_core::rank::ReuseRanker;
 use ramwarden_ml::features::{FEATURES, WINDOW, encode, examples};
-use candle_core::Device;
 use ramwarden_ml::jepa::{self, Jepa, Metrics};
 
 /// Training passes. Early stopping picks the best checkpoint within these.
@@ -54,7 +54,11 @@ impl LivePredictor {
                         "reuse predictor loaded (AUC {:?} vs LRU {:?}, {})",
                         m.metrics.auc,
                         m.metrics.lru_auc,
-                        if m.metrics.enabled { "enabled" } else { "gated off" }
+                        if m.metrics.enabled {
+                            "enabled"
+                        } else {
+                            "gated off"
+                        }
                     );
                     inner.metrics = Some(m.metrics.clone());
                     inner.model = Some(m);
@@ -103,7 +107,11 @@ impl LivePredictor {
         let rows: Vec<&[f32]> = full.iter().map(|(_, v)| v.as_slice()).collect();
         match model.score(&rows) {
             Ok(p) => {
-                inner.scores = full.iter().map(|(pid, _)| *pid).zip(p.into_iter().map(f64::from)).collect();
+                inner.scores = full
+                    .iter()
+                    .map(|(pid, _)| *pid)
+                    .zip(p.into_iter().map(f64::from))
+                    .collect();
             }
             Err(e) => tracing::warn!("reuse scoring failed: {e}"),
         }
@@ -120,7 +128,12 @@ impl LivePredictor {
     }
 
     /// Train on the GPU in the worker process, then load the result here.
-    pub fn train_on_gpu(&self, worker: &Path, db: &Path, horizon_secs: i64) -> Result<Metrics, String> {
+    pub fn train_on_gpu(
+        &self,
+        worker: &Path,
+        db: &Path,
+        horizon_secs: i64,
+    ) -> Result<Metrics, String> {
         let mut cmd = std::process::Command::new(worker);
         cmd.arg("train")
             .arg("--db")
@@ -134,7 +147,9 @@ impl LivePredictor {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        let out = cmd.output().map_err(|e| format!("start {}: {e}", worker.display()))?;
+        let out = cmd
+            .output()
+            .map_err(|e| format!("start {}: {e}", worker.display()))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
@@ -143,7 +158,11 @@ impl LivePredictor {
             "reuse predictor trained on the GPU: AUC {:?} vs LRU {:?} — {}",
             metrics.auc,
             metrics.lru_auc,
-            if metrics.enabled { "enabled" } else { "not better than LRU; gated off" }
+            if metrics.enabled {
+                "enabled"
+            } else {
+                "not better than LRU; gated off"
+            }
         );
         Ok(metrics)
     }
@@ -174,7 +193,11 @@ impl LivePredictor {
             device,
             metrics.auc,
             metrics.lru_auc,
-            if metrics.enabled { "enabled" } else { "not better than LRU; gated off" }
+            if metrics.enabled {
+                "enabled"
+            } else {
+                "not better than LRU; gated off"
+            }
         );
         let mut inner = self.inner.write().unwrap();
         inner.metrics = Some(metrics.clone());

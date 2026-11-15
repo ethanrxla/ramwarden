@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    Background, DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl, ProcessSource,
+    Background, DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl,
+    ProcessSource,
 };
 
 type Factory<T> = Box<dyn Fn() -> Box<T> + Send + Sync>;

@@ -11,7 +11,8 @@ impl MemorySource for MacMemory {
         let ps = page_size();
         // Free, inactive and speculative pages can be handed out without
         // swapping; active, wired and compressed pages cannot.
-        let available = (vm.free_count as u64 + vm.inactive_count as u64 + vm.speculative_count as u64) * ps;
+        let available =
+            (vm.free_count as u64 + vm.inactive_count as u64 + vm.speculative_count as u64) * ps;
         let swap = sysctl_struct::<libc::xsw_usage>("vm.swapusage");
         Ok(MemoryStatus {
             total,

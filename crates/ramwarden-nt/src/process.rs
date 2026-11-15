@@ -12,13 +12,12 @@ use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_SYNCHRONIZE,
-    PROCESS_TERMINATE,
+    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     TerminateProcess, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindow, GetWindowThreadProcessId, GW_OWNER, IsWindowVisible, PostMessageW,
+    EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
     WM_CLOSE,
 };
 use windows::core::BOOL;
@@ -51,7 +50,10 @@ pub const PRIORITY_ACCESS: PROCESS_ACCESS_RIGHTS =
 /// Open `pid` with `access`, mapping the failure modes the ladder distinguishes.
 pub fn open(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<Handle> {
     if pid <= 4 {
-        return Err(Error::denied(format!("pid {pid}"), "the kernel's own pseudo-processes"));
+        return Err(Error::denied(
+            format!("pid {pid}"),
+            "the kernel's own pseudo-processes",
+        ));
     }
     // SAFETY: plain FFI; the returned handle is owned immediately.
     match unsafe { OpenProcess(access, false, pid) } {
@@ -83,7 +85,11 @@ impl NtProcessHandle {
         })
     }
 
-    fn nt(&self, what: &str, f: unsafe extern "system" fn(*mut std::ffi::c_void) -> i32) -> Result<()> {
+    fn nt(
+        &self,
+        what: &str,
+        f: unsafe extern "system" fn(*mut std::ffi::c_void) -> i32,
+    ) -> Result<()> {
         // SAFETY: the handle is open with PROCESS_SUSPEND_RESUME.
         let status = unsafe { f(self.handle.raw().0) };
         if ntdll::success(status) {
@@ -91,7 +97,9 @@ impl NtProcessHandle {
         }
         Err(match status {
             ntdll::STATUS_PROCESS_IS_TERMINATING => Error::missing(format!("pid {}", self.pid)),
-            ntdll::STATUS_ACCESS_DENIED => Error::denied(format!("pid {}", self.pid), "access denied"),
+            ntdll::STATUS_ACCESS_DENIED => {
+                Error::denied(format!("pid {}", self.pid), "access denied")
+            }
             s => Error::os(format!("{what}(pid {}): {s:#x}", self.pid)),
         })
     }
@@ -109,7 +117,9 @@ impl NtProcessHandle {
             // SAFETY: plain FFI on a window handle the system gave us.
             unsafe {
                 GetWindowThreadProcessId(hwnd, Some(&mut owner));
-                let unowned = GetWindow(hwnd, GW_OWNER).map(|h| h.0.is_null()).unwrap_or(true);
+                let unowned = GetWindow(hwnd, GW_OWNER)
+                    .map(|h| h.0.is_null())
+                    .unwrap_or(true);
                 if owner == s.pid && IsWindowVisible(hwnd).as_bool() && unowned {
                     s.found.push(hwnd);
                 }

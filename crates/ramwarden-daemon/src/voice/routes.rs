@@ -18,7 +18,7 @@ pub fn routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/warden/bubble", get(bubble))
-        .route("/warden/facts",get(facts).post(refresh_facts))
+        .route("/warden/facts", get(facts).post(refresh_facts))
         .route("/warden/answer", post(answer))
         .route("/warden/mute", post(mute))
         .route("/warden/focus", get(focus).post(super::focus_chat::suggest))
@@ -33,7 +33,10 @@ async fn focus(State(st): State<AppState>) -> Json<Value> {
 pub async fn bubble(State(st): State<AppState>) -> Json<Value> {
     let unix = unix_now();
     // Pets come with Plus and Pro, not Lite (see `Entitlement::has_pet`).
-    if !crate::wardens::Wardens::global(&st.cfg).entitlement().has_pet(unix) {
+    if !crate::wardens::Wardens::global(&st.cfg)
+        .entitlement()
+        .has_pet(unix)
+    {
         return Json(json!({ "bubble": null, "pet": false, "muted": false, "muted_until": null }));
     }
     let threshold = st.cfg.thresholds.inactivity_minutes as i64;
@@ -45,15 +48,27 @@ pub async fn bubble(State(st): State<AppState>) -> Json<Value> {
         (rows, closing)
     };
     let percent = st.memory().percent();
-    let scene = Scene { rows: &rows, closing: &closing, percent, now: Instant::now(), unix };
+    let scene = Scene {
+        rows: &rows,
+        closing: &closing,
+        percent,
+        now: Instant::now(),
+        unix,
+    };
     let bubble = st.voice.speak(&st.cfg.voice, &scene);
-    if bubble.as_ref().is_some_and(|b|b.kind==super::Kind::Quip){super::facts::warm(&st);}
+    if bubble.as_ref().is_some_and(|b| b.kind == super::Kind::Quip) {
+        super::facts::warm(&st);
+    }
     let (muted, until) = st.voice.mute_state(unix);
     Json(json!({ "bubble": bubble, "pet": true, "muted": muted, "muted_until": until }))
 }
 
-async fn facts(State(st):State<AppState>)->Json<Value>{Json(st.voice.facts.view())}
-async fn refresh_facts(State(st):State<AppState>)->Json<Value>{Json(json!({"queued":super::facts::warm(&st)}))}
+async fn facts(State(st): State<AppState>) -> Json<Value> {
+    Json(st.voice.facts.view())
+}
+async fn refresh_facts(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({"queued":super::facts::warm(&st)}))
+}
 
 #[derive(Deserialize)]
 pub struct AnswerRequest {
@@ -61,11 +76,21 @@ pub struct AnswerRequest {
     choice: Pick,
 }
 
-pub async fn answer(State(st): State<AppState>, Json(r): Json<AnswerRequest>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+pub async fn answer(
+    State(st): State<AppState>,
+    Json(r): Json<AnswerRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let now = Instant::now();
     match st.voice.answer(&r.id, r.choice, now) {
-        Err(_) => Err((StatusCode::CONFLICT, Json(json!({"ok": false, "reply": "That question has already gone. I'll ask again if it matters."})))),
-        Ok(Answered::Said(reply)) => Ok(Json(json!({ "ok": true, "reply": reply, "closed": false }))),
+        Err(_) => Err((
+            StatusCode::CONFLICT,
+            Json(
+                json!({"ok": false, "reply": "That question has already gone. I'll ask again if it matters."}),
+            ),
+        )),
+        Ok(Answered::Said(reply)) => {
+            Ok(Json(json!({ "ok": true, "reply": reply, "closed": false })))
+        }
         Ok(Answered::Close(tab)) => {
             // The same checked path as a manual close: a fresh report, the right
             // owner, the same URL, and `can_close` all re-checked now.
@@ -80,14 +105,22 @@ pub async fn answer(State(st): State<AppState>, Json(r): Json<AnswerRequest>) ->
             if outcome != CloseResult::Refused
                 && let Ok(h) = st.history.lock()
             {
-                let _ = h.save_tabs(&[(tab.target.url.clone(), tab.title.clone())], 0.0, "warden", "check-in");
+                let _ = h.save_tabs(
+                    &[(tab.target.url.clone(), tab.title.clone())],
+                    0.0,
+                    "warden",
+                    "check-in",
+                );
             }
             let reply = if !result.extension_update_required.is_empty() {
                 "Your browser is still running my old extension. Reload RamWarden at chrome://extensions, then try again. I haven’t closed that tab.".to_string()
             } else {
                 st.voice.after_close(&tab.target, outcome, now)
             };
-            tracing::info!("voice: user asked to close {} ({outcome:?})", tab.target.url);
+            tracing::info!(
+                "voice: user asked to close {} ({outcome:?})",
+                tab.target.url
+            );
             Ok(Json(json!({
                 "ok": outcome != CloseResult::Refused,
                 "reply": reply,

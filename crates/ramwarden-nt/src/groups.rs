@@ -31,7 +31,8 @@ use crate::workingset::{self, Limits};
 /// Takes owned processes or references, so the sampler can pass the user's
 /// processes without cloning each one every tick.
 pub fn roots<P: std::borrow::Borrow<NtProcess>>(procs: &[P]) -> HashMap<u32, u32> {
-    let by_pid: HashMap<u32, &NtProcess> = procs.iter().map(|p| (p.borrow().pid, p.borrow())).collect();
+    let by_pid: HashMap<u32, &NtProcess> =
+        procs.iter().map(|p| (p.borrow().pid, p.borrow())).collect();
     let mut out = HashMap::with_capacity(procs.len());
     for p in procs {
         let p: &NtProcess = p.borrow();
@@ -142,7 +143,11 @@ impl NtGroup {
     fn sizes(&self) -> Vec<(u32, u64)> {
         self.pids
             .iter()
-            .filter_map(|pid| workingset::private_working_set_of(*pid).ok().map(|ws| (*pid, ws)))
+            .filter_map(|pid| {
+                workingset::private_working_set_of(*pid)
+                    .ok()
+                    .map(|ws| (*pid, ws))
+            })
             .collect()
     }
 }
@@ -201,8 +206,16 @@ impl AppGroup for NtGroup {
 
     fn soft_cap(&self) -> Result<Option<u64>> {
         let caps = self.caps.lock().unwrap();
-        let mine: Vec<u64> = caps.values().filter(|c| c.group == self.name).map(|c| c.cap).collect();
-        Ok(if mine.is_empty() { None } else { Some(mine.iter().sum()) })
+        let mine: Vec<u64> = caps
+            .values()
+            .filter(|c| c.group == self.name)
+            .map(|c| c.cap)
+            .collect();
+        Ok(if mine.is_empty() {
+            None
+        } else {
+            Some(mine.iter().sum())
+        })
     }
 
     /// Divide `bytes` among members by their share of the group's private
@@ -317,7 +330,11 @@ mod tests {
             .collect();
         for g in groups.groups().unwrap() {
             for pid in g.pids().unwrap() {
-                assert!(!services.contains(&pid), "{} reached session 0 pid {pid}", g.name());
+                assert!(
+                    !services.contains(&pid),
+                    "{} reached session 0 pid {pid}",
+                    g.name()
+                );
             }
         }
     }
