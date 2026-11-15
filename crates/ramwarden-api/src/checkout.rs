@@ -406,7 +406,11 @@ pub struct BaseChain {
 }
 
 /// Most blocks asked for in one `eth_getLogs`; public RPCs cap the range.
-const MAX_RANGE: u64 = 2_000;
+/// Base's public endpoints (sepolia.base.org, mainnet.base.org) refuse more
+/// than 200 ("eth_getLogs is limited to a 200 range", seen on staging
+/// 2026-11-15), and at 2,000 every poll failed so no payment was ever seen.
+/// Polling every 4 s, 200 blocks (~400 s of chain) still keeps far ahead.
+const MAX_RANGE: u64 = 200;
 
 impl BaseChain {
     pub fn new(cfg: BaseConfig) -> Self {
