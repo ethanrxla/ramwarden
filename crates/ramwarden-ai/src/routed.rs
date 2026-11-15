@@ -385,7 +385,7 @@ mod compression_routing_tests {
             json!({"role":"system","content":"x".repeat(9000)}),
             json!({"role":"user","content":"can you find out which ollama model is running?"}),
         ];
-        assert!(!user_request_too_long(messages));
+        assert!(!user_request_too_long(&messages));
         assert!(user_request_too_long(&[
             json!({"role":"user","content":"x".repeat(8000)})
         ]));
