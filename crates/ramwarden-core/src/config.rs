@@ -148,6 +148,12 @@ pub struct Assistant {
     pub memory_hub_enabled: bool,
     pub workspace: Option<PathBuf>,
     pub threat_workspace: Option<PathBuf>,
+    /// Let the warden answer hardware questions about the user's other
+    /// devices by running one fixed, read-only command on a Tailscale peer
+    /// over SSH, with the user's own keys. Off by default: the daemon does
+    /// not log in to other machines unless the user turns this on. Listing
+    /// the tailnet's devices needs no SSH and is always available.
+    pub devices_ssh: bool,
 }
 
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.

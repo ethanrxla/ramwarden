@@ -26,6 +26,7 @@ mod error;
 mod root;
 
 pub mod cgroup;
+pub mod cpuinfo;
 pub mod desktop;
 pub mod helper;
 pub mod madvise;

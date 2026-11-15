@@ -42,6 +42,11 @@ pub struct Chat {
     progress_text: Option<String>,
     cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     generating: bool,
+    /// Height of everything under the transcript (errors, proposal, input,
+    /// Send) as laid out last frame. The transcript takes the rest of the
+    /// pane. A fixed 210 px reserve left the answer in a 100 px box with
+    /// empty space below it (screenshot, 2026-11-15).
+    footer_height: f32,
 }
 impl Chat {
     pub fn for_warden(threat: bool) -> Self {
@@ -65,7 +70,7 @@ impl Chat {
             turns: bounded_turns(turns),
             path: Some(path),
             input: String::new(), pending: None, approval: false, result: None, error: None,
-            audio_result: None, progress: None, progress_text: None, cancellation: None, generating: false,
+            audio_result: None, progress: None, progress_text: None, cancellation: None, generating: false, footer_height: 0.,
         }
     }
     pub fn forget(&mut self) {
@@ -234,7 +239,8 @@ impl Chat {
         egui::ScrollArea::vertical()
             .id_salt(if threat { "threat-chat" } else { "ram-chat" })
             .stick_to_bottom(true)
-            .max_height((ui.available_height() - 210.).max(100.))
+            .auto_shrink([false, false])
+            .max_height(transcript_height(ui.available_height(), self.footer_height))
             .show(ui, |ui| {
                 for t in &self.turns {
                     ui.strong(if t.role == "user" {
@@ -248,6 +254,7 @@ impl Chat {
                     ui.add_space(8.);
                 }
             });
+        let footer_top = ui.cursor().top();
         if let Some(error) = &self.error {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
@@ -305,6 +312,11 @@ impl Chat {
                 if ui.button("■").on_hover_text("Stop generating").clicked() { self.stop_response(); }
             } else if self.cancellation.is_some() && ui.button("Stop plan").clicked() { self.stop_plan(); }
         }
+        let footer = ui.cursor().top() - footer_top;
+        if (footer - self.footer_height).abs() > 0.5 {
+            self.footer_height = footer;
+            ui.ctx().request_repaint();
+        }
         if send && !self.input.trim().is_empty() && self.input.len() <= 4000 {
             let message = self.input.trim().to_owned();
             let history = history(&self.turns);
@@ -355,6 +367,13 @@ impl Chat {
             }
         }
     }
+}
+/// The transcript's height: whatever the pane has left once the footer
+/// (input box, Send, any proposal) is placed under it. Before the footer has
+/// been measured, a typical footer is assumed.
+fn transcript_height(available: f32, footer: f32) -> f32 {
+    let footer = if footer > 0. { footer } else { 110. };
+    (available - footer - 8.).max(80.)
 }
 // egui's logical modifier matching ignores extra Shift/Alt. Match the actual
 // event exactly so Shift+Enter remains available to the multiline editor.
@@ -481,6 +500,13 @@ impl Drop for Chat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transcript_takes_the_room_the_footer_leaves() {
+        // The screenshot's pane: ~330 px under the heading, ~95 px of footer.
+        assert_eq!(transcript_height(330., 95.), 227.);
+        assert_eq!(transcript_height(330., 0.), 212.);
+        assert_eq!(transcript_height(120., 95.), 80.);
+    }
     #[test]
     fn enter_sends_but_shift_enter_stays_with_the_editor() {
         let key = |modifiers| egui::Event::Key {key:egui::Key::Enter, physical_key:None, pressed:true, repeat:false, modifiers};

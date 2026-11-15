@@ -21,6 +21,8 @@ pub struct Snapshot {
     pub state: Option<State>,
     pub tidy: Option<TidyState>,
     pub gpu: Option<GpuReport>,
+    /// This computer and the user's other devices, from `/devices`.
+    pub devices: Option<crate::devices::DevicesPane>,
     pub debloat: Option<DebloatState>,
     /// What the warden is saying, from `/warden/bubble`.
     pub speech: Option<crate::voice::Speech>,
@@ -199,7 +201,7 @@ impl Poller {
     }
 
     async fn refresh_slow(client: &Client, shared: &Mutex<Snapshot>) {
-        let (gpu, debloat, threat) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane());
+        let (gpu, debloat, threat, devices) = tokio::join!(client.gpu(), client.debloat(), client.threat_pane(), client.devices());
         let need_icon=shared.lock().unwrap().threat_icon.is_none();
         let icon=match (&threat.icon,need_icon){(Some(path),true)=>client.warden_icon(path).await.ok(),_=>None};
         let mut s = shared.lock().unwrap();
@@ -207,6 +209,9 @@ impl Poller {
         if icon.is_some(){s.threat_icon=icon;}
         if let Ok(g) = gpu {
             s.gpu = Some(g);
+        }
+        if let Ok(d) = devices {
+            s.devices = Some(d);
         }
         if let Ok(d) = debloat {
             s.debloat = Some(d);

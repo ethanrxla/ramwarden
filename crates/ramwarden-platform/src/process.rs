@@ -95,4 +95,27 @@ pub trait ProcessControl: Send + Sync {
 
     /// Current proportional size of one process, if it can be read.
     fn proportional(&self, pid: i32) -> Option<u64>;
+
+    /// What is inside one process: threads, open handles, services. A point
+    /// query made when the user asks about that process, never per tick.
+    /// `None` where the platform cannot look or the process is gone.
+    fn detail(&self, _pid: i32) -> Option<ProcessDetail> {
+        None
+    }
+}
+
+/// The inside of one process, for "what is X doing?". Each field is what
+/// the OS reports to an unprivileged reader; `None` or empty means unknown,
+/// not zero.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProcessDetail {
+    pub threads: Option<u32>,
+    /// Open file descriptors (Linux, macOS) or handles (Windows).
+    pub open_handles: Option<u32>,
+    /// Paths of open regular files, where the OS gives them (Linux). Raw
+    /// paths: anything shown outside the machine must cut them down first.
+    pub open_files: Vec<String>,
+    /// Services hosted by this process (Windows `svchost`), or the unit it
+    /// runs under.
+    pub services: Vec<String>,
 }

@@ -256,6 +256,73 @@ pub fn page_size() -> u64 {
     if v > 0 { v as u64 } else { 4096 }
 }
 
+/// Open files listed per process. A browser holds thousands of descriptors;
+/// the count is exact, the list is a sample.
+const OPEN_FILE_SAMPLE: usize = 64;
+
+/// Threads, open descriptors, open regular files and the systemd unit of one
+/// process. `None` when the process is gone. Another user's process reports
+/// its threads but not its descriptors, which stay `None`.
+pub fn detail(root: &Root, pid: i32) -> Option<ramwarden_platform::ProcessDetail> {
+    let status = fs::read_to_string(root.proc_pid(pid, "status")).ok()?;
+    let threads = status
+        .lines()
+        .find_map(|l| l.strip_prefix("Threads:"))
+        .and_then(|v| v.trim().parse().ok());
+    let mut open_handles = None;
+    let mut open_files = Vec::new();
+    if let Ok(dir) = fs::read_dir(root.proc_pid(pid, "fd")) {
+        let mut count = 0u32;
+        for entry in dir.flatten() {
+            count += 1;
+            if open_files.len() < OPEN_FILE_SAMPLE
+                && let Ok(target) = fs::read_link(entry.path())
+                && let Some(path) = target.to_str()
+                // Regular files only: sockets, pipes and anon inodes are
+                // `socket:[123]`, and /dev, /proc and /sys say nothing useful.
+                && path.starts_with('/')
+                && !["/dev/", "/proc/", "/sys/", "/memfd:"].iter().any(|p| path.starts_with(p))
+                && !open_files.iter().any(|f| f == path)
+            {
+                open_files.push(path.to_string());
+            }
+        }
+        open_handles = Some(count);
+    }
+    // The last cgroup component is the unit: `app-firefox-1234.scope`,
+    // `ollama.service`.
+    let services = fs::read_to_string(root.proc_pid(pid, "cgroup"))
+        .ok()
+        .and_then(|c| c.lines().next().and_then(|l| l.rsplit('/').next().map(str::to_string)))
+        .filter(|u| u.ends_with(".service") || u.ends_with(".scope"))
+        .into_iter()
+        .collect();
+    Some(ramwarden_platform::ProcessDetail { threads, open_handles, open_files, services })
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+
+    #[test]
+    fn threads_files_and_unit_are_read_from_a_synthetic_proc() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("proc/42");
+        fs::create_dir_all(p.join("fd")).unwrap();
+        fs::write(p.join("status"), "Name:\tollama\nThreads:\t23\n").unwrap();
+        fs::write(p.join("cgroup"), "0::/system.slice/ollama.service\n").unwrap();
+        std::os::unix::fs::symlink("/home/u/models/qwen.gguf", p.join("fd/3")).unwrap();
+        std::os::unix::fs::symlink("socket:[991]", p.join("fd/4")).unwrap();
+        std::os::unix::fs::symlink("/dev/null", p.join("fd/0")).unwrap();
+        let d = detail(&Root::at(dir.path()), 42).unwrap();
+        assert_eq!(d.threads, Some(23));
+        assert_eq!(d.open_handles, Some(3));
+        assert_eq!(d.open_files, vec!["/home/u/models/qwen.gguf"]);
+        assert_eq!(d.services, vec!["ollama.service"]);
+        assert!(detail(&Root::at(dir.path()), 43).is_none());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

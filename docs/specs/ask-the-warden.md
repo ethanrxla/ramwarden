@@ -20,10 +20,21 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
   | `gpu` | Each NVIDIA GPU: use %, VRAM used/total, temperature, and the processes holding VRAM. On Apple silicon: the GPU's use % and the unified memory it has in use. |
   | `models` | Models loaded now in Ollama and LM Studio, models installed in Ollama, and any llama-server, vLLM, llamafile, koboldcpp or similar server, asked on its own loopback ports (`/v1/models`, and `/slots` for whether llama.cpp is generating). |
   | `history(name)` | RamWarden's last 6 recorded actions on that app. |
+  | `hardware` | This computer's CPU model, physical and logical cores (performance and efficiency cores where the CPU has both), total RAM and GPUs. |
+  | `devices` | The user's Tailscale devices: name, OS, address, online. |
+  | `device(name)` | One other device's CPU, cores and RAM, asked over SSH. See "Other devices". |
+
+- **Inside a process.** For the 3 largest processes of an app, `app` also
+  reports who started it (up to 6 parents), its thread count, its open
+  handles or file descriptors, and the services it hosts (Windows `svchost`
+  services, or the systemd unit on Linux). On Linux it lists up to 8 open
+  files by name. The full list with paths stays on the computer.
 
 - **Picking.** The daemon picks probes from the question before asking any
-  model: GPU words read the GPU, model words read the model runtimes, and the
-  name of a running app reads that app (at most 2 apps). History words
+  model: GPU words read the GPU, model words read the model runtimes, CPU and
+  core words read the hardware, the name of a Tailscale device reads that
+  device instead of this computer, and the name of a running app reads that
+  app (at most 2 apps). History words
   ("close", "froze", "did") with an app add its history.
 - **One extra round.** The model may answer, or reply
   `{"reply":"","probes":[...]}` to ask for up to 3 more probes, once. A
@@ -39,6 +50,45 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
   14 min."). Lite's reply says conversational answers come with Plus.
   `Entitlement::has_assistant` decides; it follows the pet rule (Plus, Pro, or
   the signed-out self-built app).
+
+## Other devices
+
+"How many CPU cores does my Legion have?" is about another machine.
+
+- **Listing** uses `tailscale status --json` (3 s timeout). No Tailscale, or
+  Tailscale not connected, is a normal configuration: the probe says which.
+- **Asking a device** is off unless `[assistant] devices_ssh = true`. With it
+  on, the daemon runs one fixed, read-only command over SSH with the user's
+  own keys:
+  - Only a device in Tailscale's own list is ever connected to. A name that
+    is not a peer is refused, so neither the question nor a model can point
+    SSH at another host.
+  - The command is chosen by the device's OS (Linux, macOS, Windows). No text
+    from the question or a model reaches the remote shell. Phones are not
+    asked.
+  - `BatchMode=yes` and `StrictHostKeyChecking=yes`: keys only, never a
+    prompt, and a host this computer has not connected to before is refused.
+    `known_hosts` is never written.
+  - 5 s to connect, 10 s overall, 1 KB of output kept, control characters
+    removed.
+  - A failure is reported as its cause (unknown host key, keys refused, no SSH
+    server, unreachable) with the fix, never as a guess at the hardware.
+- **Connected devices pane.** `GET /devices` (loopback only) returns this
+  computer's hardware and the device list, and never opens an SSH connection.
+  The view model is `ramwarden-ui::devices`. The Windows window has a
+  Devices tab; the GTK window and the Mac menu do not show it yet.
+
+## When no model answers
+
+The chat used to say "Cloud AI is opted in but did not respond", which named
+no cause. `assistant::ask_model_why` now reports why for each model tried:
+routing turned off, the named API key missing, the key rejected (401/403),
+the model not found (404), rate limit or credit (429), a timeout with the
+model's name, no network, or an unreadable reply; and for the local model:
+not set up, not reachable, skipped for VRAM, or timed out. A failed request to
+the slower task model (timeout, 400, 404, 422, 5xx, unreadable reply) is
+retried once on the conversation model. A rejected key or no network is not
+retried. No provider response text or key is ever shown.
 
 ## Policy: what a model may see
 
@@ -67,6 +117,13 @@ Redaction (`ask/redact.rs`):
 - `ask::plain` tests: each probe worded, including "not running" and runtimes
   that could not be asked.
 - `ramwarden_ai::vram` test: `ioreg` statistics parsed.
+- `ask::devices` tests: status parsed, a peer found by a word of its name,
+  this computer and non-peers never matched, no connection without the
+  setting or when offline, SSH failures reduced to causes.
+- `ramwarden_kernel::cpuinfo` and `process::detail` tests on a synthetic
+  `/proc`; `ramwarden_nt::hardware` and `detail` tests on the test process.
+- `ramwarden_ai::routed::failure_tests`: each cause worded, retry rules.
+- `ramwarden_ui::devices` tests: the pane's lines.
 
 ## Basis and limitations
 
@@ -80,5 +137,9 @@ Redaction (`ask/redact.rs`):
 - macOS reports no per-process GPU use without root (`powermetrics`), so the
   GPU probe gives totals there. AMD and Intel GPUs on Windows and Linux are
   not read yet; the probe says so.
+- Windows and macOS report how many handles a process has open, not which
+  files they are. Open file names are Linux only.
+- Another device's hardware is whatever its own commands print. It is shown
+  to the model as data and is not parsed.
 - Model servers are only asked on loopback, with a 1.5 s timeout. One that does
   not answer is reported as running with its model unknown.

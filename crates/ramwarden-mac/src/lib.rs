@@ -46,6 +46,26 @@ pub fn platform() -> Platform {
         || Box::new(MacProcesses::new()),
         || Box::new(MacDesktop::new()),
     )
+    .with_hardware(Arc::new(MacHardware))
+}
+
+/// CPU model and core counts from `sysctl`. On Apple silicon the
+/// performance levels give the P- and E-core split (`hw.perflevel0` is the
+/// performance cluster).
+pub struct MacHardware;
+
+impl ramwarden_platform::HardwareSource for MacHardware {
+    fn read(&self) -> Result<ramwarden_platform::Hardware> {
+        let count = |name: &str| sys::sysctl_int(name).map(|n| n as u32);
+        let levels = count("hw.nperflevels").unwrap_or(0);
+        Ok(ramwarden_platform::Hardware {
+            cpu_model: sys::sysctl_string("machdep.cpu.brand_string"),
+            physical_cores: count("hw.physicalcpu"),
+            logical_cores: count("hw.logicalcpu").or_else(ramwarden_platform::hardware::logical_cores),
+            performance_cores: (levels > 1).then(|| count("hw.perflevel0.physicalcpu")).flatten(),
+            efficiency_cores: (levels > 1).then(|| count("hw.perflevel1.physicalcpu")).flatten(),
+        })
+    }
 }
 
 /// macOS has no reclaim unit like a cgroup scope, so group reclaim is off.

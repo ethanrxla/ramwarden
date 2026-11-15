@@ -37,6 +37,12 @@ pub enum Probe {
     Models,
     /// What RamWarden has recently done to an app.
     History(String),
+    /// This computer's CPU model, cores, RAM and GPUs.
+    Hardware,
+    /// The user's other devices, from Tailscale.
+    Devices,
+    /// One other device's hardware, asked over SSH when that is allowed.
+    Device(String),
 }
 
 impl Probe {
@@ -48,6 +54,9 @@ impl Probe {
             Probe::Gpu => "GPU".into(),
             Probe::Models => "local models".into(),
             Probe::History(n) => format!("RamWarden's history with {n}"),
+            Probe::Hardware => "this computer's hardware".into(),
+            Probe::Devices => "your Tailscale devices".into(),
+            Probe::Device(n) => format!("{n} (another device)"),
         }
     }
 
@@ -67,6 +76,9 @@ impl Probe {
             "gpu" => Some(Probe::Gpu),
             "models" => Some(Probe::Models),
             "history" => name().map(Probe::History),
+            "hardware" => Some(Probe::Hardware),
+            "devices" => Some(Probe::Devices),
+            "device" => name().map(Probe::Device),
             _ => None,
         }
     }
@@ -78,7 +90,10 @@ pub const CATALOG: &str = r#"Read-only probes you may request (at most 3, one ro
 {"probe":"gpu"}                                  each GPU's use %, VRAM, temperature and the processes holding VRAM
 {"probe":"models"}                               models loaded now in Ollama, LM Studio, llama-server, vLLM and similar
 {"probe":"history","name":"<app>"}              what RamWarden recently did to that app
-{"probe":"overview"}                             RAM, pressure, swap and the largest apps"#;
+{"probe":"overview"}                             RAM, pressure, swap and the largest apps
+{"probe":"hardware"}                             this computer's CPU model, physical and logical cores, RAM and GPUs
+{"probe":"devices"}                              the user's other devices on Tailscale: name, OS, online
+{"probe":"device","name":"<device name>"}       another device's CPU, cores and RAM, when the user allows asking it"#;
 
 /// Words that are never app names, so "what is my computer doing" does not
 /// probe an app called "computer".
@@ -91,7 +106,7 @@ const NOT_APPS: &[&str] = &[
 /// Probes the daemon runs before asking the model, picked from the question
 /// alone. Cheap and deterministic, so most questions need one model call.
 /// `names` are the running apps and process names, lowercase.
-pub fn pick(message: &str, names: &HashSet<String>) -> Vec<Probe> {
+pub fn pick(message: &str, names: &HashSet<String>, devices: &[super::devices::Device]) -> Vec<Probe> {
     let text = message.to_lowercase();
     let words: Vec<&str> = text
         .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.')
@@ -110,6 +125,31 @@ pub fn pick(message: &str, names: &HashSet<String>) -> Vec<Probe> {
         || text.contains("lm studio")
     {
         out.push(Probe::Models);
+    }
+    // Another device named in the question ("my legion") comes before this
+    // computer's hardware: "how many cores does my legion have" is about it.
+    let named: Vec<&super::devices::Device> = words
+        .iter()
+        .filter(|w| !NOT_APPS.contains(w))
+        .filter_map(|w| super::devices::find(devices, w))
+        .fold(Vec::new(), |mut acc, d| {
+            if !acc.iter().any(|x: &&super::devices::Device| x.name == d.name) {
+                acc.push(d);
+            }
+            acc
+        });
+    for d in named.iter().take(2) {
+        out.push(Probe::Device(d.name.clone()));
+    }
+    if has(&["devices", "tailscale", "tailnet", "machines", "computers", "laptops", "servers"]) || text.contains("other device") {
+        out.push(Probe::Devices);
+    }
+    if named.is_empty()
+        && (has(&["cpu", "cpus", "core", "cores", "processor", "processors", "threads", "hardware", "specs", "spec", "ryzen", "intel", "motherboard"])
+            || text.contains("how much ram")
+            || text.contains("how much memory do"))
+    {
+        out.push(Probe::Hardware);
     }
     let history = has(&["closed", "close", "killed", "froze", "frozen", "suspended", "paused", "history", "did"]);
     let mut apps: Vec<String> = Vec::new();
@@ -157,6 +197,9 @@ pub async fn run(st: &AppState, probe: &Probe) -> Value {
         Probe::Gpu => gpu(st).await,
         Probe::Models => models(st).await,
         Probe::History(name) => history(st, name),
+        Probe::Hardware => hardware(st).await,
+        Probe::Devices => devices().await,
+        Probe::Device(name) => device(st, name).await,
     };
     cap(v, CAP)
 }
@@ -246,6 +289,8 @@ struct Row {
     state: char,
     verdict: &'static str,
     command: Option<String>,
+    /// Names from this process up to the root of its tree.
+    ancestors: Vec<String>,
 }
 
 async fn app(st: &AppState, query: &str) -> Value {
@@ -289,11 +334,21 @@ async fn app(st: &AppState, query: &str) -> Value {
                 state: s.state,
                 verdict: s.verdict.as_str(),
                 command: None,
+                ancestors: Vec::new(),
             })
             .collect();
         rows.sort_by_key(|r| std::cmp::Reverse(r.pss));
         for r in rows.iter_mut().take(APP_COMMANDS) {
             r.command = det.cmdline(r.pid).map(redact::command_line).filter(|c| !c.is_empty());
+            // Who started it: up to six parents, stopping at a loop or the root.
+            let mut at = snap.get(&r.pid).map(|s| s.ppid);
+            while let Some(parent) = at.and_then(|p| snap.get(&p)) {
+                if r.ancestors.len() >= 6 || parent.pid == r.pid {
+                    break;
+                }
+                r.ancestors.push(parent.name.clone());
+                at = Some(parent.ppid);
+            }
         }
         let apps: HashSet<String> =
             pids.iter().filter_map(|p| snap.get(p)).map(|s| if s.app.is_empty() { s.name.clone() } else { s.app.clone() }).collect();
@@ -309,6 +364,20 @@ async fn app(st: &AppState, query: &str) -> Value {
         return json!({"probe":"app","name":query,"running":false,
             "note":"No running process matches this name. It may be closed, or named differently."});
     }
+    // Inside the largest processes: threads, open handles, files, services.
+    // A point query per process, off the runtime (Windows walks the process
+    // table for it).
+    let inside: HashMap<i32, Value> = {
+        let pids: Vec<i32> = rows.iter().take(APP_COMMANDS).map(|r| r.pid).collect();
+        let platform = st.platform.clone();
+        tokio::task::spawn_blocking(move || {
+            pids.into_iter()
+                .filter_map(|pid| platform.control.detail(pid).map(|d| (pid, detail_json(&d))))
+                .collect()
+        })
+        .await
+        .unwrap_or_default()
+    };
     let vram = vram_by_pid().await;
     let total_vram: u64 = rows.iter().filter_map(|r| vram.get(&(r.pid as u32))).sum();
     let found: Vec<servers::Found> = rows
@@ -331,10 +400,27 @@ async fn app(st: &AppState, query: &str) -> Value {
             "vram_mib":vram.get(&(r.pid as u32)).map(|b| mb(*b)),"age_minutes":r.age_minutes.round(),
             "listening_ports":r.ports,"connections":r.established,"focused":r.focused,"audio":r.audio,
             "window":r.window,"suspended":r.state=='T',"classification":r.verdict,
-            "command":r.command,
+            "command":r.command,"started_by":r.ancestors,"inside":inside.get(&r.pid),
         })).collect::<Vec<_>>(),
         "note":"cpu_percent is per core (100 = one full core) over the last sample window. idle_minutes counts only user-facing use (focus, audio), and only since RamWarden started. Commands are redacted."
     })
+}
+
+/// A process's detail as a model may see it: counts as they are, files cut
+/// to their names (paths never leave the machine), at most eight of them.
+pub fn detail_json(d: &ramwarden_platform::ProcessDetail) -> Value {
+    let mut files: Vec<String> = Vec::new();
+    for path in &d.open_files {
+        let name = redact::command_line(&format!("x {path}"));
+        let name = name.strip_prefix("x ").unwrap_or(&name).to_string();
+        if !name.is_empty() && !files.contains(&name) {
+            files.push(name);
+        }
+        if files.len() >= 8 {
+            break;
+        }
+    }
+    json!({"threads":d.threads,"open_handles":d.open_handles,"open_file_names":files,"services":d.services})
 }
 
 /// VRAM per pid on every GPU. NVML is synchronous, so it runs off the runtime.
@@ -432,6 +518,53 @@ async fn models(st: &AppState) -> Value {
     })
 }
 
+async fn hardware(st: &AppState) -> Value {
+    let hw = st.platform.hardware.read().ok();
+    let gpus = tokio::task::spawn_blocking(|| {
+        let mut names: Vec<Value> = ramwarden_ai::vram::gpus().iter().map(|g| json!({"name":g.name,"vram_total_mib":mb(g.total)})).collect();
+        if names.is_empty()
+            && let Some(a) = ramwarden_ai::vram::apple_gpu()
+        {
+            names.push(json!({"name":a.model,"shared_memory":true}));
+        }
+        names
+    })
+    .await
+    .unwrap_or_default();
+    let m = st.memory();
+    json!({
+        "probe":"hardware","os":st.platform.name,
+        "cpu_model":hw.as_ref().and_then(|h| h.cpu_model.clone()),
+        "physical_cores":hw.as_ref().and_then(|h| h.physical_cores),
+        "logical_cores":hw.as_ref().and_then(|h| h.logical_cores),
+        "performance_cores":hw.as_ref().and_then(|h| h.performance_cores),
+        "efficiency_cores":hw.as_ref().and_then(|h| h.efficiency_cores),
+        "ram_total_mib":mb(m.total),"gpus":gpus,
+        "note":"physical_cores are real cores; logical_cores are the hardware threads the OS schedules on. null means this OS did not report it."
+    })
+}
+
+async fn devices() -> Value {
+    match super::devices::list().await {
+        Ok(list) => json!({"probe":"devices","devices":list,
+            "note":"Devices on the user's Tailscale network. this_device marks the computer RamWarden is running on."}),
+        Err(why) => json!({"probe":"devices","available":false,"note":why.describe()}),
+    }
+}
+
+async fn device(st: &AppState, name: &str) -> Value {
+    let list = match super::devices::list().await {
+        Ok(list) => list,
+        Err(why) => return json!({"probe":"device","name":name,"read":false,"note":why.describe()}),
+    };
+    match super::devices::find(&list, name) {
+        Some(d) => super::devices::hardware(d, st.cfg.assistant.devices_ssh).await,
+        None => json!({"probe":"device","name":name,"read":false,
+            "note":"No device with that name is on the user's Tailscale network, so it was not contacted.",
+            "known_devices":list.iter().map(|d| d.name.clone()).collect::<Vec<_>>()}),
+    }
+}
+
 fn history(st: &AppState, name: &str) -> Value {
     let q = name.to_lowercase();
     let rows = st.history.try_lock().ok().and_then(|h| h.recent_actions(200).ok());
@@ -459,7 +592,9 @@ mod tests {
     #[test]
     fn gpu_and_model_questions_pick_their_probes() {
         let running = names(&["ollama", "llama-server", "chrome", "google chrome"]);
+        let pick = |m: &str, n: &HashSet<String>| super::pick(m, n, &[]);
         assert_eq!(pick("what is my GPU doing?", &running), vec![Probe::Gpu]);
+        assert_eq!(pick("how many CPU cores do I have?", &running), vec![Probe::Hardware]);
         assert_eq!(
             pick("what is ollama doing on my computer", &running),
             vec![Probe::Models, Probe::App("ollama".into())]
@@ -473,9 +608,34 @@ mod tests {
     fn history_questions_add_the_history_probe() {
         let running = names(&["slack"]);
         assert_eq!(
-            pick("did you close slack?", &running),
+            pick("did you close slack?", &running, &[]),
             vec![Probe::History("slack".into()), Probe::App("slack".into())]
         );
+    }
+
+    #[test]
+    fn a_named_device_is_asked_instead_of_this_computer() {
+        let d = |name: &str, this_device| super::super::devices::Device { name: name.into(), os: "linux".into(), address: None, online: true, this_device };
+        let devices = [d("RXLA_PC_1", true), d("Ethan-Legion5", false)];
+        assert_eq!(
+            pick("how many CPU cores does my legion have?", &HashSet::new(), &devices),
+            vec![Probe::Device("Ethan-Legion5".into())]
+        );
+        assert_eq!(pick("what devices are on my tailscale?", &HashSet::new(), &devices), vec![Probe::Devices]);
+    }
+
+    #[test]
+    fn open_files_reach_a_model_as_names_only() {
+        let d = ramwarden_platform::ProcessDetail {
+            threads: Some(23),
+            open_handles: Some(410),
+            open_files: vec!["/home/ethan/models/qwen3-8b.gguf".into(), "/home/ethan/models/qwen3-8b.gguf".into(), "/home/ethan/.ssh/id_ed25519".into()],
+            services: vec!["ollama.service".into()],
+        };
+        let v = detail_json(&d);
+        assert_eq!(v["open_file_names"], json!(["qwen3-8b.gguf", "id_ed25519"]));
+        assert!(!v.to_string().contains("/home/ethan"));
+        assert_eq!(v["threads"], 23);
     }
 
     #[test]
