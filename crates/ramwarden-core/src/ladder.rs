@@ -1970,10 +1970,12 @@ mod tests {
         let mut first = Report::default();
         l.do_reclaim(&w, &mut first);
         assert_eq!(first.steps.len(), 1);
+        // The live report says why on every tick; `log` writes it to history
+        // once (fake_platform.rs: a_rung_the_platform_cannot_run_is_logged_once).
         for _ in 0..100 {
             let mut repeated = Report::default();
             l.do_reclaim(&w, &mut repeated);
-            assert!(repeated.steps.is_empty());
+            assert!(repeated.steps.len() == 1 && repeated.steps[0].2.did_nothing());
         }
         // Capability discovery can recover; do not permanently disable a rung.
         w.groups = Some(&h);
@@ -1989,7 +1991,7 @@ mod tests {
             for _ in 0..100 {
                 let mut repeated = Report::default();
                 l.do_page_out(&w, &mut repeated);
-                assert!(repeated.steps.is_empty());
+                assert!(repeated.steps.len() == 1 && repeated.steps[0].2.did_nothing());
             }
         }
     }
