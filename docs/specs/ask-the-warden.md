@@ -57,9 +57,9 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
 
 - **Listing** uses `tailscale status --json` (3 s timeout). No Tailscale, or
   Tailscale not connected, is a normal configuration: the probe says which.
-- **Asking a device** is off unless `[assistant] devices_ssh = true`. With it
-  on, the daemon runs one fixed, read-only command over SSH with the user's
-  own keys:
+- **Asking a device** is on by default (user decision, 2026-11-16) and off
+  with `[assistant] devices_ssh = false`. The daemon runs one fixed,
+  read-only command over SSH with the user's own keys:
   - Only a device in Tailscale's own list is ever connected to. A name that
     is not a peer is refused, so neither the question nor a model can point
     SSH at another host.

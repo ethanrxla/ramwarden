@@ -107,7 +107,7 @@ impl DevicesPane {
         if self.ssh_checks {
             "Ask the warden about any online computer here, for example \"how many CPU cores does my laptop have?\". It runs one read-only hardware command over SSH with your own keys.".into()
         } else {
-            "The warden can list these devices. To let it answer hardware questions about them, set devices_ssh = true under [assistant] in ramwarden.toml.".into()
+            "The warden can list these devices but is set not to ask them anything. To let it answer hardware questions about them, set devices_ssh = true under [assistant] in your RamWarden config.".into()
         }
     }
 

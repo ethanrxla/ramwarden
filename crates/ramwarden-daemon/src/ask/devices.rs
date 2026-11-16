@@ -5,8 +5,8 @@
 //! devices, and `tailscale status --json` lists them with no extra rights:
 //! name, OS, address, whether each is online.
 //!
-//! What a device is built from is not in that list. With
-//! `[assistant] devices_ssh = true` the warden asks the device itself: one
+//! What a device is built from is not in that list. Unless
+//! `[assistant] devices_ssh = false`, the warden asks the device itself: one
 //! fixed, read-only command per OS, over SSH with the user's own keys. The
 //! rules that keep that safe:
 //!
@@ -196,7 +196,7 @@ pub async fn hardware(device: &Device, ssh_allowed: bool) -> Value {
         return with(json!({"read":false,"note":"This kind of device has no shell RamWarden can ask (a phone or appliance)."}));
     };
     if !ssh_allowed {
-        return with(json!({"read":false,"note":"RamWarden can see this device on Tailscale but is not allowed to ask it questions. To allow read-only hardware checks over SSH, set devices_ssh = true under [assistant] in ramwarden.toml and restart RamWarden."}));
+        return with(json!({"read":false,"note":"RamWarden can see this device on Tailscale but is not allowed to ask it questions. To allow read-only hardware checks over SSH, set devices_ssh = true under [assistant] in your RamWarden config and restart RamWarden."}));
     }
     let Some(address) = device.address.as_deref() else {
         return with(json!({"read":false,"note":"Tailscale reported no address for this device."}));
