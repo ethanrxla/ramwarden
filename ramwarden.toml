@@ -115,6 +115,14 @@ low_repeat_hours = 24        # the same "low" warning at most once a day
 critical_repeat_hours = 4    # the same "critical" warning at most every 4 hours
 share_paths = false          # agents and models see folder names and sizes, never paths
 
+[assistant]
+# Questions about your other computers ("how many CPU cores does my laptop
+# have?"). RamWarden lists your Tailscale devices and asks an online one with
+# one fixed, read-only hardware command over SSH, using your own keys. Only
+# devices this computer has connected to before (known_hosts) are asked.
+# See docs/specs/ask-the-warden.md. false = list devices only, never log in.
+devices_ssh = true
+
 [voice]
 # The warden's speech bubble: "coming back to this tab?" and light comments.
 # See docs/specs/warden-voice.md. Mute from any app, or turn it off here.

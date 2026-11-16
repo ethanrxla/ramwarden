@@ -139,7 +139,7 @@ impl Ladder {
 }
 
 /// Conversational cloud use is separate from automated cloud analysis.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Assistant {
     pub cloud_enabled: bool,
@@ -148,6 +148,27 @@ pub struct Assistant {
     pub memory_hub_enabled: bool,
     pub workspace: Option<PathBuf>,
     pub threat_workspace: Option<PathBuf>,
+    /// Let the warden answer hardware questions about the user's other
+    /// devices by running one fixed, read-only command on a Tailscale peer
+    /// over SSH, with the user's own keys. On by default (user decision,
+    /// 2026-11-16): only tailnet peers this computer already trusts in
+    /// `known_hosts` are asked, keys only, never a prompt. Set false to stop
+    /// the daemon logging in to other machines; listing the tailnet's
+    /// devices needs no SSH and works either way.
+    pub devices_ssh: bool,
+}
+
+impl Default for Assistant {
+    fn default() -> Self {
+        Assistant {
+            cloud_enabled: false,
+            cloud_model: None,
+            memory_hub_enabled: false,
+            workspace: None,
+            threat_workspace: None,
+            devices_ssh: true,
+        }
+    }
 }
 
 /// The local model endpoint. Replaces v1's `[api]` Anthropic key.
@@ -1067,6 +1088,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn other_devices_are_asked_unless_the_config_says_no() {
+        assert!(Config::default().assistant.devices_ssh);
+        let off: Raw = toml::from_str("[assistant]\ndevices_ssh = false\n").unwrap();
+        assert!(!off.assistant.devices_ssh);
+        let other_keys: Raw = toml::from_str("[assistant]\ncloud_enabled = true\n").unwrap();
+        assert!(other_keys.assistant.devices_ssh, "an [assistant] table without the key keeps the default");
+    }
 
     #[test]
     fn the_wazuh_warden_is_hosted_by_default_and_parses_its_section() {

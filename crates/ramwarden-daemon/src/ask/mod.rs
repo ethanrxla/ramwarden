@@ -23,6 +23,7 @@
 //! ([`redact`]) before they are shown to any model. Spec:
 //! `docs/specs/ask-the-warden.md`.
 
+pub mod devices;
 pub mod plain;
 pub mod probes;
 pub mod redact;
@@ -48,8 +49,11 @@ impl Readings {
     /// The overview, plus whatever the question names.
     pub async fn gather(st: &AppState, message: &str) -> Self {
         let names = st.det.try_read().ok().map(|det| probes::running_names(&det)).unwrap_or_default();
+        // Tailscale is only asked when the question could be about another
+        // device; most questions never spawn it.
+        let known = if devices::may_concern_devices(message) { devices::list().await.unwrap_or_default() } else { Vec::new() };
         let mut wanted = vec![Probe::Overview];
-        wanted.extend(probes::pick(message, &names));
+        wanted.extend(probes::pick(message, &names, &known));
         let mut r = Readings::default();
         r.run(st, wanted).await;
         r
@@ -133,7 +137,7 @@ async fn probe(
         Some(p) => Ok(axum::Json(probes::run(&st, &p).await)),
         None => Err((
             axum::http::StatusCode::BAD_REQUEST,
-            axum::Json(serde_json::json!({"error":"unknown probe","probes":["overview","app","gpu","models","history","storage"],"note":"app and history need a name of at most 64 characters"})),
+            axum::Json(serde_json::json!({"error":"unknown probe","probes":["overview","app","gpu","models","history","storage","hardware","devices","device"],"note":"app, history and device need a name of at most 64 characters"})),
         )),
     }
 }

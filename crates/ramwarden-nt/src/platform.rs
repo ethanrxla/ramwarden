@@ -30,6 +30,7 @@ pub fn platform() -> Platform {
         || Box::new(NtProcesses::new()),
         || Box::new(NtDesktop::new()),
     )
+    .with_hardware(Arc::new(crate::hardware::NtHardware))
     .with_storage(Arc::new(crate::storage::NtStorage))
 }
 
@@ -43,6 +44,10 @@ impl ProcessControl for NtControl {
 
     fn proportional(&self, pid: i32) -> Option<u64> {
         workingset::private_working_set_of(pid as u32).ok()
+    }
+
+    fn detail(&self, pid: i32) -> Option<ramwarden_platform::ProcessDetail> {
+        crate::detail::detail(pid as u32)
     }
 }
 

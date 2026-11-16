@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    Background, DesktopSource, GroupSource, MemorySource, NoStorage, Pager, PressureSource, ProcessControl,
-    ProcessSource, StorageSource,
+    Background, DesktopSource, GroupSource, HardwareSource, MemorySource, NoHardware, NoStorage, Pager, PressureSource,
+    ProcessControl, ProcessSource, StorageSource,
 };
 
 type Factory<T> = Box<dyn Fn() -> Box<T> + Send + Sync>;
@@ -24,6 +24,10 @@ pub struct Platform {
     /// Free space per volume. [`NoStorage`] until a mechanism crate supplies
     /// one with [`Platform::with_storage`].
     pub storage: Arc<dyn StorageSource>,
+    /// CPU model and core counts, for questions about the machine. Unknown
+    /// ([`NoHardware`]) unless the mechanism crate sets it with
+    /// [`Platform::with_hardware`].
+    pub hardware: Arc<dyn HardwareSource>,
     processes: Factory<dyn ProcessSource>,
     desktop: Factory<dyn DesktopSource>,
 }
@@ -57,6 +61,7 @@ impl Platform {
             background: parts.background,
             groups: parts.groups,
             storage: Arc::new(NoStorage),
+            hardware: Arc::new(NoHardware),
             processes: Box::new(processes),
             desktop: Box::new(desktop),
         }
@@ -66,6 +71,12 @@ impl Platform {
     /// test) without one still builds and simply has no storage watcher.
     pub fn with_storage(mut self, storage: Arc<dyn StorageSource>) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// The same platform, with a hardware reader.
+    pub fn with_hardware(mut self, hardware: Arc<dyn HardwareSource>) -> Self {
+        self.hardware = hardware;
         self
     }
 

@@ -50,6 +50,7 @@ enum Tab {
     Processes,
     Debloat,
     Gpu,
+    Devices,
 }
 
 struct WindowApp {
@@ -90,6 +91,7 @@ impl eframe::App for WindowApp {
                 ui.selectable_value(&mut self.tab, Tab::Processes, "Processes");
                 ui.selectable_value(&mut self.tab, Tab::Debloat, "Privacy & startup");
                 ui.selectable_value(&mut self.tab, Tab::Gpu, "GPU");
+                ui.selectable_value(&mut self.tab, Tab::Devices, "Devices");
                 if snap.busy {
                     ui.spinner();
                 }
@@ -119,6 +121,7 @@ if self.surface==Surface::Settings{companion_ui::settings(ui,self.pane==Pane::Th
             (Pane::Ram,Tab::Processes) => command = views::processes(ui, &snap, &mut self.view),
             (Pane::Ram,Tab::Debloat) => command = views::debloat(ui, &snap, &mut self.view),
             (Pane::Ram,Tab::Gpu) => {egui::ScrollArea::vertical().id_salt("gpu").show(ui, |ui| command = views::gpu(ui, &snap));}
+            (Pane::Ram,Tab::Devices) => {egui::ScrollArea::vertical().id_salt("devices").show(ui, |ui| views::devices(ui, &snap));}
         }});
 
         if let Some((pending, question)) = self.view.confirm.clone() {

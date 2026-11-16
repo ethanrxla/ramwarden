@@ -24,6 +24,9 @@ pub fn describe(v: &Value) -> Option<String> {
         "models" => models(v),
         "history" => history(v),
         "storage" => storage(v),
+        "hardware" => hardware(v),
+        "devices" => devices(v),
+        "device" => device(v),
         _ => None,
     }
 }
@@ -205,6 +208,59 @@ fn models(v: &Value) -> Option<String> {
     })
 }
 
+fn hardware(v: &Value) -> Option<String> {
+    let mut s = match v["cpu_model"].as_str() {
+        Some(m) => format!("CPU: {m}"),
+        None => "CPU".to_string(),
+    };
+    match (v["physical_cores"].as_u64(), v["logical_cores"].as_u64()) {
+        (Some(p), Some(l)) if p != l => s += &format!(", {p} cores ({l} threads)"),
+        (Some(p), _) => s += &format!(", {p} cores"),
+        (None, Some(l)) => s += &format!(", {l} logical processors"),
+        (None, None) => s += ", core count not reported by this system",
+    }
+    if let (Some(p), Some(e)) = (v["performance_cores"].as_u64(), v["efficiency_cores"].as_u64()) {
+        s += &format!(": {p} performance and {e} efficiency");
+    }
+    s += ".";
+    if let Some(m) = num(&v["ram_total_mib"]).filter(|m| *m > 0.0) {
+        s += &format!(" RAM: {}.", gb(m));
+    }
+    let gpus: Vec<&str> = v["gpus"].as_array().into_iter().flatten().filter_map(|g| g["name"].as_str()).collect();
+    if !gpus.is_empty() {
+        s += &format!(" GPU: {}.", gpus.join(", "));
+    }
+    Some(s)
+}
+
+fn devices(v: &Value) -> Option<String> {
+    if v["available"] == false {
+        return v["note"].as_str().map(str::to_string);
+    }
+    let list = v["devices"]
+        .as_array()?
+        .iter()
+        .filter_map(|d| {
+            Some(format!(
+                "{} ({}, {})",
+                d["name"].as_str()?,
+                d["os"].as_str().unwrap_or("unknown"),
+                if d["this_device"] == true { "this computer" } else if d["online"] == true { "online" } else { "offline" }
+            ))
+        })
+        .collect::<Vec<_>>();
+    Some(format!("Your Tailscale devices: {}.", list.join(", ")))
+}
+
+fn device(v: &Value) -> Option<String> {
+    let name = v["name"].as_str()?;
+    if v["read"] == true {
+        let lines = v["output"].as_str().unwrap_or("").lines().collect::<Vec<_>>().join("; ");
+        return Some(format!("{name} reports: {lines}."));
+    }
+    Some(format!("{name}: {}", v["note"].as_str().unwrap_or("it could not be asked.")))
+}
+
 fn history(v: &Value) -> Option<String> {
     let name = v["name"].as_str()?;
     let rows = v["recent_actions"].as_array()?;
@@ -242,6 +298,21 @@ mod tests {
             "ollama: 2 processes, 5.1 GB RAM, 4.3 GB VRAM, 2% CPU, serving qwen3:8b, not used for 14 min."
         );
         assert_eq!(describe(&json!({"probe":"app","name":"slack","running":false})).unwrap(), "slack: not running.");
+    }
+
+    #[test]
+    fn hardware_and_devices_read_plainly() {
+        let h = json!({"probe":"hardware","cpu_model":"AMD Ryzen 7 9700X 8-Core Processor","physical_cores":8,"logical_cores":16,
+            "ram_total_mib":31846.0,"gpus":[{"name":"NVIDIA GeForce RTX 5070"}]});
+        assert_eq!(
+            describe(&h).unwrap(),
+            "CPU: AMD Ryzen 7 9700X 8-Core Processor, 8 cores (16 threads). RAM: 31.1 GB. GPU: NVIDIA GeForce RTX 5070."
+        );
+        let d = json!({"probe":"devices","devices":[{"name":"RXLA_PC_1","os":"windows","online":true,"this_device":true},
+            {"name":"Ethan-Legion5","os":"linux","online":false,"this_device":false}]});
+        assert_eq!(describe(&d).unwrap(), "Your Tailscale devices: RXLA_PC_1 (windows, this computer), Ethan-Legion5 (linux, offline).");
+        let one = json!({"probe":"device","name":"Ethan-Legion5","read":true,"output":"16\nmodel name : Intel Core i7"});
+        assert_eq!(describe(&one).unwrap(), "Ethan-Legion5 reports: 16; model name : Intel Core i7.");
     }
 
     #[test]

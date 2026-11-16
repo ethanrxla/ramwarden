@@ -28,6 +28,7 @@ pub fn platform(root: Root) -> p::Platform {
     let uid = current_uid();
     let factory_root = root.clone();
     let storage = Arc::new(crate::storage::LinuxStorage { root: root.clone() });
+    let hardware = Arc::new(LinuxHardware { root: root.clone() });
     p::Platform::new(
         p::Parts {
             name: "linux",
@@ -43,7 +44,19 @@ pub fn platform(root: Root) -> p::Platform {
         move || Box::new(LinuxProcesses::new(factory_root.clone())),
         || Box::new(crate::desktop::DesktopProbe::new()),
     )
+    .with_hardware(hardware)
     .with_storage(storage)
+}
+
+/// CPU model and core counts from `/proc/cpuinfo`.
+pub struct LinuxHardware {
+    root: Root,
+}
+
+impl p::HardwareSource for LinuxHardware {
+    fn read(&self) -> p::Result<p::Hardware> {
+        Ok(crate::cpuinfo::read(&self.root)?)
+    }
 }
 
 pub fn current_uid() -> u32 {
@@ -161,6 +174,10 @@ impl p::ProcessControl for LinuxControl {
 
     fn proportional(&self, pid: i32) -> Option<u64> {
         smaps::rollup(&self.root, pid).ok().map(|r| r.pss)
+    }
+
+    fn detail(&self, pid: i32) -> Option<p::ProcessDetail> {
+        crate::process::detail(&self.root, pid)
     }
 }
 

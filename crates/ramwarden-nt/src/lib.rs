@@ -25,8 +25,10 @@ mod handle;
 mod ntdll;
 
 pub mod desktop;
+pub mod detail;
 pub mod gpu;
 pub mod groups;
+pub mod hardware;
 pub mod inventory;
 pub mod memory;
 pub mod net;

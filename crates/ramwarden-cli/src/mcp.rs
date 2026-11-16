@@ -81,10 +81,10 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "computer_probe",
-        description: "One read-only reading of the computer. overview: RAM, swap, pressure, largest apps. app: one app's processes, memory, CPU, VRAM, ports and redacted command lines (needs name). gpu: use, VRAM, temperature and who holds VRAM. models: local models loaded in Ollama, LM Studio, llama-server, vLLM. history: what RamWarden recently did to an app (needs name). storage: disks and what fills them, in brief.",
+        description: "One read-only reading of the computer. overview: RAM, swap, pressure, largest apps. app: one app's processes, memory, CPU, VRAM, ports and redacted command lines (needs name). gpu: use, VRAM, temperature and who holds VRAM. models: local models loaded in Ollama, LM Studio, llama-server, vLLM. history: what RamWarden recently did to an app (needs name). storage: disks and what fills them, in brief. hardware: CPU model, cores, RAM and GPUs.",
         properties: || {
             json!({
-                "probe": {"type": "string", "enum": ["overview", "app", "gpu", "models", "history", "storage"]},
+                "probe": {"type": "string", "enum": ["overview", "app", "gpu", "models", "history", "storage", "hardware"]},
                 "name": {"type": "string", "maxLength": 64, "description": "App or process name, for app and history."}
             })
         },
@@ -146,8 +146,8 @@ fn request(name: &str, args: &Value) -> Result<(&'static str, String, Value, Dur
         }
         "computer_probe" => {
             let probe = args["probe"].as_str().unwrap_or_default();
-            if !["overview", "app", "gpu", "models", "history", "storage"].contains(&probe) {
-                return Err("probe must be one of overview, app, gpu, models, history, storage".into());
+            if !["overview", "app", "gpu", "models", "history", "storage", "hardware"].contains(&probe) {
+                return Err("probe must be one of overview, app, gpu, models, history, storage, hardware".into());
             }
             let name = args["name"].as_str().map(str::trim).filter(|n| !n.is_empty());
             if matches!(probe, "app" | "history") && name.is_none_or(|n| n.len() > 64) {

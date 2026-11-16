@@ -422,6 +422,37 @@ pub fn debloat(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option
 
 // ── GPU ─────────────────────────────────────────────────────────────────────
 
+/// Connected devices: this computer's hardware, then the user's Tailscale
+/// devices. Read-only; the wording lives in `crate::devices`.
+pub fn devices(ui: &mut egui::Ui, snap: &Snapshot) {
+    let Some(pane) = &snap.devices else {
+        ui.label("Loading…");
+        return;
+    };
+    ui.heading("This computer");
+    ui.label(pane.this_computer.summary());
+    ui.separator();
+    ui.heading("Connected devices");
+    if pane.tailscale && pane.others().next().is_none() {
+        ui.label("No other devices are on your Tailscale network.");
+    }
+    egui::Grid::new("devices").num_columns(4).striped(true).show(ui, |ui| {
+        for d in pane.others() {
+            let dot = if d.online { egui::Color32::from_rgb(74, 222, 128) } else { egui::Color32::GRAY };
+            ui.colored_label(dot, "●");
+            ui.strong(&d.name);
+            ui.label(d.os_label());
+            ui.label(match &d.address {
+                Some(a) => format!("{} · {a}", d.status()),
+                None => d.status().to_string(),
+            });
+            ui.end_row();
+        }
+    });
+    ui.add_space(6.);
+    ui.label(RichText::new(pane.footnote()).weak());
+}
+
 pub fn gpu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Command> {
     let Some(g) = &snap.gpu else {
         ui.label("Loading…");
