@@ -99,6 +99,7 @@ pub fn router(state: AppState) -> Router {
     let router = if policy.loopback {
         router.route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
+            .route("/devices", get(crate::ask::devices::route))
             .route("/wardens/threat/events/{id}",get(crate::wardens::event))
             .route("/assistant/action", post(crate::assistant::act))
             .route("/assistant/action/stream", post(crate::assistant::act_stream))

@@ -28,11 +28,73 @@ fn user_request_too_long(messages: &[Value]) -> bool {
 pub async fn explain(work: Work, messages: &[Value]) -> Option<String> {
     explain_with_settings(work, messages, |name| std::env::var(name).ok()).await
 }
+/// Why a hosted model request produced no answer. Shown to the user, so the
+/// chat can say what actually went wrong instead of "did not respond"
+/// (2026-11-15). Never carries a key or a provider's response body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// Routing is switched off in this install's settings.
+    Disabled,
+    /// The named key is not set.
+    NoKey(&'static str),
+    /// The user's own message is too long to send without the compressor.
+    Compression,
+    Timeout { model: String },
+    Connect,
+    /// The provider answered with an HTTP error.
+    Status { code: u16, model: String },
+    TooLarge,
+    /// The provider answered, but not with a usable reply.
+    BadReply { model: String },
+}
+impl Failure {
+    /// A sentence for the user. Names the cause and, where there is one, the fix.
+    pub fn describe(&self) -> String {
+        match self {
+            Failure::Disabled => "hosted model routing is turned off in this install's settings".into(),
+            Failure::NoKey(name) => format!("no API key is set ({name} is missing from this computer's RamWarden settings)"),
+            Failure::Compression => "the message is too long to send".into(),
+            Failure::Timeout { model } => format!("the model ({model}) did not answer within 40 seconds"),
+            Failure::Connect => "this computer could not reach the AI provider (check the internet connection or firewall)".into(),
+            Failure::Status { code: 401 | 403, .. } => "the AI provider rejected the API key (it may be wrong, expired or out of credit)".into(),
+            Failure::Status { code: 404, model } => format!("the AI provider does not offer the configured model ({model})"),
+            Failure::Status { code: 429, .. } => "the AI provider is rate-limiting this key or its credit has run out".into(),
+            Failure::Status { code, model } => format!("the AI provider returned an error (HTTP {code}) for {model}"),
+            Failure::TooLarge => "the AI provider's answer was too large to accept".into(),
+            Failure::BadReply { model } => format!("the model ({model}) answered in a form RamWarden could not read"),
+        }
+    }
+    /// Whether a second try on the fast conversation model could succeed:
+    /// the task model is slower and its id is the one most likely to be
+    /// wrong, while a bad key or no network fails either way.
+    fn worth_retrying(&self) -> bool {
+        matches!(self, Failure::Timeout { .. } | Failure::BadReply { .. } | Failure::Status { code: 400 | 404 | 422 | 500..=599, .. })
+    }
+}
 /// Resolve private settings without requiring a particular daemon launch wrapper.
 pub async fn explain_with_settings(
     work: Work, messages: &[Value], setting: impl Fn(&str) -> Option<String> + Send + Sync,
 ) -> Option<String> {
-    if setting("RAMWARDEN_ROUTED_ASSISTANT").as_deref() != Some("1") { return None; }
+    try_explain_with_settings(work, messages, setting).await.ok()
+}
+/// As [`explain_with_settings`], but says why there is no answer. A failed
+/// task-model request is retried once on the conversation model, so a slow
+/// or misnamed task model does not leave the chat without AI.
+pub async fn try_explain_with_settings(
+    work: Work, messages: &[Value], setting: impl Fn(&str) -> Option<String> + Send + Sync,
+) -> Result<String, Failure> {
+    match attempt(work, messages, &setting).await {
+        Err(failure) if failure.worth_retrying() && !matches!(work, Work::Conversation | Work::Specialist) => {
+            tracing::info!(reason = failure.describe().as_str(), "retrying on the conversation model");
+            attempt(Work::Conversation, messages, &setting).await.map_err(|_| failure)
+        }
+        other => other,
+    }
+}
+async fn attempt(
+    work: Work, messages: &[Value], setting: &(impl Fn(&str) -> Option<String> + Send + Sync),
+) -> Result<String, Failure> {
+    if setting("RAMWARDEN_ROUTED_ASSISTANT").as_deref() != Some("1") { return Err(Failure::Disabled); }
     let compress = needs_compression(work, messages);
     tracing::info!(work=?work, compression_required=compress, "warden model route");
     let prepared = if compress { crate::nyquest::compress(messages).await } else { Ok(messages.to_vec()) };
@@ -48,7 +110,7 @@ pub async fn explain_with_settings(
         }
         Err(_) => {
             tracing::warn!("warden model request stopped: required compression unavailable");
-            return None;
+            return Err(Failure::Compression);
         }
     };
     let latest=messages.iter().rev().find(|m|m["role"]=="user").and_then(|m|m["content"].as_str()).unwrap_or("");
@@ -58,10 +120,10 @@ pub async fn explain_with_settings(
         Work::Conversation|Work::Routine if !research=>("https://api.x.ai","XAI_API_KEY","XAI_CHAT_MODEL_ID",work.model()),
         _=>("https://api.x.ai","XAI_API_KEY","XAI_TASK_MODEL_ID","grok-4.7"),
     };
-    let key=crate::secret::Secret::new(setting(key_name)?);if key.is_empty(){return None}
+    let key=crate::secret::Secret::new(setting(key_name).ok_or(Failure::NoKey(key_name))?);if key.is_empty(){return Err(Failure::NoKey(key_name))}
     let model=setting(model_name).filter(|s|!s.trim().is_empty()).unwrap_or_else(||default_model.into());
     let payload = request_body(work, &model, &messages);
-    let r = match http()?
+    let r = match http().ok_or(Failure::Connect)?
         .post(format!("{origin}/v1/responses"))
         .bearer_auth(key.expose())
         .json(&payload)
@@ -76,7 +138,7 @@ pub async fn explain_with_settings(
                 connect = error.is_connect(),
                 "warden model request failed"
             );
-            return None;
+            return Err(if error.is_timeout() { Failure::Timeout { model } } else { Failure::Connect });
         }
     };
     if !r.status().is_success() {
@@ -85,21 +147,21 @@ pub async fn explain_with_settings(
             status = r.status().as_u16(),
             "warden model provider refused request"
         );
-        return None;
+        return Err(Failure::Status { code: r.status().as_u16(), model });
     }
     // Cap the response before parsing; do not log provider bodies or keys.
     if r.content_length().is_some_and(|n| n > 128 * 1024) {
-        return None;
+        return Err(Failure::TooLarge);
     }
     let mut r = r;
     let mut bytes = Vec::new();
-    while let Some(chunk) = r.chunk().await.ok()? {
+    while let Some(chunk) = r.chunk().await.map_err(|e| if e.is_timeout() { Failure::Timeout { model: model.clone() } } else { Failure::Connect })? {
         if bytes.len() + chunk.len() > 128 * 1024 {
-            return None;
+            return Err(Failure::TooLarge);
         }
         bytes.extend_from_slice(&chunk);
     }
-    let body: Value = serde_json::from_slice(&bytes).ok()?;
+    let body: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::BadReply { model: model.clone() })?;
     if let Some(usage) = body.get("usage") {
         tracing::info!(
             provider = origin,
@@ -121,7 +183,7 @@ pub async fn explain_with_settings(
             "warden model returned no valid structured reply"
         );
     }
-    reply
+    reply.ok_or(Failure::BadReply { model })
 }
 fn request_body(work: Work, model: &str, messages: &[Value]) -> Value {
     let mut body = json!({"model":model,"input":messages,"store":false,"max_output_tokens":1200,"text":{"format":{"type":"json_object"}}});
@@ -143,7 +205,11 @@ fn request_body(work: Work, model: &str, messages: &[Value]) -> Value {
     let workspace_tools=messages.iter().any(|message|message["role"]=="system" && message["content"].as_str().is_some_and(|text|text.starts_with("WORKSPACE TOOL CATALOG:")));
     if work==Work::Conversation && !public_search && plain_chat && !workspace_tools {
         body["max_output_tokens"]=json!(300);
-        body["text"]=json!({"format":{"type":"json_schema","name":"companion_reply","strict":true,"schema":{"type":"object","properties":{"reply":{"type":"string"},"proposed_action":{"type":"null"}},"required":["reply","proposed_action"],"additionalProperties":false}}});
+        body["text"]=json!({"format":{"type":"json_schema","name":"companion_reply","strict":true,"schema":{"type":"object","properties":{"reply":{"type":"string"},"proposed_action":{"type":"null"},
+            // The warden may ask for more read-only probes instead of answering
+            // (ramwarden-daemon::ask). Strict mode rejects any key not listed.
+            "probes":{"type":"array","items":{"type":"object","properties":{"probe":{"type":"string","enum":["overview","app","gpu","models","history","hardware","devices","device"]},"name":{"type":["string","null"]}},"required":["probe","name"],"additionalProperties":false}}},
+            "required":["reply","proposed_action","probes"],"additionalProperties":false}}});
     }
     if work==Work::Specialist && let Some(input)=body["input"].as_array_mut(){input.insert(0,json!({"role":"system","content":"This request is already routed to the selected GPT specialist. Perform the review directly, without claiming you cannot consult GPT or narrating a second delegation. All supplied execution permissions and tool constraints still apply."}));}
     if work!=Work::Specialist {
@@ -248,7 +314,7 @@ mod compression_routing_tests {
         // The case behind "Conversational AI is unavailable": a short question
         // classified as multi-step, with a large system snapshot.
         let messages=[json!({"role":"system","content":"x".repeat(9000)}),json!({"role":"user","content":"can you find out which ollama model is running?"})];
-        assert!(!user_request_too_long(messages));
+        assert!(!user_request_too_long(&messages));
         assert!(user_request_too_long(&[json!({"role":"user","content":"x".repeat(8000)})]));
     }
     #[test]
@@ -269,5 +335,33 @@ mod public_web_tests {
         assert!(!body.to_string().contains("Private device"));
         assert!(!body.to_string().contains("private folder"));
         for text in ["do not search the web for cats","why search the web for cats?","read my files"] {assert!(!crate::routing::public_web_request(text));}
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn missing_settings_name_their_cause() {
+        let messages = [json!({"role":"user","content":"hi"})];
+        let off = try_explain_with_settings(Work::Conversation, &messages, |_| None).await;
+        assert_eq!(off, Err(Failure::Disabled));
+        let no_key = try_explain_with_settings(Work::Conversation, &messages, |n| (n == "RAMWARDEN_ROUTED_ASSISTANT").then(|| "1".into())).await;
+        assert_eq!(no_key, Err(Failure::NoKey("XAI_API_KEY")));
+        assert!(no_key.unwrap_err().describe().contains("XAI_API_KEY is missing"));
+    }
+
+    #[test]
+    fn causes_read_as_sentences_and_only_some_are_retried() {
+        let m = || "grok-4.7".to_string();
+        assert!(Failure::Status { code: 401, model: m() }.describe().contains("rejected the API key"));
+        assert!(Failure::Status { code: 404, model: m() }.describe().contains("grok-4.7"));
+        assert!(Failure::Timeout { model: m() }.describe().contains("40 seconds"));
+        assert!(Failure::Timeout { model: m() }.worth_retrying());
+        assert!(Failure::Status { code: 404, model: m() }.worth_retrying());
+        assert!(!Failure::Status { code: 401, model: m() }.worth_retrying());
+        assert!(!Failure::Connect.worth_retrying());
+        assert!(!Failure::NoKey("XAI_API_KEY").worth_retrying());
     }
 }

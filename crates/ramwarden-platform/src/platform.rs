@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    Background, DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl, ProcessSource,
+    Background, HardwareSource, NoHardware, DesktopSource, GroupSource, MemorySource, Pager, PressureSource, ProcessControl, ProcessSource,
 };
 
 type Factory<T> = Box<dyn Fn() -> Box<T> + Send + Sync>;
@@ -20,6 +20,10 @@ pub struct Platform {
     pub pager: Arc<dyn Pager>,
     pub background: Arc<dyn Background>,
     pub groups: Arc<dyn GroupSource>,
+    /// CPU model and core counts, for questions about the machine. Unknown
+    /// ([`NoHardware`]) unless the mechanism crate sets it with
+    /// [`Platform::with_hardware`].
+    pub hardware: Arc<dyn HardwareSource>,
     processes: Factory<dyn ProcessSource>,
     desktop: Factory<dyn DesktopSource>,
 }
@@ -52,9 +56,16 @@ impl Platform {
             pager: parts.pager,
             background: parts.background,
             groups: parts.groups,
+            hardware: Arc::new(NoHardware),
             processes: Box::new(processes),
             desktop: Box::new(desktop),
         }
+    }
+
+    /// The same platform, with a hardware reader.
+    pub fn with_hardware(mut self, hardware: Arc<dyn HardwareSource>) -> Self {
+        self.hardware = hardware;
+        self
     }
 
     /// A fresh process source, for a new detector.

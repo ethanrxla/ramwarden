@@ -281,6 +281,18 @@ impl ProcessControl for MacControl {
     fn proportional(&self, pid: i32) -> Option<u64> {
         sys::footprint(pid)
     }
+
+    /// Threads and open descriptors. macOS gives neither the files behind
+    /// them nor a service map without more rights than the daemon has.
+    fn detail(&self, pid: i32) -> Option<ramwarden_platform::ProcessDetail> {
+        let task = sys::task_info(pid)?;
+        Some(ramwarden_platform::ProcessDetail {
+            threads: u32::try_from(task.pti_threadnum).ok(),
+            open_handles: sys::fd_count(pid),
+            open_files: Vec::new(),
+            services: Vec::new(),
+        })
+    }
 }
 
 #[cfg(test)]

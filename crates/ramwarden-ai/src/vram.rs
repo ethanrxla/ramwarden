@@ -29,6 +29,8 @@ pub struct Gpu {
     pub used: u64,
     /// Percent utilisation of the compute units, if the driver reports it.
     pub utilisation: u32,
+    /// Core temperature in °C, when the driver reports it.
+    pub temperature_c: Option<u32>,
 }
 
 impl Gpu {
@@ -94,6 +96,9 @@ pub fn gpus() -> Vec<Gpu> {
                 total: mem.total,
                 used: mem.used,
                 utilisation: d.utilization_rates().map(|u| u.gpu).unwrap_or(0),
+                temperature_c: d
+                    .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+                    .ok(),
             })
         })
         .collect()
@@ -162,6 +167,55 @@ pub fn attributed(index: u32) -> u64 {
     processes(index).iter().map(|p| p.used).sum()
 }
 
+/// The integrated GPU on Apple silicon, as `ioreg` reports it.
+///
+/// There is no NVML on a Mac, and per-process GPU time needs `powermetrics`,
+/// which needs root. What an unprivileged process can read is the
+/// accelerator's own `PerformanceStatistics`: overall utilisation and how much
+/// of the unified memory the GPU has in use.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppleGpu {
+    pub model: Option<String>,
+    pub utilisation: Option<u32>,
+    /// Unified memory the GPU has in use, in bytes.
+    pub in_use: Option<u64>,
+}
+
+/// Read the Apple GPU's statistics. `None` off macOS or when `ioreg` fails.
+pub fn apple_gpu() -> Option<AppleGpu> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("/usr/sbin/ioreg")
+            .args(["-r", "-d", "1", "-c", "IOAccelerator"])
+            .output()
+            .ok()?;
+        parse_ioreg(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Pull the figures out of `ioreg -r -d 1 -c IOAccelerator`. Pure, for tests.
+pub fn parse_ioreg(text: &str) -> Option<AppleGpu> {
+    fn number(text: &str, key: &str) -> Option<u64> {
+        let at = text.find(&format!("\"{key}\"="))? + key.len() + 3;
+        let digits: String = text[at..].chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+    let model = text.find("\"model\" = \"").map(|at| {
+        let rest = &text[at + 11..];
+        rest[..rest.find('"').unwrap_or(rest.len())].to_string()
+    });
+    let gpu = AppleGpu {
+        model,
+        utilisation: number(text, "Device Utilization %").map(|n| n.min(100) as u32),
+        in_use: number(text, "In use system memory"),
+    };
+    (gpu != AppleGpu::default()).then_some(gpu)
+}
+
 /// VRAM headroom to leave free beyond a model's own weights.
 ///
 /// Covers the KV cache, which grows with context length and is the part that
@@ -187,6 +241,20 @@ pub fn room_for_local_model() -> Option<bool> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ioreg_statistics_are_read() {
+        let text = r#"+-o AGXAcceleratorG14X  <class AGXAcceleratorG14X>
+    {
+      "model" = "Apple M3 Pro"
+      "PerformanceStatistics" = {"Tiler Utilization %"=3,"Device Utilization %"=17,"In use system memory"=1288490188,"Alloc system memory"=4000000000}
+    }"#;
+        let g = parse_ioreg(text).unwrap();
+        assert_eq!(g.model.as_deref(), Some("Apple M3 Pro"));
+        assert_eq!(g.utilisation, Some(17));
+        assert_eq!(g.in_use, Some(1_288_490_188));
+        assert_eq!(parse_ioreg("nothing here"), None);
+    }
+
     fn gpu(total: u64, used: u64) -> Gpu {
         Gpu {
             index: 0,
@@ -194,6 +262,7 @@ mod tests {
             total,
             used,
             utilisation: 0,
+            temperature_c: None,
         }
     }
 

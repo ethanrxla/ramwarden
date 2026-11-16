@@ -319,3 +319,38 @@ async fn workspace_search_uses_the_selected_folder_and_observed_matches() {
     assert!(!report.to_string().contains("credential"));
     server.abort();
 }
+
+#[tokio::test]
+async fn model_may_request_more_probes_once_and_reply_names_them() {
+    use axum::{Json, Router, routing::post};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mock = Router::new().route("/api/chat",post(move |Json(v): Json<Value>| { let seen = seen.clone(); async move {
+        let n = seen.fetch_add(1, Ordering::SeqCst);
+        // What the daemon wrote: the model's own earlier turn is excluded.
+        let all: String = v["messages"].as_array().unwrap().iter().filter(|m| m["role"] != "assistant").filter_map(|m| m["content"].as_str()).collect();
+        assert!(all.contains("\"probe\":\"overview\""), "the overview is always read");
+        let content = if n == 0 {
+            json!({"reply":"","probes":[{"probe":"gpu"},{"probe":"shell","name":"rm -rf /"}]}).to_string()
+        } else {
+            assert!(all.contains("\"probe\":\"gpu\""), "the requested probe was run");
+            assert!(!all.contains("\"probe\":\"shell\""), "unknown probes are not run");
+            json!({"reply":"Your GPU is quiet.","proposed_action":null}).to_string()
+        };
+        Json(json!({"message":{"content":content}}))
+    }}));
+    let server = tokio::spawn(async move { axum::serve(listener,mock).await.unwrap() });
+    let mut st = state();
+    Arc::make_mut(&mut st.cfg).ollama.host = format!("http://{addr}");
+    Arc::make_mut(&mut st.cfg).ollama.respect_vram = false;
+    st.ai = Arc::new(ramwarden_daemon::ai::provider(&st.cfg));
+    let response = request(st,json!({"message":"Explain RAM"}),None).await;
+    let v: Value = serde_json::from_slice(&to_bytes(response.into_body(),100000).await.unwrap()).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "one extra round, no more");
+    assert_eq!(v["reply"], "Your GPU is quiet.\n\nLooked at: GPU.");
+    assert_eq!(v["looked_at"], json!(["GPU"]));
+    server.abort();
+}

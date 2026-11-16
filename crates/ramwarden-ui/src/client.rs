@@ -257,6 +257,8 @@ impl Client {
         }
     }
 
+    // Only the Windows tray plays speech; without the feature nothing calls this.
+    #[cfg(feature = "tray")]
     pub(crate) async fn speech_audio(&self, text: &str, warden: &str) -> Result<Vec<u8>> {
         let mut r=self.http.post(format!("{}/warden/speech",self.base)).json(&serde_json::json!({"text":text.chars().take(800).collect::<String>(),"warden":warden})).timeout(Duration::from_secs(35)).send().await.map_err(|e|Error::Transport(e.to_string()))?;
         if !r.status().is_success() {
@@ -825,6 +827,11 @@ pub struct TweakReport {
 impl Client {
     pub async fn tidy(&self) -> Result<TidyState> {
         self.get("/tidy", TIMEOUT).await
+    }
+
+    /// This computer's hardware and the user's Tailscale devices.
+    pub async fn devices(&self) -> Result<crate::devices::DevicesPane> {
+        self.get("/devices", Duration::from_secs(8)).await
     }
 
     pub async fn gpu(&self) -> Result<GpuReport> {

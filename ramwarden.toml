@@ -102,6 +102,14 @@ keep_tabs = 6              # tab budget: keep the 6 most recently used tabs; 0 =
 budget_idle_minutes = 60   # close any other tab untouched this long (hard-protected pages excepted)
 max_close_per_sweep = 10   # closed tabs are listed in the extension popup for reopening
 
+[assistant]
+# Questions about your other computers ("how many CPU cores does my laptop
+# have?"). RamWarden lists your Tailscale devices and asks an online one with
+# one fixed, read-only hardware command over SSH, using your own keys. Only
+# devices this computer has connected to before (known_hosts) are asked.
+# See docs/specs/ask-the-warden.md. false = list devices only, never log in.
+devices_ssh = true
+
 [voice]
 # The warden's speech bubble: "coming back to this tab?" and light comments.
 # See docs/specs/warden-voice.md. Mute from any app, or turn it off here.

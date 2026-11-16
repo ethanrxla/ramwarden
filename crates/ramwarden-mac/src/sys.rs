@@ -14,6 +14,18 @@ pub fn sysctl_raw(name: &str, buf: *mut c_void, len: &mut usize) -> bool {
     unsafe { libc::sysctlbyname(c.as_ptr(), buf, len, std::ptr::null_mut(), 0) == 0 }
 }
 
+/// A string sysctl, such as `machdep.cpu.brand_string`.
+pub fn sysctl_string(name: &str) -> Option<String> {
+    let mut buf = [0u8; 256];
+    let mut len = buf.len();
+    if !sysctl_raw(name, buf.as_mut_ptr().cast(), &mut len) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&buf[..len.min(buf.len())]);
+    let text = text.trim_matches(char::from(0)).trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
 /// An integer sysctl, whether the kernel reports it as 4 or 8 bytes.
 pub fn sysctl_int(name: &str) -> Option<u64> {
     let mut buf = [0u8; 8];
@@ -53,6 +65,14 @@ pub fn vm_stats() -> Option<libc::vm_statistics64> {
     };
     // SAFETY: success means the struct was filled.
     (rc == libc::KERN_SUCCESS).then(|| unsafe { s.assume_init() })
+}
+
+/// How many file descriptors a process has open. Asking for the list with no
+/// buffer returns the bytes it would need.
+pub fn fd_count(pid: i32) -> Option<u32> {
+    // SAFETY: a null buffer of size 0 only asks for the required size.
+    let bytes = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+    (bytes > 0).then(|| (bytes as usize / size_of::<libc::proc_fdinfo>()) as u32)
 }
 
 pub fn bsd_info(pid: i32) -> Option<libc::proc_bsdinfo> {
