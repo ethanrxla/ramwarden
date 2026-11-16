@@ -39,6 +39,7 @@ fn state() -> AppState {
         hold_until: Default::default(),
         desktop: Arc::new(ramwarden_daemon::desktop::DesktopCtl::disabled()),
         voice: Default::default(),
+        storage: Default::default(),
     }
 }
 fn tab(id: i64) -> Tab {

@@ -21,6 +21,7 @@ pub mod pattern;
 pub mod rank;
 pub mod roles;
 pub mod signals;
+pub mod storage;
 pub mod structures;
 pub mod tidy;
 pub mod wardens;

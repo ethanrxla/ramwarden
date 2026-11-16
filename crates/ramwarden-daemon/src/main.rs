@@ -122,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = ai::provider(&cfg);
     ramwarden_daemon::embedder::attach(&provider);
     let desktop = Arc::new(ramwarden_daemon::desktop::DesktopCtl::from_config(&cfg));
+    let places = ramwarden_daemon::storage::catalog::Places::from_env(platform.name);
     let state = AppState {
         desktop,
         cfg: Arc::new(cfg),
@@ -136,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         started: Instant::now(),
         hold_until: Arc::new(Mutex::new(None)),
         voice: Arc::new(ramwarden_daemon::voice::Voice::new(Some(ramwarden_daemon::voice::default_store()))),
+        storage: Arc::new(ramwarden_daemon::storage::Storage::new(places)),
     };
 
     // Bind before the monitor starts, so a daemon that cannot have the port

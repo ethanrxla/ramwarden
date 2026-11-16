@@ -20,6 +20,7 @@ mod forecast;
 mod memory;
 mod pressure;
 mod process;
+mod storage;
 mod sys;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub use desktop::MacDesktop;
 pub use memory::MacMemory;
 pub use pressure::MacPressure;
 pub use process::{MacControl, MacHandle, MacProcesses};
+pub use storage::MacStorage;
 
 /// Build the macOS platform over the live system.
 pub fn platform() -> Platform {
@@ -46,6 +48,7 @@ pub fn platform() -> Platform {
         || Box::new(MacProcesses::new()),
         || Box::new(MacDesktop::new()),
     )
+    .with_storage(Arc::new(MacStorage))
 }
 
 /// macOS has no reclaim unit like a cgroup scope, so group reclaim is off.

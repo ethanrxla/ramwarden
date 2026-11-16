@@ -110,6 +110,34 @@ impl Readings {
     }
 }
 
+impl Readings {
+    /// Whether this turn looked at disk space.
+    pub fn looked_at_storage(&self) -> bool {
+        self.probes.contains(&Probe::Storage)
+    }
+}
+
+/// `POST /ask/probe`: run one read-only probe and return its reading. The
+/// same probes the warden's chat answers from, for local agents (the tool
+/// server in `ramwarden mcp`). Body: `{"probe":"gpu"}` or
+/// `{"probe":"app","name":"ollama"}`.
+pub fn routes() -> axum::Router<AppState> {
+    axum::Router::new().route("/ask/probe", axum::routing::post(probe))
+}
+
+async fn probe(
+    axum::extract::State(st): axum::extract::State<AppState>,
+    axum::Json(request): axum::Json<Value>,
+) -> Result<axum::Json<Value>, (axum::http::StatusCode, axum::Json<Value>)> {
+    match Probe::from_request(&request) {
+        Some(p) => Ok(axum::Json(probes::run(&st, &p).await)),
+        None => Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error":"unknown probe","probes":["overview","app","gpu","models","history","storage"],"note":"app and history need a name of at most 64 characters"})),
+        )),
+    }
+}
+
 /// The reply with the "Looked at" line appended.
 pub fn with_sources(reply: &str, readings: &Readings) -> String {
     format!("{}\n\nLooked at: {}.", reply.trim_end(), readings.looked_at().join(", "))

@@ -46,6 +46,8 @@ use lines::{Lines, fill};
 const QUESTION_LIFE: Duration = Duration::from_secs(10 * 60);
 const REMARK_LIFE: Duration = Duration::from_secs(60);
 const REPLY_LIFE: Duration = Duration::from_secs(10);
+/// A storage answer with no buttons: long enough to read a paragraph.
+const STORAGE_ANSWER_LIFE: Duration = Duration::from_secs(45);
 /// A release older than this is no longer news.
 const EVENT_SHELF_LIFE: Duration = Duration::from_secs(30 * 60);
 /// Lines not to repeat: the last few said.
@@ -65,22 +67,25 @@ pub enum Kind {
     Focus,
     Quip,
     Reply,
+    /// A disk is running out, or the user asked what fills it. Never
+    /// rationed here: `ramwarden_core::storage::Watch` rations the alerts.
+    Storage,
 }
 
 /// A button under a bubble.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Choice {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label: std::borrow::Cow<'static, str>,
 }
 
 /// The placeholder in the focus question's text box.
 pub const FOCUS_PROMPT: &str = "What are you working on?";
 
 const CHECK_IN_CHOICES: [Choice; 3] = [
-    Choice { id: "keep", label: "Yes, keep it" },
-    Choice { id: "close", label: "No, close it" },
-    Choice { id: "later", label: "Ask me later" },
+    Choice { id: "keep", label: std::borrow::Cow::Borrowed("Yes, keep it") },
+    Choice { id: "close", label: std::borrow::Cow::Borrowed("No, close it") },
+    Choice { id: "later", label: std::borrow::Cow::Borrowed("Ask me later") },
 ];
 
 /// The tab a check-in is about.
@@ -108,6 +113,25 @@ pub struct Bubble {
     pub expires_in_s: u64,
     #[serde(skip_serializing_if="Option::is_none")]
     pub source_url:Option<String>,
+    /// `"baa"` or `"baa_critical"`: the client plays it once, when this
+    /// bubble first appears. Only alerts carry one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sound: Option<&'static str>,
+    /// The clean-up a storage bubble's "Free" button approves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+}
+
+/// What a storage bubble says and offers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StorageSay {
+    pub text: String,
+    /// `Some(critical)` plays the baa. `None` is silent: an answer, not an alert.
+    pub baa: Option<bool>,
+    /// The pending clean-up and its size, for the "Free" button.
+    pub proposal: Option<(String, u64)>,
+    /// Offer "What's using it?". Off once it has been answered.
+    pub explain: bool,
 }
 
 /// What the user picked.
@@ -119,6 +143,10 @@ pub enum Pick {
     Later,
     Dismiss,
     Focus,
+    /// Storage: approve the clean-up on offer.
+    Free,
+    /// Storage: say what is using the space.
+    Show,
 }
 
 /// What an answer asks the caller to do.
@@ -128,6 +156,8 @@ pub enum Answered {
     Said(String),
     /// Close this tab, then report with [`Voice::after_close`].
     Close(TabRef),
+    /// A storage bubble was answered; the route acts on the proposal.
+    Storage { pick: Pick, proposal: Option<String> },
 }
 
 /// The answer was for a bubble that is no longer up.
@@ -379,6 +409,8 @@ impl Voice {
             tab,
             expires_in_s: life.as_secs(),
             source_url,
+            sound: None,
+            proposal: None,
         };
         s.current = Some((bubble.clone(), now + life));
         Some(bubble)
@@ -415,6 +447,9 @@ impl Voice {
             return Err(Stale);
         }
         s.current = None;
+        if bubble.kind == Kind::Storage {
+            return Ok(Answered::Storage { pick, proposal: bubble.proposal });
+        }
         let lines = Lines::ram();
         let answered = match (bubble.tab, pick) {
             (Some(tab), Pick::Close) => Ok(Answered::Close(tab)),
@@ -422,7 +457,7 @@ impl Voice {
                 s.answers.put_hot(tab.target, (Answer::Keep, now));
                 Ok(Answered::Said(s.reply(&lines.replies.keep, now)))
             }
-            (Some(tab), Pick::Later | Pick::Dismiss | Pick::Focus) => {
+            (Some(tab), Pick::Later | Pick::Dismiss | Pick::Focus | Pick::Free | Pick::Show) => {
                 s.answers.put_hot(tab.target, (Answer::Later, now));
                 let text = if pick == Pick::Later { s.reply(&lines.replies.later, now) } else { String::new() };
                 Ok(Answered::Said(text))
@@ -476,6 +511,50 @@ impl Voice {
         while s.events.len() > 4 {
             s.events.dequeue();
         }
+    }
+
+    // ── Storage ─────────────────────────────────────────────────────────────
+
+    /// Put a storage bubble up now, replacing whatever is showing. It skips
+    /// the gap and the daily cap, because the storage watcher rations its own
+    /// alerts and a full disk outranks a joke. It still honours the two
+    /// things the user controls: the voice being off, and the mute. Returns
+    /// whether it was shown.
+    pub fn say_storage(&self, cfg: &config::Voice, say: StorageSay, now: Instant, unix: u64) -> bool {
+        let mut s = self.inner.lock().unwrap();
+        if !cfg.enabled || s.muted(unix) {
+            return false;
+        }
+        // A tab question it displaces counts as "ask me later".
+        if let Some((Bubble { tab: Some(tab), .. }, _)) = s.current.take() {
+            s.answers.put_hot(tab.target, (Answer::Later, now));
+        }
+        let mut choices = Vec::new();
+        if let Some((_, bytes)) = &say.proposal {
+            choices.push(Choice { id: "free", label: format!("Free {}", ramwarden_core::storage::size_text(*bytes)).into() });
+        }
+        if say.explain {
+            choices.push(Choice { id: "show", label: "What's using it?".into() });
+        }
+        let life = if choices.is_empty() { STORAGE_ANSWER_LIFE } else { QUESTION_LIFE };
+        if !choices.is_empty() {
+            choices.push(Choice { id: "dismiss", label: "Not now".into() });
+        }
+        let bubble = Bubble {
+            id: uuid::Uuid::new_v4().to_string(),
+            warden: "ram",
+            kind: Kind::Storage,
+            text: say.text,
+            choices,
+            input: None,
+            tab: None,
+            expires_in_s: life.as_secs(),
+            source_url: None,
+            sound: say.baa.map(|critical| if critical { "baa_critical" } else { "baa" }),
+            proposal: say.proposal.map(|(id, _)| id),
+        };
+        s.current = Some((bubble, now + life));
+        true
     }
 
     // ── Mute ────────────────────────────────────────────────────────────────
@@ -569,6 +648,8 @@ impl Inner {
                 tab: None,
                 expires_in_s: REPLY_LIFE.as_secs(),
                 source_url:None,
+                sound: None,
+                proposal: None,
             },
             now + REPLY_LIFE,
         ));

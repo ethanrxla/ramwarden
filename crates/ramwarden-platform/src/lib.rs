@@ -36,6 +36,7 @@ mod platform;
 mod pressure;
 mod process;
 pub mod secret;
+mod storage;
 mod wm;
 
 pub use background::{Background, NoBackground};
@@ -51,3 +52,4 @@ pub use pressure::{Pressure, PressureSource, PressureWaker};
 pub use wm::{WindowManager, WmCommand, WmKind, WmLayout, WmState, WmWindow, WmWorkspace};
 pub use process::{Owner, ProcessControl, ProcessHandle, ProcessSample, ProcessSource};
 pub use secret::Secret;
+pub use storage::{NoStorage, StorageSource, Volume};

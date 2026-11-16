@@ -102,6 +102,19 @@ keep_tabs = 6              # tab budget: keep the 6 most recently used tabs; 0 =
 budget_idle_minutes = 60   # close any other tab untouched this long (hard-protected pages excepted)
 max_close_per_sweep = 10   # closed tabs are listed in the extension popup for reopening
 
+[storage]
+# Disk space: the warden baas when a disk runs low, says what is using it, and
+# clears caches only after you press Free. See docs/specs/storage.md.
+# A level applies when free space is under BOTH figures (the smaller decides).
+enabled = true
+low_free_gb = 20
+low_free_percent = 10
+critical_free_gb = 5
+critical_free_percent = 3
+low_repeat_hours = 24        # the same "low" warning at most once a day
+critical_repeat_hours = 4    # the same "critical" warning at most every 4 hours
+share_paths = false          # agents and models see folder names and sizes, never paths
+
 [voice]
 # The warden's speech bubble: "coming back to this tab?" and light comments.
 # See docs/specs/warden-voice.md. Mute from any app, or turn it off here.

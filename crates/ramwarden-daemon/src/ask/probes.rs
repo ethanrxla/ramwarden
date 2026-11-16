@@ -37,6 +37,8 @@ pub enum Probe {
     Models,
     /// What RamWarden has recently done to an app.
     History(String),
+    /// Free space per disk and what is using it.
+    Storage,
 }
 
 impl Probe {
@@ -48,6 +50,7 @@ impl Probe {
             Probe::Gpu => "GPU".into(),
             Probe::Models => "local models".into(),
             Probe::History(n) => format!("RamWarden's history with {n}"),
+            Probe::Storage => "disk space".into(),
         }
     }
 
@@ -67,6 +70,7 @@ impl Probe {
             "gpu" => Some(Probe::Gpu),
             "models" => Some(Probe::Models),
             "history" => name().map(Probe::History),
+            "storage" => Some(Probe::Storage),
             _ => None,
         }
     }
@@ -78,6 +82,7 @@ pub const CATALOG: &str = r#"Read-only probes you may request (at most 3, one ro
 {"probe":"gpu"}                                  each GPU's use %, VRAM, temperature and the processes holding VRAM
 {"probe":"models"}                               models loaded now in Ollama, LM Studio, llama-server, vLLM and similar
 {"probe":"history","name":"<app>"}              what RamWarden recently did to that app
+{"probe":"storage"}                              free space per disk, the largest folders, and what can be cleared
 {"probe":"overview"}                             RAM, pressure, swap and the largest apps"#;
 
 /// Words that are never app names, so "what is my computer doing" does not
@@ -110,6 +115,13 @@ pub fn pick(message: &str, names: &HashSet<String>) -> Vec<Probe> {
         || text.contains("lm studio")
     {
         out.push(Probe::Models);
+    }
+    if has(&["storage", "disk", "disks", "drive", "drives", "ssd", "space", "cleanup", "clean-up", "gigabytes"])
+        || text.contains("free up")
+        || text.contains("out of room")
+        || text.contains("is full")
+    {
+        out.push(Probe::Storage);
     }
     let history = has(&["closed", "close", "killed", "froze", "frozen", "suspended", "paused", "history", "did"]);
     let mut apps: Vec<String> = Vec::new();
@@ -157,6 +169,7 @@ pub async fn run(st: &AppState, probe: &Probe) -> Value {
         Probe::Gpu => gpu(st).await,
         Probe::Models => models(st).await,
         Probe::History(name) => history(st, name),
+        Probe::Storage => storage(st).await,
     };
     cap(v, CAP)
 }
@@ -227,6 +240,47 @@ fn overview(st: &AppState) -> Value {
         "pressure_some_avg10":p.some_avg10,"pressure_full_avg10":p.full_avg10,"pressure_estimated":p.estimated,
         "largest_apps":top,
         "note":"largest_apps sums each app's own memory (PSS or private working set). null means the sample was busy."
+    })
+}
+
+/// Disk space, in the form a model may see: names and sizes, no paths
+/// (unless `[storage] share_paths` is on). Uses a scan under ten minutes old
+/// when there is one, so a follow-up question does not walk the disk again.
+async fn storage(st: &AppState) -> Value {
+    use ramwarden_core::storage::size_text;
+    let readings = crate::storage::routes::volumes(st).await;
+    if readings.is_empty() {
+        return json!({"probe":"storage","available":false,"note":"free space could not be read on this system"});
+    }
+    let usage = crate::storage::routes::explain(st, None, false).await;
+    let full = usage.view(st.cfg.storage.share_paths);
+    let brief = |rows: &Value, name: &str, take: usize| -> Vec<Value> {
+        rows.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| r["bytes"].as_u64().unwrap_or(0) >= 50 * 1_048_576)
+            .take(take)
+            .map(|r| {
+                let mut v = json!({"name": r[name], "size": r["size"]});
+                if r["complete"] == false {
+                    v["at_least"] = json!(true);
+                }
+                if !r["kind"].is_null() {
+                    v["kind"] = r["kind"].clone();
+                    v["id"] = r["id"].clone();
+                }
+                v
+            })
+            .collect()
+    };
+    json!({
+        "probe":"storage",
+        "volumes": readings.iter().map(|r| json!({"name":r.name,"free":size_text(r.free),"total":size_text(r.total),"level":r.level,"system":r.system})).collect::<Vec<_>>(),
+        "home_folders": brief(&full["home_folders"], "name", 8),
+        "places": brief(&full["places"], "label", 10),
+        "clearable": full["clearable"],
+        "partial": usage.partial,
+        "note":"kind clear: RamWarden deletes the contents only after the user presses Free in the warden's bubble; you cannot delete anything. kind review: the user's own files. kind guide: the user follows steps; say you can walk them through it. at_least: the scan ran out of time."
     })
 }
 

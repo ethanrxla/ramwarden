@@ -186,6 +186,9 @@ pub async fn chat(State(st): State<AppState>, Extension(service): Extension<Arc<
     let parsed = parse_reply(&raw_reply);
     let reply = ramwarden_core::branding::public_text(parsed.as_ref().and_then(|v|v["reply"].as_str()).filter(|s|!s.trim().is_empty()).unwrap_or(&raw_reply));
     let reply = if direct_release { reply } else { crate::ask::with_sources(&reply, &readings) };
+    // A storage answer with something clearable puts the offer in the bubble:
+    // approving is a button the user presses, never something chat can do.
+    if readings.looked_at_storage() { crate::storage::routes::offer(&st).await; }
     let action = parsed.as_ref().and_then(|v|serde_json::from_value::<Action>(v["proposed_action"].clone()).ok())
         .filter(|a|match a { Action::ResumeApp { name } => frozen.contains(name), Action::UnloadIdleTabs => browser.is_some_and(|(_,n)|n>0), Action::Workspace{operation,..}=>operation.valid() && service.workspace("ram").is_some(), _ => true });
     let proposed_action = action.map(|mut action| {

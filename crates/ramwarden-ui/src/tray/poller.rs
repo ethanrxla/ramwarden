@@ -86,6 +86,7 @@ impl Poller {
                 // The tray is first in line to start the daemon; the window
                 // only does it when it runs without a tray.
                 let mut launcher = DaemonLauncher::new(Duration::from_secs(if full { 20 } else { 6 }));
+                let mut heard = crate::voice::Heard::default();
                 loop {
                     let (state, tidy, speech) = if full {
                         tokio::join!(client.state(), client.tidy(), client.bubble())
@@ -97,6 +98,11 @@ impl Poller {
                         let mut s = shared.lock().unwrap();
                         // A daemon without the voice (older, or restarting) is a quiet warden.
                         s.speech = speech.ok();
+                        // A storage alert baas once. `bleat` honours the
+                        // companion's own audio mute.
+                        if heard.due(s.speech.as_ref().and_then(|v| v.bubble.as_ref())).is_some() {
+                            let _ = super::audio::bleat(false);
+                        }
                         match state {
                             Ok(st) => {
                                 s.state = Some(st);

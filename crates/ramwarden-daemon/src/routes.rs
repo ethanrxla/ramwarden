@@ -94,6 +94,8 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::desktop::routes())
         // The warden's speech bubble. See docs/specs/warden-voice.md.
         .merge(crate::voice::routes::routes())
+        .merge(crate::storage::routes::routes())
+        .merge(crate::ask::routes())
         ;
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {

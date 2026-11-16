@@ -1,3 +1,5 @@
+mod mcp;
+mod storage;
 mod tailnet;
 use serde_json::Value;
 use std::{
@@ -225,6 +227,14 @@ async fn main() -> Result<()> {
             status(&http).await?;
         }
         "tailscale" => tailnet::select(&http).await?,
+        // No banner: stdout is the protocol.
+        "mcp" => mcp::serve().await?,
+        "storage" => match std::env::args().nth(2).as_deref() {
+            Some("free") => storage::free(&http).await?,
+            Some(n) if n.parse::<u64>().is_ok() => storage::show(&http, n.parse::<u64>()?.clamp(1, 120)).await?,
+            None => storage::show(&http, 15).await?,
+            Some(_) => return Err("Use: ramwarden storage [seconds] or ramwarden storage free".into()),
+        },
         "watch" => {
             let screen =
                 io::stdout().is_terminal() && std::env::var_os("TERM").is_some_and(|v| v != "dumb");
@@ -250,7 +260,7 @@ async fn main() -> Result<()> {
         "help" | "--help" | "-h" => {
             banner();
             println!(
-                "ramwarden setup       Guided installation and account connection\nramwarden login       Connect this computer in your browser\nramwarden status      RAM and security at a glance\nramwarden watch       Live readings every 5 seconds; Ctrl-C exits\nramwarden doctor      Read-only installation checks\nramwarden tailscale   Choose machines and prepare an agent setup request\nramwarden threat      Security status\nramwarden-doctor      Shortcut for doctor"
+                "ramwarden setup       Guided installation and account connection\nramwarden login       Connect this computer in your browser\nramwarden status      RAM and security at a glance\nramwarden watch       Live readings every 5 seconds; Ctrl-C exits\nramwarden doctor      Read-only installation checks\nramwarden tailscale   Choose machines and prepare an agent setup request\nramwarden threat      Security status\nramwarden storage     What is using your disk (add a number of seconds for a longer scan)\nramwarden storage free  List what can be cleared, then clear it if you say yes\nramwarden mcp         Tool server for AI agents (Warp, Claude Code, Cursor) over stdio\nramwarden-doctor      Shortcut for doctor"
             );
         }
         _ => return Err("Unknown command. Run ramwarden --help".into()),

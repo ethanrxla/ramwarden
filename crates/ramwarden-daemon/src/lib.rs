@@ -18,6 +18,7 @@ pub mod monitor;
 pub mod outcomes;
 pub mod predict;
 pub mod routes;
+pub mod storage;
 pub mod tabpolicy;
 pub mod appintel;
 pub mod appquit;

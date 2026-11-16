@@ -68,6 +68,7 @@ fn state(desktop: DesktopCtl) -> AppState {
         hold_until: Default::default(),
         desktop: Arc::new(desktop),
         voice: Default::default(),
+        storage: Default::default(),
     }
 }
 

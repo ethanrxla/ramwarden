@@ -38,6 +38,7 @@ pub mod procfd;
 pub mod psi;
 pub mod sampler;
 pub mod smaps;
+pub mod storage;
 pub mod zram;
 
 pub use error::{Error, Result};

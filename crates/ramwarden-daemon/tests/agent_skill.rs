@@ -33,9 +33,16 @@ fn read(p: &Path) -> String {
 /// with path parameters reduced to `{}`.
 fn served_routes() -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let src = repo().join("crates/ramwarden-daemon/src");
-    for entry in fs::read_dir(&src).unwrap() {
-        let path = entry.unwrap().path();
+    // Route modules live in subfolders too (`storage/routes.rs`, `ask/mod.rs`).
+    let mut files = Vec::new();
+    let mut dirs = vec![repo().join("crates/ramwarden-daemon/src")];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() { dirs.push(path) } else { files.push(path) }
+        }
+    }
+    for path in files {
         if path.extension().is_none_or(|e| e != "rs") {
             continue;
         }

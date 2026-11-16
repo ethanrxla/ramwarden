@@ -27,6 +27,7 @@ pub const STALL_WINDOW: Duration = Duration::from_secs(1);
 pub fn platform(root: Root) -> p::Platform {
     let uid = current_uid();
     let factory_root = root.clone();
+    let storage = Arc::new(crate::storage::LinuxStorage { root: root.clone() });
     p::Platform::new(
         p::Parts {
             name: "linux",
@@ -42,6 +43,7 @@ pub fn platform(root: Root) -> p::Platform {
         move || Box::new(LinuxProcesses::new(factory_root.clone())),
         || Box::new(crate::desktop::DesktopProbe::new()),
     )
+    .with_storage(storage)
 }
 
 pub fn current_uid() -> u32 {

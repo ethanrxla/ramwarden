@@ -549,6 +549,7 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         .unwrap_or_else(Instant::now);
     let mut quitter = crate::appquit::Quitter::new();
     let mut held = false;
+    let mut last_storage: Option<Instant> = None;
 
     loop {
         LAST_TICK.store(epoch_secs(), Ordering::Relaxed);
@@ -562,6 +563,22 @@ fn run(state: AppState, handle: tokio::runtime::Handle) {
         };
 
         let started = Instant::now();
+
+        // ── disk space ──────────────────────────────────────────────────────
+        // Before the hold check: a full disk matters whatever the ladder is
+        // doing. Read off this thread, because a sleeping or failing disk can
+        // stall a free-space call and this loop is watched for stalls.
+        if cfg.storage.enabled && last_storage.is_none_or(|t| started.saturating_duration_since(t) >= Duration::from_secs(cfg.storage.check_seconds.max(5))) {
+            last_storage = Some(started);
+            let st = state.clone();
+            handle.spawn(async move {
+                let (storage, cfg, platform) = (st.storage.clone(), st.cfg.clone(), st.platform.clone());
+                let due = tokio::task::spawn_blocking(move || storage.check(&cfg.storage, &platform, Instant::now(), epoch_secs())).await;
+                if let Ok(Some(alert)) = due {
+                    crate::storage::routes::raise(st, alert).await;
+                }
+            });
+        }
 
         // A hold (a window arranger at work) means: nothing frozen, nothing new
         // frozen. Thaw once at the start; skip the ladder until it expires.

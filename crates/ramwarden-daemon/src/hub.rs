@@ -150,6 +150,8 @@ pub struct AppState {
     pub desktop: Arc<crate::desktop::DesktopCtl>,
     /// The warden's speech bubble: check-ins about tabs and comments.
     pub voice: Arc<crate::voice::Voice>,
+    /// Disk space: the low-space watcher, scans and proposed clean-ups.
+    pub storage: Arc<crate::storage::Storage>,
 }
 
 impl AppState {

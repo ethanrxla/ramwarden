@@ -23,8 +23,56 @@ pub fn describe(v: &Value) -> Option<String> {
         "gpu" => gpu(v),
         "models" => models(v),
         "history" => history(v),
+        "storage" => storage(v),
         _ => None,
     }
+}
+
+fn storage(v: &Value) -> Option<String> {
+    if v["available"] == false {
+        return Some("Disk space: I could not read free space on this system.".into());
+    }
+    let list = |rows: &Value, keep: &dyn Fn(&Value) -> bool, take: usize| -> Vec<String> {
+        rows.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| keep(r))
+            .take(take)
+            .filter_map(|r| Some(format!("{} {}{}", r["name"].as_str()?, if r["at_least"] == true { "at least " } else { "" }, r["size"].as_str()?)))
+            .collect()
+    };
+    let mut out: Vec<String> = v["volumes"]
+        .as_array()?
+        .iter()
+        .filter_map(|d| {
+            let state = match d["level"].as_str()? {
+                "critical" => ", which is nearly full",
+                "low" => ", which is getting full",
+                _ => "",
+            };
+            Some(format!("{} has {} free of {}{state}.", d["name"].as_str()?, d["free"].as_str()?, d["total"].as_str()?))
+        })
+        .collect();
+    let folders = list(&v["home_folders"], &|_| true, 5);
+    if !folders.is_empty() {
+        out.push(format!("Biggest folders in your home folder: {}.", folders.join(", ")));
+    }
+    let clear = list(&v["places"], &|r| r["kind"] == "clear", 5);
+    if !clear.is_empty() {
+        out.push(format!(
+            "I can clear {} once you press Free in my bubble: {}.",
+            v["clearable"].as_str().unwrap_or("some space"),
+            clear.join(", ")
+        ));
+    }
+    let yours = list(&v["places"], &|r| r["kind"] != "clear", 4);
+    if !yours.is_empty() {
+        out.push(format!("Yours to decide: {}.", yours.join(", ")));
+    }
+    if v["partial"] == true {
+        out.push("Some sizes are minimums because I ran out of time; ask again for a fuller count.".into());
+    }
+    Some(out.join(" "))
 }
 
 fn overview(v: &Value) -> Option<String> {
