@@ -1871,10 +1871,13 @@ mod tests {
         let mut first = Report::default();
         l.do_reclaim(&w, &mut first);
         assert_eq!(first.steps.len(), 1);
+        // The live report says why on every tick (history logs it once, see
+        // 50c6675), and each repeat is a refusal, never a claimed reclaim.
         for _ in 0..100 {
             let mut repeated = Report::default();
             l.do_reclaim(&w, &mut repeated);
-            assert!(repeated.steps.is_empty());
+            assert_eq!(repeated.steps.len(), 1);
+            assert!(repeated.steps[0].2.did_nothing());
         }
         // Capability discovery can recover; do not permanently disable a rung.
         w.groups = Some(&h);
@@ -1890,7 +1893,8 @@ mod tests {
             for _ in 0..100 {
                 let mut repeated = Report::default();
                 l.do_page_out(&w, &mut repeated);
-                assert!(repeated.steps.is_empty());
+                assert_eq!(repeated.steps.len(), 1);
+                assert!(repeated.steps[0].2.did_nothing());
             }
         }
     }
