@@ -67,36 +67,31 @@ pub struct Pace {
 }
 
 impl Evidence {
-    /// Return gaps from one browser's tabs, each given as its activation
-    /// times (JavaScript milliseconds, any order). Activations at or before
+    /// Return gaps from one tab: each time it was selected again, the time
+    /// since the user last left it. Both lists are JavaScript milliseconds as
+    /// the extension records them (`activations` when a visit started,
+    /// `departures` when the user switched away). Times at or before
     /// `since_ms` are ignored, so an old tab's history cannot stand in for the
     /// user's rhythm now.
     ///
-    /// Activations are selections, not departures, so the gap between two
-    /// selections of the same tab also holds the time spent reading it. Time
-    /// away is measured from when the user left: the first activation of any
-    /// *other* tab after this one. A tab re-selected with no other tab in
-    /// between was never left and adds nothing. Switching back within
-    /// `MIN_GAP_MINUTES` is not counted. Windows are not told apart, so a tab
-    /// visible in a second window can read as left; that errs toward a longer
-    /// gap, which only delays a close.
-    pub fn add_browser(&mut self, tabs: &[&[f64]], since_ms: f64) {
-        let mut timeline: Vec<(f64, usize)> = Vec::new();
-        for (tab, times) in tabs.iter().enumerate() {
-            timeline.extend(times.iter().filter(|t| t.is_finite() && **t > since_ms).map(|t| (*t, tab)));
-        }
-        timeline.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut left: Vec<Option<f64>> = vec![None; tabs.len()];
-        let mut current: Option<usize> = None;
-        for &(at, tab) in &timeline {
-            if let Some(prev) = current && prev != tab && left[prev].is_none() {
-                left[prev] = Some(at);
-            }
-            if current != Some(tab) && let Some(gone) = left[tab].take() {
-                let minutes = ((at - gone) / 60_000.0) as i64;
-                if minutes >= MIN_GAP_MINUTES { self.return_gaps.push(minutes); }
-            }
-            current = Some(tab);
+    /// The gap runs from the departure, never from the earlier selection, so
+    /// reading time is not counted as time away. Departures come from the tab
+    /// itself, not inferred from other tabs, so closing an unrelated tab can
+    /// never shorten a gap. A return with no departure recorded since the
+    /// previous visit (an older extension, or the window lost focus instead)
+    /// adds nothing. Switching back within `MIN_GAP_MINUTES` is not counted.
+    pub fn add_tab(&mut self, activations: &[f64], departures: &[f64], since_ms: f64) {
+        let recent = |v: &[f64]| -> Vec<f64> {
+            let mut v: Vec<f64> = v.iter().copied().filter(|t| t.is_finite() && *t > since_ms).collect();
+            v.sort_by(f64::total_cmp);
+            v
+        };
+        let (visits, left) = (recent(activations), recent(departures));
+        for pair in visits.windows(2) {
+            let (before, back) = (pair[0], pair[1]);
+            let Some(gone) = left.iter().rev().find(|d| **d > before && **d <= back) else { continue };
+            let minutes = ((back - gone) / 60_000.0) as i64;
+            if minutes >= MIN_GAP_MINUTES { self.return_gaps.push(minutes); }
         }
     }
 
@@ -177,26 +172,26 @@ mod tests {
     fn time_away_runs_from_leaving_a_tab_not_from_selecting_it() {
         let m = 60_000.0;
         let mut e = Evidence::default();
-        // A selected at 0, read until B at 480 (8 h), back to A at 540: one hour
-        // away, not nine. B, left at 540, is back at 603: 63 minutes. C, left at
-        // 603 and back at 606, was a 3-minute switch and does not count.
-        let a = [0.0, 540.0 * m];
-        let b = [480.0 * m, 603.0 * m];
-        let c = [600.0 * m, 606.0 * m];
-        e.add_browser(&[&a, &b, &c], -1.0);
-        assert_eq!(e.return_gaps, vec![60, 63]);
+        // Selected at 0, read until 480 (8 h), back at 540: one hour away, not nine.
+        // Left at 600, back at 603: a switch, not counted. Back at 700 with no
+        // departure recorded since 603: no evidence.
+        e.add_tab(&[0.0, 540.0 * m, 603.0 * m, 700.0 * m], &[480.0 * m, 600.0 * m], -1.0);
+        assert_eq!(e.return_gaps, vec![60]);
     }
 
     #[test]
-    fn visits_before_the_window_are_ignored() {
+    fn other_tabs_cannot_change_a_gap_and_old_visits_are_ignored() {
         let m = 60_000.0;
+        // Only this tab's own departures count, so nothing another tab does
+        // (opening, closing) enters the calculation.
+        let visits: Vec<f64> = (0..21).map(|i| i as f64 * 60.0 * m).collect();
+        let left: Vec<f64> = (0..20).map(|i| (i as f64 * 60.0 + 20.0) * m).collect();
         let mut e = Evidence::default();
-        let a: Vec<f64> = (0..21).map(|i| i as f64 * 20.0 * m).collect();
-        let b: Vec<f64> = (0..21).map(|i| (i as f64 * 20.0 + 10.0) * m).collect();
-        e.add_browser(&[&a, &b], 1_000_000.0 * m);
-        assert!(e.return_gaps.is_empty());
-        e.add_browser(&[&a, &b], -1.0);
-        assert_eq!(e.return_gaps.len(), 40);
-        assert!(e.return_gaps.iter().all(|g| *g == 10));
+        e.add_tab(&visits, &left, -1.0);
+        assert_eq!(e.return_gaps.len(), 20);
+        assert!(e.return_gaps.iter().all(|g| *g == 40));
+        let mut old = Evidence::default();
+        old.add_tab(&visits, &left, 1_000_000.0 * m);
+        assert!(old.return_gaps.is_empty());
     }
 }

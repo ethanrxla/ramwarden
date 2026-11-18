@@ -165,7 +165,13 @@ function mergeActivity(stored) {
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   // Reading counts until the user leaves, not merely when they first selected it.
   const previous=selectedByWindow.get(windowId);
-  if (previous && tabActivity[previous]) tabActivity[previous].lastActiveMs=Date.now();
+  if (previous && previous!==tabId && tabActivity[previous]) {
+    const row=tabActivity[previous], now=Date.now();
+    row.lastActiveMs=now;
+    // When the user left, so the daemon can tell time away from time spent
+    // reading (an activation alone is only when a visit started).
+    row.departures=[...(row.departures||[]), now].slice(-24);
+  }
   selectedByWindow.set(windowId,tabId);
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
@@ -180,6 +186,7 @@ chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
       lastActiveMs: Date.now(),
       incognito: tab.incognito || false,
       activations: [...prior, Date.now()].slice(-24),
+      departures: tabActivity[tabId]?.departures ?? [],
     };
     persistActivity();
   });
@@ -191,7 +198,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     // piece of work: keep its visit history. A new site starts fresh.
     const prior = tabActivity[tabId];
     const keep = prior && siteOf(prior.url) && siteOf(prior.url) === siteOf(changeInfo.url);
-    tabActivity[tabId] = {url:changeInfo.url,lastActiveMs:Date.now(),activations:keep ? (prior.activations || []) : []};
+    tabActivity[tabId] = {url:changeInfo.url,lastActiveMs:Date.now(),activations:keep ? (prior.activations || []) : [],departures:keep ? (prior.departures || []) : []};
     delete safety.work[tabId]; persistSafety(); persistActivity();
   }
   if (changeInfo.status !== "complete") return;
@@ -201,6 +208,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     lastActiveMs: tabActivity[tabId]?.lastActiveMs ?? (tab.lastAccessed || Date.now()),
     incognito: tab.incognito || false,
     activations: tabActivity[tabId]?.activations ?? [],
+    departures: tabActivity[tabId]?.departures ?? [],
   };
   persistActivity();
 });
@@ -313,6 +321,7 @@ async function buildTabReport(activity) {
           discardSupported: typeof chrome.tabs.discard === "function",
           safeCloseSupported: !IS_FIREFOX, // correlated close acknowledgements use the live socket
           activations: known?.activations ?? [],
+          departures: known?.departures ?? [],
           activityVersion: 1,
           workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,
           protectedUntilMs: feedback.until || 0,
@@ -664,7 +673,7 @@ chrome.runtime.onMessage?.addListener((message,sender) => {
   if (message?.type!=="rw_activity" || !sender.tab || sender.frameId!==0) return;
   const tab=sender.tab, now=Date.now();
   const old=tabActivity[tab.id] || {};
-  tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[]};
+  tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[],departures:old.departures||[]};
   if (message.dirty===true) safety.work[tab.id]={url:tab.url,dirty:true};
   persistActivity(); persistSafety();
 });

@@ -183,8 +183,7 @@ impl AppState {
         let pace = {
             let mut hub = self.hub.lock().unwrap();
             for browser in hub.reg.socket_ids().into_iter().chain(hub.reg.poll_ids()) {
-                let tabs: Vec<&[f64]> = hub.reg.tabs_for(&browser).iter().map(|t| t.activations.as_slice()).collect();
-                evidence.add_browser(&tabs, since_ms);
+                for tab in hub.reg.tabs_for(&browser) { evidence.add_tab(&tab.activations, &tab.departures, since_ms); }
             }
             let pace = evidence.pace(configured);
             if hub.tab_pace.as_ref().map(|p| p.floor_minutes) != Some(pace.floor_minutes) {

@@ -75,6 +75,10 @@ pub struct Tab {
     /// oldest first. Absent from older extensions.
     #[serde(default, deserialize_with = "lenient_f64_list")]
     pub activations: Vec<f64>,
+    /// When the user left this tab for another in its window, same units.
+    /// Absent from extensions before 2026-11-18.
+    #[serde(default, deserialize_with = "lenient_f64_list")]
+    pub departures: Vec<f64>,
     #[serde(default, rename = "activityVersion")]
     pub activity_version: u32,
     #[serde(default, rename = "workInProgress")]

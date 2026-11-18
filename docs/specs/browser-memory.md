@@ -40,8 +40,10 @@ explicit; Unload selected keeps tabs open and reloadable.
 - **The close floor is learned per user** (`ramwarden-core::tabpace`,
   `[tabs] learn_pace`, default on). Each release pass collects the user's
   return gaps from the last 14 days: how long they were away before selecting
-  a tab again, measured from when they left it (the next activation of any
-  other tab, not the earlier selection, so reading time does not count; gaps
+  a tab again, measured from when they left it (the extension records each
+  tab's departures beside its activations, so reading time does not count and
+  closing another tab cannot change a gap; a return without a recorded
+  departure adds nothing; gaps
   under 5 minutes are tab switching and skipped; visits older than 14 days are
   ignored) and how long after an unload they came back
   (`tab_outcomes`). The floor is the gap that covers 9 in 10 returns, times
