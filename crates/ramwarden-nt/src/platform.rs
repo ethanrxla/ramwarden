@@ -31,6 +31,7 @@ pub fn platform() -> Platform {
         || Box::new(NtDesktop::new()),
     )
     .with_hardware(Arc::new(crate::hardware::NtHardware))
+    .with_storage(Arc::new(crate::storage::NtStorage))
 }
 
 /// Opens process handles; answers point queries on single processes.

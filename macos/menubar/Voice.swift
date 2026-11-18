@@ -19,6 +19,8 @@ struct WardenBubble: Equatable {
     let source:URL?
     /// Placeholder for the always-visible answer box (the focus question).
     let input: String?
+    /// "baa" or "baa_critical": played once when the bubble first appears (storage alerts).
+    let sound: String?
     var isQuestion: Bool { !choices.isEmpty }
 
     init?(_ obj: Any?) {
@@ -32,6 +34,7 @@ struct WardenBubble: Equatable {
         }
         source=(b["source_url"] as? String).flatMap(URL.init(string:))
         input = b["input"] as? String
+        sound = b["sound"] as? String
         url = (b["tab"] as? [String: Any])?["url"] as? String
     }
 }
@@ -63,6 +66,8 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
             pet = obj["pet"] as? Bool ?? true
             if changed {
                 onChange?()
+                // BaaPolicy plays one event once and keeps sounds 15 minutes apart.
+                if let line = next, let sound = line.sound { GoatAlerts.shared.notify(warden:"ram",event:"storage-"+line.id,critical:sound == "baa_critical") }
                 if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram",background:true) }
             }
         }

@@ -26,6 +26,10 @@ silently breaking agents.
 | `GET /ai` | Which decision tier is answering (local model, hosted Jev, heuristic) and what it can do |
 | `GET /wardens` † | Every warden with `access`, `unlocked`, `status {level, headline, detail}`, and `paid` (ids with a current pass) |
 | `GET /wardens/{id}` † | One warden plus its report. `threat`: agent health and up to 50 recent alerts |
+| `GET /storage` | Free and total space per disk and a `level` (`ok`, `low`, `critical`). Instant |
+| `GET /storage/usage?for=agent` | What is using the disk: largest home folders and known places, each with `kind` (`clear`, `review`, `guide`), size and steps, plus a plain `summary`. `for=agent` leaves paths out |
+| `POST /ask/probe` | One read-only reading: `{"probe":"overview"|"gpu"|"models"|"storage"}` or `{"probe":"app"|"history","name":"ollama"}` |
+| `GET /storage/cleanup/{id}` | A clean-up proposal's state: `pending`, `applied` (with `freed_bytes`), `declined`, `expired` |
 
 `status.level` is `clear`, `watch`, `alert`, `off` (unlocked but not set up or
 not reachable; the headline says which) or `locked` (needs a pass).
@@ -43,6 +47,16 @@ not reachable; the headline says which) or `locked` (needs a pass).
 | `POST /ladder/cancel-kill` | Stops a pending kill countdown. Always safe; use it if the user objects | |
 | `POST /kill/{name}` | Terminates a watchlisted app. Unsaved work is lost. Only when the user named the app and asked for it | none |
 | `POST /hold/{secs}` | Pauses freezing for up to 600 s and thaws everything, e.g. while the user rearranges windows. `DELETE /hold` ends it early | |
+| `POST /storage/cleanup/propose` | Body `{"items": ["app-caches"]}` (ids of `kind: clear` places; empty for all). Deletes nothing: it puts the offer in the warden's bubble. Safe to call when the user asks to free space | the user declines in the bubble |
+
+Never call `POST /storage/cleanup/{id}/apply` yourself. The user approves a
+clean-up with the Free button in the warden's bubble or by typing yes to
+`ramwarden storage free`. Then read `GET /storage/cleanup/{id}`. For places of
+kind `review` (the user's own files) or `guide` (page file, Docker, Recycle
+Bin, games), explain the listed steps; the user carries them out.
+
+MCP clients (Warp, Claude Code, Cursor) can use these as tools instead: add a
+server with command `ramwarden` and args `["mcp"]`.
 
 `?force=true` on suspend and kill skips the watchlist and in-use checks, never
 structural protection. Use it only when the user named that exact app.

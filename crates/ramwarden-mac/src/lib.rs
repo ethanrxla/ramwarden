@@ -20,6 +20,7 @@ mod forecast;
 mod memory;
 mod pressure;
 mod process;
+mod storage;
 mod sys;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub use desktop::MacDesktop;
 pub use memory::MacMemory;
 pub use pressure::MacPressure;
 pub use process::{MacControl, MacHandle, MacProcesses};
+pub use storage::MacStorage;
 
 /// Build the macOS platform over the live system.
 pub fn platform() -> Platform {
@@ -47,6 +49,7 @@ pub fn platform() -> Platform {
         || Box::new(MacDesktop::new()),
     )
     .with_hardware(Arc::new(MacHardware))
+    .with_storage(Arc::new(MacStorage))
 }
 
 /// CPU model and core counts from `sysctl`. On Apple silicon the

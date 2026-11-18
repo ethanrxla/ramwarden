@@ -66,6 +66,8 @@ pub async fn answer(State(st): State<AppState>, Json(r): Json<AnswerRequest>) ->
     match st.voice.answer(&r.id, r.choice, now) {
         Err(_) => Err((StatusCode::CONFLICT, Json(json!({"ok": false, "reply": "That question has already gone. I'll ask again if it matters."})))),
         Ok(Answered::Said(reply)) => Ok(Json(json!({ "ok": true, "reply": reply, "closed": false }))),
+        // Free, explain or decline: the storage warden's flows.
+        Ok(Answered::Storage { pick, proposal }) => Ok(Json(crate::storage::routes::answered(&st, pick, proposal).await)),
         Ok(Answered::Close(tab)) => {
             // The same checked path as a manual close: a fresh report, the right
             // owner, the same URL, and `can_close` all re-checked now.

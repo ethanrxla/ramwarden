@@ -27,6 +27,7 @@ pub const STALL_WINDOW: Duration = Duration::from_secs(1);
 pub fn platform(root: Root) -> p::Platform {
     let uid = current_uid();
     let factory_root = root.clone();
+    let storage = Arc::new(crate::storage::LinuxStorage { root: root.clone() });
     let hardware = Arc::new(LinuxHardware { root: root.clone() });
     p::Platform::new(
         p::Parts {
@@ -44,6 +45,7 @@ pub fn platform(root: Root) -> p::Platform {
         || Box::new(crate::desktop::DesktopProbe::new()),
     )
     .with_hardware(hardware)
+    .with_storage(storage)
 }
 
 /// CPU model and core counts from `/proc/cpuinfo`.

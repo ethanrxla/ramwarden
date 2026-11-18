@@ -19,6 +19,8 @@ pub mod row_object;
 pub mod runtime;
 pub mod voice;
 #[cfg(feature = "gui")]
+pub mod baa;
+#[cfg(feature = "gui")]
 pub mod bubble;
 #[cfg(feature = "tray")]
 pub mod tray;

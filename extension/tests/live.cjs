@@ -74,9 +74,10 @@ const assert = require('node:assert/strict');
     assert.ok(saved.tabSafety.pages['https://fixture.example.org/login'], 'Keep persisted locally');
     await reopened.close();
     await worker.evaluate(() => new Promise(resolve => setTimeout(resolve,100)));
-    // docs/specs/tab-feedback.md: browser removal is not assumed to be an intentional close.
-    assert.ok(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()), 'browser removal keeps reopen protection');
-    assert.equal(await worker.evaluate(() => safety.closed['https://fixture.example.org/article']), undefined, 'browser removal clears the closed marker');
+    // A tab being removed is not a verdict: the browser also removes every tab
+    // when it quits, and a page the user reopened must stay protected (the
+    // tab-closing bug of 2026-11-02). ee92c74 stopped clearing it here.
+    assert.ok(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()), 'closing a reopened tab keeps its protection');
     assert.equal(edited.isClosed(), false);
     await context.close();
     context = await chromium.launchPersistentContext(profile, options);
@@ -86,8 +87,8 @@ const assert = require('node:assert/strict');
       return safety.pages['https://fixture.example.org/login']?.until > Date.now();
     }), 'Keep survives browser and extension restart');
     assert.ok(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()),
-      'reopen protection survives browser removal and restart');
-    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, browser removal');
+      'reopen protection survives closing the tab and restarting the browser');
+    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, reopen protection kept');
   } finally {
     await context.close();
     // Preserve the disposable profile for diagnostics; never access user profiles.

@@ -97,7 +97,11 @@ pub fn router(state: AppState) -> Router {
         ;
     // Do not expose private process context through a non-loopback listener.
     let router = if policy.loopback {
-        router.route("/companion/state", get(crate::companion::status))
+        // Storage reveals folder names and sizes and can free space; the
+        // probes read process context. Both stay on loopback only.
+        router.merge(crate::storage::routes::routes())
+            .merge(crate::ask::routes())
+            .route("/companion/state", get(crate::companion::status))
             .route("/assistant/chat", post(crate::assistant::chat))
             .route("/devices", get(crate::ask::devices::route))
             .route("/wardens/threat/events/{id}",get(crate::wardens::event))
