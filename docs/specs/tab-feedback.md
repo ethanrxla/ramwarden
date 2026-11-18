@@ -1,6 +1,6 @@
 # Tab feedback and review
 
-Automatic closes require fresh extension activity metadata, at least `close_after_hours` idle (4 by default, never under 1; the daemon sends the same floor to the extension's safe close), a return estimate below 0.3, and all live safety guards. A tab-count target or same-site page cannot bypass this floor. Exact URLs, including query and fragment, define duplicates.
+Automatic closes require fresh extension activity metadata, idle past the close floor (learned from the user's own return gaps between 1 hour and 1 day, `close_after_hours` until enough are seen; see browser-memory.md; the daemon sends the same floor to the extension's safe close), a return estimate below 0.3, and all live safety guards. A tab-count target or same-site page cannot bypass this floor. Exact URLs, including query and fragment, define duplicates.
 
 The updated extension reports timestamps and an unsaved-input bit, never typed text. Reopened and explicitly kept pages receive a 24-hour protection, without assuming browser removal was an intentional close. Local SQLite feedback and outcomes expire after 30 days. Negative feedback can only raise the return estimate; this is not external model retraining.
 

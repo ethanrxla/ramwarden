@@ -42,6 +42,9 @@ pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(8);
 pub struct Hub {
     pub tab_budget: Arc<crate::settings::TabBudget>,
     pub tab_review: crate::tabreview::ReviewState,
+    /// The idle floor learned from this user's returns, refreshed each release
+    /// pass (`AppState::learn_pace`).
+    pub tab_pace: Option<ramwarden_core::tabpace::Pace>,
     pub reg: Registry,
     senders: HashMap<String, mpsc::UnboundedSender<String>>,
     tab_waiters: HashMap<String, Vec<oneshot::Sender<Vec<Tab>>>>,
@@ -157,8 +160,38 @@ pub struct AppState {
 impl AppState {
     /// Snapshot the user’s live tab policy; all automatic budget paths use this.
     pub fn tabs_config(&self) -> ramwarden_core::config::Tabs {
-        let settings = self.hub.lock().unwrap().tab_budget.clone();
-        settings.effective(&self.cfg.tabs)
+        let (settings, pace) = {
+            let hub = self.hub.lock().unwrap();
+            (hub.tab_budget.clone(), hub.tab_pace.clone())
+        };
+        let mut tabs = settings.effective(&self.cfg.tabs);
+        if tabs.learn_pace && let Some(pace) = pace.filter(|p| p.learned) {
+            tabs.close_after_hours = pace.floor_minutes as f64 / 60.0;
+        }
+        tabs
+    }
+
+    /// Re-learn the idle floor from the last two weeks of returns and reopens
+    /// plus the activations the browsers just reported. Cheap: one indexed
+    /// query and the open tabs, once per release pass.
+    pub fn learn_pace(&self) -> Option<ramwarden_core::tabpace::Pace> {
+        if !self.cfg.tabs.learn_pace { return None; }
+        let since = ramwarden_core::history::unix_now() as i64 - 14 * 86_400;
+        let mut evidence = self.history.lock().ok()?.pace_evidence(since).ok()?;
+        let configured = self.cfg.tabs.close_idle_minutes();
+        let pace = {
+            let mut hub = self.hub.lock().unwrap();
+            for browser in hub.reg.socket_ids().into_iter().chain(hub.reg.poll_ids()) {
+                for tab in hub.reg.tabs_for(&browser) { evidence.add_activations(&tab.activations); }
+            }
+            let pace = evidence.pace(configured);
+            if hub.tab_pace.as_ref().map(|p| p.floor_minutes) != Some(pace.floor_minutes) {
+                tracing::info!(floor_minutes = pace.floor_minutes, learned = pace.learned, "tabs: close floor {}", pace.why);
+            }
+            hub.tab_pace = Some(pace.clone());
+            pace
+        };
+        Some(pace)
     }
 
     /// Whether freezing is on hold right now.

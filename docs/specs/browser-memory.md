@@ -27,8 +27,7 @@ explicit; Unload selected keeps tabs open and reloadable.
 - A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
   pressure, so a machine with spare RAM still releases idle tabs. It may also
   close tabs, the one exception to "keep tabs open": only rows that passed every
-  unload guard or were already unloaded, idle at least `close_after_hours`
-  (default 4, never under 1), with a Jev-adjusted return chance below
+  unload guard or were already unloaded, idle at least the close floor, with a Jev-adjusted return chance below
   `close_below_return` (at most 0.3), not a work page, at most
   `max_close_per_sweep` per sweep. `close` is `off`, `review`, `dry-run`
   (default: log only) or `live`. The extension rechecks each tab live with the
@@ -38,6 +37,18 @@ explicit; Unload selected keeps tabs open and reloadable.
   its own. A tab Chrome has unloaded reports status `unloaded`; it counts as
   settled like `complete`, so an unloaded tab can still be closed. Only a page
   that is actually loading is skipped.
+- **The close floor is learned per user** (`ramwarden-core::tabpace`,
+  `[tabs] learn_pace`, default on). Each release pass collects the user's
+  return gaps from the last 14 days: how long they were away before selecting
+  a tab again (the extension's activation times; gaps under 5 minutes are tab
+  switching and skipped) and how long after an unload they came back
+  (`tab_outcomes`). The floor is the gap that covers 9 in 10 returns, times
+  1.5 when more than 20% of the warden's closes were reopened, or 0.8 when
+  under 5% of at least 10 were, held between 1 hour and 1 day. With fewer than
+  20 returns seen, `close_after_hours` (default 4) is used. The floor only
+  decides when a tab may be considered; every other guard (recent tabs, work
+  pages, forms, keeps, focus list, return chance, Atlas recall) still applies.
+  `GET /browser/pace` shows the floor in use and why.
 - Protections other than the hard ones (non-web pages, private hosts, editors
   whose state lives in the tab) lift once a tab has been idle 4 hours
   (`tabpolicy::PROTECTION_RELEASE_MINUTES`): consoles, dashboards, login pages,

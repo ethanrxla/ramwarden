@@ -370,6 +370,30 @@ impl History {
         )
     }
 
+    /// Live tab closes since `since` on every subject, and how many were reopened.
+    pub fn close_reopen_totals(&self, since: i64) -> Result<(i64, i64)> {
+        self.conn().query_row(
+            "SELECT COUNT(*), COALESCE(SUM(outcome = 'reopened'), 0) FROM decisions
+              WHERE kind = 'tab' AND action = 'close' AND result IN ('confirmed', 'queued')
+                AND at >= ?1",
+            params![since],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+
+    /// What the warden has seen of the user's return rhythm since `since`:
+    /// how long after an unload they came back, and how many closes they
+    /// undid. Live tab activations are added by the caller (`tabpace`).
+    pub fn pace_evidence(&self, since: i64) -> Result<crate::tabpace::Evidence> {
+        let mut stmt = self.conn().prepare(
+            "SELECT idle_minutes + (returned_at - unloaded_at) / 60 FROM tab_outcomes
+              WHERE returned_at IS NOT NULL AND unloaded_at >= ?1",
+        )?;
+        let return_gaps = stmt.query_map([since], |r| r.get::<_, i64>(0))?.collect::<Result<Vec<_>>>()?;
+        let (closes, reopened) = self.close_reopen_totals(since)?;
+        Ok(crate::tabpace::Evidence { return_gaps, closes, reopened })
+    }
+
     pub fn count_decisions(&self) -> Result<i64> {
         self.conn().query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))
     }
@@ -400,6 +424,23 @@ mod tests {
             vector: TabVector { class: "page", idle_minutes: 1800, ..Default::default() }.encode(),
             bytes: 0,
         }
+    }
+
+    #[test]
+    fn pace_evidence_counts_returns_after_unloads_and_reopened_closes() {
+        let h = History::in_memory().unwrap();
+        let unload = crate::history::NewUnload { browser: "chrome".into(), tab_id: 7, host: "x.test".into(),
+            class: "page".into(), idle_minutes: 30, p_return: 0.4, est_mb: 50, frecency: 0.0 };
+        h.record_unload(&unload, 1_000).unwrap();
+        h.mark_returned("chrome", 7, 1_000 + 45 * 60).unwrap();
+        h.record_unload(&crate::history::NewUnload { tab_id: 8, ..unload }, 1_000).unwrap(); // never came back
+        h.record_decision(&close("https://x.test/a", "A"), 2_000).unwrap();
+        h.record_decision(&close("https://x.test/b", "B"), 2_000).unwrap();
+        h.mark_close_reopened("https://x.test/a", "docs.example.com", 2_100).unwrap();
+        let e = h.pace_evidence(0).unwrap();
+        assert_eq!(e.return_gaps, vec![75]);
+        assert_eq!((e.closes, e.reopened), (2, 1));
+        assert!(h.pace_evidence(5_000).unwrap().return_gaps.is_empty());
     }
 
     #[test]

@@ -350,6 +350,10 @@ pub struct Tabs {
     pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
+    /// Learn the idle floor from how this user comes back to tabs
+    /// (`tabpace`), within one hour and one day. `close_after_hours` is used
+    /// until there is enough evidence, or always when this is false.
+    pub learn_pace: bool,
 }
 
 impl Tabs {
@@ -377,6 +381,7 @@ impl Default for Tabs {
             keep_tabs: 6,
             budget_idle_minutes: 60.0,
             max_close_per_sweep: 10,
+            learn_pace: true,
         }
     }
 }
