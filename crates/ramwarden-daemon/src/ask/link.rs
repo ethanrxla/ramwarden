@@ -27,6 +27,8 @@ const MAX_BODY: usize = 512 * 1024;
 /// Characters of a page's text passed on. Keeps the reading under the
 /// probe cap with room for its other fields.
 const MAX_TEXT: usize = 1400;
+/// Characters of the link itself shown in a reading.
+const MAX_URL: usize = 200;
 /// Characters of a page's title passed on.
 const MAX_TITLE: usize = 160;
 /// Bytes of JSON one link reading may take, under the probe cap.
@@ -84,8 +86,16 @@ pub fn host(link: &str) -> String {
         .unwrap_or_else(|| "a link".into())
 }
 
-/// Fetch one link and reduce it to a small reading.
+/// Fetch one link and reduce it to a small reading, within one
+/// [`TIMEOUT`] for the whole link: redirects and body included.
 pub async fn read(link: &str) -> Value {
+    match tokio::time::timeout(TIMEOUT, fetch(link)).await {
+        Ok(v) => fit(v, BUDGET),
+        Err(_) => failed(link, "it did not answer within 10 seconds"),
+    }
+}
+
+async fn fetch(link: &str) -> Value {
     let client = match reqwest::Client::builder()
         .timeout(TIMEOUT)
         // Redirects are followed only on the host the user typed. A public
@@ -177,18 +187,22 @@ pub async fn read(link: &str) -> Value {
     } else if content.trim().is_empty() {
         v["note"] = json!("the page has no readable text; it is probably drawn by JavaScript. An API address on the same server (often /api/... or a .json link) would show its data");
     }
-    fit(v, BUDGET)
+    v
 }
 
-/// Shorten the text until the whole reading fits `budget` bytes of JSON.
-/// The shared cap only trims lists, so a link reading budgets itself.
+/// Shorten the reading until it fits `budget` bytes of JSON. The URL is
+/// bounded first, so a long link never pushes out the page's text; then the
+/// text gives way. The shared cap only trims lists, so a link reading
+/// budgets itself.
 fn fit(mut v: Value, budget: usize) -> Value {
     let size = |v: &Value| serde_json::to_string(v).map_or(0, |s| s.len());
+    if let Some(u) = v["url"].as_str().filter(|u| u.chars().count() > MAX_URL) {
+        v["url"] = json!(clip(u, MAX_URL));
+    }
     while size(&v) > budget {
         let text = v["text"].as_str().unwrap_or("").trim_end_matches('…');
         let n = text.chars().count();
         if n == 0 {
-            v["url"] = json!(clip(v["url"].as_str().unwrap_or(""), 200));
             break;
         }
         v["text"] = json!(clip(text, n * 4 / 5));
@@ -316,6 +330,11 @@ mod tests {
         let v = fit(v, BUDGET);
         assert!(serde_json::to_string(&v).unwrap().len() <= BUDGET);
         assert_eq!(v["partial"], true);
+        // A link longer than the whole budget is shortened, not the text.
+        let long = format!("http://x.test/?q={}", "a".repeat(3_000));
+        let v = fit(json!({"probe":"link","url":long,"status":200,"text":r#"{"edges":2,"nodes":3}"#}), BUDGET);
+        assert_eq!(v["text"], r#"{"edges":2,"nodes":3}"#);
+        assert!(serde_json::to_string(&v).unwrap().len() <= BUDGET);
     }
 
     /// Serve one canned response on a fresh loopback port.
