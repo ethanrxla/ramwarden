@@ -40,10 +40,12 @@ explicit; Unload selected keeps tabs open and reloadable.
 - **The close floor is learned per user** (`ramwarden-core::tabpace`,
   `[tabs] learn_pace`, default on). Each release pass collects the user's
   return gaps from the last 14 days: how long they were away before selecting
-  a tab again (the extension's activation times; gaps under 5 minutes are tab
-  switching and skipped) and how long after an unload they came back
+  a tab again, measured from when they left it (the next activation of any
+  other tab, not the earlier selection, so reading time does not count; gaps
+  under 5 minutes are tab switching and skipped; visits older than 14 days are
+  ignored) and how long after an unload they came back
   (`tab_outcomes`). The floor is the gap that covers 9 in 10 returns, times
-  1.5 when more than 20% of the warden's closes were reopened, or 0.8 when
+  1.5 when more than 20% of the warden's own unattended closes were reopened, or 0.8 when
   under 5% of at least 10 were, held between 1 hour and 1 day. With fewer than
   20 returns seen, `close_after_hours` (default 4) is used. The floor only
   decides when a tab may be considered; every other guard (recent tabs, work

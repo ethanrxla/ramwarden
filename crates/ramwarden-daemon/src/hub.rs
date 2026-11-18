@@ -177,12 +177,14 @@ impl AppState {
     pub fn learn_pace(&self) -> Option<ramwarden_core::tabpace::Pace> {
         if !self.cfg.tabs.learn_pace { return None; }
         let since = ramwarden_core::history::unix_now() as i64 - 14 * 86_400;
+        let since_ms = since as f64 * 1000.0;
         let mut evidence = self.history.lock().ok()?.pace_evidence(since).ok()?;
         let configured = self.cfg.tabs.close_idle_minutes();
         let pace = {
             let mut hub = self.hub.lock().unwrap();
             for browser in hub.reg.socket_ids().into_iter().chain(hub.reg.poll_ids()) {
-                for tab in hub.reg.tabs_for(&browser) { evidence.add_activations(&tab.activations); }
+                let tabs: Vec<&[f64]> = hub.reg.tabs_for(&browser).iter().map(|t| t.activations.as_slice()).collect();
+                evidence.add_browser(&tabs, since_ms);
             }
             let pace = evidence.pace(configured);
             if hub.tab_pace.as_ref().map(|p| p.floor_minutes) != Some(pace.floor_minutes) {

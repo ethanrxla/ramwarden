@@ -370,12 +370,14 @@ impl History {
         )
     }
 
-    /// Live tab closes since `since` on every subject, and how many were reopened.
+    /// The warden's own unattended tab closes since `since`, and how many the
+    /// user reopened. Closes the user asked for (trigger `manual`, `review`)
+    /// say nothing about the unattended floor and are left out.
     pub fn close_reopen_totals(&self, since: i64) -> Result<(i64, i64)> {
         self.conn().query_row(
             "SELECT COUNT(*), COALESCE(SUM(outcome = 'reopened'), 0) FROM decisions
               WHERE kind = 'tab' AND action = 'close' AND result IN ('confirmed', 'queued')
-                AND at >= ?1",
+                AND trigger IN ('sweep', 'pressure') AND at >= ?1",
             params![since],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -437,6 +439,8 @@ mod tests {
         h.record_decision(&close("https://x.test/a", "A"), 2_000).unwrap();
         h.record_decision(&close("https://x.test/b", "B"), 2_000).unwrap();
         h.mark_close_reopened("https://x.test/a", "docs.example.com", 2_100).unwrap();
+        // A close the user asked for says nothing about the unattended floor.
+        h.record_decision(&NewDecision { trigger: "manual".into(), ..close("https://x.test/c", "C") }, 2_000).unwrap();
         let e = h.pace_evidence(0).unwrap();
         assert_eq!(e.return_gaps, vec![75]);
         assert_eq!((e.closes, e.reopened), (2, 1));
