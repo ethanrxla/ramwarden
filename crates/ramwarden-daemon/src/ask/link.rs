@@ -27,14 +27,19 @@ const MAX_BODY: usize = 512 * 1024;
 /// Characters of a page's text passed on. Keeps the reading under the
 /// probe cap with room for its other fields.
 const MAX_TEXT: usize = 1400;
+/// Characters of a page's title passed on.
+const MAX_TITLE: usize = 160;
+/// Bytes of JSON one link reading may take, under the probe cap.
+const BUDGET: usize = super::probes::CAP - 64;
 
 /// The http(s) links in a message, in order, without duplicates.
 pub fn urls(message: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in message.split_whitespace() {
-        let start = word.find("http://").or_else(|| word.find("https://"));
-        let Some(start) = start else { continue };
-        let raw = word[start..].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '>', '"', '\'']);
+        // The earliest scheme in the word: an https link whose query holds
+        // `http://...` is the https link.
+        let Some(start) = [word.find("http://"), word.find("https://")].into_iter().flatten().min() else { continue };
+        let raw = trim_trailing(&word[start..]);
         let Ok(parsed) = url::Url::parse(raw) else { continue };
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() {
             continue;
@@ -48,6 +53,24 @@ pub fn urls(message: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Drop punctuation that ends the sentence rather than the link. A `)` or
+/// `]` stays when the link opened one itself (`/wiki/Rust_(language)`).
+fn trim_trailing(mut raw: &str) -> &str {
+    loop {
+        let Some(last) = raw.chars().last() else { return raw };
+        let strip = match last {
+            '.' | ',' | ';' | ':' | '!' | '?' | '>' | '"' | '\'' => true,
+            ')' => raw.matches('(').count() < raw.matches(')').count(),
+            ']' => raw.matches('[').count() < raw.matches(']').count(),
+            _ => false,
+        };
+        if !strip {
+            return raw;
+        }
+        raw = &raw[..raw.len() - last.len_utf8()];
+    }
 }
 
 /// The host, for the "Looked at" line.
@@ -65,22 +88,44 @@ pub fn host(link: &str) -> String {
 pub async fn read(link: &str) -> Value {
     let client = match reqwest::Client::builder()
         .timeout(TIMEOUT)
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 || !matches!(attempt.url().scheme(), "http" | "https") {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        }))
+        // Redirects are followed only on the host the user typed. A public
+        // page that redirects to a private address (a router, a cloud
+        // metadata service) is not read on the user's behalf: the reading
+        // names where it points instead, and the user can paste that.
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("RamWarden/", env!("CARGO_PKG_VERSION")))
         .build()
     {
         Ok(c) => c,
         Err(_) => return failed(link, "the request could not be set up"),
     };
-    let mut response = match client.get(link).send().await {
-        Ok(r) => r,
-        Err(e) => return failed(link, why(&e, link)),
+    let Ok(start) = url::Url::parse(link) else { return failed(link, "it is not a valid link") };
+    let mut at = start.clone();
+    let mut hops = 0;
+    let mut response = loop {
+        let r = match client.get(at.clone()).send().await {
+            Ok(r) => r,
+            Err(e) => return failed(link, why(&e, link)),
+        };
+        if !r.status().is_redirection() {
+            break r;
+        }
+        let next = r
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|l| at.join(l).ok());
+        let Some(next) = next else { break r };
+        hops += 1;
+        if hops > 5 {
+            return failed(link, "it redirected too many times");
+        }
+        if !same_site(&start, &next) {
+            let mut v = failed(link, format!("it redirects to another address ({}); paste that link if you want it read", host(next.as_str())));
+            v["status"] = json!(r.status().as_u16());
+            return v;
+        }
+        at = next;
     };
     let status = response.status();
     let kind = response
@@ -122,7 +167,7 @@ pub async fn read(link: &str) -> Value {
         "text": clip(&content, MAX_TEXT),
     });
     if let Some(t) = title {
-        v["title"] = json!(t);
+        v["title"] = json!(clip(&t, MAX_TITLE));
     }
     if cut || content.chars().count() > MAX_TEXT {
         v["partial"] = json!(true);
@@ -132,7 +177,29 @@ pub async fn read(link: &str) -> Value {
     } else if content.trim().is_empty() {
         v["note"] = json!("the page has no readable text; it is probably drawn by JavaScript. An API address on the same server (often /api/... or a .json link) would show its data");
     }
+    fit(v, BUDGET)
+}
+
+/// Shorten the text until the whole reading fits `budget` bytes of JSON.
+/// The shared cap only trims lists, so a link reading budgets itself.
+fn fit(mut v: Value, budget: usize) -> Value {
+    let size = |v: &Value| serde_json::to_string(v).map_or(0, |s| s.len());
+    while size(&v) > budget {
+        let text = v["text"].as_str().unwrap_or("").trim_end_matches('…');
+        let n = text.chars().count();
+        if n == 0 {
+            v["url"] = json!(clip(v["url"].as_str().unwrap_or(""), 200));
+            break;
+        }
+        v["text"] = json!(clip(text, n * 4 / 5));
+        v["partial"] = json!(true);
+    }
     v
+}
+
+/// Same scheme family and host: http to https on one host is fine.
+fn same_site(a: &url::Url, b: &url::Url) -> bool {
+    matches!(b.scheme(), "http" | "https") && a.host_str() == b.host_str()
 }
 
 fn failed(link: &str, reason: impl Into<String>) -> Value {
@@ -150,8 +217,6 @@ fn why(e: &reqwest::Error, link: &str) -> String {
         } else {
             "could not connect: the address did not resolve or nothing is listening there".into()
         }
-    } else if e.is_redirect() {
-        "it redirected too many times".into()
     } else {
         "the page could not be read".into()
     }
@@ -231,6 +296,9 @@ mod tests {
         assert!(urls("ftp://x.test file:///etc/passwd javascript:alert(1)").is_empty());
         assert!(urls("http://user:pw@x.test/").is_empty(), "no credentials in links");
         assert_eq!(host("http://rxla-pc-1.tailf11891.ts.net:8787/graph"), "rxla-pc-1.tailf11891.ts.net:8787");
+        assert_eq!(urls("see https://en.wikipedia.org/wiki/Rust_(programming_language)."), vec!["https://en.wikipedia.org/wiki/Rust_(programming_language)".to_string()]);
+        assert_eq!(urls("(see https://example.com/a)"), vec!["https://example.com/a".to_string()]);
+        assert_eq!(urls("https://example.com/r?to=http://other.example/p"), vec!["https://example.com/r?to=http://other.example/p".to_string()]);
     }
 
     #[test]
@@ -240,6 +308,37 @@ mod tests {
         let (title, text) = page_text(html);
         assert_eq!(title.as_deref(), Some("Agent & memory"));
         assert_eq!(text, "Graph 3 nodes, 2 edges");
+    }
+
+    #[test]
+    fn a_reading_fits_its_budget_whatever_the_page() {
+        let v = json!({"probe":"link","url":"http://x.test/","status":200,"title":clip(&"t".repeat(10_000), MAX_TITLE),"text":clip(&"é漢".repeat(2_000), MAX_TEXT)});
+        let v = fit(v, BUDGET);
+        assert!(serde_json::to_string(&v).unwrap().len() <= BUDGET);
+        assert_eq!(v["partial"], true);
+    }
+
+    /// Serve one canned response on a fresh loopback port.
+    async fn serve(reply: String) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf).await;
+            let _ = s.write_all(reply.as_bytes()).await;
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_another_host_is_named_not_followed() {
+        let addr = serve("HTTP/1.1 302 Found\r\nlocation: http://169.254.169.254/latest/meta-data\r\ncontent-length: 0\r\n\r\n".into()).await;
+        let v = read(&format!("http://{addr}/go")).await;
+        assert_eq!(v["read"], false);
+        assert!(v["note"].as_str().unwrap().contains("169.254.169.254"), "{v}");
+        assert!(v.get("text").is_none());
     }
 
     #[tokio::test]

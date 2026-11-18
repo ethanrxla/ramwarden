@@ -23,7 +23,7 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
   | `hardware` | This computer's CPU model, physical and logical cores (performance and efficiency cores where the CPU has both), total RAM and GPUs. |
   | `devices` | The user's Tailscale devices: name, OS, address, online. |
   | `device(name)` | One other device's CPU, cores and RAM, asked over SSH. See "Other devices". |
-  | `link(url)` | A link the user typed in this message: HTTP status, title and up to 1,400 characters of its text (JSON compacted, HTML reduced to visible text). See "Links". |
+  | `link(url)` | A link the user typed in this message: HTTP status, title and up to 1,400 characters of its text, the whole reading kept under 2 KB (JSON compacted, HTML reduced to visible text). See "Links". |
 
 - **Inside a process.** For the 3 largest processes of an app, `app` also
   reports who started it (up to 6 parents), its thread count, its open
@@ -60,7 +60,9 @@ refused (user request, 2026-11-18).
 - Only http(s) links the user typed in the current message are read, at most
   2. The model cannot request a link, and links inside a fetched page are
   never followed, so a page cannot steer the warden elsewhere.
-- One `GET`, 10 s timeout, up to 5 redirects within http(s), the first
+- One `GET`, 10 s timeout, up to 5 redirects on the same host (a redirect
+  to another host is named, not followed, so a public page cannot point the
+  warden at a private address), the first
   512 KB. No cookies, keys or credentials in the URL; a link with a username
   or password is ignored.
 - A failure says why: no answer in time, could not connect (for a tailnet
