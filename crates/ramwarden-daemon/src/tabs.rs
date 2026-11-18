@@ -336,6 +336,17 @@ impl Registry {
     }
 }
 
+
+impl Tab {
+    /// Whether the page has finished loading. Chrome reports a discarded tab
+    /// as `unloaded`, never `complete`; until 2026-11-18 only `complete`
+    /// counted, so every unloaded tab ranked as "page is loading" and could
+    /// never be closed (11 of 28 tabs on the Mac, idle up to 54 hours).
+    pub fn settled(&self) -> bool {
+        matches!(self.status.as_deref(), Some("complete" | "unloaded"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

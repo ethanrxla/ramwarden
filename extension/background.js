@@ -679,7 +679,8 @@ async function closeSafe(command) {
     if (!tab || tab.url!==target.url || (!approved && isWorkPage(tab.url))
       || (!approved && !disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
-      || tab.status!=="complete" || tab.autoDiscardable===false
+      // A discarded tab reports "unloaded"; only a page still loading is unsettled.
+      || (tab.status!=="complete" && tab.status!=="unloaded") || tab.autoDiscardable===false
       || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
       || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))
       // Approval covers a batch the user may not have read tab by tab.

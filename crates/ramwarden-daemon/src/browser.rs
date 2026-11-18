@@ -123,7 +123,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 )
             } else if t.auto_discardable != Some(true) {
                 ("protected", "browser opted out of discarding")
-            } else if t.status.as_deref() != Some("complete") {
+            } else if !t.settled() {
                 ("protected", "page is loading")
             } else if t.work_in_progress || t.protected_until_ms > now_ms {
                 ("protected", "recent work or explicit keep/reopen feedback")
@@ -448,7 +448,7 @@ pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
 pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
     can_close(tab) && tab.activity_version >= 1
         && tab.active == Some(false) && tab.pinned == Some(false)
-        && tab.audible == Some(false) && tab.status.as_deref() == Some("complete")
+        && tab.audible == Some(false) && tab.settled()
         && tab.auto_discardable == Some(true) && !tab.work_in_progress
         && tab.protected_until_ms <= now_ms
         && tab.last_active_ms.is_finite() && tab.last_active_ms > 0.0
@@ -474,7 +474,8 @@ mod manual_close_tests {
     fn idle(id: i64, url: &str, minutes: i64, discarded: bool) -> Tab {
         serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":minutes,
             "active":false,"pinned":false,"audible":false,"discarded":discarded,"autoDiscardable":true,
-            "status":"complete","discardSupported":true,"activityVersion":1,
+            // Chrome reports a discarded tab as "unloaded", never "complete".
+            "status":if discarded {"unloaded"} else {"complete"},"discardSupported":true,"activityVersion":1,
             "lastActiveMs": ramwarden_core::history::unix_now() as f64 * 1000.0 - minutes as f64 * 60000.0})).unwrap()
     }
 
@@ -569,6 +570,19 @@ mod manual_close_tests {
         let tabs = vec![idle(3, "https://example.org/forty-minutes", 40, false), idle(4, "https://example.org/two-hours", 120, false)];
         let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &eager).iter().map(|t| t.id).collect();
         assert_eq!(ids, vec![4]);
+    }
+
+    #[test]
+    fn an_unloaded_tab_can_still_be_closed_and_a_loading_one_cannot() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let unloaded = idle(1, "https://example.org/unloaded-days-ago", 3_000, true);
+        assert_eq!(unloaded.status.as_deref(), Some("unloaded"));
+        let mut loading = idle(2, "https://example.org/stuck-loading", 3_000, false);
+        loading.status = Some("loading".into());
+        let rows = rank("b", &[unloaded, loading], 30);
+        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![1]);
+        assert_eq!(rows.iter().find(|r| r.target.id == 2).unwrap().reason, "page is loading");
     }
 
     #[test]

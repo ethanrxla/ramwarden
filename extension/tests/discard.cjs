@@ -133,6 +133,12 @@ test('safe closing refuses navigation, recent activity, dirty work, protection a
   await f.context.keepTabs(command.tabs);
   assert.equal((await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})).length,0);
 });
+test('safe closing accepts a tab Chrome has unloaded',async()=>{
+  // Chrome reports a discarded tab as status "unloaded", never "complete".
+  const f=fixture({discarded:true,status:'unloaded'});const removed=[];f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
+  assert.deepEqual(Array.from(await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})),[7]);
+  assert.deepEqual(removed,[7]);
+});
 test('safe closing confirms selected identity only and reopening protects a new tab ID',async()=>{
   const f=fixture();const removed=[];f.chrome.tabs.remove=(id,cb)=>{removed.push(id);cb();};
   assert.deepEqual(Array.from(await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})),[7]);

@@ -35,7 +35,9 @@ explicit; Unload selected keeps tabs open and reloadable.
   same idle floor before closing, answers every close command, and saves closed
   URLs to a reopen list in the popup. A tab budget (`keep_tabs`, default 6)
   keeps the most recently used tabs per browser open; it never closes a tab on
-  its own.
+  its own. A tab Chrome has unloaded reports status `unloaded`; it counts as
+  settled like `complete`, so an unloaded tab can still be closed. Only a page
+  that is actually loading is skipped.
 - Protections other than the hard ones (non-web pages, private hosts, editors
   whose state lives in the tab) lift once a tab has been idle 4 hours
   (`tabpolicy::PROTECTION_RELEASE_MINUTES`): consoles, dashboards, login pages,
