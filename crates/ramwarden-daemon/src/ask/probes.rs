@@ -45,6 +45,8 @@ pub enum Probe {
     Devices,
     /// One other device's hardware, asked over SSH when that is allowed.
     Device(String),
+    /// A link the user typed in this message. Never requested by the model.
+    Link(String),
 }
 
 impl Probe {
@@ -60,11 +62,13 @@ impl Probe {
             Probe::Hardware => "this computer's hardware".into(),
             Probe::Devices => "your Tailscale devices".into(),
             Probe::Device(n) => format!("{n} (another device)"),
+            Probe::Link(u) => format!("the link you sent ({})", super::link::host(u)),
         }
     }
 
     /// A probe the model asked for: `{"probe":"app","name":"ollama"}`.
     /// Anything else is ignored. A name is data, never an instruction.
+    /// There is no `link`: only the user's own message picks a link.
     pub fn from_request(v: &Value) -> Option<Probe> {
         let name = || {
             v["name"]
@@ -98,7 +102,8 @@ pub const CATALOG: &str = r#"Read-only probes you may request (at most 3, one ro
 {"probe":"overview"}                             RAM, pressure, swap and the largest apps
 {"probe":"hardware"}                             this computer's CPU model, physical and logical cores, RAM and GPUs
 {"probe":"devices"}                              the user's other devices on Tailscale: name, OS, online
-{"probe":"device","name":"<device name>"}       another device's CPU, cores and RAM, when the user allows asking it"#;
+{"probe":"device","name":"<device name>"}       another device's CPU, cores and RAM, when the user allows asking it
+A link the user typed in their message is read for you (probe "link": its status, title and text); you cannot request other links."#;
 
 /// Words that are never app names, so "what is my computer doing" does not
 /// probe an app called "computer".
@@ -119,7 +124,8 @@ pub fn pick(message: &str, names: &HashSet<String>, devices: &[super::devices::D
         .filter(|w| !w.is_empty())
         .collect();
     let has = |w: &[&str]| words.iter().any(|x| w.contains(x));
-    let mut out = Vec::new();
+    // Links first, from the message as typed (paths are case-sensitive).
+    let mut out: Vec<Probe> = super::link::urls(message).into_iter().map(Probe::Link).collect();
     if has(&["gpu", "gpus", "vram", "cuda", "graphics", "nvidia", "geforce", "rtx", "radeon", "metal"])
         || text.contains("video card")
         || text.contains("graphics card")
@@ -213,6 +219,7 @@ pub async fn run(st: &AppState, probe: &Probe) -> Value {
         Probe::Hardware => hardware(st).await,
         Probe::Devices => devices().await,
         Probe::Device(name) => device(st, name).await,
+        Probe::Link(url) => super::link::read(url).await,
     };
     cap(v, CAP)
 }
@@ -697,6 +704,10 @@ mod tests {
         assert_eq!(Probe::from_request(&json!({"probe":"app","name":"ollama"})), Some(Probe::App("ollama".into())));
         assert_eq!(Probe::from_request(&json!({"probe":"gpu"})), Some(Probe::Gpu));
         assert_eq!(Probe::from_request(&json!({"probe":"app"})), None);
+        // Only the user's own message picks a link; the model never can.
+        assert_eq!(Probe::from_request(&json!({"probe":"link","name":"http://169.254.169.254/"})), None);
+        let picked = pick("can you open http://rxla-pc-1.tailf11891.ts.net:8787/Graph?", &HashSet::new(), &[]);
+        assert_eq!(picked.first(), Some(&Probe::Link("http://rxla-pc-1.tailf11891.ts.net:8787/Graph".into())));
         assert_eq!(Probe::from_request(&json!({"probe":"shell","name":"rm -rf"})), None);
         assert_eq!(Probe::from_request(&json!({"probe":"app","name":"x".repeat(65)})), None);
     }

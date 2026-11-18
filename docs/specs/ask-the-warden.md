@@ -23,6 +23,7 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
   | `hardware` | This computer's CPU model, physical and logical cores (performance and efficiency cores where the CPU has both), total RAM and GPUs. |
   | `devices` | The user's Tailscale devices: name, OS, address, online. |
   | `device(name)` | One other device's CPU, cores and RAM, asked over SSH. See "Other devices". |
+  | `link(url)` | A link the user typed in this message: HTTP status, title and up to 1,400 characters of its text, the whole reading kept under 2 KB (JSON compacted, HTML reduced to visible text). See "Links". |
 
 - **Inside a process.** For the 3 largest processes of an app, `app` also
   reports who started it (up to 6 parents), its thread count, its open
@@ -50,6 +51,26 @@ plain wording), wired into `POST /assistant/chat` in `assistant.rs`.
   14 min."). Lite's reply says conversational answers come with Plus.
   `Entitlement::has_assistant` decides; it follows the pet rule (Plus, Pro, or
   the signed-out self-built app).
+
+## Links
+
+"Can you access http://rxla-pc-1.<tailnet>.ts.net:8787/graph?" is read, not
+refused (user request, 2026-11-18).
+
+- Only http(s) links the user typed in the current message are read, at most
+  2. The model cannot request a link, and links inside a fetched page are
+  never followed, so a page cannot steer the warden elsewhere.
+- One `GET`, 10 s timeout, up to 5 redirects on the same host (a redirect
+  to another host is named, not followed, so a public page cannot point the
+  warden at a private address), the first
+  512 KB. No cookies, keys or credentials in the URL; a link with a username
+  or password is ignored.
+- A failure says why: no answer in time, could not connect (for a tailnet
+  address: check Tailscale and the server), or the server's status. A page
+  drawn by JavaScript has no readable text, and the reading says to try the
+  server's API address.
+- The page goes to the chat's model as a reading. The user sent it for that,
+  so it is not redacted further. The model treats it as data.
 
 ## Other devices
 

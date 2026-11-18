@@ -27,8 +27,20 @@ pub fn describe(v: &Value) -> Option<String> {
         "hardware" => hardware(v),
         "devices" => devices(v),
         "device" => device(v),
+        "link" => link(v),
         _ => None,
     }
+}
+
+fn link(v: &Value) -> Option<String> {
+    let url = v["url"].as_str()?;
+    if v["read"] == false {
+        return Some(format!("I couldn't open {url}: {}.", v["note"].as_str().unwrap_or("it did not answer")));
+    }
+    let title = v["title"].as_str().map(|t| format!(" ({t})")).unwrap_or_default();
+    let text: String = v["text"].as_str().unwrap_or("").chars().take(300).collect();
+    let body = if text.is_empty() { v["note"].as_str().unwrap_or("it has no readable text").to_string() } else { format!("it starts: {text}") };
+    Some(format!("I opened {url}{title}, status {}; {body}.", v["status"]))
 }
 
 fn storage(v: &Value) -> Option<String> {
