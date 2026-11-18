@@ -376,7 +376,10 @@ mod tests {
         });
         let v = read(&format!("http://{addr}/graph.json")).await;
         assert_eq!(v["status"], 200);
-        assert_eq!(v["text"], r#"{"edges":2,"nodes":3}"#);
+        // Key order depends on serde_json's preserve_order feature, which
+        // differs by platform; compare the values.
+        let body: Value = serde_json::from_str(v["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body, json!({"nodes":3,"edges":2}));
         // Port 9 on loopback: nothing listens there.
         let v = read("http://127.0.0.1:9/").await;
         assert_eq!(v["read"], false);
