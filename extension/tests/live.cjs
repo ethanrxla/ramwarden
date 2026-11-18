@@ -74,7 +74,9 @@ const assert = require('node:assert/strict');
     assert.ok(saved.tabSafety.pages['https://fixture.example.org/login'], 'Keep persisted locally');
     await reopened.close();
     await worker.evaluate(() => new Promise(resolve => setTimeout(resolve,100)));
-    assert.equal(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined, 'manual close clears protection');
+    // docs/specs/tab-feedback.md: browser removal is not assumed to be an intentional close.
+    assert.ok(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()), 'browser removal keeps reopen protection');
+    assert.equal(await worker.evaluate(() => safety.closed['https://fixture.example.org/article']), undefined, 'browser removal clears the closed marker');
     assert.equal(edited.isClosed(), false);
     await context.close();
     context = await chromium.launchPersistentContext(profile, options);
@@ -83,9 +85,9 @@ const assert = require('node:assert/strict');
       await safetyReady;
       return safety.pages['https://fixture.example.org/login']?.until > Date.now();
     }), 'Keep survives browser and extension restart');
-    assert.equal(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined,
-      'manual-close feedback remains cleared after restart');
-    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, manual close');
+    assert.ok(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()),
+      'reopen protection survives browser removal and restart');
+    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, browser removal');
   } finally {
     await context.close();
     // Preserve the disposable profile for diagnostics; never access user profiles.

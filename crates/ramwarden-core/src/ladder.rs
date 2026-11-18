@@ -36,7 +36,7 @@
 //! undoes. Without that band a machine hovering at the threshold would suspend
 //! and resume the same application every tick.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use ramwarden_platform::{AppGroup, GroupSource, MemorySource, Pressure};
@@ -756,9 +756,11 @@ impl Ladder {
 
         // Keep the circle in step with what is idle now; newcomers join at the
         // back, largest first.
-        self.pageout_turns.retain(|pid| idle.iter().any(|(p, _, _)| p == pid));
+        let idle_pids: HashSet<i32> = idle.iter().map(|(pid, _, _)| *pid).collect();
+        self.pageout_turns.retain(|pid| idle_pids.contains(pid));
+        let queued: HashSet<i32> = self.pageout_turns.iter().copied().collect();
         for (pid, _, _) in &idle {
-            if !self.pageout_turns.iter().any(|p| p == pid) {
+            if !queued.contains(pid) {
                 self.pageout_turns.insert_last(*pid);
             }
         }
@@ -1871,10 +1873,12 @@ mod tests {
         let mut first = Report::default();
         l.do_reclaim(&w, &mut first);
         assert_eq!(first.steps.len(), 1);
+        // The live report says why on every tick; history logs it once.
         for _ in 0..100 {
             let mut repeated = Report::default();
             l.do_reclaim(&w, &mut repeated);
-            assert!(repeated.steps.is_empty());
+            assert_eq!(repeated.steps.len(), 1);
+            assert_eq!(repeated.steps[0].2.bytes_freed, 0);
         }
         // Capability discovery can recover; do not permanently disable a rung.
         w.groups = Some(&h);
@@ -1890,7 +1894,7 @@ mod tests {
             for _ in 0..100 {
                 let mut repeated = Report::default();
                 l.do_page_out(&w, &mut repeated);
-                assert!(repeated.steps.is_empty());
+                assert_eq!(repeated.steps.len(), 1);
             }
         }
     }
