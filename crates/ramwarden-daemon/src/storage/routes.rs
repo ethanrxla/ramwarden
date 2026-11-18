@@ -103,6 +103,11 @@ pub async fn offer(st: &AppState) {
 pub async fn answered(st: &AppState, pick: Pick, proposal: Option<String>) -> Value {
     let unix = unix_now();
     match (pick, proposal) {
+        // `/warden/answer` is served on every listener. Freeing space is
+        // only ever approved from this machine.
+        (Pick::Free, Some(_)) if !crate::guard::Policy::for_bind(&st.cfg.server.host, st.cfg.server.port).loopback => {
+            json!({"ok": false, "reply": "Freeing space can only be approved on this computer.", "closed": false})
+        }
         (Pick::Free, Some(id)) => {
             let (storage, cfg) = (st.storage.clone(), st.cfg.clone());
             let applied = tokio::task::spawn_blocking(move || storage.apply(&id, &cfg.storage, unix)).await;

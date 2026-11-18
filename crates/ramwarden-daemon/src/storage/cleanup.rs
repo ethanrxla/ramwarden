@@ -17,8 +17,11 @@
 //! 3. Only the folder's **contents** go; the folder stays, so the app that
 //!    owns it finds it where it expects.
 //! 4. Links inside are unlinked, never followed.
-//! 5. In a temp folder, entries modified within the minimum age are kept.
-//! 6. A file that will not delete (open in an app, no permission) is skipped
+//! 5. In a temp folder, files modified within the minimum age are kept, at
+//!    any depth, along with the folders that hold them.
+//! 6. The walk stays on the folder's own disk: another disk mounted inside
+//!    is left alone.
+//! 7. A file that will not delete (open in an app, no permission) is skipped
 //!    and counted, never retried harder.
 //!
 //! The [`Outcome`] reports bytes of entries that were actually removed. If
@@ -32,12 +35,10 @@ use ramwarden_platform::Outcome;
 use serde::Serialize;
 
 use super::catalog::Places;
-use super::scan::{self, Budget};
+use super::scan;
 
 /// How long an unanswered proposal can still be approved.
 pub const PROPOSAL_LIFE: Duration = Duration::from_secs(15 * 60);
-/// Sizing what is about to be deleted may take this long per proposal.
-const SIZING: Duration = Duration::from_secs(120);
 
 /// One place in a proposal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -98,40 +99,95 @@ struct Cleared {
     skipped: u64,
 }
 
-/// Delete the contents of `dir`, keeping entries newer than `keep_newer`.
-fn clear_contents(dir: &Path, keep_newer: Option<Duration>, budget: &Budget) -> Cleared {
+/// Delete the contents of `dir`, keeping files newer than `keep_newer`.
+///
+/// The walk goes file by file rather than handing a whole folder to
+/// `remove_dir_all`, for two reasons. Age is checked on every file, not on
+/// the top-level entry: an old temp folder can hold a file written a moment
+/// ago, and that file stays (with the folders above it). And bytes are
+/// counted per file actually removed, so a folder that half-deletes reports
+/// the half that went instead of nothing.
+fn clear_contents(dir: &Path, keep_newer: Option<Duration>) -> Cleared {
     let mut out = Cleared::default();
-    let now = SystemTime::now();
-    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
+    let Ok(meta) = fs::symlink_metadata(dir) else { return out };
+    Clearer { now: SystemTime::now(), keep_newer, device: scan::on_disk(&meta).1 }.contents(dir, 0, &mut out);
+    out
+}
+
+/// Deepest folder the clean-up descends into. Anything below is kept.
+const MAX_CLEAR_DEPTH: usize = 64;
+
+struct Clearer {
+    now: SystemTime,
+    keep_newer: Option<Duration>,
+    device: u64,
+}
+
+impl Clearer {
+    fn old_enough(&self, meta: &fs::Metadata) -> bool {
+        let Some(min_age) = self.keep_newer else { return true };
+        let age = meta.modified().ok().and_then(|m| self.now.duration_since(m).ok());
+        age.is_some_and(|a| a >= min_age)
+    }
+
+    /// Clear what is inside `dir`. True when `dir` is left empty.
+    fn contents(&self, dir: &Path, depth: usize, out: &mut Cleared) -> bool {
+        let Ok(entries) = fs::read_dir(dir) else {
             out.skipped += 1;
-            continue;
+            return false;
         };
-        if let Some(min_age) = keep_newer {
-            let age = meta.modified().ok().and_then(|m| now.duration_since(m).ok());
-            if age.is_none_or(|a| a < min_age) {
+        let mut empty = true;
+        for entry in entries {
+            // `DirEntry::metadata` does not follow links.
+            let Ok((entry, meta)) = entry.and_then(|e| e.metadata().map(|m| (e, m))) else {
+                out.skipped += 1;
+                empty = false;
+                continue;
+            };
+            let path = entry.path();
+            if meta.is_dir() {
+                if depth >= MAX_CLEAR_DEPTH || scan::on_disk(&meta).1 != self.device || !self.contents(&path, depth + 1, out) {
+                    empty = false;
+                    continue;
+                }
+                // Emptied: the folder itself goes. Its own date changed as
+                // its contents went, so it is not age-checked.
+                match fs::remove_dir(&path) {
+                    Ok(()) => {
+                        out.bytes += scan::on_disk(&meta).0;
+                        out.removed += 1;
+                    }
+                    Err(_) => {
+                        out.skipped += 1;
+                        empty = false;
+                    }
+                }
                 continue;
             }
-        }
-        // A link is removed as a link; `measure_alone` counts it as nothing
-        // and `remove_file` never touches its target.
-        let size = scan::measure_alone(&path, budget).bytes;
-        let removed = if meta.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
-        match removed {
-            Ok(()) => {
-                out.bytes += size;
-                out.removed += 1;
+            if !self.old_enough(&meta) {
+                empty = false;
+                continue;
             }
-            Err(_) => out.skipped += 1,
+            // A link is removed as a link and counts as nothing; its target
+            // is never touched.
+            let bytes = if meta.file_type().is_symlink() { 0 } else { scan::on_disk(&meta).0 };
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    out.bytes += bytes;
+                    out.removed += 1;
+                }
+                Err(_) => {
+                    out.skipped += 1;
+                    empty = false;
+                }
+            }
         }
+        empty
     }
-    out
 }
 
 /// Apply every line of a proposal. Returns what was really removed.
 pub fn apply(places: &Places, lines: &[Line], temp_min_age: Duration) -> (Outcome, u64) {
-    let budget = Budget::new(SIZING, i64::MAX / 2);
     let mut outcome = Outcome::default();
     let mut skipped = 0;
     for line in lines {
@@ -144,7 +200,7 @@ pub fn apply(places: &Places, lines: &[Line], temp_min_age: Duration) -> (Outcom
                 outcome.notes.push(format!("{}: left alone, it no longer marks itself as a cache", line.label));
                 continue;
             }
-            let cleared = clear_contents(dir, line.aged.then_some(temp_min_age), &budget);
+            let cleared = clear_contents(dir, line.aged.then_some(temp_min_age));
             outcome.bytes_freed += cleared.bytes;
             skipped += cleared.skipped;
             if cleared.skipped > 0 {
@@ -257,6 +313,32 @@ mod tests {
         assert!(temp.join("in-use.tmp").exists());
         let (outcome, _) = apply(&p, &[l], Duration::ZERO);
         assert!(outcome.bytes_freed >= 10_000);
+    }
+
+    fn age(path: &Path, secs: u64) {
+        let when = SystemTime::now() - Duration::from_secs(secs);
+        fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn an_old_temp_folder_keeps_the_new_file_inside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let temp = dir.path().join("Temp");
+        write(&temp.join("job/old.tmp"), 20_000);
+        write(&temp.join("job/fresh.tmp"), 10_000);
+        write(&temp.join("stale/a/b.tmp"), 30_000);
+        age(&temp.join("job/old.tmp"), 3 * 86_400);
+        age(&temp.join("stale/a/b.tmp"), 3 * 86_400);
+        let p = Places { os: "linux", home: PathBuf::new(), temp: Some(temp.clone()), ..Default::default() };
+        let mut l = line("temp-files", temp.clone());
+        l.aged = true;
+        let (outcome, skipped) = apply(&p, &[l], Duration::from_secs(86_400));
+        assert_eq!(skipped, 0);
+        assert!(temp.join("job/fresh.tmp").exists(), "a file written a moment ago survives its old folder");
+        assert!(!temp.join("job/old.tmp").exists());
+        assert!(!temp.join("stale").exists(), "a folder left empty goes too");
+        // Counted per file removed: both old files, not the kept one.
+        assert!(outcome.bytes_freed >= 50_000 && outcome.bytes_freed < 70_000, "{}", outcome.bytes_freed);
     }
 
     #[test]

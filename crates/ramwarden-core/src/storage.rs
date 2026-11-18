@@ -110,6 +110,15 @@ impl Watch {
                 // Recovered: the next dip is news again.
                 seen.alerted = None;
             } else {
+                // Eased from critical to low: remember the lower level, so
+                // a return to critical is news again rather than waiting
+                // out the 4-hour repeat. The recovery margin in
+                // `Level::of` keeps this from flapping at the line.
+                if let Some((at_level, at)) = seen.alerted
+                    && level < at_level
+                {
+                    seen.alerted = Some((level, at));
+                }
                 let repeat = if level == Level::Critical { cfg.critical_repeat_hours } else { cfg.low_repeat_hours };
                 let quiet = match seen.alerted {
                     None => false,
@@ -209,6 +218,19 @@ mod tests {
         // Back to low is better news, not an alert.
         assert!(w.observe(&cfg, &[vol("C:", 930, 12.0, true)], 3_720 + 4 * 3600 + 60).is_none());
         assert_eq!(w.level(), Level::Low);
+    }
+
+    #[test]
+    fn critical_again_after_easing_to_low_is_news() {
+        let cfg = config::Storage::default();
+        let mut w = Watch::default();
+        assert_eq!(w.observe(&cfg, &[vol("C:", 930, 0.2, true)], 0).unwrap().volume.level, Level::Critical);
+        // Something freed a little: low, quiet.
+        assert!(w.observe(&cfg, &[vol("C:", 930, 12.0, true)], 600).is_none());
+        // Filled up again within the hour: speaks, not four hours later.
+        assert_eq!(w.observe(&cfg, &[vol("C:", 930, 0.3, true)], 1_200).unwrap().volume.level, Level::Critical);
+        // And the low it eased to is no new alert either, until its own repeat.
+        assert!(w.observe(&cfg, &[vol("C:", 930, 12.0, true)], 1_800).is_none());
     }
 
     #[test]

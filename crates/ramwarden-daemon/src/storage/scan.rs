@@ -98,13 +98,13 @@ pub struct CacheDir {
 }
 
 #[cfg(unix)]
-fn on_disk(m: &fs::Metadata) -> (u64, u64) {
+pub(super) fn on_disk(m: &fs::Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     (m.blocks() * 512, m.dev())
 }
 
 #[cfg(not(unix))]
-fn on_disk(m: &fs::Metadata) -> (u64, u64) {
+pub(super) fn on_disk(m: &fs::Metadata) -> (u64, u64) {
     (m.len(), 0)
 }
 
@@ -117,36 +117,53 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn dir(&mut self, dir: &Path, depth: usize, in_cache: bool) -> u64 {
-        let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    /// Size of everything below `dir`, and whether all of it was seen. A
+    /// folder or entry that cannot be read, or a branch past `MAX_DEPTH`,
+    /// makes the figure a floor, the same as running out of budget. Other
+    /// disks mounted below are left out on purpose and do not.
+    fn dir(&mut self, dir: &Path, depth: usize, in_cache: bool) -> (u64, bool) {
+        let Ok(entries) = fs::read_dir(dir) else { return (0, false) };
         let cache = !in_cache && is_cache_dir(dir);
         let mut total = 0u64;
-        for entry in entries.flatten() {
+        let mut complete = true;
+        for entry in entries {
             if !self.budget.take() {
-                self.complete = false;
+                complete = false;
                 break;
             }
             // `DirEntry::metadata` does not follow links.
-            let Ok(meta) = entry.metadata() else { continue };
+            let Ok(meta) = entry.and_then(|e| e.metadata().map(|m| (e, m))) else {
+                complete = false;
+                continue;
+            };
+            let (entry, meta) = meta;
             let kind = meta.file_type();
             if kind.is_symlink() {
                 continue;
             }
             let (bytes, device) = on_disk(&meta);
             if kind.is_dir() {
-                if device != self.device || depth >= MAX_DEPTH {
+                if device != self.device {
                     continue;
                 }
-                total += bytes + self.dir(&entry.path(), depth + 1, in_cache || cache);
+                if depth >= MAX_DEPTH {
+                    complete = false;
+                    continue;
+                }
+                let (below, seen) = self.dir(&entry.path(), depth + 1, in_cache || cache);
+                total += bytes + below;
+                complete &= seen;
             } else {
                 total += bytes;
                 self.files += 1;
             }
         }
-        if cache && self.complete {
+        // A cache folder is offered only when it was measured in full.
+        if cache && complete {
             self.caches.lock().unwrap().push(CacheDir { path: dir.to_path_buf(), bytes: total });
         }
-        total
+        self.complete &= complete;
+        (total, complete)
     }
 }
 
@@ -161,8 +178,8 @@ pub fn measure(path: &Path, budget: &Budget, caches: &Mutex<Vec<CacheDir>>) -> M
         return Measured { bytes, files: 1, complete: true };
     }
     let mut walk = Walk { budget, device, files: 0, complete: !budget.spent(), caches };
-    let total = bytes + walk.dir(path, 0, false);
-    Measured { bytes: total, files: walk.files, complete: walk.complete }
+    let (below, _) = walk.dir(path, 0, false);
+    Measured { bytes: bytes + below, files: walk.files, complete: walk.complete }
 }
 
 /// Measure a path with nothing else to report.
@@ -272,5 +289,37 @@ mod tests {
         assert!(m.files < 50);
         let m = measure(&dir.path().join("d"), &Budget::new(Duration::ZERO, 1_000_000), &caches);
         assert!(m.complete || m.files < 50);
+    }
+
+    #[test]
+    fn a_branch_past_the_depth_limit_marks_the_figure_a_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deep = dir.path().join("d");
+        for _ in 0..=MAX_DEPTH + 1 {
+            deep.push("x");
+        }
+        write(&deep.join("f"), 10);
+        assert!(!measure_alone(&dir.path().join("d"), &roomy()).complete);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_folder_marks_the_figure_a_floor_but_spares_sibling_caches() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("a/locked/f"), 10);
+        let target = dir.path().join("z/target");
+        write(&target.join("x"), 10);
+        fs::write(target.join(CACHE_TAG), CACHE_SIGNATURE).unwrap();
+        let locked = dir.path().join("a/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = fs::read_dir(&locked).is_ok(); // root reads anything
+        let caches = Mutex::new(Vec::new());
+        let m = measure(dir.path(), &roomy(), &caches);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(caches.into_inner().unwrap().len(), 1, "an unreadable folder elsewhere must not hide a complete cache");
+        if !readable {
+            assert!(!m.complete);
+        }
     }
 }

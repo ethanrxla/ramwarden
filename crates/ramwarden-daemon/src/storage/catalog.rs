@@ -309,10 +309,17 @@ impl Places {
             return false;
         }
         let Ok(real) = dir.canonicalize() else { return false };
+        // The path as written must sit under the base, and resolve to the
+        // same place as the base's real path plus that remainder. A link at
+        // any step below the base (`~/.cache/x -> ~/Documents`) changes the
+        // resolved path and is refused, not just a link at the last step.
         let below = |base: &Path, min_depth: usize| -> Option<PathBuf> {
-            let base = base.canonicalize().ok()?;
-            let rest = real.strip_prefix(&base).ok()?;
-            (rest.components().count() >= min_depth).then(|| rest.to_path_buf())
+            let real_base = base.canonicalize().ok()?;
+            let rest = dir.strip_prefix(base).or_else(|_| dir.strip_prefix(&real_base)).ok()?;
+            if rest.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                return None;
+            }
+            (real_base.join(rest) == real && rest.components().count() >= min_depth).then(|| rest.to_path_buf())
         };
         if self.temp.as_deref().is_some_and(|t| below(t, 0).is_some()) || self.local.as_deref().is_some_and(|l| below(l, 1).is_some()) {
             return true;
@@ -401,6 +408,12 @@ mod tests {
         {
             std::os::unix::fs::symlink(&outside, home.join(".cache/link")).unwrap();
             assert!(!places.may_clear(&home.join(".cache/link")), "a link out of home is refused");
+            // A link part-way down: `.cache/docs` points at Documents, so
+            // `.cache/docs/Work` resolves inside the user's own folder.
+            std::fs::create_dir_all(home.join("Documents/Work")).unwrap();
+            std::os::unix::fs::symlink(home.join("Documents"), home.join(".cache/docs")).unwrap();
+            assert!(!places.may_clear(&home.join(".cache/docs/Work")), "a link below the base is refused");
+            assert!(!places.may_clear(&home.join(".cache/app/../../Documents")), "dot-dot is refused");
         }
     }
 }

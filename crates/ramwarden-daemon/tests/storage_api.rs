@@ -146,3 +146,25 @@ async fn a_due_alert_baas_once_with_the_offer() {
     assert!(b["bubble"]["text"].as_str().unwrap().starts_with("Baa! / is nearly full: 0.2 GB left of 930 GB."), "{b}");
     assert!(b["bubble"]["proposal"].is_string());
 }
+
+#[tokio::test]
+async fn a_listener_beyond_this_computer_cannot_see_or_free_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let blob = dir.path().join(".cache/app/blob");
+    write(&blob, 60 * MB);
+    let local = state(dir.path(), 3.0);
+    let (_, p) = send(&local, "POST", "/storage/cleanup/propose", json!({})).await;
+    assert_eq!(p["state"], "pending");
+
+    // Same daemon state, served on every interface.
+    let mut cfg = (*local.cfg).clone();
+    cfg.server.host = "0.0.0.0".into();
+    let open = AppState { cfg: Arc::new(cfg), ..local.clone() };
+    for path in ["/storage", "/storage/usage?for=agent", &format!("/storage/cleanup/{}", p["id"].as_str().unwrap())] {
+        assert_ne!(send(&open, "GET", path, Value::Null).await.0, 200, "{path}");
+    }
+    assert_ne!(send(&open, "POST", "/ask/probe", json!({"probe": "storage"})).await.0, 200);
+    let (_, b) = send(&local, "GET", "/warden/bubble", Value::Null).await;
+    send(&open, "POST", "/warden/answer", json!({"id": b["bubble"]["id"], "choice": "free"})).await;
+    assert!(blob.exists(), "Free is only ever approved from this computer");
+}

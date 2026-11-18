@@ -35,7 +35,7 @@ Code: `crates/ramwarden-platform/src/storage.rs` (trait),
 - **Explain.** A scan measures the catalogue's places and the top folders of
   the home folder within a time budget (8 s by default, at most 120 s, 20
   million entries), with four walker threads. It counts space on disk, follows
-  no links, stays on one filesystem, and marks sizes it could not finish as
+  no links, stays on one filesystem, and marks sizes it could not finish (out of time, or a folder it could not read) as
   minimums. Folders with a valid `CACHEDIR.TAG` (Cargo's `target/`, among
   others) are reported as build output. A scan under 10 minutes old is reused.
   Scans run only when asked or when an alert fires.
@@ -54,8 +54,16 @@ Code: `crates/ramwarden-platform/src/storage.rs` (trait),
   temp or local-data folder (not `Documents`, `Desktop`, `Downloads` and the
   like wholesale), reached through no link, and still tagged if it was found
   by its tag. Only the contents go; links inside are unlinked, never followed;
-  files in use are skipped and counted. The result reports bytes actually
-  removed, and zero is a refusal.
+  files in use are skipped and counted. The walk goes file by file: in temp
+  folders every file is age-checked, at any depth, and a folder is removed
+  only once it is empty. The result reports bytes of files actually removed,
+  and zero is a refusal.
+- **This computer only.** The `/storage` routes and `/ask/probe` are served
+  only when the daemon listens on loopback, and a Free answer arriving on any
+  other listener is refused.
+- **Alert after easing.** A disk that eased from critical to low and then
+  fills to critical again alerts at once; the 4-hour repeat applies only to
+  a level that has not changed.
 - **Asking.** The chat's `storage` probe (picked by words like disk, storage,
   space, drive, "free up") answers from the same scan, and when something can
   be cleared the offer appears in the bubble, without a baa.
@@ -71,7 +79,7 @@ any MCP client. Configure it with command `ramwarden`, args `["mcp"]`.
 | `storage_usage` | What is using the disk, with kinds, sizes and steps |
 | `storage_propose_cleanup` | Prepares a clean-up and shows it in the warden's bubble. Deletes nothing |
 | `storage_cleanup_status` | Pending, applied (with bytes freed), declined or expired |
-| `computer_probe` | One read-only probe: overview, app, gpu, models, history, storage |
+| `computer_probe` | One read-only probe: overview, app, gpu, models, history, storage, hardware |
 
 There is no tool that deletes, approves or runs a command. Every argument is
 validated before it becomes a daemon request on `127.0.0.1:7823`.
