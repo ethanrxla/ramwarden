@@ -131,9 +131,9 @@ impl Row {
     /// with this tab's numbers.
     pub fn close_reason(&self, cfg: &config::Tabs) -> String {
         format!(
-            "idle {:.1} h (floor {:.0} h), return chance {:.2} below {:.2}{}",
+            "idle {:.1} h (floor {:.1} h), return chance {:.2} below {:.2}{}",
             self.inactive_minutes as f64 / 60.0,
-            cfg.close_after_hours.max(24.0),
+            cfg.close_idle_minutes() as f64 / 60.0,
             self.p_return,
             cfg.close_below_return.min(0.3),
             if self.duplicate { "; older copy of an open page" } else { "" },

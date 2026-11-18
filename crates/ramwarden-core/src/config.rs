@@ -332,7 +332,8 @@ pub struct Tabs {
     pub sweep_minutes: f64,
     /// `off`, `review` (require approval), `dry-run` (log what would close) or `live`.
     pub close: String,
-    /// A tab must have been idle at least this long to be closed.
+    /// A tab must have been idle at least this long to be closed. Never below
+    /// one hour (`Tabs::close_idle_minutes`), whatever the file says.
     pub close_after_hours: f64,
     /// Close only below this chance of the user returning.
     pub close_below_return: f64,
@@ -351,12 +352,26 @@ pub struct Tabs {
     pub max_close_per_sweep: usize,
 }
 
+impl Tabs {
+    /// The least idle time, in minutes, before a tab may be closed unattended.
+    ///
+    /// Until 2026-11-18 this was pinned at 24 hours in two places (the sweep and
+    /// the extension's safe-close command), after the 2026-11-02 closures of
+    /// tabs in use. A whole day meant almost nothing ever qualified, so the
+    /// warden stopped closing tabs the user had stopped using. What protects a
+    /// tab in use is the other guards (recent tabs, work pages, forms, reopens,
+    /// return chance), so the floor follows the setting again, down to an hour.
+    pub fn close_idle_minutes(&self) -> i64 {
+        (self.close_after_hours.max(1.0) * 60.0) as i64
+    }
+}
+
 impl Default for Tabs {
     fn default() -> Self {
         Tabs {
             sweep_minutes: 5.0,
             close: "dry-run".into(),
-            close_after_hours: 24.0,
+            close_after_hours: 4.0,
             close_below_return: 0.3,
             close_duplicates_after_hours: 4.0,
             keep_tabs: 6,

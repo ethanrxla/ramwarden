@@ -305,7 +305,11 @@ impl AppState {
         let requested_at = std::time::Instant::now();
         self.request_all_tabs().await;
         let rows = crate::tabreview::snapshot(self);
-        let auto = crate::browser::close_candidates(&rows, &self.tabs_config());
+        let tabs = self.tabs_config();
+        let auto = crate::browser::close_candidates(&rows, &tabs);
+        // The extension re-checks idle time with this figure, so it must be the
+        // same floor the sweep used, not a fixed day.
+        let unattended_minutes = tabs.close_idle_minutes();
         let mut result = DiscardResult::default();
         for target in requested {
             if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {
@@ -335,7 +339,7 @@ impl AppState {
                 let (tx,rx)=oneshot::channel();
                 hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
                 let message=serde_json::json!({"action":"close_safe","requestId":request,
-                    "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {1440},
+                    "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {unattended_minutes},
                     "expiresAt":ramwarden_core::history::unix_now()*1000+10000});
                 hub.send(&target.browser,&message);
                 rx

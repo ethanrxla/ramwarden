@@ -425,7 +425,7 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
         kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
     }
-    let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
+    let min_idle = cfg.close_idle_minutes();
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
         && r.inactive_minutes >= min_idle
@@ -548,6 +548,27 @@ mod manual_close_tests {
         let cfg = ramwarden_core::config::Tabs { close_duplicates_after_hours: 0.0, ..Default::default() };
         let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 90, false)];
         assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
+    }
+
+    #[test]
+    fn the_idle_floor_follows_the_setting_and_never_drops_below_an_hour() {
+        // A tab left five hours, that the warden thinks you won't come back to,
+        // closes on the default settings; it used to wait a whole day.
+        let unlikely = |tabs: &[Tab]| {
+            let mut rows = rank("b", tabs, 30);
+            for r in &mut rows { r.p_return = 0.1; }
+            rows
+        };
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/left", 300, false), idle(2, "https://example.org/just-now", 90, false)];
+        let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![1]);
+
+        let eager = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 0.1, ..Default::default() };
+        assert_eq!(eager.close_idle_minutes(), 60);
+        let tabs = vec![idle(3, "https://example.org/forty-minutes", 40, false), idle(4, "https://example.org/two-hours", 120, false)];
+        let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &eager).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![4]);
     }
 
     #[test]
