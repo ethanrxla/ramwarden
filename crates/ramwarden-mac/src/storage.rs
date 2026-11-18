@@ -50,16 +50,18 @@ fn statfs(path: &Path) -> Option<Stat> {
     })
 }
 
-/// What makes two mounts the same free space. APFS volumes share their
-/// container's free space, so `/dev/disk3s1s1` and `/dev/disk3s5` are both
-/// `disk3`. Any other filesystem (an HFS+ or exFAT partition beside it on
-/// the same disk) has space of its own and is keyed by its full device.
-fn key(st: &Stat) -> String {
-    let name = st.device.trim_start_matches("/dev/");
-    if st.fs_type != "apfs" {
-        return name.to_string();
+impl Stat {
+    /// What makes two mounts the same free space. APFS volumes share their
+    /// container's free space, so `/dev/disk3s1s1` and `/dev/disk3s5` are
+    /// both `disk3`. Any other filesystem (an HFS+ or exFAT partition beside
+    /// it on the same disk) has space of its own and is keyed by its device.
+    fn key(&self) -> String {
+        let name = self.device.trim_start_matches("/dev/");
+        if self.fs_type != "apfs" {
+            return name.to_string();
+        }
+        container(name)
     }
-    container(name)
 }
 
 /// `disk3s1s1` → `disk3`. Anything that is not a `diskN…` name is itself.
@@ -76,7 +78,7 @@ pub struct MacStorage;
 impl StorageSource for MacStorage {
     fn volumes(&self) -> Result<Vec<Volume>> {
         let root = statfs(Path::new("/")).ok_or_else(|| Error::os("statfs /: failed".to_string()))?;
-        let mut seen: HashSet<String> = HashSet::from([key(&root)]);
+        let mut seen: HashSet<String> = HashSet::from([root.key()]);
         let mut out = vec![Volume {
             mount: PathBuf::from("/"),
             name: "Macintosh HD".into(),
@@ -88,7 +90,7 @@ impl StorageSource for MacStorage {
             let path = entry.path();
             let Some(st) = statfs(&path) else { continue };
             // Disk images and installers mount read-only; nothing can be freed.
-            if st.total == 0 || st.read_only || !st.device.starts_with("/dev/") || !seen.insert(key(&st)) {
+            if st.total == 0 || st.read_only || !st.device.starts_with("/dev/") || !seen.insert(st.key()) {
                 continue;
             }
             out.push(Volume {
@@ -113,9 +115,9 @@ mod tests {
 
     #[test]
     fn apfs_siblings_share_a_key_other_partitions_do_not() {
-        assert_eq!(key(&stat("/dev/disk3s1s1", "apfs")), key(&stat("/dev/disk3s5", "apfs")));
-        assert_ne!(key(&stat("/dev/disk4s1", "hfs")), key(&stat("/dev/disk4s2", "exfat")));
-        assert_ne!(key(&stat("/dev/disk4s2", "apfs")), key(&stat("/dev/disk4s1", "msdos")));
+        assert_eq!(stat("/dev/disk3s1s1", "apfs").key(), stat("/dev/disk3s5", "apfs").key());
+        assert_ne!(stat("/dev/disk4s1", "hfs").key(), stat("/dev/disk4s2", "exfat").key());
+        assert_ne!(stat("/dev/disk4s2", "apfs").key(), stat("/dev/disk4s1", "msdos").key());
         assert_eq!(container("disk10s2"), "disk10");
     }
 }

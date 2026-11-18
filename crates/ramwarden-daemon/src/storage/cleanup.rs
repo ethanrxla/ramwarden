@@ -110,8 +110,34 @@ struct Cleared {
 fn clear_contents(dir: &Path, keep_newer: Option<Duration>) -> Cleared {
     let mut out = Cleared::default();
     let Ok(meta) = fs::symlink_metadata(dir) else { return out };
+    if !still_the_same_folder(dir, &meta) {
+        return out;
+    }
     Clearer { now: SystemTime::now(), keep_newer, device: scan::on_disk(&meta).1 }.contents(dir, 0, &mut out);
     out
+}
+
+/// Is `path` still the plain folder `seen` described? Checked just before
+/// descending, because `read_dir` follows a link: a folder swapped for a
+/// link after it was listed would otherwise lead the walk out of the cache.
+/// This narrows the window to the moment between this check and the open;
+/// a process able to make that swap runs as the same user and could delete
+/// the target itself, so RamWarden adds no reach it did not already have.
+fn still_the_same_folder(path: &Path, seen: &fs::Metadata) -> bool {
+    let Ok(now) = fs::symlink_metadata(path) else { return false };
+    if !now.is_dir() || now.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        now.dev() == seen.dev() && now.ino() == seen.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = seen;
+        true
+    }
 }
 
 /// Deepest folder the clean-up descends into. Anything below is kept.
@@ -146,7 +172,11 @@ impl Clearer {
             };
             let path = entry.path();
             if meta.is_dir() {
-                if depth >= MAX_CLEAR_DEPTH || scan::on_disk(&meta).1 != self.device || !self.contents(&path, depth + 1, out) {
+                if depth >= MAX_CLEAR_DEPTH
+                    || scan::on_disk(&meta).1 != self.device
+                    || !still_the_same_folder(&path, &meta)
+                    || !self.contents(&path, depth + 1, out)
+                {
                     empty = false;
                     continue;
                 }
@@ -339,6 +369,20 @@ mod tests {
         assert!(!temp.join("stale").exists(), "a folder left empty goes too");
         // Counted per file removed: both old files, not the kept one.
         assert!(outcome.bytes_freed >= 50_000 && outcome.bytes_freed < 70_000, "{}", outcome.bytes_freed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_after_listing_is_not_entered() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let seen = fs::symlink_metadata(&sub).unwrap();
+        assert!(still_the_same_folder(&sub, &seen));
+        let outside = tempfile::tempdir().unwrap();
+        fs::remove_dir(&sub).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &sub).unwrap();
+        assert!(!still_the_same_folder(&sub, &seen), "now a link");
     }
 
     #[test]
