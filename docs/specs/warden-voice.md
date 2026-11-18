@@ -113,6 +113,15 @@ preferably split at sentence or word boundaries. A new reply, mute, or hiding
 cancels the remaining chunks. Background comments do not interrupt a reply.
 Text remains usable if speech is unavailable.
 
+When ElevenLabs refuses, the daemon logs its status and `detail.status`
+(never the key) and answers `{"error": "..."}` with the cause in plain words:
+quota used up, free tier paused for unusual activity, key rejected or missing
+text-to-speech permission, voice not on the account, rate limited, or a server
+problem. Auth refusals come back as 401, quota as 402, rate limits as 429,
+anything else as 502. A 5xx or dropped connection is retried once after 600 ms.
+A call that produced no audio does not count against the per-minute or daily
+budget. The Windows "Test voice" shows the daemon's sentence.
+
 Production website sales chat remains separate from this local focus session.
 
 | Route | Does |

@@ -262,10 +262,12 @@ impl Client {
     pub(crate) async fn speech_audio(&self, text: &str, warden: &str) -> Result<Vec<u8>> {
         let mut r=self.http.post(format!("{}/warden/speech",self.base)).json(&serde_json::json!({"text":text.chars().take(800).collect::<String>(),"warden":warden})).timeout(Duration::from_secs(35)).send().await.map_err(|e|Error::Transport(e.to_string()))?;
         if !r.status().is_success() {
-            return Err(Error::Status {
-                status: r.status().as_u16(),
-                body: "Spoken voice is unavailable; text chat still works.".into(),
-            });
+            let status = r.status().as_u16();
+            // The daemon says why in {"error": "..."}; keep its words.
+            let why = r.json::<serde_json::Value>().await.ok()
+                .and_then(|v| v["error"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "Spoken voice is unavailable; text chat still works.".into());
+            return Err(Error::Status { status, body: why });
         }
         if !r
             .headers()

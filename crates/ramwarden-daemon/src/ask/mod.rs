@@ -24,6 +24,7 @@
 //! `docs/specs/ask-the-warden.md`.
 
 pub mod devices;
+pub mod link;
 pub mod plain;
 pub mod probes;
 pub mod redact;
