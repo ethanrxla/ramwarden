@@ -74,7 +74,10 @@ const assert = require('node:assert/strict');
     assert.ok(saved.tabSafety.pages['https://fixture.example.org/login'], 'Keep persisted locally');
     await reopened.close();
     await worker.evaluate(() => new Promise(resolve => setTimeout(resolve,100)));
-    assert.equal(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined, 'manual close clears protection');
+    // A tab being removed is not a verdict: the browser also removes every tab
+    // when it quits, and a page the user reopened must stay protected (the
+    // tab-closing bug of 2026-11-02). ee92c74 stopped clearing it here.
+    assert.ok(await worker.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()), 'closing a reopened tab keeps its protection');
     assert.equal(edited.isClosed(), false);
     await context.close();
     context = await chromium.launchPersistentContext(profile, options);
@@ -83,9 +86,9 @@ const assert = require('node:assert/strict');
       await safetyReady;
       return safety.pages['https://fixture.example.org/login']?.until > Date.now();
     }), 'Keep survives browser and extension restart');
-    assert.equal(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']), undefined,
-      'manual-close feedback remains cleared after restart');
-    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, manual close');
+    assert.ok(await restarted.evaluate(() => safety.pages['https://fixture.example.org/article']?.until > Date.now()),
+      'reopen protection survives closing the tab and restarting the browser');
+    console.log('PASS: restart persistence, real activity, active/work protections, expiry, identity, selected close, reopen, Keep persistence, reopen protection kept');
   } finally {
     await context.close();
     // Preserve the disposable profile for diagnostics; never access user profiles.

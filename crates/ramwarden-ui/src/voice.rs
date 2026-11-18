@@ -32,7 +32,7 @@ pub struct Bubble {
     pub id: String,
     #[serde(default)]
     pub warden: String,
-    /// `activity`, `check_in`, `quip` or `reply`.
+    /// `activity`, `check_in`, `focus`, `quip`, `reply` or `storage`.
     pub kind: String,
     pub text: String,
     #[serde(default)]
@@ -45,6 +45,28 @@ pub struct Bubble {
     pub tab: Option<BubbleTab>,
     #[serde(default)]
     pub expires_in_s: u64,
+    /// `baa` or `baa_critical`: play it once when this bubble first appears.
+    /// Only storage alerts carry one.
+    #[serde(default)]
+    pub sound: Option<String>,
+}
+
+/// Which bubble's sound was last played, so a bubble polled every two
+/// seconds baas once.
+#[derive(Default)]
+pub struct Heard(Option<String>);
+
+impl Heard {
+    /// `Some(critical)` the first time a bubble with a sound is seen.
+    pub fn due(&mut self, bubble: Option<&Bubble>) -> Option<bool> {
+        let b = bubble?;
+        let sound = b.sound.as_deref()?;
+        if self.0.as_deref() == Some(b.id.as_str()) {
+            return None;
+        }
+        self.0 = Some(b.id.clone());
+        Some(sound == "baa_critical")
+    }
 }
 
 impl Bubble {

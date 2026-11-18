@@ -32,6 +32,8 @@ struct Ui {
     unmute: gtk4::Button,
     close: gtk4::Button,
     shown: RefCell<Option<Bubble>>,
+    /// Which alert's baa has been played.
+    heard: RefCell<crate::voice::Heard>,
     /// The always-visible text box, and the warden's answer to it.
     entry: gtk4::Entry,
     said: gtk4::Box,
@@ -87,7 +89,7 @@ pub fn bar(client: Client) -> gtk4::Box {
     root.set_visible(false);
 
     let ui = Rc::new(Ui {
-        root: root.clone(), text, choices, mute, unmute, close, shown: RefCell::new(None),
+        root: root.clone(), text, choices, mute, unmute, close, shown: RefCell::new(None), heard: RefCell::default(),
         entry: entry.clone(), said, talking: RefCell::new(false),
     });
     {
@@ -344,13 +346,16 @@ fn render(client: &Rc<Client>, ui: &Rc<Ui>, speech: Speech) {
     if ui.shown.borrow().as_ref().is_some_and(|b| b.id == bubble.id) {
         return; // already showing it; keep the buttons the user may be reaching for
     }
+    if let Some(critical) = ui.heard.borrow_mut().due(Some(&bubble)) {
+        crate::baa::play(critical);
+    }
     say(ui, &bubble.text);
     ui.entry.set_placeholder_text(Some(bubble.placeholder()));
     for choice in bubble.buttons() {
         let b = gtk4::Button::with_label(&choice.label);
         if choice.id == "close" {
             b.add_css_class("destructive-action");
-        } else if choice.id == "keep" {
+        } else if choice.id == "keep" || choice.id == "free" {
             b.add_css_class("suggested-action");
         }
         let (c, u, id, pick) = (client.clone(), ui.clone(), bubble.id.clone(), choice_id(&choice.id));
@@ -369,6 +374,9 @@ fn choice_id(id: &str) -> &'static str {
         "keep" => "keep",
         "close" => "close",
         "later" => "later",
+        // Storage: approve the clean-up, or ask what is using the space.
+        "free" => "free",
+        "show" => "show",
         _ => "dismiss",
     }
 }

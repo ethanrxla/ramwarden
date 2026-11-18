@@ -41,6 +41,7 @@ pub mod privilege;
 pub mod process;
 pub mod snapshot;
 pub mod standby;
+pub mod storage;
 pub mod workingset;
 
 pub use handle::Handle;

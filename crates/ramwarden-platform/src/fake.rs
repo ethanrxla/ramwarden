@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::{
     AppGroup, Background, Compression, Desktop, DesktopSource, Error, GroupSource, MemorySource, MemoryStatus, Outcome, Pager, Parts,
     Platform, Pressure, PressureSource, PressureWaker, ProcessControl, ProcessHandle,
-    ProcessSample, ProcessSource, Result,
+    ProcessSample, ProcessSource, Result, StorageSource, Volume,
 };
 
 /// One fake reclaim group.
@@ -33,6 +33,8 @@ pub struct World {
     pub pressure: Pressure,
     pub memory: MemoryStatus,
     pub desktop: Desktop,
+    /// Mounted volumes, for the storage watcher.
+    pub volumes: Vec<Volume>,
     /// pids currently marked as background work.
     pub background: Vec<i32>,
     /// pids currently suspended by a handle.
@@ -54,6 +56,7 @@ pub type Shared = Arc<Mutex<World>>;
 /// Build a [`Platform`] over a shared fake world.
 pub fn platform(world: Shared) -> Platform {
     let w = world.clone();
+    let storage = Arc::new(Fake(world.clone()));
     Platform::new(
         Parts {
             name: "fake",
@@ -70,6 +73,7 @@ pub fn platform(world: Shared) -> Platform {
         },
         move || Box::new(Fake(w.clone())),
     )
+    .with_storage(storage)
 }
 
 /// One newtype implements every trait; they all read the same world.
@@ -184,6 +188,12 @@ impl PressureSource for Fake {
 
     fn waker(&self) -> Result<Box<dyn PressureWaker>> {
         Err(Error::Unsupported("pressure wakeups in the fake platform"))
+    }
+}
+
+impl StorageSource for Fake {
+    fn volumes(&self) -> Result<Vec<Volume>> {
+        Ok(self.world().volumes.clone())
     }
 }
 

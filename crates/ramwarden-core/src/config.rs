@@ -420,6 +420,56 @@ impl Default for Voice {
     }
 }
 
+/// Disk space: when the warden warns, and how often. See
+/// `docs/specs/storage.md`.
+///
+/// A volume is "low" or "critical" when its free space is under **both** the
+/// gigabyte figure and the percent figure, so the smaller one decides. A fixed
+/// 10% would nag a 4 TB disk with 400 GB free; a fixed 20 GB would never clear
+/// on a 32 GB tablet.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Storage {
+    /// Off stops the watcher and its alerts. Asking still works.
+    pub enabled: bool,
+    pub low_free_gb: f64,
+    pub low_free_percent: f64,
+    pub critical_free_gb: f64,
+    pub critical_free_percent: f64,
+    /// Hours before the same "low" warning may repeat.
+    pub low_repeat_hours: f64,
+    /// Hours before the same "critical" warning may repeat.
+    pub critical_repeat_hours: f64,
+    /// Seconds between free-space readings. One `statvfs` per volume.
+    pub check_seconds: u64,
+    /// Seconds one "what is using the space" scan may run before it reports
+    /// what it has, marked partial.
+    pub scan_seconds: u64,
+    /// Temp files newer than this are left alone: something may be using them.
+    pub temp_min_age_hours: f64,
+    /// Include folder paths in what agents and models see. Off: they get
+    /// names and sizes only, and paths stay on this computer.
+    pub share_paths: bool,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Storage {
+            enabled: true,
+            low_free_gb: 20.0,
+            low_free_percent: 10.0,
+            critical_free_gb: 5.0,
+            critical_free_percent: 3.0,
+            low_repeat_hours: 24.0,
+            critical_repeat_hours: 4.0,
+            check_seconds: 60,
+            scan_seconds: 8,
+            temp_min_age_hours: 24.0,
+            share_paths: false,
+        }
+    }
+}
+
 /// VRAM policy: unload idle local models when a game needs the card.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -686,6 +736,7 @@ pub struct Config {
     pub wardens: Wardens,
     pub tabs: Tabs,
     pub voice: Voice,
+    pub storage: Storage,
     /// Process names the user has opted into reclaiming. A ceiling, never
     /// widened by detection — see [`crate::detector::Detector::may_suspend`].
     pub watchlist: Vec<String>,
@@ -715,6 +766,7 @@ struct Raw {
     wardens: Wardens,
     tabs: Tabs,
     voice: Voice,
+    storage: Storage,
     processes: RawProcesses,
     workspaces: RawWorkspaces,
     db_path: Option<String>,
@@ -743,7 +795,7 @@ fn default_db_path() -> PathBuf {
     data_dir().join("ramwarden").join("history.db")
 }
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -795,6 +847,7 @@ impl Default for Config {
             wardens: Wardens::default(),
             tabs: Tabs::default(),
             voice: Voice::default(),
+            storage: Storage::default(),
             watchlist: default_watchlist(),
             workspace_rules: Vec::new(),
             db_path: default_db_path(),
@@ -1016,6 +1069,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         wardens: raw.wardens,
         tabs: raw.tabs,
         voice: raw.voice,
+        storage: raw.storage,
         watchlist: raw.processes.watchlist.unwrap_or_else(default_watchlist),
         workspace_rules: raw.workspaces.rules,
         db_path: raw.db_path.map(PathBuf::from).unwrap_or_else(default_db_path),
