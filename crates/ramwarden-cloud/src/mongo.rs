@@ -392,6 +392,42 @@ impl Store for MongoStore {
             .await?)
     }
 
+    async fn apply_prepaid(
+        &self,
+        account_id: &str,
+        payment_id: &str,
+        expected_paid_until: Option<u64>,
+        p: &PrepaidGrant,
+    ) -> Result<Prepaid> {
+        let expected = expected_paid_until.map_or(Bson::Null, |t| Bson::Int64(t as i64));
+        let r = self
+            .accounts()
+            .update_one(
+                doc! { "_id": account_id, "paid_until": expected, "prepaid_payments": { "$ne": payment_id } },
+                doc! {
+                    "$set": {
+                        "tier": to_bson(&p.tier),
+                        "interval": to_bson(&p.interval),
+                        "paid_until": p.paid_until as i64,
+                        "trial_ends_at": 0_i64,
+                        "cancelled": true,
+                        "billing": to_bson(&p.billing),
+                        "prepaid_rate": p.rate as i64,
+                    },
+                    "$push": { "prepaid_payments": payment_id },
+                },
+            )
+            .await?;
+        if r.modified_count == 1 {
+            return Ok(Prepaid::Applied);
+        }
+        Ok(match self.account(account_id).await? {
+            None => Prepaid::NoAccount,
+            Some(a) if a.prepaid_payments.iter().any(|x| x == payment_id) => Prepaid::AlreadyApplied,
+            Some(_) => Prepaid::Changed,
+        })
+    }
+
     async fn set_prefs(&self, account_id: &str, prefs: serde_json::Map<String, serde_json::Value>) -> Result<Option<Account>> {
         Ok(self
             .accounts()

@@ -165,6 +165,15 @@ main.app h1 { font-size: 32px; margin: 0 0 12px; letter-spacing: -.5px; }
 }
 .wallet:hover:not([disabled]) { border-color: var(--accent); }
 .wallet span { color: var(--muted); font-size: 13px; }
+.coin-picker { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+.coin-picker select {
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font: inherit; min-width: 200px;
+}
+.coin-pay dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 12px 0; }
+.coin-pay dt { color: var(--muted); }
+.coin-pay dd { margin: 0; overflow-wrap: anywhere; }
+.coin-pay code { font-family: var(--mono); user-select: all; }
 
 .code-form { display: flex; gap: 10px; margin: 16px 0; flex-wrap: wrap; }
 .code-form input {

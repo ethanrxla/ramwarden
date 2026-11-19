@@ -146,6 +146,17 @@ pub trait Store: crate::support::SupportStore + crate::usage::UsageStore + Send 
     async fn account(&self, id: &str) -> Result<Option<Account>>;
     async fn account_by_chain_key(&self, key: &[u8; 32]) -> Result<Option<Account>>;
     async fn update_billing(&self, account_id: &str, u: &BillingUpdate) -> Result<Option<Account>>;
+    /// Adds one prepaid period as a single compare-and-swap: written only if
+    /// `paid_until` still equals `expected_paid_until` and `payment_id` is not
+    /// in `prepaid_payments` yet. Sets tier, interval and billing, ends any
+    /// trial, records the account as not renewing, and remembers the payment.
+    async fn apply_prepaid(
+        &self,
+        account_id: &str,
+        payment_id: &str,
+        expected_paid_until: Option<u64>,
+        g: &PrepaidGrant,
+    ) -> Result<Prepaid>;
     async fn set_prefs(&self, account_id: &str, prefs: serde_json::Map<String, serde_json::Value>) -> Result<Option<Account>>;
 
     // --- web sessions
@@ -377,6 +388,32 @@ impl Store for MemoryStore {
             u.apply(a);
             a.clone()
         }))
+    }
+
+    async fn apply_prepaid(
+        &self,
+        account_id: &str,
+        payment_id: &str,
+        expected_paid_until: Option<u64>,
+        p: &PrepaidGrant,
+    ) -> Result<Prepaid> {
+        let mut g = self.lock();
+        let Some(a) = g.accounts.get_mut(account_id) else { return Ok(Prepaid::NoAccount) };
+        if a.prepaid_payments.iter().any(|x| x == payment_id) {
+            return Ok(Prepaid::AlreadyApplied);
+        }
+        if a.paid_until != expected_paid_until {
+            return Ok(Prepaid::Changed);
+        }
+        a.tier = Some(p.tier);
+        a.interval = Some(p.interval);
+        a.paid_until = Some(p.paid_until);
+        a.trial_ends_at = Some(0);
+        a.cancelled = true;
+        a.billing = Some(p.billing.clone());
+        a.prepaid_rate = Some(p.rate);
+        a.prepaid_payments.push(payment_id.to_string());
+        Ok(Prepaid::Applied)
     }
 
     async fn set_prefs(&self, account_id: &str, prefs: serde_json::Map<String, serde_json::Value>) -> Result<Option<Account>> {
@@ -642,6 +679,25 @@ pub mod contract {
             .unwrap();
         assert_eq!(a.paid_until, Some(NOW + 100), "a replayed older event cannot shorten service");
         assert!(a.trial_used);
+
+        // Prepaid periods: compare-and-swap on paid_until, once per payment.
+        let (p, _) = s.account_for_identity(&wallet(77), NOW).await.unwrap();
+        let grant = |until| PrepaidGrant {
+            tier: Tier::Ram,
+            interval: Interval::Month,
+            paid_until: until,
+            rate: 1,
+            billing: Billing { method: BillingMethod::Thorchain, reference: "bc1qbuyer".into() },
+        };
+        assert_eq!(s.apply_prepaid(&p.id, "thor-1", Some(NOW), &grant(NOW + 30)).await.unwrap(), Prepaid::Changed, "nothing paid yet");
+        assert_eq!(s.apply_prepaid(&p.id, "thor-1", None, &grant(NOW + 30)).await.unwrap(), Prepaid::Applied);
+        assert_eq!(s.apply_prepaid(&p.id, "thor-1", Some(NOW + 30), &grant(NOW + 60)).await.unwrap(), Prepaid::AlreadyApplied);
+        assert_eq!(s.apply_prepaid(&p.id, "thor-2", None, &grant(NOW + 30)).await.unwrap(), Prepaid::Changed, "stale read");
+        assert_eq!(s.apply_prepaid(&p.id, "thor-2", Some(NOW + 30), &grant(NOW + 60)).await.unwrap(), Prepaid::Applied);
+        assert_eq!(s.apply_prepaid("no-such-account", "thor-3", None, &grant(1)).await.unwrap(), Prepaid::NoAccount);
+        let p = s.account(&p.id).await.unwrap().unwrap();
+        assert_eq!((p.paid_until, p.cancelled, p.tier, p.prepaid_payments.len()), (Some(NOW + 60), true, Some(Tier::Ram), 2));
+        assert_eq!(p.billing.unwrap().method, BillingMethod::Thorchain);
 
         let mut prefs = serde_json::Map::new();
         prefs.insert("wardens".into(), serde_json::json!({"ram": {"color": "#ff8800"}}));

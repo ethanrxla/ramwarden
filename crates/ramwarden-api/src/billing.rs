@@ -10,7 +10,10 @@
 //! - **Card**: Stripe Checkout in subscription mode ([`crate::stripe`]); the
 //!   signed webhook records what Stripe did.
 //!
-//! Neither route changes an account by itself. Only the watcher and the
+//! - **THORChain**: any coin, swapped to USDC on Base ([`crate::thorchain`]).
+//!   Prepaid, one period per payment; the swap watcher records it.
+//!
+//! No route changes an account by itself. Only the watcher and the
 //! webhook do, from what actually happened, so `status` never says "active"
 //! for a checkout that was abandoned.
 
@@ -35,6 +38,7 @@ use crate::accounts::{Cloud, Reply, cloud, session, storage};
 use crate::checkout::{BaseChain, PlanDef, usdc_minor};
 use crate::routes::{AppState, error};
 use crate::stripe::{self, CheckoutRequest, Stripe};
+use crate::thorchain::{self as thor, ASSETS, Thorchain, UNITS_PER_USD};
 use crate::wallet::{self, Chain, iso8601};
 
 /// The payment rails this server has configured.
@@ -42,6 +46,7 @@ use crate::wallet::{self, Chain, iso8601};
 pub struct Billing {
     pub base: Option<Arc<BaseChain>>,
     pub stripe: Option<Stripe>,
+    pub thorchain: Option<Arc<Thorchain>>,
 }
 
 pub fn routes() -> axum::Router<Arc<AppState>> {
@@ -50,6 +55,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
         .route("/v1/checkout/base", post(checkout_base))
         .route("/v1/checkout/stripe", post(checkout_stripe))
         .route("/v1/checkout/solana", post(solana))
+        .route("/v1/checkout/thorchain", post(checkout_thorchain))
         .route("/v1/checkout/payments/{id}", get(payment))
         .route("/v1/checkout/cancel", post(cancel))
         .route("/v1/stripe/webhook", post(webhook))
@@ -58,10 +64,14 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
 async fn config(State(state): State<Arc<AppState>>) -> Reply {
     let c = cloud(&state)?;
     let b = &c.billing;
-    let json = c.plans.config_json(
+    let mut json = c.plans.config_json(
         b.base.as_deref().map(|b| &b.cfg),
         b.stripe.as_ref().map(Stripe::test_mode),
     );
+    json["thorchain"] = match &b.thorchain {
+        Some(t) => json!({"live": t.cfg.live, "assets": ASSETS.iter().map(thor::PayAsset::json).collect::<Vec<_>>()}),
+        None => serde_json::Value::Null,
+    };
     Ok(Json(json).into_response())
 }
 
@@ -130,6 +140,7 @@ async fn start<'a>(
     if a.billing.as_ref().map(|b| b.method) != Some(pays_with) {
         let how = match a.billing.as_ref().map(|b| b.method) {
             Some(BillingMethod::Card) => "by card",
+            Some(BillingMethod::Thorchain) => "ahead with crypto through THORChain",
             _ => "from your wallet on Base",
         };
         return Err(error(
@@ -298,6 +309,83 @@ async fn checkout_stripe(
     Ok(Json(json!({"payment_id": id, "upgrade": false, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
 }
 
+#[derive(Deserialize)]
+struct ThorReq {
+    plan: u32,
+    asset: String,
+}
+
+/// Any coin through THORChain. Without the live flag this is a price
+/// preview: no payment is created and no deposit address is shown.
+async fn checkout_thorchain(
+    State(state): State<Arc<AppState>>,
+    method: Method,
+    headers: HeaderMap,
+    Json(b): Json<ThorReq>,
+) -> Reply {
+    let c = cloud(&state)?;
+    let now = (state.now)();
+    let t = c.billing.thorchain.as_ref().ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Paying with other coins opens soon."))?;
+    let a = session(c, &method, &headers, now).await?;
+    if a.developer_access {
+        return Err(error(StatusCode::CONFLICT, "This developer account has complimentary access. No payment is needed."));
+    }
+    let plan = c.plans.plan(b.plan).ok_or_else(|| error(StatusCode::NOT_FOUND, "No such plan."))?;
+    let asset = thor::pay_asset(&b.asset).ok_or_else(|| error(StatusCode::UNPROCESSABLE_ENTITY, "That coin isn't offered."))?;
+    // A renewing subscription would keep charging on top of prepaid time.
+    if matches!(a.status(now), Some(Status::Trial | Status::Active | Status::Grace))
+        && a.billing.as_ref().is_some_and(|x| x.method != BillingMethod::Thorchain)
+    {
+        return Err(error(StatusCode::CONFLICT, "Your plan renews by itself. Cancel it first; you can pay ahead with any coin once it ends."));
+    }
+    if a.status(now).is_some_and(|s| s != Status::Lapsed) && a.tier.is_some_and(|tier| tier == Tier::Pro && plan.tier() != Tier::Pro) {
+        return Err(error(StatusCode::CONFLICT, "You're on Pro until your paid time ends. Renew Pro, or pick Plus after it ends."));
+    }
+    let price_units = thor::plan_cents(plan) * (UNITS_PER_USD / 100);
+    let q = t.quote_for(asset, price_units).await.map_err(|e| {
+        tracing::warn!("thorchain quote: {e}");
+        error(StatusCode::BAD_GATEWAY, &format!("No THORChain quote right now: {e}"))
+    })?;
+    let common = json!({
+        "asset": asset.json(),
+        "amount": asset.display(q.amount),
+        "usd": format!("{}.{:02}", thor::plan_cents(plan) / 100, thor::plan_cents(plan) % 100),
+        "days": plan.days,
+        "swap_seconds": q.seconds,
+        "renews": false,
+    });
+    if !t.cfg.live {
+        let mut v = common;
+        v["preview"] = json!(true);
+        return Ok(Json(v).into_response());
+    }
+    // A free price limit is this payment's id.
+    let mut limit = 0;
+    for _ in 0..8 {
+        let tag = u64::from_le_bytes(random_bytes::<8>()) % 999_999 + 1;
+        let candidate = thor::limit_for(price_units, q.outbound_fee, tag);
+        if c.store.payment(&thor::payment_id(candidate)).await.map_err(storage)?.is_none() {
+            limit = candidate;
+            break;
+        }
+    }
+    if limit == 0 {
+        return Err(error(StatusCode::SERVICE_UNAVAILABLE, "Try again in a moment."));
+    }
+    let id = thor::payment_id(limit);
+    c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Thorchain, None, now)).await.map_err(storage)?;
+    let memo = t.cfg.memo(limit);
+    let mut v = common;
+    v["preview"] = json!(false);
+    v["payment_id"] = json!(id);
+    v["inbound_address"] = json!(q.inbound_address);
+    v["memo"] = json!(memo);
+    v["expires_at"] = json!(iso8601(q.expiry));
+    v["chain_id"] = json!(asset.evm_chain);
+    v["transactions"] = json!(t.transaction(asset, &q, &memo).into_iter().collect::<Vec<_>>());
+    Ok(Json(v).into_response())
+}
+
 async fn solana(State(state): State<Arc<AppState>>) -> Reply {
     cloud(&state)?;
     Err(error(
@@ -398,7 +486,8 @@ async fn cancel(State(state): State<Arc<AppState>>, method: Method, headers: Hea
                     .into_response(),
             )
         }
-        BillingMethod::Solana => Err(nothing()),
+        // Prepaid: recorded as not renewing from the start.
+        BillingMethod::Solana | BillingMethod::Thorchain => Err(nothing()),
     }
 }
 

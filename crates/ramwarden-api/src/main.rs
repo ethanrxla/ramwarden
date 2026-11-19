@@ -105,6 +105,25 @@ async fn run() -> Result<(), String> {
                     );
                 }
             }
+            let thorchain = cc
+                .thorchain
+                .clone()
+                .map(|t| Arc::new(ramwarden_api::thorchain::Thorchain::new(t)));
+            match &thorchain {
+                Some(t) if t.cfg.live => {
+                    tracing::info!("THORChain checkout on, paying out to {}", t.cfg.payout_hex());
+                    tokio::spawn(t.clone().run(
+                        store.clone(),
+                        plans.clone(),
+                        std::time::Duration::from_secs(30),
+                        unix_now,
+                    ));
+                }
+                Some(_) => tracing::warn!(
+                    "THORChain checkout quotes only: it is mainnet, so payments need RAMWARDEN_ALLOW_LIVE_PAYMENTS=1"
+                ),
+                None => tracing::info!("THORChain checkout off (RAMWARDEN_THORCHAIN_PAYOUT not set)"),
+            }
             let stripe = cc
                 .stripe
                 .as_ref()
@@ -143,7 +162,11 @@ async fn run() -> Result<(), String> {
                 siwe_chain_id: base
                     .as_ref()
                     .map_or(ramwarden_api::checkout::BASE_SEPOLIA, |b| b.cfg.chain_id),
-                billing: Billing { base, stripe },
+                billing: Billing {
+                    base,
+                    stripe,
+                    thorchain,
+                },
                 signer,
                 mailer,
                 downloads_dir: cc.downloads_dir.clone().map(Into::into),

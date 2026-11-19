@@ -25,6 +25,19 @@ export class MockApi {
       this.account_ = this.#newAccount("email", "you@example.com");
       this.signedIn = true;
     }
+    if (AS === "prepaid") {
+      this.account_ = this.#newAccount("email", "you@example.com");
+      Object.assign(this.account_, {
+        tier: "pro",
+        interval: "month",
+        status: "cancelled",
+        device_limit: 5,
+        trial_available: false,
+        billing: { method: "thorchain" },
+        paid_until: new Date(Date.now() + 20 * DAY).toISOString(),
+      });
+      this.signedIn = true;
+    }
     if (["trial", "active", "lapsed"].includes(AS)) {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {
@@ -180,7 +193,13 @@ export class MockApi {
       base: { chain_id: 84532, network: "Base Sepolia (test)" },
       solana: { network: "Solana devnet (test)" },
       stripe: true,
+      thorchain: { live: false, assets: [{ asset: "BTC.BTC", name: "Bitcoin", symbol: "BTC", wallet: "memo" }, { asset: "ETH.ETH", name: "Ether", symbol: "ETH", wallet: "evm" }] },
     };
+  }
+  async checkoutThorchain(plan, asset) {
+    const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
+    const btc = asset === "BTC.BTC";
+    return { preview: true, renews: false, usd: p.usd.toFixed(2), days: p.days, amount: btc ? "0.00005312" : "0.00161", asset: { asset, symbol: btc ? "BTC" : "ETH" } };
   }
   async checkoutBase(plan, payer) {
     const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);

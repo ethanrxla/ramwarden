@@ -51,19 +51,18 @@ pub(crate) enum Auth<'a> {
     Bearer(&'a str),
 }
 
-struct Opts {
-    downloads: Option<PathBuf>,
-    stripe: Option<String>,
+#[derive(Default)]
+pub(crate) struct Opts {
+    pub(crate) downloads: Option<PathBuf>,
+    pub(crate) stripe: Option<String>,
+    pub(crate) thorchain: Option<crate::thorchain::ThorConfig>,
 }
 
 pub(crate) fn app() -> App {
-    app_with(Opts {
-        downloads: None,
-        stripe: None,
-    })
+    app_with(Opts::default())
 }
 
-fn app_with(o: Opts) -> App {
+pub(crate) fn app_with(o: Opts) -> App {
     app_with_threat(o, crate::threat::ThreatDesk::default())
 }
 
@@ -83,6 +82,7 @@ fn app_with_threat(o: Opts, threat: crate::threat::ThreatDesk) -> App {
             stripe: o
                 .stripe
                 .map(|url| Stripe::with_base(Secret::new("sk_test_123"), Secret::new(WHSEC), &url)),
+            thorchain: o.thorchain.map(|c| Arc::new(crate::thorchain::Thorchain::new(c))),
         },
         signer: Some(EntitlementSigner::from_base64(SEED).unwrap()),
         mailer: Some(mailer.clone()),
@@ -217,7 +217,7 @@ impl App {
     }
 
     /// The daemon's whole sign-in: start, approve with a wallet, claim.
-    async fn sign_in_device(&self, w: &EvmWallet) -> (String, String, String) {
+    pub(crate) async fn sign_in_device(&self, w: &EvmWallet) -> (String, String, String) {
         let (dc, code) = self.start_device().await;
         let (s, v, cookie) = self.sign_in_evm(w, Some(&code)).await;
         assert_eq!(s, StatusCode::OK, "{v}");
@@ -1184,8 +1184,8 @@ async fn fake_stripe() -> (String, Seen, PaymentStoreProbe) {
 async fn a_card_trial_starts_from_a_signed_webhook() {
     let (url, seen, probe) = fake_stripe().await;
     let a = app_with(Opts {
-        downloads: None,
         stripe: Some(url),
+        ..Default::default()
     });
     *probe.lock().unwrap() = Some(a.store.clone());
     let (s, _) = a
@@ -1394,7 +1394,7 @@ async fn threatwarden_downloads_need_pro_in_good_standing() {
     .unwrap();
     let a = app_with(Opts {
         downloads: Some(dir.path().to_path_buf()),
-        stripe: None,
+        ..Default::default()
     });
     let (tok, cookie, id) = a.sign_in_device(&EvmWallet::new(9)).await;
     let uri = "/v1/downloads/threat/threatwarden-linux-x86_64.tar.gz";
@@ -1922,10 +1922,7 @@ async fn hosted_threat_reports_require_pro_and_only_query_the_bound_device() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, manager).await.unwrap() });
     let a = app_with_threat(
-        Opts {
-            downloads: None,
-            stripe: None,
-        },
+        Opts::default(),
         crate::threat::ThreatDesk::testing(&url),
     );
     let (dc, code) = a.start_device().await;
@@ -2039,10 +2036,7 @@ async fn hosted_enrollment_uses_server_identity_and_returns_only_its_own_key() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, manager).await.unwrap() });
     let a = app_with_threat(
-        Opts {
-            downloads: None,
-            stripe: None,
-        },
+        Opts::default(),
         crate::threat::ThreatDesk::testing(&url),
     );
     let (dc, code) = a.start_device().await;
@@ -2121,10 +2115,7 @@ async fn source_events_require_pro_bound_device_and_reject_foreign_records() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, indexer).await.unwrap() });
     let a = app_with_threat(
-        Opts {
-            downloads: None,
-            stripe: None,
-        },
+        Opts::default(),
         crate::threat::ThreatDesk::testing(&url),
     );
     let (token, _, account) = a.sign_in_device(&EvmWallet::new(90)).await;
