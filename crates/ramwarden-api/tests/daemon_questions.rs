@@ -15,7 +15,10 @@ fn assert_accepted(what: &str, request: &serde_json::Value) {
     let questions = request["questions"].as_object().expect("questions object");
     assert!(!questions.is_empty(), "{what}: no questions");
     for (name, def) in questions {
-        assert!(catalog.allows(name, def), "{what}: the server refuses `{name}`: {def}");
+        assert!(
+            catalog.allows(name, def),
+            "{what}: the server refuses `{name}`: {def}"
+        );
     }
 }
 
@@ -35,8 +38,14 @@ fn candidate(name: &str, rank: usize) -> Candidate {
 
 #[test]
 fn app_and_tab_questions_are_in_the_catalog() {
-    assert_accepted("appintel", &build_request("jev-latest", "App.", &appintel::questions()));
-    assert_accepted("tabintel", &build_request("jev-latest", "Tab.", &tabintel::questions()));
+    assert_accepted(
+        "appintel",
+        &build_request("jev-latest", "App.", &appintel::questions()),
+    );
+    assert_accepted(
+        "tabintel",
+        &build_request("jev-latest", "Tab.", &tabintel::questions()),
+    );
 }
 
 #[test]
@@ -51,7 +60,11 @@ fn a_full_ladder_judge_batch_fits_the_default_limits() {
         "Notes",
         "Preview",
     ];
-    let candidates: Vec<Candidate> = names.iter().enumerate().map(|(i, n)| candidate(n, i)).collect();
+    let candidates: Vec<Candidate> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| candidate(n, i))
+        .collect();
     for intent in [Intent::Suspend, Intent::Kill] {
         let (state, questions) = ladderjudge::request(intent, &candidates);
         let request = build_request("jev-latest", &state, &questions);

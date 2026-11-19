@@ -78,11 +78,13 @@ export const config = {
       ],
     },
   },
+  // Billing is every two months, not monthly (owner, 2026-11-18): a price
+  // shown with "/ month" was read as a monthly charge. Prices are in cents.
   plans: [
-    { id: 1, tier: "ram", interval: "month", usd: 4 },
-    { id: 2, tier: "pro", interval: "month", usd: 5 },
-    { id: 3, tier: "ram", interval: "year", usd: 20 },
-    { id: 4, tier: "pro", interval: "year", usd: 24 },
+    { id: 1, tier: "ram", interval: "two_months", cents: 399, usd: 3.99 },
+    { id: 2, tier: "pro", interval: "two_months", cents: 499, usd: 4.99 },
+    { id: 3, tier: "ram", interval: "year", cents: 1999, usd: 19.99 },
+    { id: 4, tier: "pro", interval: "year", cents: 2399, usd: 23.99 },
   ],
 };
 
@@ -91,14 +93,27 @@ export function planFor(plans, tier, interval) {
   return plans.find((p) => p.tier === tier && p.interval === interval) || null;
 }
 
-// What a year of the annual plan saves against twelve monthly payments, in whole percent.
-export function annualSaving(plans, tier) {
-  const m = planFor(plans, tier, "month");
-  const y = planFor(plans, tier, "year");
-  if (!m || !y) return 0;
-  return Math.round((1 - y.usd / (m.usd * PER_YEAR["month"])) * 100);
+// The shorter billing period the site sells.
+export const SHORT = "two_months";
+
+// A plan's price in cents, from the server's `cents` or the older `usd`.
+export function cents(plan) {
+  return plan ? (Number.isFinite(plan.cents) ? plan.cents : Math.round(plan.usd * 100)) : 0;
 }
 
-// Monthly and annual pricing (owner decision, 2026-11-02).
-export const PERIOD = { "month": "month", year: "year" };
-export const PER_YEAR = { "month": 12, year: 1 };
+// "$3.99", "$19.99", "$2.00".
+export function money(c) {
+  return `$${(c / 100).toFixed(2)}`;
+}
+
+// What a year of the annual plan saves against six two-month payments, in whole percent.
+export function annualSaving(plans, tier) {
+  const m = planFor(plans, tier, SHORT);
+  const y = planFor(plans, tier, "year");
+  if (!m || !y) return 0;
+  return Math.round((1 - cents(y) / (cents(m) * PER_YEAR[SHORT])) * 100);
+}
+
+// Billing periods. "2mo" is how an account's own plan comes back from the API.
+export const PERIOD = { two_months: "2 months", "2mo": "2 months", month: "month", year: "year" };
+export const PER_YEAR = { two_months: 6, "2mo": 6, month: 12, year: 1 };

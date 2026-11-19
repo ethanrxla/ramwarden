@@ -3,7 +3,7 @@
 // drift apart. Lite sits first so Plus reads as the easy step up, and Pro
 // one dollar more makes Plus look like the sensible pick.
 
-import { annualSaving, config, planFor } from "./config.js";
+import { SHORT, annualSaving, cents, config, money, planFor } from "./config.js";
 import { h, pageHref } from "./common.js";
 
 // One bullet: plain text, or {text, soon} for a part that hasn't shipped.
@@ -20,7 +20,7 @@ export class Pricing {
     this.plans = plans;
     this.tiers = tiers;
     this.lite = lite;
-    this.interval = "month";
+    this.interval = SHORT;
   }
 
   render() {
@@ -28,7 +28,7 @@ export class Pricing {
     const toggle = h(
       "div",
       { class: "interval", role: "group", "aria-label": "Billing" },
-      h("button", { type: "button", "data-interval": "month", onclick: () => this.set("month") }, "Monthly"),
+      h("button", { type: "button", "data-interval": SHORT, onclick: () => this.set(SHORT) }, "Every 2 months"),
       h("button", { type: "button", "data-interval": "year", onclick: () => this.set("year") }, "Annual", h("small", {}, `save up to ${best}%`)),
     );
     this.el.replaceChildren(
@@ -57,7 +57,7 @@ export class Pricing {
 
   card(tier) {
     const t = this.tiers[tier];
-    const m = planFor(this.plans, tier, "month");
+    const m = planFor(this.plans, tier, SHORT);
     const y = planFor(this.plans, tier, "year");
     return h(
       "div",
@@ -68,14 +68,15 @@ export class Pricing {
       h(
         "div",
         { class: "amount" },
-        h("span", { "data-price": "month" }, `$${m.usd}`, h("small", {}, " / month")),
-        h("span", { "data-price": "year" }, h("s", { class: "annual-reference" }, `$${m.usd * 12}`), `$${y.usd}`, h("small", {}, " / year")),
+        h("span", { "data-price": SHORT }, money(cents(m)), h("small", {}, " every 2 months")),
+        h("span", { "data-price": "year" }, h("s", { class: "annual-reference" }, money(cents(m) * 6)), money(cents(y)), h("small", {}, " / year")),
       ),
       h(
         "p",
         { class: "alt" },
-        h("span", { "data-price": "month" }, `or $${y.usd} / year`),
-        h("span", { "data-price": "year" }, `${annualSaving(this.plans, tier)}% less than monthly billing`),
+        // Spelled out so nobody reads it as a monthly charge.
+        h("span", { "data-price": SHORT }, `One payment of ${money(cents(m))} covers 2 months (about ${money(Math.round(cents(m) / 2))} a month). Or ${money(cents(y))} a year.`),
+        h("span", { "data-price": "year" }, `One payment a year. ${annualSaving(this.plans, tier)}% less than paying every 2 months.`),
       ),
       h("ul", {}, t.features.map((x, i) => bullet(x, i))),
       h("a", { class: "button", "data-buy": tier, href: "#" }, t.trialDays ? `Start ${t.trialDays}-day free trial` : `Get ${t.name.replace(/^RamWarden /, "")}`),

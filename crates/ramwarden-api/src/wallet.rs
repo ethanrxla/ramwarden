@@ -24,7 +24,10 @@ pub fn normalise(chain: Chain, address: &str) -> Result<String, String> {
     let a = address.trim();
     match chain {
         Chain::Evm => {
-            let hex = a.strip_prefix("0x").or_else(|| a.strip_prefix("0X")).unwrap_or("");
+            let hex = a
+                .strip_prefix("0x")
+                .or_else(|| a.strip_prefix("0X"))
+                .unwrap_or("");
             if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err("not an Ethereum address".into());
             }
@@ -56,7 +59,11 @@ pub fn checksum(lower: &str) -> String {
     let mut out = String::from("0x");
     for (i, c) in hex.chars().enumerate() {
         let nibble = (h[i / 2] >> if i % 2 == 0 { 4 } else { 0 }) & 0x0f;
-        out.push(if nibble >= 8 { c.to_ascii_uppercase() } else { c });
+        out.push(if nibble >= 8 {
+            c.to_ascii_uppercase()
+        } else {
+            c
+        });
     }
     out
 }
@@ -78,7 +85,8 @@ pub struct MessageParts<'a> {
     pub user_code: Option<&'a str>,
 }
 
-const STATEMENT: &str = "Sign in to RamWarden. This does not move funds or approve any transaction.";
+const STATEMENT: &str =
+    "Sign in to RamWarden. This does not move funds or approve any transaction.";
 
 pub fn link_message(text: &str, account: &str) -> String {
     text.replacen(STATEMENT,
@@ -113,7 +121,10 @@ pub fn message(chain: Chain, address: &str, p: &MessageParts) -> String {
 
 /// The nonce a message quotes, to find what the server stored for it.
 pub fn nonce_of(message: &str) -> Option<&str> {
-    message.lines().find_map(|l| l.strip_prefix("Nonce: ")).map(str::trim)
+    message
+        .lines()
+        .find_map(|l| l.strip_prefix("Nonce: "))
+        .map(str::trim)
 }
 
 /// Whether `signature` is `address` signing exactly `message`.
@@ -137,7 +148,8 @@ fn verify_evm(address: &str, message: &str, signature: &str) -> Result<(), Strin
         0 | 1 => sig[64],
         _ => return Err("signature has an unknown recovery id".into()),
     };
-    let mut s = EcdsaSignature::from_slice(&sig[..64]).map_err(|_| "signature is malformed".to_string())?;
+    let mut s =
+        EcdsaSignature::from_slice(&sig[..64]).map_err(|_| "signature is malformed".to_string())?;
     let mut rec = RecoveryId::from_byte(v).ok_or("signature has an unknown recovery id")?;
     // Wallets sign low-S, but nothing in EIP-191 requires it; flip a high-S
     // signature to its low-S twin, which recovers the same key.
@@ -146,7 +158,8 @@ fn verify_evm(address: &str, message: &str, signature: &str) -> Result<(), Strin
         rec = RecoveryId::new(!rec.is_y_odd(), rec.is_x_reduced());
     }
     let hash = personal_hash(message);
-    let key = EcdsaKey::recover_from_prehash(&hash, &s, rec).map_err(|_| "signature does not verify".to_string())?;
+    let key = EcdsaKey::recover_from_prehash(&hash, &s, rec)
+        .map_err(|_| "signature does not verify".to_string())?;
     if evm_address(&key) == normalise(Chain::Evm, address)? {
         Ok(())
     } else {
@@ -174,14 +187,18 @@ fn verify_solana(address: &str, message: &str, signature: &str) -> Result<(), St
         .ok()
         .and_then(|k| k.try_into().ok())
         .ok_or("not a Solana address")?;
-    let key = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| "not a Solana address".to_string())?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&key)
+        .map_err(|_| "not a Solana address".to_string())?;
     let sig: [u8; 64] = bs58::decode(signature.trim())
         .into_vec()
         .ok()
         .and_then(|s| s.try_into().ok())
         .ok_or("signature is not 64 bytes of base58")?;
-    key.verify_strict(message.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sig))
-        .map_err(|_| "signature does not verify".to_string())
+    key.verify_strict(
+        message.as_bytes(),
+        &ed25519_dalek::Signature::from_bytes(&sig),
+    )
+    .map_err(|_| "signature does not verify".to_string())
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for Unix seconds, as SIWE requires (RFC 3339).
@@ -198,7 +215,12 @@ pub fn iso8601(unix: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs / 60 % 60, secs % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
 }
 
 #[cfg(test)]
@@ -218,7 +240,10 @@ pub(crate) mod testing {
             checksum(&evm_address(self.0.verifying_key()))
         }
         pub fn personal_sign(&self, message: &str) -> String {
-            let (sig, rec) = self.0.sign_prehash_recoverable(&personal_hash(message)).unwrap();
+            let (sig, rec) = self
+                .0
+                .sign_prehash_recoverable(&personal_hash(message))
+                .unwrap();
             let mut bytes = sig.to_bytes().to_vec();
             bytes.push(27 + rec.to_byte());
             format!("0x{}", hex::encode(bytes))
@@ -258,7 +283,10 @@ mod tests {
 
     #[test]
     fn eip55_matches_the_spec_vectors() {
-        for a in ["0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"] {
+        for a in [
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+        ] {
             assert_eq!(checksum(&a.to_ascii_lowercase()), a);
         }
     }
@@ -273,7 +301,10 @@ mod tests {
     #[test]
     fn addresses_normalise_or_are_refused() {
         let w = EvmWallet::new(7);
-        assert_eq!(normalise(Chain::Evm, &w.address()).unwrap(), w.address().to_ascii_lowercase());
+        assert_eq!(
+            normalise(Chain::Evm, &w.address()).unwrap(),
+            w.address().to_ascii_lowercase()
+        );
         assert!(normalise(Chain::Evm, "0x1234").is_err());
         assert!(normalise(Chain::Evm, "1234567890123456789012345678901234567890").is_err());
         let s = SolWallet::new(7);
@@ -287,7 +318,10 @@ mod tests {
         let addr = normalise(Chain::Evm, &w.address()).unwrap();
         let m = message(Chain::Evm, &addr, &parts(Some("ABCD-EFGH")));
         let lines: Vec<&str> = m.lines().collect();
-        assert_eq!(lines[0], "ramwarden.app wants you to sign in with your Ethereum account:");
+        assert_eq!(
+            lines[0],
+            "ramwarden.app wants you to sign in with your Ethereum account:"
+        );
         assert_eq!(lines[1], w.address(), "checksummed in the message");
         assert!(m.contains("\nChain ID: 8453\nNonce: n0nce123\nIssued At: 2026-10-26T07:33:20Z\n"));
         assert!(m.ends_with("Resources:\n- urn:ramwarden:device:ABCD-EFGH"));
@@ -303,14 +337,24 @@ mod tests {
         let m = message(Chain::Evm, &w.address().to_ascii_lowercase(), &parts(None));
         let sig = w.personal_sign(&m);
         assert_eq!(verify(Chain::Evm, &w.address(), &m, &sig), Ok(()));
-        assert_eq!(verify(Chain::Evm, &w.address().to_ascii_lowercase(), &m, &sig), Ok(()), "case-insensitive");
+        assert_eq!(
+            verify(Chain::Evm, &w.address().to_ascii_lowercase(), &m, &sig),
+            Ok(()),
+            "case-insensitive"
+        );
         assert!(verify(Chain::Evm, &other.address(), &m, &sig).is_err());
-        assert!(verify(Chain::Evm, &w.address(), &format!("{m} "), &sig).is_err(), "one byte changed");
+        assert!(
+            verify(Chain::Evm, &w.address(), &format!("{m} "), &sig).is_err(),
+            "one byte changed"
+        );
         assert!(verify(Chain::Evm, &w.address(), &m, "0x1234").is_err());
         // v as 0/1, as some wallets send it.
         let mut raw = hex::decode(&sig[2..]).unwrap();
         raw[64] -= 27;
-        assert_eq!(verify(Chain::Evm, &w.address(), &m, &hex::encode(raw)), Ok(()));
+        assert_eq!(
+            verify(Chain::Evm, &w.address(), &m, &hex::encode(raw)),
+            Ok(())
+        );
     }
 
     #[test]
@@ -320,7 +364,15 @@ mod tests {
         let sig = w.sign_message(&m);
         assert_eq!(verify(Chain::Solana, &w.address(), &m, &sig), Ok(()));
         assert!(verify(Chain::Solana, &other.address(), &m, &sig).is_err());
-        assert!(verify(Chain::Solana, &w.address(), &m.replace("ABCD", "WXYZ"), &sig).is_err());
+        assert!(
+            verify(
+                Chain::Solana,
+                &w.address(),
+                &m.replace("ABCD", "WXYZ"),
+                &sig
+            )
+            .is_err()
+        );
         assert!(verify(Chain::Solana, &w.address(), &m, "abc").is_err());
     }
 }
