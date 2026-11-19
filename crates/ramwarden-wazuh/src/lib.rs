@@ -70,33 +70,4 @@ pub enum Error {
     Install(String),
 }
 
-impl Error {
-    /// Whether asking again soon could get a different answer: the service
-    /// was unreachable, overloaded or restarting (5xx, 429). Signed-out,
-    /// no-pass, refused credentials and bad configuration are definite.
-    pub fn is_transient(&self) -> bool {
-        match self {
-            Error::Unreachable(..) => true,
-            Error::Status(_, code) => *code >= 500 || *code == 429,
-            _ => false,
-        }
-    }
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(test)]
-mod tests {
-    use super::Error;
-
-    #[test]
-    fn only_outages_are_transient() {
-        assert!(Error::Status("cloud", 502).is_transient());
-        assert!(Error::Status("cloud", 429).is_transient());
-        assert!(Error::Unreachable("cloud", "reset".into()).is_transient());
-        assert!(!Error::Status("cloud", 404).is_transient());
-        assert!(!Error::SignedOut.is_transient());
-        assert!(!Error::NoPass.is_transient());
-        assert!(!Error::Auth("manager").is_transient());
-    }
-}

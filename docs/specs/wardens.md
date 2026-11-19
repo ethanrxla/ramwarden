@@ -97,8 +97,8 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   ```
 
   The daemon polls every `poll_seconds` (default 120). A poll that fails
-  without an answer (the service unreachable, a 429, or a 5xx such as a 502
-  while the API restarts) shows "Can't reach ThreatWarden's service" and is retried
+  without an answer (the service unreachable, a 429, a 5xx such as a 502
+  while the API restarts, or a body that breaks off or does not parse) shows "Can't reach ThreatWarden's service" and is retried
   after 15 s, then 30 s, 60 s, doubling up to `poll_seconds`; the first answer
   replaces the error and resets the schedule. Signed-out and no-pass answers
   are definite and wait the full interval, as do other 4xx answers. Self-hosted

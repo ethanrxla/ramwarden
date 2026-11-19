@@ -238,7 +238,7 @@ impl ThreatWarden {
                 return true;
             }
             Err(e) => {
-                let transient = e.is_transient();
+                let transient = retry_soon(&e);
                 report.problems.push(e.to_string());
                 let status = if report.local.is_connected() {
                     Status::new(Level::Watch, "Can't reach ThreatWarden's service", e.to_string(), now)
@@ -307,7 +307,7 @@ impl ThreatWarden {
                             report.agent_name
                         )),
                         Err(e) => {
-                            transient |= e.is_transient();
+                            transient |= retry_soon(&e);
                             report.problems.push(e.to_string())
                         }
                     }
@@ -319,7 +319,7 @@ impl ThreatWarden {
                             report.alerts = a;
                         }
                         Err(e) => {
-                            transient |= e.is_transient();
+                            transient |= retry_soon(&e);
                             report.problems.push(e.to_string())
                         }
                     }
@@ -449,6 +449,20 @@ impl Pace {
     }
 }
 
+/// Whether asking again soon could get a different answer, which decides
+/// [`Pace`]'s short retry. Unreachable, 5xx and 429 are outages. A parse
+/// error is too: reqwest reports a connection that drops mid-body after a
+/// 200 as one, and a garbled answer from a half-deployed API is retried at
+/// the same bounded pace. Signed-out, no-pass, refused credentials, other
+/// 4xx and bad configuration are definite, and wait the full interval.
+fn retry_soon(e: &Error) -> bool {
+    match e {
+        Error::Unreachable(..) | Error::Parse(..) => true,
+        Error::Status(_, code) => *code >= 500 || *code == 429,
+        _ => false,
+    }
+}
+
 fn sentence(s: &str) -> String {
     let mut s = s.trim().to_string();
     if let Some(first) = s.get(0..1) {
@@ -544,6 +558,18 @@ mod tests {
         for _ in 0..100 {
             assert!(pace.after(false) <= Duration::from_secs(120));
         }
+    }
+
+    #[test]
+    fn only_outages_are_retried_soon() {
+        assert!(retry_soon(&Error::Status("cloud", 502)));
+        assert!(retry_soon(&Error::Status("cloud", 429)));
+        assert!(retry_soon(&Error::Unreachable("cloud", "reset".into())));
+        assert!(retry_soon(&Error::Parse("cloud", "body ended early".into())));
+        assert!(!retry_soon(&Error::Status("cloud", 404)));
+        assert!(!retry_soon(&Error::SignedOut));
+        assert!(!retry_soon(&Error::NoPass));
+        assert!(!retry_soon(&Error::Auth("manager")));
     }
 
     #[tokio::test]
