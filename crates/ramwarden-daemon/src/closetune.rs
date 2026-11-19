@@ -73,10 +73,11 @@ impl ActivityClock {
     /// the wall-clock time between them.
     pub fn active_minutes_since(&self, since_ms: f64, now_ms: f64) -> f64 {
         let gap = AWAY_GAP_MINUTES * 60_000.0;
-        let start = self.times.partition_point(|t| *t <= since_ms);
-        // The span with incomplete history counts in full.
+        // The span with incomplete history counts in full; the walk starts
+        // after it, so an older timestamp cannot take that time back.
         let mut prev = since_ms.max(self.complete_after.min(now_ms));
         let mut total = prev - since_ms;
+        let start = self.times.partition_point(|t| *t <= prev);
         for &t in &self.times[start..] {
             if t > now_ms {
                 break;
@@ -160,6 +161,10 @@ mod tests {
         let b: Vec<f64> = (0..24).map(|i| now - (46.0 - 2.0 * i as f64) * MIN).collect();
         let tabs = [tab(1, now - 420.0 * MIN, &[now - 420.0 * MIN], now), tab(2, now - MIN, &a, now), tab(3, now, &b, now)];
         assert_eq!(ActivityClock::from_tabs(&tabs).idle_minutes(&tabs[0], now), 420);
+        // Another tab used once inside the cut-off span adds nothing and takes nothing.
+        let with_old = [tab(1, now - 420.0 * MIN, &[now - 420.0 * MIN], now), tab(2, now - MIN, &a, now), tab(3, now, &b, now),
+            tab(4, now - 400.0 * MIN, &[now - 400.0 * MIN], now)];
+        assert_eq!(ActivityClock::from_tabs(&with_old).idle_minutes(&with_old[0], now), 420);
         // A short history that was never cut off still skips time away.
         let short = [tab(1, now - 420.0 * MIN, &[now - 420.0 * MIN], now), tab(2, now - 400.0 * MIN, &[now - 400.0 * MIN], now)];
         assert_eq!(ActivityClock::from_tabs(&short).idle_minutes(&short[0], now), 20);
