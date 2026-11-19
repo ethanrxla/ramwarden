@@ -1,6 +1,6 @@
 # Tab feedback and review
 
-Automatic closes require fresh extension activity metadata, at least 24 hours idle, a return estimate below 0.3, and all live safety guards. A tab-count target or same-site page cannot bypass this floor. Exact URLs, including query and fragment, define duplicates.
+Automatic closes require fresh extension activity metadata, idle past the close floor (learned from the user's own return gaps between 1 hour and 1 day, `close_after_hours` until enough are seen; see browser-memory.md; the daemon sends the same floor to the extension's safe close), a return estimate below 0.3, and all live safety guards. A tab-count target or same-site page cannot bypass this floor. Exact URLs, including query and fragment, define duplicates.
 
 The updated extension reports timestamps and an unsaved-input bit, never typed text. Reopened and explicitly kept pages receive a 24-hour protection, without assuming browser removal was an intentional close. Local SQLite feedback and outcomes expire after 30 days. Negative feedback can only raise the return estimate; this is not external model retraining.
 
@@ -19,7 +19,7 @@ The native Swift harness renders the checklist off-screen and verifies its conte
 Contract: a work page is never closed automatically, and a browser settings page is closed before any web page.
 
 - **Work page** (`tabpolicy::is_work_page`, mirrored in the extension as `isWorkPage`): a signed-in cloud, database or hosting console, a registrar or DNS panel (`cloud.oracle.com`, `namecheap.com`, `dash.cloudflare.com`, ...), or any page whose path has a whole segment such as `submit`, `new`, `checkout`, `settings` or `account` (plus `submit-...` style prefixes). It is protected from unloading for 4 h like other soft protections, keeps its return chance four times longer once that lifts, so it unloads last, and is described to Jev as a work page. Automatic closing never takes one; only the user's own review checklist or a manual close can.
-- **Browser settings page** (`chrome://extensions`, `edge://settings`, ...; never `chrome-extension://`): still never unloaded, but may be closed automatically after the same 24 h floor, ahead of every web page.
+- **Browser settings page** (`chrome://extensions`, `edge://settings`, ...; never `chrome-extension://`): still never unloaded, but may be closed automatically after the same idle floor, ahead of every web page.
 - **Reopen by site**: a reopen is matched on the site, not the exact URL, so reopening Namecheap from the address bar after its control panel was closed counts. A reopen protects every page on that site for 24 h, and repeated reopens raise the negative-feedback count (max 4). Navigating within a site keeps the tab's visit history.
 
 Basis: on 2026-11-02 the old tab budget closed an Oracle Cloud console signed into a database, an Agensi "submit a skill" form and a twice-reopened Namecheap tab, because no protection matched their hosts and the budget never consulted Jev, while `chrome://extensions` stayed because every non-web page was protected forever.

@@ -27,17 +27,40 @@ explicit; Unload selected keeps tabs open and reloadable.
 - A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
   pressure, so a machine with spare RAM still releases idle tabs. It may also
   close tabs, the one exception to "keep tabs open": only rows that passed every
-  unload guard or were already unloaded, idle at least `close_after_hours`, with
-  a Jev-adjusted return chance below `close_below_return`, at most
-  `max_close_per_sweep` per sweep. `close` is `off`, `dry-run` (default: log
-  only) or `live`. The extension rechecks each tab live before closing, answers
-  every close command, and saves closed URLs to a reopen list in the popup.
-  An older tab on the same site (host, plus a `/u/N` account slot) as a more
-  recently used one is also closed after `close_duplicates_after_hours` idle,
-  under the same guards. A tab budget (`keep_tabs`, default 6) keeps the most
-  recently used tabs per browser and closes any other tab untouched for
-  `budget_idle_minutes` (60), including tabs only "recent" by the inactivity
-  threshold.
+  unload guard or were already unloaded, not a work page, and one of: idle
+  past the close floor with a return chance below `close_below_return` (at
+  most 0.95); idle twice the floor, whatever the estimate; or an older copy of
+  an open page idle `close_duplicates_after_hours`. At most
+  `max_close_per_sweep` per sweep. The return chance used for closing is the
+  Jev-adjusted estimate on the user's own time scale
+  (`tabrank::at_pace`): the class half-lives are fixed priors (a page: 12 h)
+  that kept tabs left 6 to 10 h near 0.6, so the curve is rescaled until an
+  unvisited page stands at 0.1 at the learned floor, matching the 1 in 10
+  returns that come later. Visits, a related tab in use and work pages stretch
+  it by the same factors as before; it is never stretched past the prior. `close` is `off`, `review`, `dry-run`
+  (default: log only) or `live`. The extension rechecks each tab live with the
+  same idle floor before closing, answers every close command, and saves closed
+  URLs to a reopen list in the popup. A tab budget (`keep_tabs`, default 6)
+  keeps the most recently used tabs per browser open; it never closes a tab on
+  its own. A tab Chrome has unloaded reports status `unloaded`; it counts as
+  settled like `complete`, so an unloaded tab can still be closed. Only a page
+  that is actually loading is skipped.
+- **The close floor is learned per user** (`ramwarden-core::tabpace`,
+  `[tabs] learn_pace`, default on). Each release pass collects the user's
+  return gaps from the last 14 days: how long they were away before selecting
+  a tab again, measured from when they left it (the extension records each
+  tab's departures beside its activations, so reading time does not count and
+  closing another tab cannot change a gap; a return without a recorded
+  departure adds nothing; gaps
+  under 5 minutes are tab switching and skipped; visits older than 14 days are
+  ignored) and how long after an unload they came back
+  (`tab_outcomes`). The floor is the gap that covers 9 in 10 returns, times
+  1.5 when more than 20% of the warden's own unattended closes were reopened, or 0.8 when
+  under 5% of at least 10 were, held between 1 hour and 1 day. With fewer than
+  20 returns seen, `close_after_hours` (default 4) is used. The floor only
+  decides when a tab may be considered; every other guard (recent tabs, work
+  pages, forms, keeps, focus list, return chance, Atlas recall) still applies.
+  `GET /browser/pace` shows the floor in use and why.
 - Protections other than the hard ones (non-web pages, private hosts, editors
   whose state lives in the tab) lift once a tab has been idle 4 hours
   (`tabpolicy::PROTECTION_RELEASE_MINUTES`): consoles, dashboards, login pages,

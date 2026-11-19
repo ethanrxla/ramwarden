@@ -37,13 +37,22 @@ pub struct Triage {
 }
 
 pub fn questions(warden: &str) -> Vec<Question> {
-    let criteria: Vec<(&str, &str)> =
-        TOPICS.iter().map(|t| (t.id, t.meaning)).chain([(UNKNOWN, "anything else, or not a question about RamWarden")]).collect();
-    let persona = if warden == "threat" { "ThreatWarden's" } else { "RamWarden's" };
+    let criteria: Vec<(&str, &str)> = TOPICS
+        .iter()
+        .map(|t| (t.id, t.meaning))
+        .chain([(UNKNOWN, "anything else, or not a question about RamWarden")])
+        .collect();
+    let persona = if warden == "threat" {
+        "ThreatWarden's"
+    } else {
+        "RamWarden's"
+    };
     vec![
         Question::choice(
             "topic",
-            &format!("A visitor on the RamWarden website wrote this to {persona} support chat. Which topic is the visitor asking about?"),
+            &format!(
+                "A visitor on the RamWarden website wrote this to {persona} support chat. Which topic is the visitor asking about?"
+            ),
             &criteria,
         ),
         Question::new(
@@ -65,7 +74,9 @@ pub fn by_keywords(message: &str) -> Triage {
         let score: usize = t
             .keywords
             .iter()
-            .filter(|k| text.contains(&format!(" {} ", normalise(k))) || (k.len() == 1 && text.contains(*k)))
+            .filter(|k| {
+                text.contains(&format!(" {} ", normalise(k))) || (k.len() == 1 && text.contains(*k))
+            })
             .map(|k| if k.contains(' ') { 3 } else { 1 })
             .sum();
         if score > best.1 {
@@ -73,14 +84,25 @@ pub fn by_keywords(message: &str) -> Triage {
         }
     }
     let wants_person = best.0 == "human" || best.0 == "refund";
-    Triage { topic: best.0, wants_person, via: "keywords", input_tokens: 0 }
+    Triage {
+        topic: best.0,
+        wants_person,
+        via: "keywords",
+        input_tokens: 0,
+    }
 }
 
 /// Lowercase words separated by single spaces; `$` kept so "$5" can match.
 fn normalise(s: &str) -> String {
     s.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '$' || c == '-' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '$' || c == '-' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -92,12 +114,24 @@ fn normalise(s: &str) -> String {
 pub fn from_jev(reply: &Value) -> Option<Triage> {
     let a = parse_response(&reply.to_string()).ok()?;
     let c = a.choice.get("topic")?;
-    let topic = TOPICS.iter().map(|t| t.id).chain([UNKNOWN]).find(|id| *id == c.choice)?;
+    let topic = TOPICS
+        .iter()
+        .map(|t| t.id)
+        .chain([UNKNOWN])
+        .find(|id| *id == c.choice)?;
     if c.confidence < MIN_TOPIC_CONFIDENCE {
         return None;
     }
-    let wants_person = a.noul.get("needs_person").is_some_and(|p| *p >= PERSON_THRESHOLD);
-    Some(Triage { topic, wants_person, via: "jev", input_tokens: a.input_tokens })
+    let wants_person = a
+        .noul
+        .get("needs_person")
+        .is_some_and(|p| *p >= PERSON_THRESHOLD);
+    Some(Triage {
+        topic,
+        wants_person,
+        via: "jev",
+        input_tokens: a.input_tokens,
+    })
 }
 
 /// Asks Jev; the keyword router when Jev is off, failing or unsure. A topic
@@ -110,11 +144,16 @@ pub async fn triage(upstream: Option<&Upstream>, warden: &str, message: &str) ->
     let qs: Map<String, Value> = req["questions"].as_object().cloned().unwrap_or_default();
     match up.ask_sales(&state(message), &qs).await {
         Ok((reply, tokens)) => match from_jev(&reply) {
-            Some(t) if t.topic == UNKNOWN && words.topic != UNKNOWN => {
-                Triage { wants_person: t.wants_person || words.wants_person, input_tokens: tokens, ..words }
-            }
+            Some(t) if t.topic == UNKNOWN && words.topic != UNKNOWN => Triage {
+                wants_person: t.wants_person || words.wants_person,
+                input_tokens: tokens,
+                ..words
+            },
             Some(t) => t,
-            None => Triage { input_tokens: tokens, ..words },
+            None => Triage {
+                input_tokens: tokens,
+                ..words
+            },
         },
         Err(e) => {
             tracing::info!("support triage fell back to keywords: {e:?}");
@@ -125,7 +164,12 @@ pub async fn triage(upstream: Option<&Upstream>, warden: &str, message: &str) ->
 
 /// The topic's answer, for the chips' own questions.
 pub fn for_chip(id: &str) -> Option<Triage> {
-    kb::topic(id).map(|t| Triage { topic: t.id, wants_person: t.id == "human", via: "chip", input_tokens: 0 })
+    kb::topic(id).map(|t| Triage {
+        topic: t.id,
+        wants_person: t.id == "human",
+        via: "chip",
+        input_tokens: 0,
+    })
 }
 
 #[cfg(test)]
@@ -174,17 +218,28 @@ mod tests {
                 "usage": {"input_tokens": 120}})
         };
         let t = from_jev(&r("trial", 0.9, 0.1)).unwrap();
-        assert_eq!((t.topic, t.wants_person, t.via, t.input_tokens), ("trial", false, "jev", 120));
+        assert_eq!(
+            (t.topic, t.wants_person, t.via, t.input_tokens),
+            ("trial", false, "jev", 120)
+        );
         assert!(from_jev(&r("refund", 0.8, 0.9)).unwrap().wants_person);
         assert!(from_jev(&r("trial", 0.2, 0.1)).is_none(), "unsure");
-        assert!(from_jev(&r("write me a poem", 0.99, 0.0)).is_none(), "not a topic");
+        assert!(
+            from_jev(&r("write me a poem", 0.99, 0.0)).is_none(),
+            "not a topic"
+        );
         assert!(from_jev(&json!({"answers": {}})).is_none());
     }
 
     #[tokio::test]
     async fn an_unreachable_jev_falls_back_to_keywords() {
-        let up = Upstream::new("http://127.0.0.1:9", "jev-latest", ramwarden_ai::secret::Secret::new("k"), std::time::Duration::from_millis(300))
-            .unwrap();
+        let up = Upstream::new(
+            "http://127.0.0.1:9",
+            "jev-latest",
+            ramwarden_ai::secret::Secret::new("k"),
+            std::time::Duration::from_millis(300),
+        )
+        .unwrap();
         let t = triage(Some(&up), "ram", "How much is Plus?").await;
         assert_eq!((t.topic, t.via), ("pricing", "keywords"));
     }

@@ -67,8 +67,14 @@ let wardenMuteChoices: [(String, Double?)] = [("Quiet for an hour", 1), ("Quiet 
             if changed {
                 onChange?()
                 // BaaPolicy plays one event once and keeps sounds 15 minutes apart.
-                if let line = next, let sound = line.sound { GoatAlerts.shared.notify(warden:"ram",event:"storage-"+line.id,critical:sound == "baa_critical") }
-                if let line = next, !muted, allowSpeech?() != false { CompanionSpeech.shared.say(line.text,warden:"ram",background:true) }
+                // The goat clip is the baa; the words follow it, never over it.
+                var baa: TimeInterval = 0
+                if let line = next, let sound = line.sound { baa = GoatAlerts.shared.notify(warden:"ram",event:"storage-"+line.id,critical:sound == "baa_critical") }
+                if let line = next, !muted, allowSpeech?() != false {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (baa > 0 ? baa + 0.2 : 0)) {
+                        CompanionSpeech.shared.say(line.text,warden:"ram",background:true)
+                    }
+                }
             }
         }
     }

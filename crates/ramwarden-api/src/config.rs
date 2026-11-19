@@ -90,7 +90,10 @@ pub struct StripeKeys {
 pub enum MailConfig {
     /// Email sign-in is off; wallets still work.
     Off,
-    Resend { key: Secret, from: String },
+    Resend {
+        key: Secret,
+        from: String,
+    },
     /// Development only (`RAMWARDEN_DEV_MAIL_LOG=1`): codes go to the log.
     Log,
 }
@@ -99,7 +102,10 @@ impl std::fmt::Debug for CloudConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CloudConfig")
             .field("site_origin", &self.site_origin)
-            .field("entitlement_key", &self.entitlement_key.as_ref().map(|_| "<set>"))
+            .field(
+                "entitlement_key",
+                &self.entitlement_key.as_ref().map(|_| "<set>"),
+            )
             .field("downloads_dir", &self.downloads_dir)
             .field("base", &self.base)
             .field("stripe", &self.stripe.as_ref().map(|_| "<set>"))
@@ -121,10 +127,16 @@ impl Config {
     }
 
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
-        let var = |k: &str| get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let var = |k: &str| {
+            get(k)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         fn num<T: std::str::FromStr>(k: &str, v: Option<String>, default: T) -> Result<T, String> {
             match v {
-                Some(s) => s.parse().map_err(|_| format!("{k} must be a number, got `{s}`")),
+                Some(s) => s
+                    .parse()
+                    .map_err(|_| format!("{k} must be a number, got `{s}`")),
                 None => Ok(default),
             }
         }
@@ -133,7 +145,9 @@ impl Config {
         let production_model = match var("RAMWARDEN_API_PROFILE").as_deref() {
             None | Some("development") => None,
             Some("production") => Some((
-                Secret::new(var("OPENAI_API_KEY").ok_or("OPENAI_API_KEY is required for production")?),
+                Secret::new(
+                    var("OPENAI_API_KEY").ok_or("OPENAI_API_KEY is required for production")?,
+                ),
                 var("OPENAI_MODEL_ID").unwrap_or_else(|| "gpt-6-luna".into()),
             )),
             Some(_) => return Err("RAMWARDEN_API_PROFILE must be development or production".into()),
@@ -141,9 +155,13 @@ impl Config {
 
         if production_model.is_some()
             && ["RAMWARDEN_DEV_MEMORY_STORE", "RAMWARDEN_DEV_MAIL_LOG"]
-                .iter().any(|key| var(key).as_deref() == Some("1"))
+                .iter()
+                .any(|key| var(key).as_deref() == Some("1"))
         {
-            return Err("development storage and mail logging are forbidden in the production profile".into());
+            return Err(
+                "development storage and mail logging are forbidden in the production profile"
+                    .into(),
+            );
         }
 
         let cloud = Self::cloud_from(&var)?;
@@ -155,9 +173,16 @@ impl Config {
             return Err("RAMWARDEN_API_TOKENS is not set (comma-separated)".into());
         }
         let mut tokens = Vec::new();
-        for t in raw_tokens.iter().flat_map(|r| r.split(',')).map(str::trim).filter(|t| !t.is_empty()) {
+        for t in raw_tokens
+            .iter()
+            .flat_map(|r| r.split(','))
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        {
             if t.len() < MIN_TOKEN_LEN {
-                return Err(format!("every RAMWARDEN_API_TOKENS entry needs at least {MIN_TOKEN_LEN} characters"));
+                return Err(format!(
+                    "every RAMWARDEN_API_TOKENS entry needs at least {MIN_TOKEN_LEN} characters"
+                ));
             }
             tokens.push(hash_token(t));
         }
@@ -167,22 +192,40 @@ impl Config {
 
         let bind = var("RAMWARDEN_API_BIND").unwrap_or_else(|| "0.0.0.0:8080".into());
         Ok(Config {
-            bind: bind.parse().map_err(|_| format!("RAMWARDEN_API_BIND is not an address: `{bind}`"))?,
+            bind: bind
+                .parse()
+                .map_err(|_| format!("RAMWARDEN_API_BIND is not an address: `{bind}`"))?,
             jev_base_url: var("JEV_BASE_URL").unwrap_or_else(|| "https://api.typesafe.ai".into()),
             jev_model: var("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
             jev_key,
             production_model,
-            jev_timeout: Duration::from_secs(num("JEV_TIMEOUT_SECONDS", var("JEV_TIMEOUT_SECONDS"), 10)?),
+            jev_timeout: Duration::from_secs(num(
+                "JEV_TIMEOUT_SECONDS",
+                var("JEV_TIMEOUT_SECONDS"),
+                10,
+            )?),
             tokens,
             catalog_path: var("RAMWARDEN_API_CATALOG"),
             // The daemon caps itself at 60 Jev calls an hour by default; these
             // leave room for that and stop a script.
-            per_minute: num("RAMWARDEN_API_PER_MINUTE", var("RAMWARDEN_API_PER_MINUTE"), 20)?,
+            per_minute: num(
+                "RAMWARDEN_API_PER_MINUTE",
+                var("RAMWARDEN_API_PER_MINUTE"),
+                20,
+            )?,
             per_day: num("RAMWARDEN_API_PER_DAY", var("RAMWARDEN_API_PER_DAY"), 1000)?,
             // The ladder judge sends up to 8 candidates in one request, two
             // questions each, with a JSON state describing all of them.
-            max_state_bytes: num("RAMWARDEN_API_MAX_STATE_BYTES", var("RAMWARDEN_API_MAX_STATE_BYTES"), 16_384)?,
-            max_questions: num("RAMWARDEN_API_MAX_QUESTIONS", var("RAMWARDEN_API_MAX_QUESTIONS"), 24)?,
+            max_state_bytes: num(
+                "RAMWARDEN_API_MAX_STATE_BYTES",
+                var("RAMWARDEN_API_MAX_STATE_BYTES"),
+                16_384,
+            )?,
+            max_questions: num(
+                "RAMWARDEN_API_MAX_QUESTIONS",
+                var("RAMWARDEN_API_MAX_QUESTIONS"),
+                24,
+            )?,
             daily_input_tokens: num(
                 "RAMWARDEN_API_DAILY_INPUT_TOKENS",
                 var("RAMWARDEN_API_DAILY_INPUT_TOKENS"),
@@ -193,15 +236,30 @@ impl Config {
     }
 
     fn cloud_from(var: &dyn Fn(&str) -> Option<String>) -> Result<Option<CloudConfig>, String> {
-        let Some(origin) = var("RAMWARDEN_SITE_ORIGIN") else { return Ok(None) };
+        let Some(origin) = var("RAMWARDEN_SITE_ORIGIN") else {
+            return Ok(None);
+        };
         let parsed = reqwest::Url::parse(&origin).map_err(|_| "Invalid RAMWARDEN_SITE_ORIGIN")?;
-        if !safe_service_url(&parsed) || parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
-            return Err("RAMWARDEN_SITE_ORIGIN must be an HTTPS origin or an HTTP loopback origin".into());
+        if !safe_service_url(&parsed)
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(
+                "RAMWARDEN_SITE_ORIGIN must be an HTTPS origin or an HTTP loopback origin".into(),
+            );
         }
         let origin = parsed.origin().ascii_serialization();
-        let domain = origin.split_once("://").expect("validated scheme").1.to_string();
+        let domain = origin
+            .split_once("://")
+            .expect("validated scheme")
+            .1
+            .to_string();
         let num = |k: &str, default: u64| -> Result<u64, String> {
-            var(k).map_or(Ok(default), |v| v.parse().map_err(|_| format!("{k} must be a number, got `{v}`")))
+            var(k).map_or(Ok(default), |v| {
+                v.parse()
+                    .map_err(|_| format!("{k} must be a number, got `{v}`"))
+            })
         };
         // Real money waits for the contract's outside audit (spec 10.4): Base
         // mainnet and live Stripe keys are refused unless the operator says
@@ -216,21 +274,27 @@ impl Config {
                 }
                 let usdc = match var("RAMWARDEN_BASE_USDC") {
                     Some(a) => parse_address(&a)?,
-                    None => BaseConfig::default_usdc(chain_id)
-                        .ok_or("RAMWARDEN_BASE_USDC is needed for a chain other than Base or Base Sepolia")?,
+                    None => BaseConfig::default_usdc(chain_id).ok_or(
+                        "RAMWARDEN_BASE_USDC is needed for a chain other than Base or Base Sepolia",
+                    )?,
                 };
                 Some(BaseConfig {
                     chain_id,
-                    checkout: parse_address(&addr).map_err(|e| format!("RAMWARDEN_CHECKOUT_ADDRESS: {e}"))?,
+                    checkout: parse_address(&addr)
+                        .map_err(|e| format!("RAMWARDEN_CHECKOUT_ADDRESS: {e}"))?,
                     usdc,
                     rpc_url: var("RAMWARDEN_BASE_RPC_URL"),
                     confirmations: num("RAMWARDEN_BASE_CONFIRMATIONS", 5)?,
-                    from_block: var("RAMWARDEN_BASE_FROM_BLOCK").map(|_| num("RAMWARDEN_BASE_FROM_BLOCK", 0)).transpose()?,
+                    from_block: var("RAMWARDEN_BASE_FROM_BLOCK")
+                        .map(|_| num("RAMWARDEN_BASE_FROM_BLOCK", 0))
+                        .transpose()?,
                 })
             }
         };
         // THORChain has no testnet: without the live flag it only quotes.
-        let thorchain = match var("RAMWARDEN_THORCHAIN_PAYOUT") {
+        // USDC_BASE_ADDRESS is the name the owner's .env already uses.
+        let payout_var = ["RAMWARDEN_THORCHAIN_PAYOUT", "USDC_BASE_ADDRESS"].into_iter().find(|k| var(k).is_some());
+        let thorchain = match payout_var.and_then(var) {
             None => None,
             Some(addr) => {
                 let url = |k: &str, default: &str| -> Result<String, String> {
@@ -243,7 +307,7 @@ impl Config {
                 Some(ThorConfig {
                     node_url: url("RAMWARDEN_THORNODE_URL", DEFAULT_NODE)?,
                     midgard_url: url("RAMWARDEN_MIDGARD_URL", DEFAULT_MIDGARD)?,
-                    payout: parse_address(&addr).map_err(|e| format!("RAMWARDEN_THORCHAIN_PAYOUT: {e}"))?,
+                    payout: parse_address(&addr).map_err(|e| format!("{}: {e}", payout_var.unwrap_or_default()))?,
                     live: live_ok,
                 })
             }
@@ -254,25 +318,49 @@ impl Config {
                 if (k.starts_with("sk_live_") || k.starts_with("rk_live_")) && !live_ok {
                     return Err("STRIPE_SECRET_KEY is a live key; use a test key, or set RAMWARDEN_ALLOW_LIVE_PAYMENTS=1".into());
                 }
-                Some(StripeKeys { secret_key: Secret::new(k), webhook_secret: Secret::new(w) })
+                Some(StripeKeys {
+                    secret_key: Secret::new(k),
+                    webhook_secret: Secret::new(w),
+                })
             }
-            _ => return Err("set both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, or neither".into()),
+            _ => {
+                return Err(
+                    "set both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, or neither".into(),
+                );
+            }
         };
         let mail = match (var("RESEND_API_KEY"), var("RAMWARDEN_MAIL_FROM")) {
-            (Some(key), Some(from)) => MailConfig::Resend { key: Secret::new(key), from },
-            (Some(_), None) => return Err("RESEND_API_KEY needs RAMWARDEN_MAIL_FROM, like RamWarden <hello@ramwarden.app>".into()),
+            (Some(key), Some(from)) => MailConfig::Resend {
+                key: Secret::new(key),
+                from,
+            },
+            (Some(_), None) => return Err(
+                "RESEND_API_KEY needs RAMWARDEN_MAIL_FROM, like RamWarden <hello@ramwarden.app>"
+                    .into(),
+            ),
             _ if var("RAMWARDEN_DEV_MAIL_LOG").as_deref() == Some("1") => MailConfig::Log,
             _ => MailConfig::Off,
         };
         let public_url = var("RAMWARDEN_PUBLIC_URL")
             .map(|u| u.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| if origin.starts_with("http://") { "http://localhost:8080".into() } else { format!("https://api.{domain}") });
-        if !reqwest::Url::parse(&public_url).is_ok_and(|url| safe_service_url(&url) && url.query().is_none() && url.fragment().is_none()) || public_url.contains('\'') {
+            .unwrap_or_else(|| {
+                if origin.starts_with("http://") {
+                    "http://localhost:8080".into()
+                } else {
+                    format!("https://api.{domain}")
+                }
+            });
+        if !reqwest::Url::parse(&public_url).is_ok_and(|url| {
+            safe_service_url(&url) && url.query().is_none() && url.fragment().is_none()
+        }) || public_url.contains('\'')
+        {
             return Err("RAMWARDEN_PUBLIC_URL must be an https:// URL".into());
         }
         let support_token = match var("RAMWARDEN_SUPPORT_TOKEN") {
             Some(t) if t.trim().len() < MIN_TOKEN_LEN => {
-                return Err(format!("RAMWARDEN_SUPPORT_TOKEN must be at least {MIN_TOKEN_LEN} characters"));
+                return Err(format!(
+                    "RAMWARDEN_SUPPORT_TOKEN must be at least {MIN_TOKEN_LEN} characters"
+                ));
             }
             Some(t) => Some(hash_token(t.trim())),
             None => None,
@@ -284,11 +372,21 @@ impl Config {
             return Err("RAMWARDEN_RELEASES_URL must be an https:// URL".into());
         }
         let install_links_enabled = var("RAMWARDEN_ENABLE_INSTALL_LINKS").as_deref() == Some("1");
-        if install_links_enabled && !reqwest::Url::parse(&releases_url).is_ok_and(|url|
-            url.host_str() == Some("github.com")
-                && url.path().starts_with("/ethanrxla/ramwarden/releases/download/")
-                && url.path().trim_end_matches('/').rsplit('/').next().is_some_and(|tag| tag != "download")
-                && url.query().is_none() && url.fragment().is_none())
+        if install_links_enabled
+            && !reqwest::Url::parse(&releases_url).is_ok_and(|url| {
+                url.host_str() == Some("github.com")
+                    && url
+                        .path()
+                        .starts_with("/ethanrxla/ramwarden/releases/download/")
+                    && url
+                        .path()
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|tag| tag != "download")
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+            })
         {
             return Err("install links require a versioned RamWarden GitHub release URL".into());
         }
@@ -317,80 +415,149 @@ mod tests {
     const TOKEN: &str = "rw_test_token_0123456789abcdef";
 
     fn cfg(pairs: &[(&str, &str)]) -> Result<Config, String> {
-        let m: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let m: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         Config::from_lookup(|k| m.get(k).cloned())
     }
 
     #[test]
     fn an_openai_key_does_not_switch_personal_development_to_production() {
-        let base = [("JEV_API_KEY", "test-jev"), ("RAMWARDEN_API_TOKENS", TOKEN), ("OPENAI_API_KEY", "openai-test")];
+        let base = [
+            ("JEV_API_KEY", "test-jev"),
+            ("RAMWARDEN_API_TOKENS", TOKEN),
+            ("OPENAI_API_KEY", "openai-test"),
+        ];
         assert!(cfg(&base).unwrap().production_model.is_none());
         let mut production = base.to_vec();
         production.push(("RAMWARDEN_API_PROFILE", "production"));
-        assert_eq!(cfg(&production).unwrap().production_model.unwrap().1, "gpt-6-luna");
+        assert_eq!(
+            cfg(&production).unwrap().production_model.unwrap().1,
+            "gpt-6-luna"
+        );
         production.retain(|(key, _)| *key != "OPENAI_API_KEY");
         assert!(cfg(&production).unwrap_err().contains("OPENAI_API_KEY"));
     }
 
     #[test]
     fn install_links_require_an_explicit_versioned_release() {
-        let mut settings = vec![("JEV_API_KEY", "test"), ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.com")];
+        let mut settings = vec![
+            ("JEV_API_KEY", "test"),
+            ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.com"),
+        ];
         assert!(!cfg(&settings).unwrap().cloud.unwrap().install_links_enabled);
         settings.push(("RAMWARDEN_ENABLE_INSTALL_LINKS", "1"));
         assert!(cfg(&settings).is_err());
-        settings.push(("RAMWARDEN_RELEASES_URL", "https://github.com/ethanrxla/ramwarden/releases/download/v1.0.0"));
+        settings.push((
+            "RAMWARDEN_RELEASES_URL",
+            "https://github.com/ethanrxla/ramwarden/releases/download/v1.0.0",
+        ));
         assert!(cfg(&settings).unwrap().cloud.unwrap().install_links_enabled);
     }
 
     #[test]
     fn defaults_fill_everything_but_the_secrets() {
-        let c = cfg(&[("JEV_API_KEY", "jev-key-abcdef"), ("RAMWARDEN_API_TOKENS", TOKEN)]).unwrap();
+        let c = cfg(&[
+            ("JEV_API_KEY", "jev-key-abcdef"),
+            ("RAMWARDEN_API_TOKENS", TOKEN),
+        ])
+        .unwrap();
         assert_eq!(c.jev_base_url, "https://api.typesafe.ai");
         assert_eq!(c.jev_model, "jev-latest");
         assert_eq!(c.bind.port(), 8080);
         assert_eq!(c.tokens, vec![hash_token(TOKEN)]);
-        assert_eq!((c.per_minute, c.per_day, c.max_state_bytes, c.max_questions), (20, 1000, 16_384, 24));
+        assert_eq!(
+            (c.per_minute, c.per_day, c.max_state_bytes, c.max_questions),
+            (20, 1000, 16_384, 24)
+        );
     }
 
     #[test]
     fn missing_or_weak_secrets_are_refused() {
-        assert!(cfg(&[("RAMWARDEN_API_TOKENS", TOKEN)]).unwrap_err().contains("JEV_API_KEY"));
-        assert!(cfg(&[("JEV_API_KEY", "k")]).unwrap_err().contains("RAMWARDEN_API_TOKENS"));
-        assert!(cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_API_TOKENS", "short")]).unwrap_err().contains("24"));
+        assert!(
+            cfg(&[("RAMWARDEN_API_TOKENS", TOKEN)])
+                .unwrap_err()
+                .contains("JEV_API_KEY")
+        );
+        assert!(
+            cfg(&[("JEV_API_KEY", "k")])
+                .unwrap_err()
+                .contains("RAMWARDEN_API_TOKENS")
+        );
+        assert!(
+            cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_API_TOKENS", "short")])
+                .unwrap_err()
+                .contains("24")
+        );
         assert!(cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_API_TOKENS", " , ")]).is_err());
     }
 
     #[test]
     fn bad_numbers_name_the_variable() {
-        let e = cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_API_TOKENS", TOKEN), ("RAMWARDEN_API_PER_DAY", "lots")])
-            .unwrap_err();
+        let e = cfg(&[
+            ("JEV_API_KEY", "k"),
+            ("RAMWARDEN_API_TOKENS", TOKEN),
+            ("RAMWARDEN_API_PER_DAY", "lots"),
+        ])
+        .unwrap_err();
         assert!(e.contains("RAMWARDEN_API_PER_DAY"), "{e}");
     }
 
     #[test]
     fn the_site_origin_turns_on_accounts_and_base_checkout() {
-        let c = cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app/")]).unwrap();
+        let c = cfg(&[
+            ("JEV_API_KEY", "k"),
+            ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app/"),
+        ])
+        .unwrap();
         let cloud = c.cloud.unwrap();
-        assert!(c.tokens.is_empty(), "devices sign in; phase 1 tokens are optional");
-        assert_eq!((cloud.site_origin.as_str(), cloud.site_domain.as_str()), ("https://ramwarden.app", "ramwarden.app"));
-        assert!(cloud.base.is_none(), "no contract address, no Base checkout");
+        assert!(
+            c.tokens.is_empty(),
+            "devices sign in; phase 1 tokens are optional"
+        );
+        assert_eq!(
+            (cloud.site_origin.as_str(), cloud.site_domain.as_str()),
+            ("https://ramwarden.app", "ramwarden.app")
+        );
+        assert!(
+            cloud.base.is_none(),
+            "no contract address, no Base checkout"
+        );
         assert_eq!(cloud.public_url, "https://api.ramwarden.app");
 
         let c = cfg(&[
             ("JEV_API_KEY", "k"),
             ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app"),
-            ("RAMWARDEN_CHECKOUT_ADDRESS", "0x00000000000000000000000000000000000000cc"),
+            (
+                "RAMWARDEN_CHECKOUT_ADDRESS",
+                "0x00000000000000000000000000000000000000cc",
+            ),
         ])
         .unwrap();
         let base = c.cloud.unwrap().base.unwrap();
         assert_eq!(base.chain_id, BASE_SEPOLIA, "testnet unless told otherwise");
-        assert_eq!(base.usdc, BaseConfig::default_usdc(84532).unwrap(), "USDC filled in for Base Sepolia");
+        assert_eq!(
+            base.usdc,
+            BaseConfig::default_usdc(84532).unwrap(),
+            "USDC filled in for Base Sepolia"
+        );
         assert_eq!(base.confirmations, 5);
 
-        assert!(cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_SITE_ORIGIN", "http://evil.example")]).is_err());
         assert!(
-            cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_SITE_ORIGIN", "https://a.b"), ("RAMWARDEN_CHECKOUT_ADDRESS", "0x12")])
-                .is_err()
+            cfg(&[
+                ("JEV_API_KEY", "k"),
+                ("RAMWARDEN_SITE_ORIGIN", "http://evil.example")
+            ])
+            .is_err()
+        );
+        assert!(
+            cfg(&[
+                ("JEV_API_KEY", "k"),
+                ("RAMWARDEN_SITE_ORIGIN", "https://a.b"),
+                ("RAMWARDEN_CHECKOUT_ADDRESS", "0x12")
+            ])
+            .is_err()
         );
     }
 
@@ -405,6 +572,11 @@ mod tests {
         let t = cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_ALLOW_LIVE_PAYMENTS", "1")]).unwrap().cloud.unwrap().thorchain.unwrap();
         assert!(t.live);
         assert!(cfg(&[("JEV_API_KEY", "k"), site, ("RAMWARDEN_THORCHAIN_PAYOUT", "bc1qnope")]).is_err());
+        let alias = ("USDC_BASE_ADDRESS", "0x00000000000000000000000000000000000000bb");
+        let t = cfg(&[("JEV_API_KEY", "k"), site, alias]).unwrap().cloud.unwrap().thorchain.unwrap();
+        assert!(t.payout_hex().ends_with("bb"), "the .env name works too");
+        let t = cfg(&[("JEV_API_KEY", "k"), site, payout, alias]).unwrap().cloud.unwrap().thorchain.unwrap();
+        assert!(t.payout_hex().ends_with("aa"), "the explicit name wins");
         assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_THORNODE_URL", "http://evil.example")]).is_err());
         assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_MIDGARD_URL", "http://localhost.evil.example")]).is_err());
         assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_MIDGARD_URL", "http://127.0.0.1:9000")]).is_ok());
@@ -413,17 +585,50 @@ mod tests {
     #[test]
     fn real_money_needs_saying_so() {
         let site = ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app");
-        let mainnet = [("JEV_API_KEY", "k"), site, ("RAMWARDEN_CHECKOUT_ADDRESS", "0x00000000000000000000000000000000000000cc"), ("RAMWARDEN_BASE_CHAIN_ID", "8453")];
-        assert!(cfg(&mainnet).unwrap_err().contains("RAMWARDEN_ALLOW_LIVE_PAYMENTS"));
+        let mainnet = [
+            ("JEV_API_KEY", "k"),
+            site,
+            (
+                "RAMWARDEN_CHECKOUT_ADDRESS",
+                "0x00000000000000000000000000000000000000cc",
+            ),
+            ("RAMWARDEN_BASE_CHAIN_ID", "8453"),
+        ];
+        assert!(
+            cfg(&mainnet)
+                .unwrap_err()
+                .contains("RAMWARDEN_ALLOW_LIVE_PAYMENTS")
+        );
         let mut ok = mainnet.to_vec();
         ok.push(("RAMWARDEN_ALLOW_LIVE_PAYMENTS", "1"));
-        assert_eq!(cfg(&ok).unwrap().cloud.unwrap().base.unwrap().chain_id, BASE_MAINNET);
+        assert_eq!(
+            cfg(&ok).unwrap().cloud.unwrap().base.unwrap().chain_id,
+            BASE_MAINNET
+        );
 
-        let live = [("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_live_x"), ("STRIPE_WEBHOOK_SECRET", "whsec_x")];
+        let live = [
+            ("JEV_API_KEY", "k"),
+            site,
+            ("STRIPE_SECRET_KEY", "sk_live_x"),
+            ("STRIPE_WEBHOOK_SECRET", "whsec_x"),
+        ];
         assert!(cfg(&live).is_err());
-        let test = [("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_test_x"), ("STRIPE_WEBHOOK_SECRET", "whsec_x")];
+        let test = [
+            ("JEV_API_KEY", "k"),
+            site,
+            ("STRIPE_SECRET_KEY", "sk_test_x"),
+            ("STRIPE_WEBHOOK_SECRET", "whsec_x"),
+        ];
         assert!(cfg(&test).unwrap().cloud.unwrap().stripe.is_some());
-        assert!(cfg(&[("JEV_API_KEY", "k"), site, ("STRIPE_SECRET_KEY", "sk_test_x")]).is_err(), "no webhook secret");
+        assert!(
+            cfg(&[
+                ("JEV_API_KEY", "k"),
+                site,
+                ("STRIPE_SECRET_KEY", "sk_test_x")
+            ])
+            .is_err(),
+            "no webhook secret"
+        );
     }
 
     #[test]
@@ -435,9 +640,16 @@ mod tests {
             cfg(&v).map(|c| c.cloud.unwrap().mail)
         };
         assert!(matches!(mail(&[]).unwrap(), MailConfig::Off));
-        assert!(matches!(mail(&[("RAMWARDEN_DEV_MAIL_LOG", "1")]).unwrap(), MailConfig::Log));
         assert!(matches!(
-            mail(&[("RESEND_API_KEY", "re_x"), ("RAMWARDEN_MAIL_FROM", "RamWarden <a@b.c>")]).unwrap(),
+            mail(&[("RAMWARDEN_DEV_MAIL_LOG", "1")]).unwrap(),
+            MailConfig::Log
+        ));
+        assert!(matches!(
+            mail(&[
+                ("RESEND_API_KEY", "re_x"),
+                ("RAMWARDEN_MAIL_FROM", "RamWarden <a@b.c>")
+            ])
+            .unwrap(),
             MailConfig::Resend { .. }
         ));
         assert!(mail(&[("RESEND_API_KEY", "re_x")]).is_err());
@@ -445,7 +657,11 @@ mod tests {
 
     #[test]
     fn the_jev_key_does_not_print() {
-        let c = cfg(&[("JEV_API_KEY", "jev-secret-value-XYZ123"), ("RAMWARDEN_API_TOKENS", TOKEN)]).unwrap();
+        let c = cfg(&[
+            ("JEV_API_KEY", "jev-secret-value-XYZ123"),
+            ("RAMWARDEN_API_TOKENS", TOKEN),
+        ])
+        .unwrap();
         let printed = format!("{c:?}");
         assert!(!printed.contains("jev-secret-value"), "{printed}");
         assert!(!printed.contains(TOKEN), "{printed}");
@@ -456,7 +672,12 @@ fn safe_service_url(url: &reqwest::Url) -> bool {
     url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none()
-        && (url.scheme() == "https" || (url.scheme() == "http" && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"))))
+        && (url.scheme() == "https"
+            || (url.scheme() == "http"
+                && matches!(
+                    url.host_str(),
+                    Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+                )))
 }
 
 #[cfg(test)]
@@ -464,10 +685,20 @@ mod local_origin_tests {
     #[test]
     fn only_real_loopback_hosts_may_use_http() {
         for host in ["localhost:8000", "127.0.0.1:8080", "[::1]:8000"] {
-            assert!(super::safe_service_url(&reqwest::Url::parse(&format!("http://{host}")).unwrap()));
+            assert!(super::safe_service_url(
+                &reqwest::Url::parse(&format!("http://{host}")).unwrap()
+            ));
         }
-        for url in ["http://localhost.evil.example", "http://localhost@evil.example", "https://user:pass@example.com", "http://example.com"] {
-            assert!(!super::safe_service_url(&reqwest::Url::parse(url).unwrap()), "{url}");
+        for url in [
+            "http://localhost.evil.example",
+            "http://localhost@evil.example",
+            "https://user:pass@example.com",
+            "http://example.com",
+        ] {
+            assert!(
+                !super::safe_service_url(&reqwest::Url::parse(url).unwrap()),
+                "{url}"
+            );
         }
     }
 }

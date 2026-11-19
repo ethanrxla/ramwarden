@@ -87,8 +87,8 @@ confirmed by the user 2026-11-01):
 | Card | Plan | Tier id | Price | Trial | Wardens | Devices |
 | --- | --- | --- | --- | --- | --- | --- |
 | RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI, no warden pet | 1 |
-| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 3 |
-| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
+| RamWarden Plus | 1, 3 | `ram` | $3.99 every 2 months, $19.99 / year | 14 days | `ram` | 3 |
+| RamWarden Pro | 2, 4 | `pro` | $4.99 every 2 months, $23.99 / year | none | `ram`, `threat` | 5 |
 
 Plans 1 and 2 now bill monthly (`interval: "month"`, 30-day crypto periods;
 Stripe calendar-month recurrence), per owner clarification 2026-11-02.
@@ -297,7 +297,7 @@ coins (ETH, ETH on Base, BNB, AVAX) are sent as the router's
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | unset: card checkout off. Both or neither; `sk_test_` unless live payments are allowed |
 | `RESEND_API_KEY` + `RAMWARDEN_MAIL_FROM` | unset: email sign-in off |
 | `RAMWARDEN_DEV_MAIL_LOG` | `1` writes sign-in codes to the log instead of mailing them. Development only |
-| `RAMWARDEN_THORCHAIN_PAYOUT` | unset: any-coin checkout off. The operator's USDC address on Base |
+| `RAMWARDEN_THORCHAIN_PAYOUT` | unset: any-coin checkout off. The operator's USDC address on Base (`USDC_BASE_ADDRESS` is read when this is unset) |
 | `RAMWARDEN_THORNODE_URL` / `RAMWARDEN_MIDGARD_URL` | THORChain's public Liquify gateway |
 | `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |
 | `RAMWARDEN_PUBLIC_URL` | `https://api.<site domain>`: this API's URL as install lines name it |

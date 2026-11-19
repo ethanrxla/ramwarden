@@ -54,11 +54,24 @@ pub struct Budget {
     deadline: Instant,
     entries: AtomicI64,
     spent: AtomicBool,
+    /// Folders never entered (`Places::private`): the figure for whatever
+    /// holds one is then a floor.
+    private: Vec<PathBuf>,
 }
 
 impl Budget {
     pub fn new(time: Duration, entries: i64) -> Self {
-        Budget { deadline: Instant::now() + time, entries: AtomicI64::new(entries), spent: AtomicBool::new(false) }
+        Budget { deadline: Instant::now() + time, entries: AtomicI64::new(entries), spent: AtomicBool::new(false), private: Vec::new() }
+    }
+
+    /// Leave these folders, and everything in them, out of every walk.
+    pub fn skipping(mut self, private: &[PathBuf]) -> Self {
+        self.private = private.to_vec();
+        self
+    }
+
+    fn private(&self, path: &Path) -> bool {
+        self.private.iter().any(|p| path.starts_with(p))
     }
 
     /// Count one entry. False once the budget is gone.
@@ -131,8 +144,18 @@ impl Walk<'_> {
                 complete = false;
                 break;
             }
+            let Ok(entry) = entry else {
+                complete = false;
+                continue;
+            };
+            // Before any lookup: even a stat of a guarded folder can make
+            // macOS ask.
+            if self.budget.private(&entry.path()) {
+                complete = false;
+                continue;
+            }
             // `DirEntry::metadata` does not follow links.
-            let Ok(meta) = entry.and_then(|e| e.metadata().map(|m| (e, m))) else {
+            let Ok(meta) = entry.metadata().map(|m| (entry, m)) else {
                 complete = false;
                 continue;
             };
@@ -169,6 +192,9 @@ impl Walk<'_> {
 
 /// Measure one path. Cache folders found inside are appended to `caches`.
 pub fn measure(path: &Path, budget: &Budget, caches: &Mutex<Vec<CacheDir>>) -> Measured {
+    if budget.private(path) {
+        return Measured::default();
+    }
     let Ok(meta) = fs::symlink_metadata(path) else { return Measured { complete: true, ..Default::default() } };
     let (bytes, device) = on_disk(&meta);
     if meta.file_type().is_symlink() {
@@ -197,8 +223,9 @@ pub struct Child {
 /// Measure every immediate child of `root`, largest first. Children are
 /// walked by a few threads at once so a budget that runs out leaves every
 /// large folder partly measured, not the first one fully and the rest at zero.
+/// Private children are left out; the caller names them.
 pub fn children(root: &Path, budget: &Budget, caches: &Mutex<Vec<CacheDir>>) -> Vec<Child> {
-    let mut names: Vec<PathBuf> = fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    let mut names: Vec<PathBuf> = fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !budget.private(p)).collect();
     names.sort();
     let queue = Mutex::new(names);
     let out = Mutex::new(Vec::new());

@@ -43,6 +43,13 @@ pub fn snapshot(st:&AppState)->Vec<Row> {
 pub fn routes()->Router<AppState> {
     Router::new().route("/browser/review",get(review)).route("/browser/review/respond",post(respond))
         .route("/browser/feedback",post(feedback))
+        .route("/browser/pace",get(pace))
+}
+/// The idle floor in use and why: learned from this user's returns, or the
+/// setting while there is too little evidence.
+async fn pace(State(st):State<AppState>)->Json<serde_json::Value> {
+    let pace=st.learn_pace();
+    Json(serde_json::json!({"floor_minutes":st.tabs_config().close_idle_minutes(),"pace":pace}))
 }
 async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
     if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}

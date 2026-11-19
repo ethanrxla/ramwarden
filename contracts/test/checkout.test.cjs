@@ -283,17 +283,17 @@ describe("plans.json", function () {
       ids.add(p.id);
       for (const w of p.wardens) expect(plans.wardens[String(w)], `plan ${p.id} names warden ${w}`).to.exist;
       const mask = p.wardens.reduce((m, w) => m | (1 << w), 0);
-      await checkout.setPlan(p.id, BigInt(p.usd) * 1_000_000n, p.days * DAY, mask, p.trial === true, true);
+      await checkout.setPlan(p.id, BigInt(p.cents) * 10_000n, p.days * DAY, mask, p.trial === true, true);
     }
     // docs/product-spec.md 1.2: ids are fixed because the agent skill uses them.
     // The 14-day trial is RamWarden's only (user decision, 2026-11-01).
-    // Plans 1 and 2 use monthly pricing (owner clarification, 2026-11-02).
-    const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.days, p.usd, p.trial]]));
+    // Plans 1 and 2 bill every two months (owner, 2026-11-18); prices in cents.
+    const by = Object.fromEntries(plans.plans.map((p) => [p.id, [p.tier, p.interval, p.days, p.cents, p.trial]]));
     expect(by).to.deep.equal({
-      1: ["ram", "month", 30, 4, true],
-      2: ["pro", "month", 30, 5, false],
-      3: ["ram", "year", 365, 20, true],
-      4: ["pro", "year", 365, 24, false],
+      1: ["ram", "two_months", 60, 399, true],
+      2: ["pro", "two_months", 60, 499, false],
+      3: ["ram", "year", 365, 1999, true],
+      4: ["pro", "year", 365, 2399, false],
     });
   });
 });

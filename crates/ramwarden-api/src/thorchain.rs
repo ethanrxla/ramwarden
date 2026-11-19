@@ -65,7 +65,7 @@ pub const DEFAULT_MIDGARD: &str = "https://gateway.liquify.com/chain/thorchain_m
 
 /// The plan's price in cents. The one place plans.json's price is read here.
 pub fn plan_cents(plan: &PlanDef) -> u64 {
-    plan.usd * 100
+    plan.cents
 }
 
 /// A coin the checkout offers.

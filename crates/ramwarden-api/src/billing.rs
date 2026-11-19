@@ -64,7 +64,10 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
 async fn config(State(state): State<Arc<AppState>>) -> Reply {
     let c = cloud(&state)?;
     let b = &c.billing;
-    let mut json = c.plans.config_json(b.base.as_deref().map(|b| &b.cfg), b.stripe.as_ref().map(Stripe::test_mode));
+    let mut json = c.plans.config_json(
+        b.base.as_deref().map(|b| &b.cfg),
+        b.stripe.as_ref().map(Stripe::test_mode),
+    );
     json["thorchain"] = match &b.thorchain {
         Some(t) => json!({"live": t.cfg.live, "assets": ASSETS.iter().map(thor::PayAsset::json).collect::<Vec<_>>()}),
         None => serde_json::Value::Null,
@@ -91,9 +94,12 @@ pub enum Start {
 /// Whether moving from the account's live plan to `plan` is an upgrade:
 /// more wardens, or the same wardens for a longer period.
 pub fn is_upgrade(a: &Account, plan: &PlanDef) -> bool {
-    let (Some(tier), Some(interval)) = (a.tier, a.interval) else { return false };
+    let (Some(tier), Some(interval)) = (a.tier, a.interval) else {
+        return false;
+    };
     let rank = |t: Tier| if t == Tier::Pro { 1 } else { 0 };
-    let longer = matches!(interval, Interval::Month | Interval::TwoMonths) && plan.interval() == Interval::Year;
+    let longer = matches!(interval, Interval::Month | Interval::TwoMonths)
+        && plan.interval() == Interval::Year;
     rank(plan.tier()) > rank(tier) || (plan.tier() == tier && longer)
 }
 
@@ -110,10 +116,19 @@ async fn start<'a>(
 ) -> Result<(Account, &'a PlanDef, Start), Response> {
     let a = session(c, method, headers, now).await?;
     if a.developer_access {
-        return Err(error(StatusCode::CONFLICT, "This developer account has complimentary access. Plan changes are managed by the operator; no payment is needed."));
+        return Err(error(
+            StatusCode::CONFLICT,
+            "This developer account has complimentary access. Plan changes are managed by the operator; no payment is needed.",
+        ));
     }
-    let plan = c.plans.plan(plan).ok_or_else(|| error(StatusCode::NOT_FOUND, "No such plan."))?;
-    if !matches!(a.status(now), Some(Status::Trial | Status::Active | Status::Grace)) {
+    let plan = c
+        .plans
+        .plan(plan)
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, "No such plan."))?;
+    if !matches!(
+        a.status(now),
+        Some(Status::Trial | Status::Active | Status::Grace)
+    ) {
         return Ok((a, plan, Start::New));
     }
     if !is_upgrade(&a, plan) {
@@ -128,12 +143,22 @@ async fn start<'a>(
             Some(BillingMethod::Thorchain) => "ahead with crypto through THORChain",
             _ => "from your wallet on Base",
         };
-        return Err(error(StatusCode::CONFLICT, &format!("Your subscription is paid {how}. Upgrade the same way.")));
+        return Err(error(
+            StatusCode::CONFLICT,
+            &format!("Your subscription is paid {how}. Upgrade the same way."),
+        ));
     }
     Ok((a, plan, Start::Upgrade))
 }
 
-fn pending(id: String, a: &Account, plan: &PlanDef, method: BillingMethod, payer: Option<String>, now: u64) -> Payment {
+fn pending(
+    id: String,
+    a: &Account,
+    plan: &PlanDef,
+    method: BillingMethod,
+    payer: Option<String>,
+    now: u64,
+) -> Payment {
     Payment {
         id,
         account_id: a.id.clone(),
@@ -155,24 +180,50 @@ async fn checkout_base(
 ) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
-    let base = c.billing.base.as_ref().ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Paying on Base opens soon."))?;
+    let base = c.billing.base.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Paying on Base opens soon.",
+        )
+    })?;
     let (a, plan, kind) = start(c, &method, &headers, b.plan, BillingMethod::Base, now).await?;
     let payer = match &b.payer {
-        Some(p) => Some(wallet::normalise(Chain::Evm, p).map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, &e))?),
+        Some(p) => Some(
+            wallet::normalise(Chain::Evm, p)
+                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, &e))?,
+        ),
         None => None,
     };
-    let cap = usdc_minor(plan.approval_usd());
+    let cap = usdc_minor(plan.approval_cents());
     let needs_approve = match &payer {
         Some(p) => base.needs_approve(p, cap).await,
         None => true,
     };
     let payment_ref = random_bytes::<32>();
     let id = hex::encode(payment_ref);
-    c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Base, payer, now)).await.map_err(storage)?;
+    c.store
+        .create_payment(pending(
+            id.clone(),
+            &a,
+            plan,
+            BillingMethod::Base,
+            payer,
+            now,
+        ))
+        .await
+        .map_err(storage)?;
     let (trial, transactions) = match kind {
-        Start::New => (plan.trial_for(a.trial_used), base.cfg.transactions(&a.id, plan, &payment_ref, needs_approve)),
+        Start::New => (
+            plan.trial_for(a.trial_used),
+            base.cfg
+                .transactions(&a.id, plan, &payment_ref, needs_approve),
+        ),
         // Only the wallet paying today can send changePlan.
-        Start::Upgrade => (false, base.cfg.change_transactions(&a.id, plan, &payment_ref, needs_approve)),
+        Start::Upgrade => (
+            false,
+            base.cfg
+                .change_transactions(&a.id, plan, &payment_ref, needs_approve),
+        ),
     };
     Ok(Json(json!({
         "payment_id": id,
@@ -180,7 +231,7 @@ async fn checkout_base(
         "upgrade": kind == Start::Upgrade,
         "payer": (kind == Start::Upgrade).then(|| a.billing.as_ref().map(|b| b.reference.clone())).flatten(),
         "trial": trial,
-        "approval_usd": plan.approval_usd(),
+        "approval_usd": plan.approval_cents() as f64 / 100.0,
         "transactions": transactions,
     }))
     .into_response())
@@ -194,23 +245,44 @@ async fn checkout_stripe(
 ) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
-    let s = c
-        .billing
-        .stripe
-        .as_ref()
-        .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Card payments open soon. Pay with USDC on Base."))?;
+    let s = c.billing.stripe.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Card payments open soon. Pay with USDC on Base.",
+        )
+    })?;
     let (a, plan, kind) = start(c, &method, &headers, b.plan, BillingMethod::Card, now).await?;
     let id = new_id();
     // Persist before Stripe can charge or deliver a webhook.
-    c.store.create_payment(pending(id.clone(), &a, plan, BillingMethod::Card, None, now)).await.map_err(storage)?;
+    c.store
+        .create_payment(pending(
+            id.clone(),
+            &a,
+            plan,
+            BillingMethod::Card,
+            None,
+            now,
+        ))
+        .await
+        .map_err(storage)?;
     if kind == Start::Upgrade {
         // The card on file pays the difference now; the webhook moves the tier.
-        let sub = a.billing.as_ref().map(|b| b.reference.clone()).unwrap_or_default();
+        let sub = a
+            .billing
+            .as_ref()
+            .map(|b| b.reference.clone())
+            .unwrap_or_default();
         s.change_plan(&sub, plan, &a.id, &id).await.map_err(|e| {
             tracing::error!("{e}");
-            error(StatusCode::BAD_GATEWAY, "The upgrade did not go through. Try again in a minute.")
+            error(
+                StatusCode::BAD_GATEWAY,
+                "The upgrade did not go through. Try again in a minute.",
+            )
         })?;
-        return Ok(Json(json!({"payment_id": id, "upgrade": true, "url": null, "trial": false})).into_response());
+        return Ok(
+            Json(json!({"payment_id": id, "upgrade": true, "url": null, "trial": false}))
+                .into_response(),
+        );
     }
     let email = match &a.identity {
         Identity::Email { email } => Some(email.as_str()),
@@ -229,7 +301,10 @@ async fn checkout_stripe(
     };
     let url = s.checkout(&req).await.map_err(|e| {
         tracing::error!("{e}");
-        error(StatusCode::BAD_GATEWAY, "Card checkout could not start. Try again in a minute.")
+        error(
+            StatusCode::BAD_GATEWAY,
+            "Card checkout could not start. Try again in a minute.",
+        )
     })?;
     Ok(Json(json!({"payment_id": id, "upgrade": false, "url": url, "trial": plan.trial_for(a.trial_used)})).into_response())
 }
@@ -313,12 +388,20 @@ async fn checkout_thorchain(
 
 async fn solana(State(state): State<Arc<AppState>>) -> Reply {
     cloud(&state)?;
-    Err(error(StatusCode::SERVICE_UNAVAILABLE, "Paying on Solana opens soon. Pay with USDC on Base, or by card."))
+    Err(error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Paying on Solana opens soon. Pay with USDC on Base, or by card.",
+    ))
 }
 
 /// The page polls this after the wallet sends, or after Stripe redirects
 /// back, until it is confirmed.
-async fn payment(State(state): State<Arc<AppState>>, method: Method, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+async fn payment(
+    State(state): State<Arc<AppState>>,
+    method: Method,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
@@ -352,10 +435,19 @@ async fn cancel(State(state): State<Arc<AppState>>, method: Method, headers: Hea
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
     let nothing = || error(StatusCode::CONFLICT, "There is no subscription to cancel.");
-    let billing = a.billing.as_ref().filter(|_| !a.cancelled && a.tier.is_some()).ok_or_else(nothing)?;
+    let billing = a
+        .billing
+        .as_ref()
+        .filter(|_| !a.cancelled && a.tier.is_some())
+        .ok_or_else(nothing)?;
     match billing.method {
         BillingMethod::Base => {
-            let base = c.billing.base.as_ref().ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Base is not configured on this server."))?;
+            let base = c.billing.base.as_ref().ok_or_else(|| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Base is not configured on this server.",
+                )
+            })?;
             Ok(Json(json!({
                 "chain_id": base.cfg.chain_id,
                 "payer": billing.reference,
@@ -364,14 +456,35 @@ async fn cancel(State(state): State<Arc<AppState>>, method: Method, headers: Hea
             .into_response())
         }
         BillingMethod::Card => {
-            let s = c.billing.stripe.as_ref().ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Card payments are not configured on this server."))?;
-            s.cancel_at_period_end(&billing.reference).await.map_err(|e| {
-                tracing::error!("{e}");
-                error(StatusCode::BAD_GATEWAY, "The cancellation did not go through. Try again in a minute.")
+            let s = c.billing.stripe.as_ref().ok_or_else(|| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Card payments are not configured on this server.",
+                )
             })?;
-            let u = BillingUpdate { cancelled: Some(true), ..Default::default() };
-            let a = c.store.update_billing(&a.id, &u).await.map_err(storage)?.ok_or_else(nothing)?;
-            Ok(Json(json!({"cancelled": true, "service_until": a.paid_until.map(iso8601)})).into_response())
+            s.cancel_at_period_end(&billing.reference)
+                .await
+                .map_err(|e| {
+                    tracing::error!("{e}");
+                    error(
+                        StatusCode::BAD_GATEWAY,
+                        "The cancellation did not go through. Try again in a minute.",
+                    )
+                })?;
+            let u = BillingUpdate {
+                cancelled: Some(true),
+                ..Default::default()
+            };
+            let a = c
+                .store
+                .update_billing(&a.id, &u)
+                .await
+                .map_err(storage)?
+                .ok_or_else(nothing)?;
+            Ok(
+                Json(json!({"cancelled": true, "service_until": a.paid_until.map(iso8601)}))
+                    .into_response(),
+            )
         }
         // Prepaid: recorded as not renewing from the start.
         BillingMethod::Solana | BillingMethod::Thorchain => Err(nothing()),
@@ -381,10 +494,17 @@ async fn cancel(State(state): State<Arc<AppState>>, method: Method, headers: Hea
 /// Stripe's webhook. The signature is checked on the raw body before it is
 /// parsed; anything unsigned, stale or for an unknown account is dropped.
 async fn webhook(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let Ok(c) = cloud(&state) else { return StatusCode::SERVICE_UNAVAILABLE.into_response() };
-    let Some(s) = &c.billing.stripe else { return StatusCode::NOT_FOUND.into_response() };
+    let Ok(c) = cloud(&state) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let Some(s) = &c.billing.stripe else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let now = (state.now)();
-    let sig = headers.get("stripe-signature").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let sig = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     if !s.verify(sig, &body, now) {
         tracing::warn!("stripe webhook with a bad signature");
         return StatusCode::BAD_REQUEST.into_response();

@@ -24,7 +24,7 @@ function wardenView(speech) {
   // "Tell Warden" button that only opened a box: the box is always there now.
   const input = b.input || (b.kind === "focus" || choices.some(c => c.id === "focus") ? "What are you working on?" : null);
   const buttons = choices.filter(c => c.id !== "focus").map(c => ({ id: c.id, label: c.label }));
-  return { id: b.id, text: b.text, title: b.tab ? b.tab.url : "", buttons, input, muted: false, question: buttons.length > 0 || !!input };
+  return { id: b.id, kind: b.kind || "", text: b.text, title: b.tab ? b.tab.url : "", buttons, input, muted: false, question: buttons.length > 0 || !!input };
 }
 
 function wardenHTML(view) {
@@ -64,4 +64,37 @@ function analysisHTML(a) {
     <div class="warden-text">${wardenEsc(a.reply)}</div><div class="warden-choices">${unload}${close}</div>${note}</div>`;
 }
 
-if (typeof module !== "undefined") module.exports = { wardenView, wardenHTML, analysisHTML, focusHTML };
+// What a storage button is doing while the daemon works, so a press always
+// shows something at once.
+const STORAGE_WORKING = { free: "Clearing caches and temp files…", show: "Measuring what is using your disk…", dismiss: "Okay…" };
+
+// "What's using it?": the warden's sentence, then the biggest things as a list.
+// `view` is the bubble the daemon put up afterwards (still offering the
+// clean-up, if one is pending), so its buttons stay usable.
+function storageHTML(reply, usage, view) {
+  const row = (name, size, min) => `<li><span>${wardenEsc(name)}</span><b>${min ? "≥ " : ""}${wardenEsc(size)}</b></li>`;
+  const folders = ((usage && usage.home_folders) || []).filter(f => f.bytes >= 1048576).slice(0, 6)
+    .map(f => row(f.name, f.size, !f.complete)).join("");
+  const places = ((usage && usage.places) || []).filter(p => p.bytes >= 1048576).slice(0, 6)
+    .map(p => row(`${p.label}${p.kind === "clear" ? " (I can clear)" : ""}`, p.size, !p.complete)).join("");
+  const hidden = ((usage && usage.not_measured) || []).length
+    ? `<div class="warden-note">Not measured: ${wardenEsc(usage.not_measured.join(", "))}. Give RamWarden Full Disk Access to include them.</div>` : "";
+  const buttons = ((view && view.buttons) || []).map(b =>
+    `<button class="warden-choice" data-choice="${wardenEsc(b.id)}">${wardenEsc(b.label)}</button>`).join("");
+  const list = (title, items) => items ? `<div class="warden-note">${title}</div><ul class="warden-usage">${items}</ul>` : "";
+  return `<div class="warden-ram" aria-hidden="true">🐏</div><div class="warden-bubble">
+    <div class="warden-text">${wardenEsc(reply)}</div>${list("Biggest folders in your home folder", folders)}${list("Caches and app data", places)}${hidden}
+    <div class="warden-choices">${buttons}</div></div>
+    <button class="warden-x" data-act="storage-done" title="Put this away">✕</button>`;
+}
+
+// The line to show for an answer, never nothing: an empty or failed reply
+// used to leave the bubble as it was, which looked like a dead button.
+function answerText(choice, status, body) {
+  const reply = body && typeof body.reply === "string" ? body.reply.trim() : "";
+  if (reply) return reply;
+  if (status !== 200) return `That didn't go through: RamWarden answered ${status}. Try again in a moment.`;
+  return choice === "dismiss" || choice === "later" ? "" : "Done.";
+}
+
+if (typeof module !== "undefined") module.exports = { wardenView, wardenHTML, analysisHTML, focusHTML, storageHTML, answerText, STORAGE_WORKING };

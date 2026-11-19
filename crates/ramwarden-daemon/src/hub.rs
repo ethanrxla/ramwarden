@@ -42,6 +42,9 @@ pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(8);
 pub struct Hub {
     pub tab_budget: Arc<crate::settings::TabBudget>,
     pub tab_review: crate::tabreview::ReviewState,
+    /// The idle floor learned from this user's returns, refreshed each release
+    /// pass (`AppState::learn_pace`).
+    pub tab_pace: Option<ramwarden_core::tabpace::Pace>,
     pub reg: Registry,
     senders: HashMap<String, mpsc::UnboundedSender<String>>,
     tab_waiters: HashMap<String, Vec<oneshot::Sender<Vec<Tab>>>>,
@@ -157,8 +160,39 @@ pub struct AppState {
 impl AppState {
     /// Snapshot the user’s live tab policy; all automatic budget paths use this.
     pub fn tabs_config(&self) -> ramwarden_core::config::Tabs {
-        let settings = self.hub.lock().unwrap().tab_budget.clone();
-        settings.effective(&self.cfg.tabs)
+        let (settings, pace) = {
+            let hub = self.hub.lock().unwrap();
+            (hub.tab_budget.clone(), hub.tab_pace.clone())
+        };
+        let mut tabs = settings.effective(&self.cfg.tabs);
+        if tabs.learn_pace && let Some(pace) = pace.filter(|p| p.learned) {
+            tabs.close_after_hours = pace.floor_minutes as f64 / 60.0;
+        }
+        tabs
+    }
+
+    /// Re-learn the idle floor from the last two weeks of returns and reopens
+    /// plus the activations the browsers just reported. Cheap: one indexed
+    /// query and the open tabs, once per release pass.
+    pub fn learn_pace(&self) -> Option<ramwarden_core::tabpace::Pace> {
+        if !self.cfg.tabs.learn_pace { return None; }
+        let since = ramwarden_core::history::unix_now() as i64 - 14 * 86_400;
+        let since_ms = since as f64 * 1000.0;
+        let mut evidence = self.history.lock().ok()?.pace_evidence(since).ok()?;
+        let configured = self.cfg.tabs.close_idle_minutes();
+        let pace = {
+            let mut hub = self.hub.lock().unwrap();
+            for browser in hub.reg.socket_ids().into_iter().chain(hub.reg.poll_ids()) {
+                for tab in hub.reg.tabs_for(&browser) { evidence.add_tab(&tab.activations, &tab.departures, since_ms); }
+            }
+            let pace = evidence.pace(configured);
+            if hub.tab_pace.as_ref().map(|p| p.floor_minutes) != Some(pace.floor_minutes) {
+                tracing::info!(floor_minutes = pace.floor_minutes, learned = pace.learned, "tabs: close floor {}", pace.why);
+            }
+            hub.tab_pace = Some(pace.clone());
+            pace
+        };
+        Some(pace)
     }
 
     /// Whether freezing is on hold right now.
@@ -305,7 +339,8 @@ impl AppState {
         let requested_at = std::time::Instant::now();
         self.request_all_tabs().await;
         let rows = crate::tabreview::snapshot(self);
-        let auto = crate::browser::close_candidates(&rows, &self.tabs_config());
+        let tabs = self.tabs_config();
+        let auto = crate::browser::close_candidates(&rows, &tabs);
         let mut result = DiscardResult::default();
         for target in requested {
             if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {
@@ -318,6 +353,10 @@ impl AppState {
                 && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
                 && (approved || auto.contains(target)));
             if !valid { result.refused.push(target.clone()); continue; }
+            // The extension re-checks idle time with this figure, so it must be
+            // the floor the sweep used for this tab (a duplicate's may be shorter).
+            let unattended_minutes = rows.iter().find(|r| &r.target == target)
+                .map_or(tabs.close_idle_minutes(), |r| crate::browser::close_floor(r, &tabs));
             // Never infer command support from discard support or files on disk:
             // Chrome may still run the pre-update cached service worker.
             if !rows.iter().any(|r| &r.target == target && r.safe_close_supported) {
@@ -335,7 +374,7 @@ impl AppState {
                 let (tx,rx)=oneshot::channel();
                 hub.discard_waiters.insert(request.clone(),(target.browser.clone(),tx));
                 let message=serde_json::json!({"action":"close_safe","requestId":request,
-                    "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {1440},
+                    "tabs":[target],"approved":approved,"minInactiveMinutes":if approved {60} else {unattended_minutes},
                     "expiresAt":ramwarden_core::history::unix_now()*1000+10000});
                 hub.send(&target.browser,&message);
                 rx

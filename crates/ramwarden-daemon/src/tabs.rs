@@ -21,7 +21,7 @@
 //!   same `browser_id` with a fresh tab list. Appending would double-count every
 //!   tab; replacing is correct.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,10 @@ pub struct Tab {
     /// oldest first. Absent from older extensions.
     #[serde(default, deserialize_with = "lenient_f64_list")]
     pub activations: Vec<f64>,
+    /// When the user left this tab for another in its window, same units.
+    /// Absent from extensions before 2026-11-18.
+    #[serde(default, deserialize_with = "lenient_f64_list")]
+    pub departures: Vec<f64>,
     #[serde(default, rename = "activityVersion")]
     pub activity_version: u32,
     #[serde(default, rename = "workInProgress")]
@@ -214,6 +218,7 @@ impl Registry {
         for id in ids {
             self.owners.remove(id);
         }
+        let ids: HashSet<i64> = ids.iter().copied().collect();
         for tabs in self.socket_tabs.values_mut().chain(self.poll_tabs.values_mut()) {
             tabs.retain(|t| !ids.contains(&t.id));
         }
@@ -305,6 +310,7 @@ impl Registry {
 
     pub fn forget_tabs_for(&mut self, browser: &str, ids: &[i64]) {
         if let Some(tabs) = self.socket_tabs.get_mut(browser).or_else(|| self.poll_tabs.get_mut(browser)) {
+            let ids: HashSet<i64> = ids.iter().copied().collect();
             tabs.retain(|t| !ids.contains(&t.id));
         }
     }
@@ -333,6 +339,17 @@ impl Registry {
 
     pub fn queued_count(&self, browser: &str) -> usize {
         self.poll_queue.get(browser).map_or(0, Vec::len)
+    }
+}
+
+
+impl Tab {
+    /// Whether the page has finished loading. Chrome reports a discarded tab
+    /// as `unloaded`, never `complete`; until 2026-11-18 only `complete`
+    /// counted, so every unloaded tab ranked as "page is loading" and could
+    /// never be closed (11 of 28 tabs on the Mac, idle up to 54 hours).
+    pub fn settled(&self) -> bool {
+        matches!(self.status.as_deref(), Some("complete" | "unloaded"))
     }
 }
 

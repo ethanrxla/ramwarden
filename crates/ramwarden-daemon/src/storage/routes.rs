@@ -131,13 +131,16 @@ pub async fn answered(st: &AppState, pick: Pick, proposal: Option<String>) -> Va
                 .filter(|p| p.state == ProposalState::Pending)
                 .map(|p| (p.id, p.bytes));
             st.voice.say_storage(&st.cfg.voice, StorageSay { text: reply.clone(), proposal: pending, ..Default::default() }, Instant::now(), unix);
-            json!({"ok": true, "reply": reply, "closed": false})
+            // The same scan as a list, for a client that can draw one; no
+            // paths, so it is the form any listener may see.
+            json!({"ok": true, "reply": reply, "closed": false, "usage": usage.view(false)})
         }
         (_, proposal) => {
             if let Some(id) = proposal {
                 let _ = st.storage.decline(&id, unix);
             }
-            json!({"ok": true, "reply": "", "closed": false})
+            // Said, not silent: a button that does nothing visible reads as broken.
+            json!({"ok": true, "reply": "Okay, I'll leave it. I'll bring it up again later, or sooner if the disk fills up more.", "closed": false})
         }
     }
 }

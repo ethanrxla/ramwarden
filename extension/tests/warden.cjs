@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { wardenView, wardenHTML, analysisHTML, focusHTML } = require('../warden.js');
+const { wardenView, wardenHTML, analysisHTML, focusHTML, storageHTML, answerText } = require('../warden.js');
 
 const checkIn = { pet: true, muted: false, bubble: { id: 'b1', kind: 'check_in', text: 'Coming back to "<Docs>"?',
   choices: [{ id: 'keep', label: 'Yes, keep it' }, { id: 'close', label: 'No, close it' }, { id: 'later', label: 'Ask me later' }],
@@ -60,4 +60,23 @@ test('a focus reply lists its tabs as checkboxes and escapes them', () => {
   assert.match(html, /data-tab="1"> Web page/);
   assert.match(html, /data-act="focus-keep"/);
   assert.doesNotMatch(focusHTML('x', { reply: 'No tabs.', proposal: null }), /focus-keep/);
+});
+
+test('a storage answer is never silent', () => {
+  assert.equal(answerText('free', 200, { reply: 'Done. I cleared 0.1 GB.' }), 'Done. I cleared 0.1 GB.');
+  assert.equal(answerText('free', 200, {}), 'Done.');
+  assert.match(answerText('show', 500, {}), /answered 500/);
+  assert.equal(answerText('dismiss', 200, { reply: '' }), '');
+});
+
+test('"What\'s using it?" draws the biggest folders and keeps the offer', () => {
+  const usage = { home_folders: [{ name: 'Library', bytes: 4e10, size: '40 GB', complete: false }, { name: 'tiny', bytes: 10, size: '0 GB', complete: true }],
+    places: [{ label: 'Browser caches', kind: 'clear', bytes: 1e8, size: '0.1 GB', complete: true }], not_measured: ['Desktop', 'Documents'] };
+  const html = storageHTML('Macintosh HD has 20 GB free.', usage, { id: 'b2', buttons: [{ id: 'free', label: 'Free 0.1 GB' }] });
+  assert.match(html, /Library<\/span><b>≥ 40 GB/);
+  assert.doesNotMatch(html, /tiny/);
+  assert.match(html, /Browser caches \(I can clear\)/);
+  assert.match(html, /Not measured: Desktop, Documents/);
+  assert.match(html, /data-choice="free"/);
+  assert.match(html, /data-act="storage-done"/);
 });

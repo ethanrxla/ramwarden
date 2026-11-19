@@ -18,6 +18,11 @@ use crate::wallet::testing::EvmWallet;
 
 const DAY: u64 = 86_400;
 
+/// Plan 1's period: what one payment buys.
+fn period() -> u64 {
+    Plans::built_in().plan(1).unwrap().days * DAY
+}
+
 type Actions = Arc<Mutex<Vec<Value>>>;
 
 /// BTC at $90,000 and ETH at $3,000; a 25-cent outbound fee on every swap.
@@ -97,7 +102,7 @@ async fn a_bitcoin_swap_buys_one_period_once() {
     let (memo, pid) = (q["memo"].as_str().unwrap().to_string(), q["payment_id"].as_str().unwrap().to_string());
     let limit = memo_limit(&memo, PAYOUT).unwrap();
     assert_eq!(pid, format!("thor-{limit}"));
-    let price = Plans::built_in().plan(1).unwrap().usd * 100_000_000;
+    let price = Plans::built_in().plan(1).unwrap().cents * 1_000_000;
     assert!(limit >= price + 25_000_000, "the limit covers the price and the outbound fee");
     assert_eq!(q["inbound_address"], "bc1qvault");
     assert_eq!(q["transactions"].as_array().unwrap().len(), 0, "Bitcoin is sent by hand, with the memo");
@@ -113,7 +118,7 @@ async fn a_bitcoin_swap_buys_one_period_once() {
     actions.lock().unwrap().push(action(&memo, PAYOUT, limit + 3_000_000, 100, "BTCIN1"));
     assert_eq!(watcher.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 1);
     let acct = a.store.account(&account_id).await.unwrap().unwrap();
-    assert_eq!(acct.paid_until, Some(NOW + 30 * DAY));
+    assert_eq!(acct.paid_until, Some(NOW + period()));
     let (_, v) = a.call("GET", "/v1/account", Auth::Cookie(&cookie), None).await;
     assert_eq!((v["tier"].as_str(), v["billing"]["method"].as_str()), (Some("ram"), Some("thorchain")));
     assert_eq!(v["status"], "cancelled", "prepaid: shown as ending, not renewing");
@@ -121,7 +126,7 @@ async fn a_bitcoin_swap_buys_one_period_once() {
     // A rescan grants nothing more.
     let again = Thorchain::new(cfg(&url, true));
     assert_eq!(again.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 0);
-    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 30 * DAY));
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + period()));
 
     // Paying again extends from the end of the paid time; Ether goes through the router.
     let (s, q) = a.call("POST", "/v1/checkout/thorchain", Auth::Cookie(&cookie), Some(json!({"plan": 1, "asset": "ETH.ETH"}))).await;
@@ -133,7 +138,7 @@ async fn a_bitcoin_swap_buys_one_period_once() {
     let limit2 = memo_limit(q["memo"].as_str().unwrap(), PAYOUT).unwrap();
     actions.lock().unwrap().push(action(q["memo"].as_str().unwrap(), PAYOUT, limit2, 101, "ETHIN"));
     assert_eq!(again.poll(a.store.as_ref(), &plans, NOW + DAY).await.unwrap(), 1);
-    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 60 * DAY));
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 2 * period()));
 }
 
 #[tokio::test]
@@ -171,7 +176,7 @@ async fn a_swap_still_in_flight_is_granted_when_it_lands() {
 
     actions.lock().unwrap().iter_mut().find(|x| x["in"][0]["txID"] == "SLOW").unwrap()["status"] = json!("success");
     assert_eq!(watcher.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 1, "found below newer swaps");
-    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 30 * DAY));
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + period()));
 }
 
 #[tokio::test]
@@ -184,7 +189,7 @@ async fn a_grant_interrupted_before_confirming_finishes_once() {
     let grant = PrepaidGrant {
         tier: ramwarden_cloud::model::Tier::Ram,
         interval: ramwarden_cloud::model::Interval::Month,
-        paid_until: NOW + 30 * DAY,
+        paid_until: NOW + period(),
         rate: 1,
         billing: Billing { method: BillingMethod::Thorchain, reference: "bc1qbuyer".into() },
     };
@@ -192,7 +197,7 @@ async fn a_grant_interrupted_before_confirming_finishes_once() {
     actions.lock().unwrap().push(action(&memo, PAYOUT, memo_limit(&memo, PAYOUT).unwrap(), 5, "IN"));
     assert_eq!(Thorchain::new(cfg(&url, true)).poll(a.store.as_ref(), &Plans::built_in(), NOW).await.unwrap(), 1);
     assert_eq!(a.store.payment(&pid).await.unwrap().unwrap().status, PaymentStatus::Confirmed);
-    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 30 * DAY), "not added twice");
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + period()), "not added twice");
 }
 
 #[tokio::test]
@@ -210,5 +215,5 @@ async fn two_payments_recorded_at_once_both_count() {
     let (w1, w2) = (Thorchain::new(cfg(&url, true)), Thorchain::new(cfg(&url, true)));
     let (r1, r2) = tokio::join!(w1.poll(a.store.as_ref(), &plans, NOW), w2.poll(a.store.as_ref(), &plans, NOW));
     assert_eq!(r1.unwrap() + r2.unwrap(), 2, "each payment confirmed once");
-    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 60 * DAY), "both periods");
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 2 * period()), "both periods");
 }

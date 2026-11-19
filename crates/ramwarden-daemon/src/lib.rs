@@ -15,6 +15,7 @@ pub mod guard;
 pub mod hub;
 pub mod ladderjudge;
 pub mod monitor;
+pub mod permissions;
 pub mod outcomes;
 pub mod predict;
 pub mod routes;
