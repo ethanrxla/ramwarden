@@ -244,6 +244,49 @@ pub struct Places {
     pub local: Option<PathBuf>,
     /// `C:` with no trailing separator.
     pub system: Option<PathBuf>,
+    /// Folders no scan enters, because reading them makes the OS ask the
+    /// user's permission. See [`MAC_PRIVATE`].
+    pub private: Vec<PathBuf>,
+}
+
+/// macOS folders whose contents only an app the user has allowed may read
+/// (TCC). Opening one makes macOS show "RamWarden would like to access files
+/// in your Documents folder" or "...data from other apps", and a scan that
+/// walks the home folder opened all of them: the first storage alert on the
+/// reference Mac (2026-11-19) came with a permission prompt. An unsigned
+/// build is a new app to TCC after every rebuild, so a grant did not last
+/// either. The scan leaves them out and says so, unless the user has given
+/// RamWarden Full Disk Access, which is one grant that never prompts.
+/// Paths are relative to the home folder.
+pub const MAC_PRIVATE: &[&str] = &[
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Library/Mobile Documents",
+    "Library/CloudStorage",
+    "Library/Containers",
+    "Library/Group Containers",
+    "Library/Mail",
+    "Library/Messages",
+    "Library/Safari",
+    "Library/Calendars",
+    "Library/Reminders",
+    "Library/Cookies",
+    "Library/HomeKit",
+    "Library/Suggestions",
+    "Library/Metadata/CoreSpotlight",
+    "Library/Application Support/AddressBook",
+    "Library/Application Support/CallHistoryDB",
+    "Library/Application Support/com.apple.TCC",
+    "Library/Application Support/Knowledge",
+    "Pictures/Photos Library.photoslibrary",
+];
+
+/// Whether this process may read every folder without macOS asking. The TCC
+/// database is readable only with Full Disk Access, and a refused open fails
+/// quietly: Full Disk Access is never prompted for, unlike the folders above.
+fn full_disk_access(home: &Path) -> bool {
+    std::fs::File::open(home.join("Library/Application Support/com.apple.TCC/TCC.db")).is_ok()
 }
 
 impl Places {
@@ -257,7 +300,32 @@ impl Places {
             local: (os == "windows").then(|| var("LOCALAPPDATA")).flatten(),
             // `C:` alone is drive-relative; the separator makes it the root.
             system: (os == "windows").then(|| PathBuf::from(format!("{}\\", std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into())))),
+            private: Vec::new(),
         }
+        .guarded()
+    }
+
+    /// Fill in [`Places::private`] for this OS. Nothing on Linux or Windows.
+    pub fn guarded(mut self) -> Self {
+        self.private = if self.os == "macos" && self.home.parent().is_some() && !full_disk_access(&self.home) {
+            MAC_PRIVATE.iter().map(|p| self.home.join(p)).collect()
+        } else {
+            Vec::new()
+        };
+        self
+    }
+
+    /// Whether every folder a template can name is private: the part before
+    /// any `*` already is.
+    pub fn template_private(&self, template: &str) -> bool {
+        let Some(rest) = template.strip_prefix("{home}") else { return false };
+        let fixed = rest.split('/').filter(|p| !p.is_empty()).take_while(|p| *p != "*").fold(self.home.clone(), |d, p| d.join(p));
+        self.is_private(&fixed)
+    }
+
+    /// Whether `path` is, or is inside, a folder no scan enters.
+    pub fn is_private(&self, path: &Path) -> bool {
+        self.private.iter().any(|p| path.starts_with(p))
     }
 
     /// The catalogue for this OS.
@@ -284,6 +352,8 @@ impl Places {
         let Some(first) = first.filter(|p| p.is_absolute()) else { return Vec::new() };
         let mut found = vec![first];
         for part in parts {
+            // Not even listed or looked up: either can make macOS ask.
+            found.retain(|p| !self.is_private(p));
             found = if part == "*" {
                 found
                     .iter()
@@ -295,7 +365,7 @@ impl Places {
                 found.into_iter().map(|dir| dir.join(part)).collect()
             };
         }
-        found.retain(|p| std::fs::symlink_metadata(p).is_ok());
+        found.retain(|p| !self.is_private(p) && std::fs::symlink_metadata(p).is_ok());
         found
     }
 
@@ -378,7 +448,7 @@ mod tests {
             std::fs::create_dir_all(local.join("Google/Chrome/User Data").join(profile).join("Cache")).unwrap();
         }
         std::fs::create_dir_all(local.join("Google/Chrome/User Data/Default/Network")).unwrap();
-        let places = Places { os: "windows", home: dir.path().join("home"), temp: None, local: Some(local.clone()), system: None };
+        let places = Places { os: "windows", home: dir.path().join("home"), temp: None, local: Some(local.clone()), system: None, private: Vec::new() };
         let mut found = places.resolve("{local}/Google/Chrome/User Data/*/Cache");
         found.sort();
         assert_eq!(found.len(), 2);

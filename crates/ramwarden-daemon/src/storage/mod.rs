@@ -90,6 +90,9 @@ pub struct Usage {
     pub home: PathBuf,
     pub folders: Vec<Folder>,
     pub places: Vec<Row>,
+    /// Folders left out because reading them makes the OS ask the user
+    /// (`Places::private`). Empty unless that is so.
+    pub private: Vec<PathBuf>,
 }
 
 fn name_of(path: &std::path::Path) -> String {
@@ -97,6 +100,16 @@ fn name_of(path: &std::path::Path) -> String {
 }
 
 impl Usage {
+    /// What was left out, as the user would name it: the home folder's own
+    /// folders by name, and the rest as one line.
+    pub fn not_measured(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.private.iter().filter(|p| p.parent() == Some(self.home.as_path())).map(|p| name_of(p)).collect();
+        if self.private.iter().any(|p| p.parent() != Some(self.home.as_path())) {
+            out.push("other apps' data".into());
+        }
+        out
+    }
+
     /// Bytes RamWarden could clear after approval.
     pub fn clearable(&self) -> u64 {
         self.clear_rows().map(|r| r.bytes).sum()
@@ -133,8 +146,9 @@ impl Usage {
             "home_folders": self.folders.iter().map(folder).collect::<Vec<_>>(),
             "places": self.places.iter().filter(|r| r.bytes > 0 || r.paths.is_empty()).map(place).collect::<Vec<_>>(),
             "clearable_bytes": self.clearable(),
-            "clearable": size_text(self.clearable()),
-            "note": "kind clear: RamWarden can delete the contents after the user approves a proposal. kind review: the user's own files, never deleted by RamWarden. kind guide: the user follows the steps. complete false: the scan ran out of time and the size is a minimum.",
+"clearable": size_text(self.clearable()),
+            "not_measured": self.not_measured(),
+            "note": "kind clear: RamWarden can delete the contents after the user approves a proposal. kind review: the user's own files, never deleted by RamWarden. kind guide: the user follows the steps. complete false: the scan ran out of time or left out a private folder, and the size is a minimum. not_measured: folders macOS asks permission for, left out until the user gives RamWarden Full Disk Access.",
         })
     }
 }
@@ -244,9 +258,14 @@ impl Storage {
     /// `spawn_blocking`. Takes at most about `seconds`.
     pub fn scan(&self, seconds: u64, unix: u64) -> Arc<Usage> {
         let started = Instant::now();
-        let budget = Budget::new(Duration::from_secs(seconds.clamp(1, 120)), SCAN_ENTRIES);
+        let budget = Budget::new(Duration::from_secs(seconds.clamp(1, 120)), SCAN_ENTRIES).skipping(&self.places.private);
         let mut places: Vec<Row> = Vec::new();
         for item in self.places.items() {
+            // A place macOS guards (Downloads, Docker's data) is named in
+            // `not_measured`, not listed at 0 bytes.
+            if !item.paths.is_empty() && item.paths.iter().all(|t| self.places.template_private(t)) {
+                continue;
+            }
             let paths: Vec<PathBuf> = item.paths.iter().flat_map(|t| self.places.resolve(t)).collect();
             let mut bytes = 0;
             let mut complete = true;
@@ -312,6 +331,7 @@ impl Storage {
             home: self.places.home.clone(),
             folders,
             places,
+            private: self.places.private.clone(),
         });
         *self.usage.lock().unwrap() = Some(usage.clone());
         usage
@@ -390,11 +410,15 @@ impl Storage {
 // ── Wording ─────────────────────────────────────────────────────────────────
 
 /// The alert, in the warden's voice. Says the figure, and what it can do.
+///
+/// No "Baa" in the words: the baa is the goat clip the bubble's `sound`
+/// plays. Written into the text, the voice read it out as a word, in a
+/// person's voice, over the clip (reference Mac, 2026-11-19).
 pub fn alert_text(alert: &Alert, clearable: u64) -> String {
     let v = &alert.volume;
     let lead = match v.level {
-        Level::Critical => format!("Baa! {} is nearly full: {} left of {}.", v.name, size_text(v.free), size_text(v.total)),
-        _ => format!("Baa. {} is getting full: {} left of {}.", v.name, size_text(v.free), size_text(v.total)),
+        Level::Critical => format!("{} is nearly full: {} left of {}.", v.name, size_text(v.free), size_text(v.total)),
+        _ => format!("{} is getting full: {} left of {}.", v.name, size_text(v.free), size_text(v.total)),
     };
     if clearable >= MIN_CLEAR_BYTES {
         format!("{lead} I can clear {} of caches and temp files, nothing of yours. Shall I?", size_text(clearable))
@@ -428,10 +452,26 @@ pub fn summary(readings: &[Reading], usage: &Usage) -> String {
     if !guided.is_empty() {
         out.push(format!("Yours to decide, I can walk you through each: {}.", guided.join(", ")));
     }
+    let hidden = usage.not_measured();
+    if !hidden.is_empty() {
+        out.push(format!(
+            "I left out {} because macOS asks before any app reads them. To include them, give RamWarden Full Disk Access once in System Settings, Privacy & Security.",
+            list_text(&hidden)
+        ));
+    }
     if usage.partial {
         out.push("I ran out of time measuring, so some sizes are minimums. Ask again for a fuller count.".into());
     }
     out.join(" ")
+}
+
+/// "a", "a and b", "a, b and c".
+fn list_text(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// What clearing did, in the warden's voice.

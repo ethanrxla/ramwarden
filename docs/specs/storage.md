@@ -27,7 +27,7 @@ Code: `crates/ramwarden-platform/src/storage.rs` (trait),
   first. The alert is a storage bubble with `sound: "baa"` or `"baa_critical"`
   and a "Free N GB" button when something can be cleared. Clients play the baa
   once per bubble: macOS through `GoatAlerts` (its own 15-minute sound gap and
-  mute), Windows through `audio::bleat` (honours the companion's audio mute),
+  mute; the spoken line starts after the clip ends), Windows through `audio::bleat` (honours the companion's audio mute),
   Linux through `pw-play`, `paplay` or `aplay` (none installed: silent). The
   voice being off or muted silences the bubble; the alert is still logged.
   Storage bubbles skip the voice's gap and daily cap, because the watcher
@@ -38,6 +38,18 @@ Code: `crates/ramwarden-platform/src/storage.rs` (trait),
   no links, stays on one filesystem, and marks sizes it could not finish (out of time, or a folder it could not read) as
   minimums. Folders with a valid `CACHEDIR.TAG` (Cargo's `target/`, among
   others) are reported as build output. A scan under 10 minutes old is reused.
+- **Folders macOS guards.** On macOS without Full Disk Access, a scan never
+  opens, lists or looks up the folders macOS asks permission for
+  (`catalog::MAC_PRIVATE`: Desktop, Documents, Downloads, iCloud Drive, other
+  apps' containers, Mail, Messages, Photos and the like). The folder holding
+  one is reported as a minimum, catalogue places inside one are left out, and
+  the scan names them in `not_measured` and says how to include them: Full
+  Disk Access, granted once in System Settings, which macOS never prompts
+  for. Full Disk Access is detected by opening the TCC database, which fails
+  quietly without it. Linux and Windows leave nothing out.
+- **The baa is a sound, not a word.** Alert text never contains "Baa": the
+  bubble's `sound` plays the bundled goat clip (`assets/audio/baa*.wav`), and
+  a voice reading the text would say the word in a person's voice.
   Scans run only when asked or when an alert fires.
 - **Kinds.** `clear`: regenerable (app and browser caches, temp files older
   than a day, crash dumps and shader caches, Xcode DerivedData, npm, pip,

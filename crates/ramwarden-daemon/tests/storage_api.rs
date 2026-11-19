@@ -143,7 +143,7 @@ async fn a_due_alert_baas_once_with_the_offer() {
     ramwarden_daemon::storage::routes::raise(st.clone(), alert).await;
     let (_, b) = send(&st, "GET", "/warden/bubble", Value::Null).await;
     assert_eq!(b["bubble"]["sound"], "baa_critical");
-    assert!(b["bubble"]["text"].as_str().unwrap().starts_with("Baa! / is nearly full: 0.2 GB left of 930 GB."), "{b}");
+    assert!(b["bubble"]["text"].as_str().unwrap().starts_with("/ is nearly full: 0.2 GB left of 930 GB."), "{b}");
     assert!(b["bubble"]["proposal"].is_string());
 }
 

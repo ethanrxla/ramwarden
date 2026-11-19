@@ -118,11 +118,43 @@ fn the_alert_and_the_summary_say_the_figures() {
     let reading = Reading { name: "C:".into(), mount: "C:\\".into(), total: 930 << 30, free: 214_748_364, system: true, level: Level::Critical };
     let alert = Alert { volume: reading.clone(), at: 0 };
     let text = alert_text(&alert, usage.clearable());
-    assert!(text.starts_with("Baa! C: is nearly full: 0.2 GB left of 930 GB."), "{text}");
+    assert!(text.starts_with("C: is nearly full: 0.2 GB left of 930 GB."), "{text}");
     assert!(text.contains("Shall I?"));
     assert!(alert_text(&alert, 0).contains("nothing I can safely clear"));
     let s = summary(&[reading], &usage);
     assert!(s.contains("C: has 0.2 GB free of 930 GB."), "{s}");
     assert!(s.contains("Biggest folders in your home folder: code"), "{s}");
     assert!(s.contains("Yours to decide, I can walk you through each: Downloads"), "{s}");
+}
+
+#[test]
+fn folders_macos_asks_about_are_never_opened_and_are_named_instead() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = dir.path();
+    write(&h.join("Documents/thesis.pdf"), 5 * MB);
+    write(&h.join("Downloads/installer.iso"), 70 * MB);
+    write(&h.join("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"), 3 * MB);
+    write(&h.join("Library/Caches/app/blob"), 60 * MB);
+    write(&h.join("Music/song.mp3"), 2 * MB);
+    // What `guarded` gives a Mac without Full Disk Access; the probe itself
+    // reads the real TCC database, so the test sets the list directly.
+    let private = catalog::MAC_PRIVATE.iter().map(|p| h.join(p)).collect();
+    let storage = Storage::new(Places { os: "macos", home: h.to_path_buf(), private, ..Default::default() });
+    let usage = storage.scan(30, 1_000);
+    let names: Vec<String> = usage.folders.iter().map(|f| name_of(&f.path)).collect();
+    assert!(!names.iter().any(|n| n == "Documents" || n == "Downloads"), "{names:?}");
+    // Library is measured, without other apps' containers, and says it is a minimum.
+    let library = usage.folders.iter().find(|f| name_of(&f.path) == "Library").unwrap();
+    assert!(library.bytes >= 60 * MB as u64 && library.bytes < 63 * MB as u64 && !library.complete);
+    // Catalogue places inside them are not looked up either.
+    let by_id = |id: &str| usage.places.iter().find(|r| r.id == id);
+    assert!(by_id("downloads").is_none() && by_id("docker").is_none());
+    assert!(by_id("app-caches").unwrap().bytes >= 60 * MB as u64);
+    assert_eq!(usage.not_measured(), vec!["Desktop", "Documents", "Downloads", "other apps' data"]);
+    let s = summary(&[], &usage);
+    assert!(s.contains("I left out Desktop, Documents, Downloads and other apps' data because macOS asks"), "{s}");
+    assert_eq!(usage.view(false)["not_measured"][1], "Documents");
+    // Linux, and a Mac with Full Disk Access, leave nothing out.
+    let (_d, linux) = home();
+    assert!(linux.scan(30, 1_000).not_measured().is_empty());
 }
