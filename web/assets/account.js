@@ -18,7 +18,12 @@ const STATUS = {
   active: (a) => `Renews ${formatDate(a.paid_until)} at ${priceText(a)}.`,
   grace: () => "The last payment did not go through. Top up your wallet or card within 3 days to keep hosted features.",
   lapsed: () => "Your plan has ended. RamWarden keeps running in local mode until you renew.",
-  cancelled: (a) => (a.paid_until && Date.parse(a.paid_until) > Date.now() ? `Cancelled. Runs until ${formatDate(a.paid_until)}.` : "Cancelled."),
+  cancelled: (a) =>
+    a.paid_until && Date.parse(a.paid_until) > Date.now()
+      ? a.billing?.method === "thorchain"
+        ? `Paid ahead until ${formatDate(a.paid_until)}. Nothing renews by itself; add time whenever you like.`
+        : `Cancelled. Runs until ${formatDate(a.paid_until)}.`
+      : "Cancelled.",
 };
 
 function priceText(a) {
@@ -95,6 +100,8 @@ class AccountPage {
     const live = state === "ready" || state === "lite";
     // What the Upgrade button offers: Lite and lapsed go to Plus, Plus to Pro.
     const next = state === "lite" ? "ram" : state === "ready" && a.tier === "ram" ? "pro" : null;
+    // Paid ahead with a coin swap: nothing renews, so offer more time.
+    const prepaid = state === "ready" && a.billing?.method === "thorchain";
     this.flashArea = h("div");
     const install = live ? h("div", { class: "install" }) : null;
 
@@ -114,6 +121,7 @@ class AccountPage {
               { class: "row-actions" },
               h("button", { class: "button secondary small", type: "button", onclick: async () => { await api.logout().catch(() => {}); location.reload(); } }, "Sign out"),
               h("a", { class: "button secondary small", href: "account.html?signin=email" }, "Sign in with email instead"),
+              prepaid && !a.developer_access ? h("a", { class: "button small", "data-add-time": "", href: "#buy", onclick: () => this.addTime() }, "Add time") : null,
               next && !a.developer_access ? h("a", { class: "button small", "data-upgrade": next, href: "#buy", onclick: () => this.upgradeTo(next) }, next === "pro" ? "Upgrade to Pro" : "Upgrade to Plus") : null,
               !a.developer_access && ["trial", "active", "grace"].includes(a.status) ? h("button", { class: "button secondary small", type: "button", onclick: (e) => this.cancel(e.target) }, "Cancel plan") : null,
             ),
@@ -236,6 +244,11 @@ class AccountPage {
 
   // Upgrade opens the plan picker on the next tier. Plus to Pro is an
   // upgrade of the running plan, which the server prices.
+  addTime() {
+    this.addingTime = true;
+    this.upgradeTo(this.account.tier);
+  }
+
   upgradeTo(tier) {
     this.upgrading = tier;
     this.render();
@@ -291,7 +304,9 @@ class AccountPage {
       h(
         "h2",
         {},
-        this.upgrading === "pro"
+        this.addingTime
+          ? "Add time"
+          : this.upgrading === "pro"
           ? "Upgrade to Pro"
           : this.account.status
             ? "Renew"
@@ -445,6 +460,7 @@ class AccountPage {
       if (p.status === "confirmed") {
         this.account = await api.account();
         this.upgrading = null;
+        this.addingTime = false;
         this.render();
         this.flash(notice("ok", this.account.status === "trial" ? "Your trial has started. Install RamWarden below." : "You're all set. Install RamWarden below."));
         return;

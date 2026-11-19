@@ -235,10 +235,10 @@ impl Config {
             Some(addr) => {
                 let url = |k: &str, default: &str| -> Result<String, String> {
                     let u = var(k).unwrap_or_else(|| default.into()).trim_end_matches('/').to_string();
-                    if !u.starts_with("https://") && !u.starts_with("http://127.0.0.1") && !u.starts_with("http://localhost") {
-                        return Err(format!("{k} must be an https:// URL"));
+                    match reqwest::Url::parse(&u) {
+                        Ok(url) if safe_service_url(&url) && url.query().is_none() && url.fragment().is_none() => Ok(u),
+                        _ => Err(format!("{k} must be an https:// URL (http only for localhost)")),
                     }
-                    Ok(u)
                 };
                 Some(ThorConfig {
                     node_url: url("RAMWARDEN_THORNODE_URL", DEFAULT_NODE)?,
@@ -406,6 +406,8 @@ mod tests {
         assert!(t.live);
         assert!(cfg(&[("JEV_API_KEY", "k"), site, ("RAMWARDEN_THORCHAIN_PAYOUT", "bc1qnope")]).is_err());
         assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_THORNODE_URL", "http://evil.example")]).is_err());
+        assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_MIDGARD_URL", "http://localhost.evil.example")]).is_err());
+        assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_MIDGARD_URL", "http://127.0.0.1:9000")]).is_ok());
     }
 
     #[test]

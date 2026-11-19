@@ -236,10 +236,17 @@ cent; the payment id is `thor-<limit>`. THORChain refunds the buyer rather
 than pay out less than `limit`. The watcher reads Midgard's
 `/v2/actions?address=<payout>&type=swap` every 30 s, newest first, reads the
 limit back out of each successful swap's memo, and grants the plan only if at
-least its price in USDC reached the payout address. Granting confirms the
-payment first, so a swap seen twice grants once. A payment buys one period:
+least its price in USDC reached the payout address. Its watermark never
+passes a swap of ours still in flight (`pending`), so a streaming swap is
+seen when it lands. The grant is one compare-and-swap on the account
+(`Store::apply_prepaid`: `paid_until` unchanged since it was read, and the
+payment not yet in `prepaid_payments`); the payment is confirmed after it,
+so retries and concurrent watchers add each period exactly once and a crash
+in between is finished by the next poll. A payment buys one period:
 `paid_until` = later of now and current `paid_until`, plus the plan's days;
-the account is recorded as not renewing (`cancelled`), with no trial. EVM
+time left on another tier is converted at its value (price per day), so
+Plus days become fewer Pro days. The account is recorded as not renewing
+(`cancelled`), with no trial, and the account page offers "Add time". EVM
 coins (ETH, ETH on Base, BNB, AVAX) are sent as the router's
 `depositWithExpiry`; the rest by hand with the memo.
 

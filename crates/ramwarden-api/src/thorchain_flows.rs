@@ -50,11 +50,16 @@ async fn fake_thorchain() -> (String, Actions) {
                 }))
             }),
         )
+        // One swap per page, newest first, so paging is exercised.
         .route(
             "/v2/actions",
-            get(move || {
-                let a = rows.lock().unwrap().clone();
-                async move { Json(json!({"actions": a, "meta": {"nextPageToken": ""}})) }
+            get(move |Query(q): Query<std::collections::HashMap<String, String>>| {
+                let mut a = rows.lock().unwrap().clone();
+                a.sort_by_key(|x| std::cmp::Reverse(x["height"].as_str().unwrap().parse::<u64>().unwrap()));
+                let at: usize = q.get("nextPageToken").map_or(0, |t| t.parse().unwrap());
+                let page: Vec<Value> = a.iter().skip(at).take(1).cloned().collect();
+                let next = if at + 1 < a.len() { (at + 1).to_string() } else { String::new() };
+                async move { Json(json!({"actions": page, "meta": {"nextPageToken": next}})) }
             }),
         );
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -141,4 +146,68 @@ async fn a_short_swap_grants_nothing_and_an_unknown_coin_is_refused() {
     actions.lock().unwrap().push(action(memo, PAYOUT, 100_000_000, 7, "SHORT"));
     assert_eq!(Thorchain::new(cfg(&url, true)).poll(a.store.as_ref(), &Plans::built_in(), NOW).await.unwrap(), 0);
     assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().tier, None);
+}
+
+#[tokio::test]
+async fn a_swap_still_in_flight_is_granted_when_it_lands() {
+    let (a, cookie, account_id, url, actions) = signed_in(true).await;
+    let (_, q) = a.call("POST", "/v1/checkout/thorchain", Auth::Cookie(&cookie), Some(json!({"plan": 1, "asset": "BTC.BTC"}))).await;
+    let memo = q["memo"].as_str().unwrap().to_string();
+    let limit = memo_limit(&memo, PAYOUT).unwrap();
+    let mut streaming = action(&memo, PAYOUT, limit, 100, "SLOW");
+    streaming["status"] = json!("pending");
+    actions.lock().unwrap().push(streaming);
+    // Newer swaps from strangers land on top of it.
+    for h in 101..104 {
+        actions.lock().unwrap().push(action("=:BASE.USDC:0xother:1", "0xother", 5, h, "X"));
+    }
+    let watcher = Thorchain::new(cfg(&url, true));
+    let plans = Plans::built_in();
+    assert_eq!(watcher.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 0);
+    for h in 104..107 {
+        actions.lock().unwrap().push(action("=:BASE.USDC:0xother:1", "0xother", 5, h, "Y"));
+    }
+    assert_eq!(watcher.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 0, "still streaming");
+
+    actions.lock().unwrap().iter_mut().find(|x| x["in"][0]["txID"] == "SLOW").unwrap()["status"] = json!("success");
+    assert_eq!(watcher.poll(a.store.as_ref(), &plans, NOW).await.unwrap(), 1, "found below newer swaps");
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 30 * DAY));
+}
+
+#[tokio::test]
+async fn a_grant_interrupted_before_confirming_finishes_once() {
+    use ramwarden_cloud::model::{Billing, BillingMethod, PaymentStatus, Prepaid, PrepaidGrant};
+    let (a, cookie, account_id, url, actions) = signed_in(true).await;
+    let (_, q) = a.call("POST", "/v1/checkout/thorchain", Auth::Cookie(&cookie), Some(json!({"plan": 1, "asset": "BTC.BTC"}))).await;
+    let (memo, pid) = (q["memo"].as_str().unwrap().to_string(), q["payment_id"].as_str().unwrap().to_string());
+    // The account write landed, then the process died before confirming.
+    let grant = PrepaidGrant {
+        tier: ramwarden_cloud::model::Tier::Ram,
+        interval: ramwarden_cloud::model::Interval::Month,
+        paid_until: NOW + 30 * DAY,
+        billing: Billing { method: BillingMethod::Thorchain, reference: "bc1qbuyer".into() },
+    };
+    assert_eq!(a.store.apply_prepaid(&account_id, &pid, None, &grant).await.unwrap(), Prepaid::Applied);
+    actions.lock().unwrap().push(action(&memo, PAYOUT, memo_limit(&memo, PAYOUT).unwrap(), 5, "IN"));
+    assert_eq!(Thorchain::new(cfg(&url, true)).poll(a.store.as_ref(), &Plans::built_in(), NOW).await.unwrap(), 1);
+    assert_eq!(a.store.payment(&pid).await.unwrap().unwrap().status, PaymentStatus::Confirmed);
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 30 * DAY), "not added twice");
+}
+
+#[tokio::test]
+async fn two_payments_recorded_at_once_both_count() {
+    let (a, cookie, account_id, url, actions) = signed_in(true).await;
+    let mut memos = Vec::new();
+    for _ in 0..2 {
+        let (_, q) = a.call("POST", "/v1/checkout/thorchain", Auth::Cookie(&cookie), Some(json!({"plan": 1, "asset": "BTC.BTC"}))).await;
+        memos.push(q["memo"].as_str().unwrap().to_string());
+    }
+    for (i, m) in memos.iter().enumerate() {
+        actions.lock().unwrap().push(action(m, PAYOUT, memo_limit(m, PAYOUT).unwrap(), 10 + i as u64, &format!("IN{i}")));
+    }
+    let plans = Plans::built_in();
+    let (w1, w2) = (Thorchain::new(cfg(&url, true)), Thorchain::new(cfg(&url, true)));
+    let (r1, r2) = tokio::join!(w1.poll(a.store.as_ref(), &plans, NOW), w2.poll(a.store.as_ref(), &plans, NOW));
+    assert_eq!(r1.unwrap() + r2.unwrap(), 2, "each payment confirmed once");
+    assert_eq!(a.store.account(&account_id).await.unwrap().unwrap().paid_until, Some(NOW + 60 * DAY), "both periods");
 }

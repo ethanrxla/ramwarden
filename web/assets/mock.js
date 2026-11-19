@@ -25,6 +25,19 @@ export class MockApi {
       this.account_ = this.#newAccount("email", "you@example.com");
       this.signedIn = true;
     }
+    if (AS === "prepaid") {
+      this.account_ = this.#newAccount("email", "you@example.com");
+      Object.assign(this.account_, {
+        tier: "pro",
+        interval: "month",
+        status: "cancelled",
+        device_limit: 5,
+        trial_available: false,
+        billing: { method: "thorchain" },
+        paid_until: new Date(Date.now() + 20 * DAY).toISOString(),
+      });
+      this.signedIn = true;
+    }
     if (["trial", "active", "lapsed"].includes(AS)) {
       this.account_ = this.#newAccount("evm", "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
       Object.assign(this.account_, {

@@ -177,6 +177,10 @@ pub struct Account {
     /// What the site and the apps share: warden colors, the pet-comment mute.
     #[serde(default)]
     pub prefs: serde_json::Map<String, serde_json::Value>,
+    /// Prepaid payments (THORChain) already added to `paid_until`, so a
+    /// retried or concurrent grant never adds the same period twice.
+    #[serde(default)]
+    pub prepaid_payments: Vec<Id>,
 }
 
 fn default_device_limit() -> u32 {
@@ -199,6 +203,7 @@ impl Account {
             device_limit: DEVICE_LIMIT,
             developer_access: false,
             prefs: Default::default(),
+            prepaid_payments: Vec::new(),
         }
     }
 
@@ -263,6 +268,28 @@ impl Account {
 /// that signed in.
 pub fn chain_key(id: &str) -> [u8; 32] {
     Keccak256::digest(id.as_bytes()).into()
+}
+
+/// One prepaid period, applied by [`crate::store::Store::apply_prepaid`].
+/// `paid_until` is the new end, set exactly (it may move back when remaining
+/// time of a cheaper tier is converted into a dearer one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepaidGrant {
+    pub tier: Tier,
+    pub interval: Interval,
+    pub paid_until: u64,
+    pub billing: Billing,
+}
+
+/// What [`crate::store::Store::apply_prepaid`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prepaid {
+    Applied,
+    /// This payment was added before (a retry): nothing changed.
+    AlreadyApplied,
+    /// `paid_until` moved since it was read: read again and retry.
+    Changed,
+    NoAccount,
 }
 
 /// What billing reports. `None` fields are left as they are.

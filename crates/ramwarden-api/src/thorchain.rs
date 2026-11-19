@@ -45,7 +45,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use ramwarden_cloud::model::{Billing, BillingMethod, BillingUpdate};
+use ramwarden_cloud::model::{Account, Billing, BillingMethod, PaymentStatus, Prepaid, PrepaidGrant};
 use ramwarden_cloud::store::Store;
 use serde_json::{Value, json};
 
@@ -259,50 +259,95 @@ pub enum Recorded {
     Short { payment_id: String, received: u64 },
 }
 
-/// Grants the period a swap paid for. Confirming the payment is the atomic
-/// step, so a swap seen twice grants once.
+/// When a new period ends: after the time already paid for, or from now.
+///
+/// Time left on a different tier is converted at its value, not carried
+/// over day for day: a year of Plus does not become a year of Pro because
+/// one month of Pro was bought (and Pro left over buys more days of Plus).
+pub fn prepaid_until(plans: &Plans, a: &Account, plan: &PlanDef, now: u64) -> u64 {
+    let left = a.paid_until.unwrap_or(0).saturating_sub(now);
+    let left = match a.tier {
+        Some(tier) if left > 0 && tier != plan.tier() => {
+            let old = plans
+                .plans
+                .iter()
+                .find(|p| p.tier() == tier && Some(p.interval()) == a.interval)
+                .or_else(|| plans.plans.iter().find(|p| p.tier() == tier));
+            match old {
+                // left x (old cents per day) / (new cents per day)
+                Some(old) => (u128::from(left) * u128::from(plan_cents(old)) * u128::from(plan.days)
+                    / (u128::from(old.days) * u128::from(plan_cents(plan)).max(1))) as u64,
+                None => 0,
+            }
+        }
+        _ => left,
+    };
+    now + left + plan.days * 86_400
+}
+
+/// Grants the period a swap paid for.
+///
+/// The account update is one compare-and-swap that also records the payment
+/// on the account ([`Store::apply_prepaid`]), so concurrent watchers and
+/// retries add each period exactly once and never overwrite each other's.
+/// The payment is confirmed only after that, so a failure in between is
+/// finished by the next poll instead of losing the period.
 pub async fn record(store: &dyn Store, plans: &Plans, swap: &Swap, now: u64) -> Result<Recorded, String> {
+    let err = |e: ramwarden_cloud::store::StoreError| e.to_string();
     let id = payment_id(swap.limit);
-    let Some(p) = store.payment(&id).await.map_err(|e| e.to_string())? else { return Ok(Recorded::Ignored) };
-    if p.method != BillingMethod::Thorchain {
+    let Some(p) = store.payment(&id).await.map_err(err)? else { return Ok(Recorded::Ignored) };
+    if p.method != BillingMethod::Thorchain || p.status != PaymentStatus::Pending {
         return Ok(Recorded::Ignored);
     }
     let Some(plan) = plans.plan(p.plan) else { return Ok(Recorded::Ignored) };
     if swap.received < plan_cents(plan) * UNITS_PER_CENT {
         return Ok(Recorded::Short { payment_id: id, received: swap.received });
     }
-    if !store.confirm_payment(&id, &swap.in_tx).await.map_err(|e| e.to_string())? {
+    let mut paid_until = None;
+    for _ in 0..8 {
+        let Some(a) = store.account(&p.account_id).await.map_err(err)? else { return Ok(Recorded::Ignored) };
+        if a.prepaid_payments.contains(&id) {
+            paid_until = a.paid_until;
+            break;
+        }
+        let grant = PrepaidGrant {
+            tier: plan.tier(),
+            interval: plan.interval(),
+            paid_until: prepaid_until(plans, &a, plan, now),
+            billing: Billing { method: BillingMethod::Thorchain, reference: swap.from.clone() },
+        };
+        match store.apply_prepaid(&a.id, &id, a.paid_until, &grant).await.map_err(err)? {
+            Prepaid::Applied => {
+                paid_until = Some(grant.paid_until);
+                break;
+            }
+            Prepaid::AlreadyApplied | Prepaid::Changed => continue,
+            Prepaid::NoAccount => return Ok(Recorded::Ignored),
+        }
+    }
+    let Some(paid_until) = paid_until else { return Err(format!("{id}: the account kept changing; retrying next poll")) };
+    if !store.confirm_payment(&id, &swap.in_tx).await.map_err(err)? {
         return Ok(Recorded::Ignored);
     }
-    let Some(a) = store.account(&p.account_id).await.map_err(|e| e.to_string())? else { return Ok(Recorded::Ignored) };
-    let from = a.paid_until.filter(|&t| t > now).unwrap_or(now);
-    let paid_until = from + plan.days * 86_400;
-    let u = BillingUpdate {
-        tier: Some(plan.tier()),
-        interval: Some(plan.interval()),
-        trial_ends_at: Some(0),
-        paid_until: Some(paid_until),
-        // Prepaid: nothing renews, so the account shows when it ends.
-        cancelled: Some(true),
-        billing: Some(Billing { method: BillingMethod::Thorchain, reference: swap.from.clone() }),
-        trial_used: None,
-    };
-    store.update_billing(&a.id, &u).await.map_err(|e| e.to_string())?;
-    Ok(Recorded::Granted { account_id: a.id, paid_until })
+    Ok(Recorded::Granted { account_id: p.account_id, paid_until })
 }
 
 /// Talks to THORNode (quotes, prices) and Midgard (finished swaps).
 pub struct Thorchain {
     pub cfg: ThorConfig,
     http: reqwest::Client,
-    /// Highest block already scanned.
+    /// Every swap to the payout address at or below this height has been
+    /// scanned and is finished (succeeded or refunded).
     seen_height: AtomicU64,
     /// THORNode allows one quote a second per IP.
     quote_gate: tokio::sync::Mutex<()>,
 }
 
-/// Pages of 50 swaps scanned at most per poll.
-const MAX_PAGES: usize = 10;
+/// Pages of 50 swaps scanned on the first poll after a start: older swaps
+/// are history. Later polls page back until they reach `seen_height`.
+const FIRST_PAGES: usize = 10;
+/// A bound on one poll, for a Midgard that never stops paging.
+const MAX_PAGES: usize = 1_000;
 
 impl Thorchain {
     pub fn new(cfg: ThorConfig) -> Self {
@@ -383,21 +428,36 @@ impl Thorchain {
     }
 
     /// Scans the newest swaps to the payout address and records them.
+    ///
+    /// The watermark never passes a swap of ours still in flight: a swap is
+    /// listed at its inbound height while THORChain streams and sends it, so
+    /// the next poll pages back far enough to see it finish.
     pub async fn poll(&self, store: &dyn Store, plans: &Plans, now: u64) -> Result<usize, String> {
         let payout = self.cfg.payout_hex();
         let seen = self.seen_height.load(Ordering::Relaxed);
+        let pages = if seen == 0 { FIRST_PAGES } else { MAX_PAGES };
         let mut token: Option<String> = None;
         let mut top = seen;
+        let mut open: Option<u64> = None;
         let mut n = 0;
-        for _ in 0..MAX_PAGES {
+        for _ in 0..pages {
             let mut url = format!("{}/v2/actions?address={payout}&type=swap&limit=50", self.cfg.midgard_url);
             if let Some(t) = &token {
                 url.push_str(&format!("&nextPageToken={t}"));
             }
             let v = self.get(&url).await?;
             let actions = v["actions"].as_array().cloned().unwrap_or_default();
-            let heights: Vec<u64> = actions.iter().filter_map(|a| a["height"].as_str()?.parse().ok()).collect();
+            let height = |a: &Value| a["height"].as_str().and_then(|h| h.parse::<u64>().ok());
+            let heights: Vec<u64> = actions.iter().filter_map(height).collect();
             top = top.max(heights.iter().copied().max().unwrap_or(0));
+            for a in &actions {
+                let ours = a["metadata"]["swap"]["memo"].as_str().is_some_and(|m| memo_limit(m, &payout).is_some());
+                if ours && a["status"] == "pending"
+                    && let Some(h) = height(a)
+                {
+                    open = Some(open.map_or(h, |o| o.min(h)));
+                }
+            }
             for swap in decode_actions(&actions, &payout) {
                 match record(store, plans, &swap, now).await? {
                     Recorded::Granted { account_id, paid_until } => {
@@ -416,7 +476,11 @@ impl Thorchain {
                 break;
             }
         }
-        self.seen_height.store(top, Ordering::Relaxed);
+        let mark = match open {
+            Some(h) => top.min(h.saturating_sub(1)),
+            None => top,
+        };
+        self.seen_height.store(mark, Ordering::Relaxed);
         Ok(n)
     }
 
@@ -478,6 +542,28 @@ pub(crate) mod tests {
         assert_eq!(atom.native_amount(1_234_567_801), 12_345_679, "rounded up to a uatom");
         assert_eq!(btc.display(100_000_000), "1");
         assert!(pay_asset("ETH.USDT-0XDAC").is_none());
+    }
+
+    #[test]
+    fn time_left_on_another_tier_converts_at_its_value() {
+        use ramwarden_cloud::model::{Identity, Interval, Tier};
+        let plans = Plans::built_in();
+        let (plus, pro) = (plans.plan(1).unwrap(), plans.plan(2).unwrap());
+        let now = 1_000_000;
+        let mut a = Account::new("a".into(), Identity::email("a@example.com"), now);
+        assert_eq!(prepaid_until(&plans, &a, plus, now), now + plus.days * 86_400, "nothing left");
+        a.tier = Some(Tier::Ram);
+        a.interval = Some(Interval::Month);
+        a.paid_until = Some(now + 300 * 86_400);
+        assert_eq!(prepaid_until(&plans, &a, plus, now), now + 330 * 86_400, "same tier: days carry over");
+        let pro_until = prepaid_until(&plans, &a, pro, now);
+        let left = 300 * 86_400 * plan_cents(plus) / plan_cents(pro);
+        assert_eq!(pro_until, now + left + pro.days * 86_400, "Plus days become fewer Pro days");
+        assert!(pro_until < now + 330 * 86_400);
+        a.tier = Some(Tier::Pro);
+        assert!(prepaid_until(&plans, &a, plus, now) > now + 330 * 86_400, "Pro days become more Plus days");
+        a.paid_until = Some(now - 5);
+        assert_eq!(prepaid_until(&plans, &a, plus, now), now + plus.days * 86_400, "lapsed time is gone");
     }
 
     #[test]

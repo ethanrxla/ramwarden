@@ -273,6 +273,21 @@ async function run() {
     assert.deepEqual(p.errors, []);
   });
 
+  t("account page: a plan paid ahead with a coin offers more time, Pro included", async () => {
+    const p = await page();
+    await p.goto(`${base}/account.html?mock=1&as=prepaid`);
+    await p.waitForSelector("h2:text('RamWarden Pro')");
+    assert.match(await p.textContent("main, body"), /Paid ahead until/);
+    assert.equal(await p.isVisible("#buy"), false, "no plan picker until asked");
+    assert.equal(await p.isVisible("text=Cancel plan"), false, "nothing to cancel");
+    await p.click("[data-add-time]");
+    await p.waitForSelector("h2:text('Add time')");
+    assert.equal(await p.isChecked('input[name=tier][value="pro"]'), true, "the current tier is picked");
+    await p.getByRole("button", { name: /Any other coin/ }).click();
+    await p.waitForSelector("text=Get the amount");
+    assert.deepEqual(p.errors, []);
+  });
+
   t("account page: email sign-in with a code, then cancel the card trial", async () => {
     const p = await page();
     p.on("dialog", (d) => d.accept());
