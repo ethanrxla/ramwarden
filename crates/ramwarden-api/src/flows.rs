@@ -51,16 +51,18 @@ pub(crate) enum Auth<'a> {
     Bearer(&'a str),
 }
 
-struct Opts {
-    downloads: Option<PathBuf>,
-    stripe: Option<String>,
+#[derive(Default)]
+pub(crate) struct Opts {
+    pub(crate) downloads: Option<PathBuf>,
+    pub(crate) stripe: Option<String>,
+    pub(crate) thorchain: Option<crate::thorchain::ThorConfig>,
 }
 
 pub(crate) fn app() -> App {
-    app_with(Opts { downloads: None, stripe: None })
+    app_with(Opts::default())
 }
 
-fn app_with(o: Opts) -> App { app_with_threat(o,crate::threat::ThreatDesk::default()) }
+pub(crate) fn app_with(o: Opts) -> App { app_with_threat(o,crate::threat::ThreatDesk::default()) }
 
 fn app_with_threat(o:Opts,threat:crate::threat::ThreatDesk)->App {
     let store = Arc::new(MemoryStore::new());
@@ -73,6 +75,7 @@ fn app_with_threat(o:Opts,threat:crate::threat::ThreatDesk)->App {
         billing: Billing {
             base: Some(Arc::new(BaseChain::new(base()))),
             stripe: o.stripe.map(|url| Stripe::with_base(Secret::new("sk_test_123"), Secret::new(WHSEC), &url)),
+            thorchain: o.thorchain.map(|c| Arc::new(crate::thorchain::Thorchain::new(c))),
         },
         signer: Some(EntitlementSigner::from_base64(SEED).unwrap()),
         mailer: Some(mailer.clone()),
@@ -154,7 +157,7 @@ impl App {
     }
 
     /// The daemon's whole sign-in: start, approve with a wallet, claim.
-    async fn sign_in_device(&self, w: &EvmWallet) -> (String, String, String) {
+    pub(crate) async fn sign_in_device(&self, w: &EvmWallet) -> (String, String, String) {
         let (dc, code) = self.start_device().await;
         let (s, v, cookie) = self.sign_in_evm(w, Some(&code)).await;
         assert_eq!(s, StatusCode::OK, "{v}");
@@ -565,7 +568,7 @@ async fn fake_stripe() -> (String, Seen, PaymentStoreProbe) {
 #[tokio::test]
 async fn a_card_trial_starts_from_a_signed_webhook() {
     let (url, seen, probe) = fake_stripe().await;
-    let a = app_with(Opts { downloads: None, stripe: Some(url) });
+    let a = app_with(Opts { stripe: Some(url), ..Default::default() });
     *probe.lock().unwrap() = Some(a.store.clone());
     let (s, _) = a.call("POST", "/v1/auth/email/start", Auth::None, Some(json!({"email": "card@example.com"}))).await;
     assert_eq!(s, StatusCode::OK);
@@ -648,7 +651,7 @@ async fn threatwarden_downloads_need_pro_in_good_standing() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("threat")).unwrap();
     std::fs::write(dir.path().join("threat/threatwarden-linux-x86_64.tar.gz"), b"installer").unwrap();
-    let a = app_with(Opts { downloads: Some(dir.path().to_path_buf()), stripe: None });
+    let a = app_with(Opts { downloads: Some(dir.path().to_path_buf()), ..Default::default() });
     let (tok, cookie, id) = a.sign_in_device(&EvmWallet::new(9)).await;
     let uri = "/v1/downloads/threat/threatwarden-linux-x86_64.tar.gz";
 
@@ -869,7 +872,7 @@ async fn hosted_threat_reports_require_pro_and_only_query_the_bound_device() {
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url=format!("http://{}",listener.local_addr().unwrap());
     let server=tokio::spawn(async move{axum::serve(listener,manager).await.unwrap()});
-    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let a=app_with_threat(Opts::default(),crate::threat::ThreatDesk::testing(&url));
     let (dc,code)=a.start_device().await;
     let (_,v,_)=a.sign_in_evm(&EvmWallet::new(87),Some(&code)).await;
     let account=v["account"]["id"].as_str().unwrap();
@@ -902,7 +905,7 @@ async fn hosted_enrollment_uses_server_identity_and_returns_only_its_own_key() {
         .route("/agents/043/group/{group}",put(||async{Json(json!({"data":{"affected_items":["043"],"failed_items":[]}}))}))
         .route("/agents/043/key",get(move ||{let name=key.lock().unwrap().clone().unwrap();async move{let key=base64::engine::general_purpose::STANDARD.encode(format!("043 {name} any {}","a".repeat(64)));Json(json!({"data":{"affected_items":[{"key":key}]}}))}}));
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());let server=tokio::spawn(async move{axum::serve(listener,manager).await.unwrap()});
-    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let a=app_with_threat(Opts::default(),crate::threat::ThreatDesk::testing(&url));
     let (dc,code)=a.start_device().await;let (_,v,_)=a.sign_in_evm(&EvmWallet::new(88),Some(&code)).await;
     let account=v["account"]["id"].as_str().unwrap();a.store.update_billing(account,&BillingUpdate{tier:Some(Tier::Pro),paid_until:Some(NOW+100),..Default::default()}).await.unwrap();
     let (_,token)=a.call("POST","/v1/device/token",Auth::None,Some(json!({"device_code":dc}))).await;let token=token["device_token"].as_str().unwrap();
@@ -928,7 +931,7 @@ async fn source_events_require_pro_bound_device_and_reject_foreign_records(){
     }));
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
     let server=tokio::spawn(async move{axum::serve(listener,indexer).await.unwrap()});
-    let a=app_with_threat(Opts{downloads:None,stripe:None},crate::threat::ThreatDesk::testing(&url));
+    let a=app_with_threat(Opts::default(),crate::threat::ThreatDesk::testing(&url));
     let (token,_,account)=a.sign_in_device(&EvmWallet::new(90)).await;
     let path="/v1/wardens/threat/events/owned-event";
     assert_eq!(a.call("GET",path,Auth::None,None).await.0,StatusCode::UNAUTHORIZED);

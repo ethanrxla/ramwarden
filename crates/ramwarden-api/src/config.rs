@@ -11,6 +11,7 @@ use ramwarden_ai::secret::Secret;
 use sha2::{Digest, Sha256};
 
 use crate::checkout::{BASE_MAINNET, BASE_SEPOLIA, BaseConfig, parse_address};
+use crate::thorchain::{DEFAULT_MIDGARD, DEFAULT_NODE, ThorConfig};
 
 /// A client token, kept only as its SHA-256.
 pub type TokenHash = [u8; 32];
@@ -62,6 +63,8 @@ pub struct CloudConfig {
     pub entitlement_key: Option<Secret>,
     pub downloads_dir: Option<String>,
     pub base: Option<BaseConfig>,
+    /// Any-coin checkout through THORChain, paying out USDC on Base.
+    pub thorchain: Option<ThorConfig>,
     pub stripe: Option<StripeKeys>,
     pub mail: MailConfig,
     /// SHA-256 of `RAMWARDEN_SUPPORT_TOKEN`: the team's key to the ticket
@@ -226,6 +229,25 @@ impl Config {
                 })
             }
         };
+        // THORChain has no testnet: without the live flag it only quotes.
+        let thorchain = match var("RAMWARDEN_THORCHAIN_PAYOUT") {
+            None => None,
+            Some(addr) => {
+                let url = |k: &str, default: &str| -> Result<String, String> {
+                    let u = var(k).unwrap_or_else(|| default.into()).trim_end_matches('/').to_string();
+                    if !u.starts_with("https://") && !u.starts_with("http://127.0.0.1") && !u.starts_with("http://localhost") {
+                        return Err(format!("{k} must be an https:// URL"));
+                    }
+                    Ok(u)
+                };
+                Some(ThorConfig {
+                    node_url: url("RAMWARDEN_THORNODE_URL", DEFAULT_NODE)?,
+                    midgard_url: url("RAMWARDEN_MIDGARD_URL", DEFAULT_MIDGARD)?,
+                    payout: parse_address(&addr).map_err(|e| format!("RAMWARDEN_THORCHAIN_PAYOUT: {e}"))?,
+                    live: live_ok,
+                })
+            }
+        };
         let stripe = match (var("STRIPE_SECRET_KEY"), var("STRIPE_WEBHOOK_SECRET")) {
             (None, None) => None,
             (Some(k), Some(w)) => {
@@ -279,6 +301,7 @@ impl Config {
             entitlement_key: var("RAMWARDEN_ENTITLEMENT_KEY").map(Secret::new),
             downloads_dir: var("RAMWARDEN_DOWNLOADS_DIR"),
             base,
+            thorchain,
             stripe,
             mail,
             support_token,
@@ -369,6 +392,20 @@ mod tests {
             cfg(&[("JEV_API_KEY", "k"), ("RAMWARDEN_SITE_ORIGIN", "https://a.b"), ("RAMWARDEN_CHECKOUT_ADDRESS", "0x12")])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn thorchain_quotes_until_real_money_is_allowed() {
+        let site = ("RAMWARDEN_SITE_ORIGIN", "https://ramwarden.app");
+        let payout = ("RAMWARDEN_THORCHAIN_PAYOUT", "0x00000000000000000000000000000000000000aa");
+        assert!(cfg(&[("JEV_API_KEY", "k"), site]).unwrap().cloud.unwrap().thorchain.is_none());
+        let t = cfg(&[("JEV_API_KEY", "k"), site, payout]).unwrap().cloud.unwrap().thorchain.unwrap();
+        assert!(!t.live, "THORChain is mainnet only: quotes, no deposit addresses");
+        assert_eq!(t.node_url, crate::thorchain::DEFAULT_NODE);
+        let t = cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_ALLOW_LIVE_PAYMENTS", "1")]).unwrap().cloud.unwrap().thorchain.unwrap();
+        assert!(t.live);
+        assert!(cfg(&[("JEV_API_KEY", "k"), site, ("RAMWARDEN_THORCHAIN_PAYOUT", "bc1qnope")]).is_err());
+        assert!(cfg(&[("JEV_API_KEY", "k"), site, payout, ("RAMWARDEN_THORNODE_URL", "http://evil.example")]).is_err());
     }
 
     #[test]

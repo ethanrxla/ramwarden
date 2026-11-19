@@ -180,7 +180,13 @@ export class MockApi {
       base: { chain_id: 84532, network: "Base Sepolia (test)" },
       solana: { network: "Solana devnet (test)" },
       stripe: true,
+      thorchain: { live: false, assets: [{ asset: "BTC.BTC", name: "Bitcoin", symbol: "BTC", wallet: "memo" }, { asset: "ETH.ETH", name: "Ether", symbol: "ETH", wallet: "evm" }] },
     };
+  }
+  async checkoutThorchain(plan, asset) {
+    const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);
+    const btc = asset === "BTC.BTC";
+    return { preview: true, renews: false, usd: p.usd.toFixed(2), days: p.days, amount: btc ? "0.00005312" : "0.00161", asset: { asset, symbol: btc ? "BTC" : "ETH" } };
   }
   async checkoutBase(plan, payer) {
     const p = (await this.checkoutConfig()).plans.find((x) => x.id === plan);

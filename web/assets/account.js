@@ -34,7 +34,7 @@ class AccountPage {
   constructor() {
     this.account = null;
     this.plans = config.plans;
-    this.methods = { base: true, solana: true, stripe: true };
+    this.methods = { base: true, solana: true, stripe: true, thorchain: false };
   }
 
   async start() {
@@ -76,10 +76,11 @@ class AccountPage {
     try {
       const c = await api.checkoutConfig();
       if (Array.isArray(c.plans) && c.plans.length) this.plans = c.plans;
-      this.methods = { base: !!c.base, solana: !!c.solana, stripe: !!c.stripe };
+      this.methods = { base: !!c.base, solana: !!c.solana, stripe: !!c.stripe, thorchain: !!c.thorchain };
       this.networks = { base: c.base?.network, solana: c.solana?.network };
+      this.coins = c.thorchain?.assets || [];
     } catch {
-      this.methods = { base: false, solana: false, stripe: false };
+      this.methods = { base: false, solana: false, stripe: false, thorchain: false };
     }
   }
 
@@ -242,7 +243,7 @@ class AccountPage {
   }
 
   buyPanel() {
-    const any = this.methods.base || this.methods.solana || this.methods.stripe;
+    const any = this.methods.base || this.methods.solana || this.methods.stripe || this.methods.thorchain;
     const area = h("div");
     // `?plan=<id>` (sent by agents and the pricing cards) preselects a plan
     // the server sells; any other value is ignored.
@@ -308,6 +309,7 @@ class AccountPage {
               method("base", "USDC on Base", this.networks?.base || "MetaMask, Phantom or any EVM wallet", (p, a) => this.payCrypto("evm", p, a)),
               method("solana", "USDC on Solana", this.networks?.solana || "Phantom", (p, a) => this.payCrypto("solana", p, a)),
               method("stripe", "Card or Apple Pay", "Card, Apple Pay or Google Pay", (p, a) => this.payStripe(p, a)),
+              method("thorchain", "Any other coin", "Bitcoin, Ether, BNB, Litecoin, Dogecoin and more. Pays one period ahead.", (p, a) => this.payAnyCoin(p, a)),
             ),
             area,
           ]
@@ -342,6 +344,52 @@ class AccountPage {
     } catch (err) {
       show(area, notice("error", errorText(err)));
     }
+  }
+
+  // Any coin THORChain swaps. One payment buys one period; nothing renews.
+  // EVM coins are sent through the router from the browser wallet; the rest
+  // by hand, with the memo, from a wallet that can attach one.
+  payAnyCoin(plan, area) {
+    const select = h("select", { "aria-label": "Coin" }, this.coins.map((c) => h("option", { value: c.asset }, `${c.name} (${c.symbol})`)));
+    const go = h("button", { type: "button", class: "button" }, "Get the amount");
+    const out = h("div");
+    go.onclick = async () => {
+      go.disabled = true;
+      show(out, notice("info", "Asking THORChain for a price. This takes a few seconds…"));
+      try {
+        const q = await api.checkoutThorchain(plan, select.value);
+        go.disabled = false;
+        const coin = q.asset;
+        const what = `$${q.usd} buys ${q.days} days. It does not renew; pay again any time to add more days.`;
+        if (q.preview) {
+          show(out, notice("info", `About ${q.amount} ${coin.symbol} today. ${what} Paying with other coins opens soon.`));
+          return;
+        }
+        if (q.transactions?.length) {
+          show(out, notice("info", `Send ${q.amount} ${coin.symbol}. ${what} Confirm in your wallet.`));
+          const wallet = await pickWallet(out, { chain: "evm", purpose: `Pick the wallet that holds your ${coin.symbol}.` });
+          await wallet.pay(q);
+          await this.waitForPayment(q.payment_id, out, null, { polls: 360, every: 10_000 });
+          return;
+        }
+        const minutes = Math.max(10, Math.round((q.swap_seconds || 600) / 60));
+        show(
+          out,
+          h(
+            "div",
+            { class: "coin-pay" },
+            h("p", {}, `Send exactly ${q.amount} ${coin.symbol} with this memo before ${formatDate(q.expires_at)}. ${what}`),
+            h("dl", {}, h("dt", {}, "To"), h("dd", {}, h("code", {}, q.inbound_address)), h("dt", {}, "Amount"), h("dd", {}, h("code", {}, `${q.amount} ${coin.symbol}`)), h("dt", {}, "Memo"), h("dd", {}, h("code", {}, q.memo))),
+            h("p", { class: "muted" }, `The address belongs to THORChain, which swaps your ${coin.symbol} to USDC on Base. Without the memo the swap can't find your account, and THORChain refunds it if the price drops below $${q.usd}. Your wallet must let you add a memo. Your plan unlocks about ${minutes} minutes after you send; you can close this page.`),
+          ),
+        );
+        this.waitForPayment(q.payment_id, h("div"), null, { polls: 360, every: 10_000 });
+      } catch (err) {
+        go.disabled = false;
+        show(out, notice("error", errorText(err)));
+      }
+    };
+    show(area, h("div", { class: "coin-picker" }, select, go), out);
   }
 
   async payStripe(plan, area) {
@@ -389,10 +437,10 @@ class AccountPage {
     }
   }
 
-  async waitForPayment(id, area) {
+  async waitForPayment(id, area, _panel, { polls = POLL_LIMIT, every = POLL_MS } = {}) {
     show(area, notice("info", "Sent. Waiting for the network to confirm it…"));
-    for (let i = 0; i < POLL_LIMIT; i++) {
-      await new Promise((r) => setTimeout(r, POLL_MS));
+    for (let i = 0; i < polls; i++) {
+      await new Promise((r) => setTimeout(r, isMock ? POLL_MS : every));
       const p = await api.payment(id);
       if (p.status === "confirmed") {
         this.account = await api.account();

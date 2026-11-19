@@ -133,12 +133,16 @@ pub enum BillingMethod {
     Base,
     Solana,
     Card,
+    /// Any coin, swapped by THORChain to USDC on Base. Prepaid: one payment
+    /// buys one period and nothing renews.
+    Thorchain,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Billing {
     pub method: BillingMethod,
-    /// Base: the paying wallet. Card: the Stripe subscription id.
+    /// Base: the paying wallet. Card: the Stripe subscription id. THORChain:
+    /// the address the coins came from.
     pub reference: String,
 }
 

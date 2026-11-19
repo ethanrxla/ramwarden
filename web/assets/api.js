@@ -120,6 +120,9 @@ export class Api {
   checkoutSolana(plan, payer) {
     return this.request("POST", "/v1/checkout/solana", { plan, payer });
   }
+  checkoutThorchain(plan, asset) {
+    return this.request("POST", "/v1/checkout/thorchain", { plan, asset });
+  }
   checkoutStripe(plan) {
     return this.request("POST", "/v1/checkout/stripe", { plan });
   }

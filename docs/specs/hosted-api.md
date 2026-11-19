@@ -144,10 +144,11 @@ unless cancelled.
 | `GET /v1/account` | session | account (below) |
 | `PUT /v1/account/prefs` `{...}` | session | `{prefs}`; any JSON object up to 4 KB, replacing the old one |
 | `DELETE /v1/account/devices/{id}` | session | `{ok}`; that device's token stops working at once |
-| `GET /v1/checkout/config` | none | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], wardens, base: {chain_id, network, contract, usdc} \| null, solana: null, stripe, stripe_test}` |
+| `GET /v1/checkout/config` | none | `{plans: [{id, tier, name, usd, interval, days, trial_days, approval_usd, wardens}], wardens, base: {chain_id, network, contract, usdc} \| null, solana: null, stripe, stripe_test, thorchain: {live, assets: [{asset, name, symbol, wallet: evm \| memo}]} \| null}` |
 | `POST /v1/checkout/base` `{plan, payer?}` | session | `{payment_id, chain_id, upgrade, payer, trial, approval_usd, transactions}`; for an upgrade the transactions end in `changePlan` and `payer` names the wallet that must send them; 409 for a downgrade or the same plan |
 | `POST /v1/checkout/stripe` `{plan}` | session | `{payment_id, upgrade, url, trial}`: open `url` (Stripe Checkout); for an upgrade `url` is null and the change is already made; 409 for a downgrade; 503 without Stripe keys |
 | `POST /v1/checkout/solana` | session | 503 until Solana opens |
+| `POST /v1/checkout/thorchain` `{plan, asset}` | session | `{preview, asset, amount, usd, days, swap_seconds, renews: false}`; when live also `{payment_id, inbound_address, memo, expires_at, chain_id, transactions}` (one router call for EVM coins, none for the rest). 409 while a renewing Base or card plan is live, or Pro to Plus mid-period; 422 for a coin not offered; 502 when THORChain gives no quote; 503 when off |
 | `GET /v1/checkout/payments/{id}` | session | `{id, plan, method, status: pending \| confirmed \| failed, reason, account_status, tier, trial_ends_at, entitlement_until}` |
 | `POST /v1/checkout/cancel` | session | Base: `{chain_id, payer, transactions: [cancel(account)]}` for the paying wallet to send. Card: cancels at Stripe, `{cancelled, service_until}`. 409 with nothing to cancel |
 | `POST /v1/stripe/webhook` | Stripe signature | 200 when recorded or ignored; 400 for a bad or stale signature |
@@ -225,6 +226,23 @@ contract's own dates onto the account.
 webhooks set tier, interval and cancellation; `paid_until` moves only for a
 `trialing` or `active` subscription.
 
+**Any other coin (THORChain).** `POST /v1/checkout/thorchain` quotes the
+coin against USDC on Base (`BASE.USDC-0X8335…2913`) paid to
+`RAMWARDEN_THORCHAIN_PAYOUT`, sized from the pool price so that the
+expected output covers the plan price, THORChain's outbound fee and a 2%
+cushion. The memo is `=:BASE.USDC:<payout>:<limit>/1/0`, where `limit` is
+price plus outbound fee rounded up to a cent, plus a random tag under one
+cent; the payment id is `thor-<limit>`. THORChain refunds the buyer rather
+than pay out less than `limit`. The watcher reads Midgard's
+`/v2/actions?address=<payout>&type=swap` every 30 s, newest first, reads the
+limit back out of each successful swap's memo, and grants the plan only if at
+least its price in USDC reached the payout address. Granting confirms the
+payment first, so a swap seen twice grants once. A payment buys one period:
+`paid_until` = later of now and current `paid_until`, plus the plan's days;
+the account is recorded as not renewing (`cancelled`), with no trial. EVM
+coins (ETH, ETH on Base, BNB, AVAX) are sent as the router's
+`depositWithExpiry`; the rest by hand with the memo.
+
 ### Policy
 
 - **Three credentials, never interchangeable.** A web session (`rwse_`, 12 h,
@@ -248,7 +266,9 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
 - **Devices: 1 on Lite, 3 on Plus, 5 on Pro**, checked when the link page
   approves, when an install line is issued and when the daemon claims.
 - **Real money waits for the audit.** Base mainnet and live Stripe keys are
-  refused at start unless `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1`.
+  refused at start unless `RAMWARDEN_ALLOW_LIVE_PAYMENTS=1`. THORChain has
+  no testnet, so without that flag it only quotes: no payment is created and
+  no deposit address is shown.
 - **Downloads decide who, not what.** File names must be plain; the launcher
   checks size and SHA-256 from the signed release manifest
   (`docs/specs/updates.md`).
@@ -269,6 +289,8 @@ webhooks set tier, interval and cancellation; `paid_until` moves only for a
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | unset: card checkout off. Both or neither; `sk_test_` unless live payments are allowed |
 | `RESEND_API_KEY` + `RAMWARDEN_MAIL_FROM` | unset: email sign-in off |
 | `RAMWARDEN_DEV_MAIL_LOG` | `1` writes sign-in codes to the log instead of mailing them. Development only |
+| `RAMWARDEN_THORCHAIN_PAYOUT` | unset: any-coin checkout off. The operator's USDC address on Base |
+| `RAMWARDEN_THORNODE_URL` / `RAMWARDEN_MIDGARD_URL` | THORChain's public Liquify gateway |
 | `RAMWARDEN_ALLOW_LIVE_PAYMENTS` | unset |
 | `RAMWARDEN_PUBLIC_URL` | `https://api.<site domain>`: this API's URL as install lines name it |
 | `RAMWARDEN_RELEASES_URL` | `https://github.com/ethanrxla/ramwarden/releases/latest/download` |
@@ -296,6 +318,10 @@ downloads need Pro; CORS with
 credentials for the site only. Unit tests cover SIWE, EIP-55, Base calldata
 (one-year approval, `startTrial` arguments), log decoding, Stripe signatures
 and event mapping, the entitlement text and config validation.
+`src/thorchain_flows.rs` runs the any-coin checkout against a fake THORNode
+and Midgard: preview only without the live flag; a Bitcoin swap grants one
+period once, a rescan grants nothing, an Ether payment goes through the
+router and extends from the end of paid time; a short swap grants nothing.
 `cargo test -p ramwarden-cloud` runs the shared store contract on memory, and
 on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
 `contracts/` covers the subscription contract and the keeper.
@@ -316,6 +342,11 @@ on Atlas when `RAMWARDEN_TEST_MONGODB_URI` is set. `npx hardhat test` in
   not built yet. Until it is, the app signs in through the device page as
   before, and the link expires unused.
 - Native Solana answers 503; Phantom pays on Base through its EVM account.
+- THORChain payments need a wallet that can add a memo for non-EVM coins
+  (many Bitcoin wallets can't). THORChain's memoless reference deposits
+  would remove that, at the cost of a RUNE-funded registration per payment.
+  Tokens (USDT, USDC on other chains) and Solana are not offered yet. A swap
+  that pays less than the price stays pending for support.
 - The contract is not deployed. Base checkout has run against Hardhat and the
   test logs only; Stripe against a fake. Going live needs a deployed contract
   on Base Sepolia, Stripe test keys, a Resend key, then an outside audit

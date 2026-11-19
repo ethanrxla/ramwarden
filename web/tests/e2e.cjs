@@ -261,6 +261,18 @@ async function run() {
     }
   });
 
+  t("account page: any other coin quotes a price, and is a preview until live", async () => {
+    const p = await page();
+    await p.goto(`${base}/account.html?mock=1&as=lite`);
+    await p.getByRole("button", { name: /Any other coin/ }).click();
+    await p.selectOption("select[aria-label=Coin]", "BTC.BTC");
+    await p.getByRole("button", { name: "Get the amount" }).click();
+    await p.waitForSelector("text=About 0.00005312 BTC today");
+    assert.match(await p.textContent("#buy"), /does not renew/);
+    if (process.env.SHOT) await p.locator("#buy").screenshot({ path: process.env.SHOT });
+    assert.deepEqual(p.errors, []);
+  });
+
   t("account page: email sign-in with a code, then cancel the card trial", async () => {
     const p = await page();
     p.on("dialog", (d) => d.accept());
