@@ -435,7 +435,7 @@ mod selection_tests {
 /// every tab the sweep picks also clears this, and the sweep and the close
 /// agree on every target.
 pub fn close_floor(row: &Row, cfg: &ramwarden_core::config::Tabs) -> i64 {
-    let need = closetune::needed_minutes(row, cfg);
+    let need = row.needed_minutes(cfg);
     let need = match duplicate_idle(cfg) {
         Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => need.min(d),
         _ => need,
@@ -473,7 +473,7 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         && !r.work
         && {
             let idle = r.active_idle_minutes;
-            let need = closetune::needed_minutes(r, cfg);
+            let need = r.needed_minutes(cfg);
             r.status == "browser page" && idle >= need
                 || matches!(r.status, "candidate" | "unloaded")
                     && ((idle >= need && r.close_chance(cfg) < ceiling)

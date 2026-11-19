@@ -12,7 +12,7 @@
 //!   old extension, polling) has no clock, and wall-clock idle is used instead.
 //!   Known limit: one long read in a single tab, with no switching, adds only
 //!   up to ten minutes, which errs toward keeping tabs.
-//! * **Per-tab stretch** ([`stretch`]): the floor (`close_idle_minutes`, which
+//! * **Per-tab stretch** ([`Row::stretch`]): the floor (`close_idle_minutes`, which
 //!   `tabpace` already learns from this user's habits) is lengthened for a tab
 //!   visited often, on a site in use now, or of a kind people keep open (mail,
 //!   chat, docs), and shortened for feeds and older copies of an open page.
@@ -28,6 +28,10 @@ use crate::tabs::Tab;
 
 /// A gap in browsing longer than this counts as time away, not time spent elsewhere.
 pub const AWAY_GAP_MINUTES: f64 = 10.0;
+/// The extension keeps this many activations per tab (`background.js`). A tab
+/// at the cap has lost its older ones, so its history is incomplete before its
+/// oldest retained activation.
+pub const ACTIVATIONS_KEPT: usize = 24;
 /// At most this much longer for a tab visited often.
 const MAX_VISIT_STRETCH: f64 = 5.0;
 
@@ -35,6 +39,11 @@ const MAX_VISIT_STRETCH: f64 = 5.0;
 #[derive(Debug, Default)]
 pub struct ActivityClock {
     times: Vec<f64>,
+    /// Before this time some tab's activations were cut off, so the gaps there
+    /// are unknown and count as wall-clock time, as they did before active idle.
+    /// Without it, steady switching between a few tabs would roll their history
+    /// over every half hour and an untouched tab would never reach the floor.
+    complete_after: f64,
 }
 
 impl ActivityClock {
@@ -48,7 +57,12 @@ impl ActivityClock {
         times.extend(tabs.iter().map(|t| t.last_active_ms).filter(|t| t.is_finite() && *t > 0.0));
         times.sort_by(f64::total_cmp);
         times.dedup();
-        ActivityClock { times }
+        let complete_after = tabs
+            .iter()
+            .filter(|t| t.activations.len() >= ACTIVATIONS_KEPT)
+            .filter_map(|t| t.activations.iter().copied().filter(|a| a.is_finite() && *a > 0.0).min_by(f64::total_cmp))
+            .fold(0.0, f64::max);
+        ActivityClock { times, complete_after }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -60,8 +74,9 @@ impl ActivityClock {
     pub fn active_minutes_since(&self, since_ms: f64, now_ms: f64) -> f64 {
         let gap = AWAY_GAP_MINUTES * 60_000.0;
         let start = self.times.partition_point(|t| *t <= since_ms);
-        let mut prev = since_ms;
-        let mut total = 0.0;
+        // The span with incomplete history counts in full.
+        let mut prev = since_ms.max(self.complete_after.min(now_ms));
+        let mut total = prev - since_ms;
         for &t in &self.times[start..] {
             if t > now_ms {
                 break;
@@ -82,27 +97,29 @@ impl ActivityClock {
     }
 }
 
-/// How much longer than the floor this tab must go unused.
-pub fn stretch(r: &Row) -> f64 {
-    let visits = crate::tabrank::half_life_multiplier(r.frecency, false).min(MAX_VISIT_STRETCH);
-    let related = if r.related { 2.0 } else { 1.0 };
-    let class = match r.class {
-        "feed" => 0.5,
-        "reference" => 1.5,
-        // Mail, calendar, chat, music: tabs people keep open to come back to.
-        "app" => 3.0,
-        _ => 1.0,
-    };
-    let copy = if r.duplicate { 0.5 } else { 1.0 };
-    visits * related * class * copy
-}
+impl Row {
+    /// How much longer than the floor this tab must go unused.
+    pub fn stretch(&self) -> f64 {
+        let visits = crate::tabrank::half_life_multiplier(self.frecency, false).min(MAX_VISIT_STRETCH);
+        let related = if self.related { 2.0 } else { 1.0 };
+        let class = match self.class {
+            "feed" => 0.5,
+            "reference" => 1.5,
+            // Mail, calendar, chat, music: tabs people keep open to come back to.
+            "app" => 3.0,
+            _ => 1.0,
+        };
+        let copy = if self.duplicate { 0.5 } else { 1.0 };
+        visits * related * class * copy
+    }
 
-/// Active-idle minutes this tab needs before the sweep may take it. A browser
-/// settings page holds no work, so it gets the plain floor.
-pub fn needed_minutes(r: &Row, cfg: &Tabs) -> i64 {
-    let floor = cfg.close_idle_minutes() as f64;
-    let need = if r.status == "browser page" { floor } else { floor * stretch(r) };
-    need.round() as i64
+    /// Active-idle minutes this tab needs before the sweep may take it. A
+    /// browser settings page holds no work, so it gets the plain floor.
+    pub fn needed_minutes(&self, cfg: &Tabs) -> i64 {
+        let floor = cfg.close_idle_minutes() as f64;
+        let need = if self.status == "browser page" { floor } else { floor * self.stretch() };
+        need.round() as i64
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +148,20 @@ mod tests {
         // No activation history at all: wall-clock idle.
         let legacy = [tab(1, 700.0 * MIN, &[], now)];
         assert_eq!(ActivityClock::from_tabs(&legacy).idle_minutes(&legacy[0], now), 300);
+    }
+
+    /// Two tabs switched every minute for seven hours keep only their last 24
+    /// activations each. The cut-off span counts as wall clock, so the
+    /// untouched tab still reaches seven hours, not the 48 minutes left.
+    #[test]
+    fn rolled_over_history_still_counts_a_long_busy_session() {
+        let now = 1_000.0 * MIN;
+        let a: Vec<f64> = (0..24).map(|i| now - (47.0 - 2.0 * i as f64) * MIN).collect();
+        let b: Vec<f64> = (0..24).map(|i| now - (46.0 - 2.0 * i as f64) * MIN).collect();
+        let tabs = [tab(1, now - 420.0 * MIN, &[now - 420.0 * MIN], now), tab(2, now - MIN, &a, now), tab(3, now, &b, now)];
+        assert_eq!(ActivityClock::from_tabs(&tabs).idle_minutes(&tabs[0], now), 420);
+        // A short history that was never cut off still skips time away.
+        let short = [tab(1, now - 420.0 * MIN, &[now - 420.0 * MIN], now), tab(2, now - 400.0 * MIN, &[now - 400.0 * MIN], now)];
+        assert_eq!(ActivityClock::from_tabs(&short).idle_minutes(&short[0], now), 20);
     }
 }

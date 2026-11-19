@@ -36,7 +36,10 @@ explicit; Unload selected keeps tabs open and reloadable.
   one was last used, from the union of every tab's last 24 activations, with
   each gap counted up to 10 minutes, so a night or a meeting away adds at most
   that. With no activation history (old extension, polling) it is wall-clock
-  idle. The floor is stretched per tab (`closetune::stretch`): visits
+  idle. The extension keeps 24 activations per tab, so before the oldest one a
+  full tab kept, history is incomplete and that span counts as wall clock.
+  Activations of tabs already closed are gone, which undercounts and errs
+  toward keeping. The floor is stretched per tab (`Row::stretch`): visits
   `1 + 0.5 * min(frecency, 8)` (at most 5x), 2x on a site in use now, mail,
   calendar, chat and music 3x, reference 1.5x, feeds 0.5x, an older copy 0.5x;
   browser settings pages use the plain floor. The extension's wall-clock
