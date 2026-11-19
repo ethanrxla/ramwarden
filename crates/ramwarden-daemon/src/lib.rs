@@ -33,6 +33,7 @@ pub mod worker;
 pub mod ws;
 
 pub mod browser;
+pub mod closetune;
 
 pub mod ask;
 pub mod assistant;

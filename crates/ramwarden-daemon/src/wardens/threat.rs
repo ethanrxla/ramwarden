@@ -189,10 +189,13 @@ impl ThreatWarden {
         if !self.hosted(){return Err("Source-event retrieval is not configured for this self-hosted connection".into());}
         self.cloud().map_err(|_|"Sign in on this computer to read its security evidence".to_string())?.event(id).await.map_err(|_|"The source event is unavailable or access changed".into())
     }
-    /// One poll. The caller has checked the warden is unlocked.
-    pub async fn poll(&self, self_hosted: Option<&Client>) {
+    /// One poll. The caller has checked the warden is unlocked. Returns
+    /// whether the service answered: `false` means a transient failure (an
+    /// unreachable service, a 502) that the poller retries soon, rather than
+    /// leaving "Can't reach" on screen for a whole poll interval.
+    pub async fn poll(&self, self_hosted: Option<&Client>) -> bool {
         if !self.cfg.enabled {
-            return;
+            return true;
         }
         let sensors = ramwarden_wazuh::sensors::collect().await;
         *self.sensors.write().unwrap() = sensors;
@@ -203,7 +206,7 @@ impl ThreatWarden {
         }
     }
 
-    async fn poll_hosted(&self) {
+    async fn poll_hosted(&self) -> bool {
         let now = wardens::now();
         let mut report = WazuhReport {
             mode: "hosted".into(),
@@ -213,30 +216,37 @@ impl ThreatWarden {
         };
         let cloud = match self.cloud() {
             Ok(c) => c,
-            Err(status) => return self.set(status, Some(report)),
+            Err(status) => {
+                self.set(status, Some(report));
+                return true;
+            }
         };
         let s = match cloud.status().await {
             Ok(s) => s,
             Err(Error::SignedOut) => {
-                return self.set(
+                self.set(
                     Status::off("Sign in to RamWarden again", "This computer's sign-in has expired.", now),
                     Some(report),
                 );
+                return true;
             }
             Err(Error::NoPass) => {
-                return self.set(
+                self.set(
                     Status::off("Your ThreatWarden pass isn't active", "Renew your ThreatWarden pass, or a bundle that includes it.", now),
                     Some(report),
                 );
+                return true;
             }
             Err(e) => {
+                let transient = retry_soon(&e);
                 report.problems.push(e.to_string());
                 let status = if report.local.is_connected() {
                     Status::new(Level::Watch, "Can't reach ThreatWarden's service", e.to_string(), now)
                 } else {
                     Status::off("Can't reach ThreatWarden's service", e.to_string(), now)
                 };
-                return self.set(status, Some(report));
+                self.set(status, Some(report));
+                return !transient;
             }
         };
         report.manager = match report.agent_name.as_str() {
@@ -267,9 +277,10 @@ impl ThreatWarden {
             status.detail = summary.clone();
         }
         self.set(status, Some(report));
+        true
     }
 
-    async fn poll_self(&self, client: Option<&Client>) {
+    async fn poll_self(&self, client: Option<&Client>) -> bool {
         let c = &self.cfg;
         let mut report = WazuhReport {
             mode: "self".into(),
@@ -282,6 +293,9 @@ impl ThreatWarden {
             ..Default::default()
         };
         let mut levels = Vec::new();
+        // Tracked apart from the status shown: an outage can read as Watch,
+        // Alert or Off depending on the local agent, and must retry either way.
+        let mut transient = false;
         match client {
             None => report.problems.push("No Wazuh manager configured; showing this computer's agent only.".into()),
             Some(client) => {
@@ -292,7 +306,10 @@ impl ThreatWarden {
                             "The manager has no agent named \"{}\". Set [wardens.threat] agent_name if it enrolled under another name.",
                             report.agent_name
                         )),
-                        Err(e) => report.problems.push(e.to_string()),
+                        Err(e) => {
+                            transient |= retry_soon(&e);
+                            report.problems.push(e.to_string())
+                        }
                     }
                 }
                 if client.has_indexer() {
@@ -301,7 +318,10 @@ impl ThreatWarden {
                             levels = a.iter().map(|x| x.level).collect();
                             report.alerts = a;
                         }
-                        Err(e) => report.problems.push(e.to_string()),
+                        Err(e) => {
+                            transient |= retry_soon(&e);
+                            report.problems.push(e.to_string())
+                        }
                     }
                 } else {
                     report.problems.push("No indexer configured, so alerts are not shown.".into());
@@ -319,6 +339,7 @@ impl ThreatWarden {
             }
         }
         self.set(status, Some(report));
+        !transient
     }
 
     /// Start the one-click setup: enrol with the hosted API, then install
@@ -386,15 +407,59 @@ impl ThreatWarden {
                     }
                 }
             };
-            let every = Duration::from_secs(self.cfg.poll_seconds.max(30));
-            tracing::info!("threatwarden ({}): polling every {}s", self.cfg.mode, every.as_secs());
+            let mut pace = Pace::new(Duration::from_secs(self.cfg.poll_seconds.max(30)));
+            tracing::info!("threatwarden ({}): polling every {}s", self.cfg.mode, pace.every.as_secs());
             loop {
-                if unlocked() {
-                    self.poll(client.as_ref()).await;
+                let reached = !unlocked() || self.poll(client.as_ref()).await;
+                let wait = pace.after(reached);
+                if !reached {
+                    tracing::info!("threatwarden: service unreachable, checking again in {}s", wait.as_secs());
                 }
-                tokio::time::sleep(every).await;
+                tokio::time::sleep(wait).await;
             }
         });
+    }
+}
+
+/// When to poll next. A poll that reached the service waits the full
+/// interval. A transient failure (a 502 while the API restarts, a dropped
+/// connection) is retried after 15 s, then 30 s, 60 s, ... up to the interval,
+/// so a recovered service clears "Can't reach ThreatWarden's service" within
+/// seconds instead of minutes, without hammering one that is down.
+struct Pace {
+    every: Duration,
+    failures: u32,
+}
+
+impl Pace {
+    const FIRST_RETRY: Duration = Duration::from_secs(15);
+
+    fn new(every: Duration) -> Pace {
+        Pace { every, failures: 0 }
+    }
+
+    fn after(&mut self, reached: bool) -> Duration {
+        if reached {
+            self.failures = 0;
+            return self.every;
+        }
+        let wait = Pace::FIRST_RETRY.saturating_mul(1 << self.failures.min(16));
+        self.failures = self.failures.saturating_add(1);
+        wait.min(self.every)
+    }
+}
+
+/// Whether asking again soon could get a different answer, which decides
+/// [`Pace`]'s short retry. Unreachable, 5xx and 429 are outages. A parse
+/// error is too: reqwest reports a connection that drops mid-body after a
+/// 200 as one, and a garbled answer from a half-deployed API is retried at
+/// the same bounded pace. Signed-out, no-pass, refused credentials, other
+/// 4xx and bad configuration are definite, and wait the full interval.
+fn retry_soon(e: &Error) -> bool {
+    match e {
+        Error::Unreachable(..) | Error::Parse(..) => true,
+        Error::Status(_, code) => *code >= 500 || *code == 429,
+        _ => false,
     }
 }
 
@@ -478,6 +543,47 @@ mod tests {
         let e = self_hosted_client(&c).err().unwrap();
         assert!(e.contains("https"), "{e}");
         assert!(self_hosted_client(&config::Wazuh::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_failed_poll_retries_soon_and_backs_off_to_the_interval() {
+        let mut pace = Pace::new(Duration::from_secs(120));
+        assert_eq!(pace.after(true).as_secs(), 120);
+        let waits: Vec<u64> = (0..5).map(|_| pace.after(false).as_secs()).collect();
+        assert_eq!(waits, [15, 30, 60, 120, 120]);
+        // One success resets the schedule, so the next outage retries quickly again.
+        assert_eq!(pace.after(true).as_secs(), 120);
+        assert_eq!(pace.after(false).as_secs(), 15);
+        // Many failures in a row never overflow or exceed the interval.
+        for _ in 0..100 {
+            assert!(pace.after(false) <= Duration::from_secs(120));
+        }
+    }
+
+    #[test]
+    fn only_outages_are_retried_soon() {
+        assert!(retry_soon(&Error::Status("cloud", 502)));
+        assert!(retry_soon(&Error::Status("cloud", 429)));
+        assert!(retry_soon(&Error::Unreachable("cloud", "reset".into())));
+        assert!(retry_soon(&Error::Parse("cloud", "body ended early".into())));
+        assert!(!retry_soon(&Error::Status("cloud", 404)));
+        assert!(!retry_soon(&Error::SignedOut));
+        assert!(!retry_soon(&Error::NoPass));
+        assert!(!retry_soon(&Error::Auth("manager")));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_self_hosted_manager_is_retried_soon() {
+        // Port 9 (discard) has nothing listening, so the manager is unreachable
+        // whatever this machine's own agent reports.
+        let cfg = config::Wazuh { mode: "self".into(), manager_url: "http://127.0.0.1:9".into(), timeout_seconds: 2, ..Default::default() };
+        let client = self_hosted_client(&cfg).unwrap().expect("manager configured");
+        let mut c = config::Config::default();
+        c.wardens.threat = cfg;
+        let warden = ThreatWarden::new(&c);
+        assert!(!warden.poll_self(Some(&client)).await, "an outage must enter the retry schedule");
+        // No manager configured is a setting, not an outage: the full interval.
+        assert!(warden.poll_self(None).await);
     }
 
     #[test]

@@ -9,6 +9,7 @@ fn row(id: i64, idle: i64, p: f64, mb: u32) -> Row {
         target: Target { browser: "b".into(), id, url: format!("https://example.org/{id}") },
         title: format!("Article {id}"),
         inactive_minutes: idle,
+        active_idle_minutes: idle,
         eligible: true,
         closeable: true,
         safe_close_supported: true,

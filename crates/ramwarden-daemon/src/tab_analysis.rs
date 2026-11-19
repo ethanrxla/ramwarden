@@ -197,6 +197,7 @@ mod tests {
             target: Target { browser: "b".into(), id, url: format!("https://secret.example/{id}") },
             title: format!("Private title {id}"),
             inactive_minutes: 300,
+            active_idle_minutes: 300,
             eligible,
             closeable,
             safe_close_supported: true,

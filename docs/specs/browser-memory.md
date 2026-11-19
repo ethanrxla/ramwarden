@@ -31,7 +31,21 @@ explicit; Unload selected keeps tabs open and reloadable.
   past the close floor with a return chance below `close_below_return` (at
   most 0.95); idle twice the floor, whatever the estimate; or an older copy of
   an open page idle `close_duplicates_after_hours`. At most
-  `max_close_per_sweep` per sweep. The return chance used for closing is the
+  `max_close_per_sweep` per sweep. Idle here is **active idle**
+  (`closetune::ActivityClock`): the browsing done in other tabs since this
+  one was last used, from the union of every tab's last 24 activations, with
+  each gap counted up to 10 minutes, so a night or a meeting away adds at most
+  that. With no activation history (old extension, polling) it is wall-clock
+  idle. The extension keeps 24 activations per tab, so before the oldest one a
+  full tab kept, history is incomplete and that span counts as wall clock.
+  Activations of tabs already closed are gone, which undercounts and errs
+  toward keeping. The floor is stretched per tab (`Row::stretch`): visits
+  `1 + 0.5 * min(frecency, 8)` (at most 5x), 2x on a site in use now, mail,
+  calendar, chat and music 3x, reference 1.5x, feeds 0.5x, an older copy 0.5x;
+  browser settings pages use the plain floor. The extension's wall-clock
+  recheck uses the lowest bar the tab could have cleared, never under an hour;
+  active idle is never more than wall-clock idle, so the two always agree.
+  The return chance used for closing is the
   Jev-adjusted estimate on the user's own time scale
   (`tabrank::at_pace`): the class half-lives are fixed priors (a page: 12 h)
   that kept tabs left 6 to 10 h near 0.6, so the curve is rescaled until an

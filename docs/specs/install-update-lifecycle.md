@@ -86,6 +86,8 @@ Security chat treats unreachable feeds as unknown, never as zero alerts. Short
 security-status questions request evidence; casual banter does not attach it.
 
 Release builds of the daemon must include RAMWARDEN_ENTITLEMENT_PUBLIC_KEY.
+The workspace's `.cargo/config.toml` sets it for every cargo build, so local
+rebuilds and the install scripts carry it; an exported value overrides it.
 Omitting it correctly rejects signed paid passes, but makes existing Pro users
 look locked. The Nov 4 local rebuild omitted it; the daemon was rebuilt with the
 configured public key and `/wardens/threat` returned unlocked:true again.

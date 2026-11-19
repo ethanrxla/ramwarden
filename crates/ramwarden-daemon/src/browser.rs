@@ -1,5 +1,5 @@
 //! Browser-scoped, model-independent memory policy.
-use crate::{tabpolicy, tabrank, tabs::Tab};
+use crate::{closetune, tabpolicy, tabrank, tabs::Tab};
 use serde::{Deserialize, Serialize};
 
 pub const BATCH_LIMIT: usize = 5;
@@ -17,6 +17,9 @@ pub struct Row {
     pub target: Target,
     pub title: String,
     pub inactive_minutes: i64,
+    /// Minutes of browsing in other tabs since this one was last used
+    /// ([`closetune::ActivityClock`]); wall-clock idle without activation history.
+    pub active_idle_minutes: i64,
     pub eligible: bool,
     /// The user may close it by hand (manual close, the review checklist).
     pub closeable: bool,
@@ -74,6 +77,7 @@ const ACTIVE_WINDOW_MINUTES: i64 = 15;
 /// [`rank`] at an explicit time, so the frecency math is testable.
 pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<Row> {
     let threshold = threshold.max(5);
+    let clock = closetune::ActivityClock::from_tabs(tabs);
     // Sites of the tabs in use right now: a tab on one of them is probably part
     // of the same task. One pass to build, O(1) per tab to look up.
     let active_sites: std::collections::HashSet<String> = tabs
@@ -189,6 +193,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 },
                 title: t.title.clone(),
                 inactive_minutes: t.inactive_minutes.max(0),
+                active_idle_minutes: clock.idle_minutes(t, now_ms),
                 eligible,
                 closeable: can_close(t),
                 safe_close_supported: t.safe_close_supported,
@@ -423,16 +428,19 @@ mod selection_tests {
 /// forever. Now: the budget and same-site rules are gone, work pages are never
 /// auto-closed, browser settings pages go first, and every pick must clear the
 /// same idle floor and return-chance ceiling.
-/// The idle time a tab must reach before an unattended close: the close floor,
-/// or an older duplicate's own delay when that is shorter. The extension
-/// re-checks idle time with this figure, so the sweep and the close agree on
-/// every target it picks.
+/// The wall-clock idle the extension re-checks before an unattended close:
+/// the lowest active-idle bar this tab could have cleared in
+/// [`close_candidates`] (its stretched floor, or an older duplicate's own
+/// delay), never under an hour. Active idle is at most wall-clock idle, so
+/// every tab the sweep picks also clears this, and the sweep and the close
+/// agree on every target.
 pub fn close_floor(row: &Row, cfg: &ramwarden_core::config::Tabs) -> i64 {
-    let min_idle = cfg.close_idle_minutes();
-    match duplicate_idle(cfg) {
-        Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => min_idle.min(d),
-        _ => min_idle,
-    }
+    let need = row.needed_minutes(cfg);
+    let need = match duplicate_idle(cfg) {
+        Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => need.min(d),
+        _ => need,
+    };
+    need.max(60)
 }
 
 fn duplicate_idle(cfg: &ramwarden_core::config::Tabs) -> Option<i64> {
@@ -449,7 +457,6 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
         kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
     }
-    let min_idle = cfg.close_idle_minutes();
     // Three ways past the floor (owner, 2026-11-19: "24 hours is too long",
     // the point is a tab strip you can navigate):
     // - unlikely to return: idle past the floor and, on this user's own time
@@ -460,13 +467,19 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
     // - an older copy of a page open more recently, after its own delay.
     let ceiling = cfg.close_below_return.clamp(0.0, 0.95);
     let dup_idle = duplicate_idle(cfg);
+    // Every bar is in active idle (`closetune`): browsing done elsewhere since
+    // the tab was last used, so a night away does not count as neglect.
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
-        && (r.status == "browser page" && r.inactive_minutes >= min_idle
-            || matches!(r.status, "candidate" | "unloaded")
-                && ((r.inactive_minutes >= min_idle && r.close_chance(cfg) < ceiling)
-                    || r.inactive_minutes >= min_idle.saturating_mul(2)
-                    || (r.duplicate && dup_idle.is_some_and(|d| r.inactive_minutes >= d))))).collect();
+        && {
+            let idle = r.active_idle_minutes;
+            let need = r.needed_minutes(cfg);
+            r.status == "browser page" && idle >= need
+                || matches!(r.status, "candidate" | "unloaded")
+                    && ((idle >= need && r.close_chance(cfg) < ceiling)
+                        || idle >= need.saturating_mul(2)
+                        || (r.duplicate && dup_idle.is_some_and(|d| idle >= d)))
+        }).collect();
     picked.sort_by(|a,b| close_priority(a,b));
     picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
 }
@@ -560,7 +573,8 @@ mod manual_close_tests {
             idle(1, "https://a.example/one", 2, false),
             idle(2, "https://b.example/two", 20, false),
             idle(3, "https://c.example/three", 50, false),     // outside the budget, but not left alone long enough
-            idle(4, "https://mail.google.com/mail/u/0/", 300, false),
+            idle(4, "https://d.example/four", 300, false),
+            idle(10, "https://mail.google.com/mail/u/0/", 300, false), // mail is kept open on purpose: 3x the floor
             idle(5, "https://console.tailscale.com/admin", 400, true), // protection lifted after 4 h
             idle(6, "https://console.tailscale.com/x", 100, false),    // still protected: used 100 min ago... but a copy of 5
             pinned,
@@ -570,11 +584,38 @@ mod manual_close_tests {
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        // Only the mail tab is eligible on its own merits: past the 4 h floor,
-        // never revisited, so at the user's pace it is unlikely to be wanted.
-        // The budget adds nothing: 3 is too fresh, 5 and 6 are work pages, 7 is
-        // pinned, 8 and 9 are protected.
+        // Only tab 4 is eligible on its own merits: past the 4 h floor, never
+        // revisited, so at the user's pace it is unlikely to be wanted. The
+        // budget adds nothing: 3 is too fresh, 5 and 6 are work pages, 7 is
+        // pinned, 8 and 9 are protected, and mail (10) needs 12 h.
         assert_eq!(ids, vec![4], "tab budgets cannot override eligibility");
+    }
+
+    /// Active idle: the same seven hours closes a tab passed over during busy
+    /// browsing, keeps one left while the computer slept, and keeps a tab the
+    /// user keeps returning to.
+    #[test]
+    fn a_tab_passed_over_in_a_busy_session_closes_but_one_left_overnight_does_not() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_duplicates_after_hours: 0.0, ..Default::default() };
+        let now = ramwarden_core::history::unix_now() as f64 * 1000.0;
+        let min = 60_000.0;
+        let session = |busy: bool, visits: usize| {
+            let mut old = idle(1, "https://old.example/", 420, false);
+            // Earlier visits to the old tab, spread over the day before.
+            old.activations = (0..visits).map(|i| now - (420.0 + 60.0 * i as f64) * min).chain([now - 420.0 * min]).collect();
+            let mut work = idle(2, "https://work.example/", 2, false);
+            work.activations = if busy {
+                (0..=83).map(|i| now - (415.0 - 5.0 * i as f64) * min).collect()
+            } else {
+                vec![now - 419.0 * min]
+            };
+            let rows = rank_at("b", &[old, work], 30, now);
+            let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+            ids
+        };
+        assert_eq!(session(true, 0), vec![1], "seven hours of browsing elsewhere");
+        assert!(session(false, 0).is_empty(), "seven hours away from the computer");
+        assert!(session(true, 4).is_empty(), "a tab visited often waits longer");
     }
 
     #[test]
