@@ -882,7 +882,7 @@ async fn a_base_trial_unlocks_pro_and_the_entitlement_says_so() {
             acct["interval"].as_str(),
             acct["status"].as_str()
         ),
-        (Some("ram"), Some("month"), Some("trial"))
+        (Some("ram"), Some("2mo"), Some("trial"))
     );
     assert_eq!(acct["trial_ends_at"], iso8601(trial_end));
     assert_eq!(acct["billing"]["method"], "base");

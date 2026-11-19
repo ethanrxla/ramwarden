@@ -379,10 +379,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn card_recurrence_matches_monthly_and_annual_prices() {
+    fn card_recurrence_matches_two_month_and_annual_prices() {
         let plans = crate::checkout::Plans::built_in();
-        assert_eq!(stripe_interval(plans.plan(1).unwrap()), ("month", "1"));
-        assert_eq!(stripe_interval(plans.plan(2).unwrap()), ("month", "1"));
+        assert_eq!(stripe_interval(plans.plan(1).unwrap()), ("month", "2"));
+        assert_eq!(stripe_interval(plans.plan(2).unwrap()), ("month", "2"));
         assert_eq!(stripe_interval(plans.plan(3).unwrap()), ("year", "1"));
     }
 
@@ -447,7 +447,7 @@ pub(crate) mod tests {
         assert_eq!(id, "a1");
         assert_eq!(
             (u.tier, u.interval),
-            (Some(Tier::Pro), Some(Interval::Month))
+            (Some(Tier::Pro), Some(Interval::TwoMonths))
         );
         assert_eq!(
             (u.paid_until, u.trial_ends_at, u.cancelled),

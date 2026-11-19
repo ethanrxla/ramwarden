@@ -694,8 +694,8 @@ pub(crate) mod tests {
         let approve = txs[0]["data"].as_str().unwrap();
         assert!(approve.starts_with("0x095ea7b3"));
         assert!(
-            approve.ends_with(&format!("{:064x}", 48_000_000)),
-            "12 x $4, one year, never unlimited"
+            approve.ends_with(&format!("{:064x}", 23_940_000)),
+            "6 x $3.99, one year, never unlimited"
         );
         assert_eq!(txs[0]["to"], base().usdc_hex());
 
@@ -709,7 +709,7 @@ pub(crate) mod tests {
         assert_eq!(&args[64..128], format!("{:064x}", 1));
         assert_eq!(
             &args[128..192],
-            format!("{:064x}", 4_000_000),
+            format!("{:064x}", 3_990_000),
             "maxPrice is one period"
         );
         assert_eq!(&args[192..], hex::encode([0xab; 32]));
