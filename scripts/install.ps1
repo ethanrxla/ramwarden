@@ -170,3 +170,13 @@ Write-Host "  app     : Start menu -> RamWarden (or the ring icon in the system 
 Write-Host "  service : $((Get-Service RamWarden).Status)"
 Write-Host "  daemon  : http://127.0.0.1:7823  (log: $log)"
 Write-Host "  debloat : & '$Dest\ramwarden-debloat.exe' status"
+
+# Everything RamWarden needs Windows to allow is granted by this elevated run:
+# nothing prompts later (docs/specs/permissions.md). Show the result.
+try {
+  $p = Invoke-RestMethod -Uri 'http://127.0.0.1:7823/permissions' -TimeoutSec 5
+  foreach ($n in $p.needs) {
+    $state = if ($n.granted) { 'allowed' } else { "not allowed: $($n.without)" }
+    Write-Host ("  {0,-8}: {1}" -f $n.id, $state)
+  }
+} catch { Write-Host '  permissions: the daemon is still starting; open the app to see them' }
