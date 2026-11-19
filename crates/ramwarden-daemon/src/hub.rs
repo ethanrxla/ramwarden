@@ -341,9 +341,6 @@ impl AppState {
         let rows = crate::tabreview::snapshot(self);
         let tabs = self.tabs_config();
         let auto = crate::browser::close_candidates(&rows, &tabs);
-        // The extension re-checks idle time with this figure, so it must be the
-        // same floor the sweep used, not a fixed day.
-        let unattended_minutes = tabs.close_idle_minutes();
         let mut result = DiscardResult::default();
         for target in requested {
             if !approved && self.voice.holds(&self.cfg.voice, target, std::time::Instant::now()) {
@@ -356,6 +353,10 @@ impl AppState {
                 && matches!(r.status,"candidate"|"unloaded"|"retained"|"browser page")
                 && (approved || auto.contains(target)));
             if !valid { result.refused.push(target.clone()); continue; }
+            // The extension re-checks idle time with this figure, so it must be
+            // the floor the sweep used for this tab (a duplicate's may be shorter).
+            let unattended_minutes = rows.iter().find(|r| &r.target == target)
+                .map_or(tabs.close_idle_minutes(), |r| crate::browser::close_floor(r, &tabs));
             // Never infer command support from discard support or files on disk:
             // Chrome may still run the pre-update cached service worker.
             if !rows.iter().any(|r| &r.target == target && r.safe_close_supported) {

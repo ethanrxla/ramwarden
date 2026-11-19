@@ -423,6 +423,22 @@ mod selection_tests {
 /// forever. Now: the budget and same-site rules are gone, work pages are never
 /// auto-closed, browser settings pages go first, and every pick must clear the
 /// same idle floor and return-chance ceiling.
+/// The idle time a tab must reach before an unattended close: the close floor,
+/// or an older duplicate's own delay when that is shorter. The extension
+/// re-checks idle time with this figure, so the sweep and the close agree on
+/// every target it picks.
+pub fn close_floor(row: &Row, cfg: &ramwarden_core::config::Tabs) -> i64 {
+    let min_idle = cfg.close_idle_minutes();
+    match duplicate_idle(cfg) {
+        Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => min_idle.min(d),
+        _ => min_idle,
+    }
+}
+
+fn duplicate_idle(cfg: &ramwarden_core::config::Tabs) -> Option<i64> {
+    (cfg.close_duplicates_after_hours > 0.0).then(|| (cfg.close_duplicates_after_hours.max(1.0) * 60.0) as i64)
+}
+
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
     // A budget is a keep floor, never permission to close. Preserve the newest
     // N tabs in each browser even when an old tab passes the normal safety floor.
@@ -443,8 +459,7 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
     //   every tab the user had walked away from;
     // - an older copy of a page open more recently, after its own delay.
     let ceiling = cfg.close_below_return.clamp(0.0, 0.95);
-    let dup_idle = (cfg.close_duplicates_after_hours > 0.0)
-        .then(|| ((cfg.close_duplicates_after_hours.max(1.0)) * 60.0) as i64);
+    let dup_idle = duplicate_idle(cfg);
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
         && (r.status == "browser page" && r.inactive_minutes >= min_idle
@@ -567,6 +582,25 @@ mod manual_close_tests {
         let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_duplicates_after_hours: 0.0, ..Default::default() };
         let tabs: Vec<Tab> = (1..=9).map(|i| idle(i, &format!("https://site{i}.example/"), 200, false)).collect();
         assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
+    }
+
+    #[test]
+    fn every_pick_clears_the_floor_the_extension_is_sent() {
+        // An eight-hour floor and a four-hour duplicate delay: a five-hour-old
+        // copy is picked, so the close must carry its four hours, not eight,
+        // or the extension refuses it and the sweep wastes the slot.
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 8.0, close_duplicates_after_hours: 4.0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/a", 30, false)];
+        let rows = rank("b", &tabs, 30);
+        let picked = close_candidates(&rows, &cfg);
+        assert_eq!(picked.iter().map(|t| t.id).collect::<Vec<_>>(), vec![1]);
+        for t in &picked {
+            let row = rows.iter().find(|r| &r.target == t).unwrap();
+            assert_eq!(close_floor(row, &cfg), 240);
+            assert!(row.inactive_minutes >= close_floor(row, &cfg));
+        }
+        let fresh = rows.iter().find(|r| r.target.id == 2).unwrap();
+        assert_eq!(close_floor(fresh, &cfg), 480, "the copy kept is not a duplicate");
     }
 
     #[test]
