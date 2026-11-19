@@ -27,9 +27,17 @@ explicit; Unload selected keeps tabs open and reloadable.
 - A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
   pressure, so a machine with spare RAM still releases idle tabs. It may also
   close tabs, the one exception to "keep tabs open": only rows that passed every
-  unload guard or were already unloaded, idle at least the close floor, with a Jev-adjusted return chance below
-  `close_below_return` (at most 0.3), not a work page, at most
-  `max_close_per_sweep` per sweep. `close` is `off`, `review`, `dry-run`
+  unload guard or were already unloaded, not a work page, and one of: idle
+  past the close floor with a return chance below `close_below_return` (at
+  most 0.95); idle twice the floor, whatever the estimate; or an older copy of
+  an open page idle `close_duplicates_after_hours`. At most
+  `max_close_per_sweep` per sweep. The return chance used for closing is the
+  Jev-adjusted estimate on the user's own time scale
+  (`tabrank::at_pace`): the class half-lives are fixed priors (a page: 12 h)
+  that kept tabs left 6 to 10 h near 0.6, so the curve is rescaled until an
+  unvisited page stands at 0.1 at the learned floor, matching the 1 in 10
+  returns that come later. Visits, a related tab in use and work pages stretch
+  it by the same factors as before; it is never stretched past the prior. `close` is `off`, `review`, `dry-run`
   (default: log only) or `live`. The extension rechecks each tab live with the
   same idle floor before closing, answers every close command, and saves closed
   URLs to a reopen list in the popup. A tab budget (`keep_tabs`, default 6)

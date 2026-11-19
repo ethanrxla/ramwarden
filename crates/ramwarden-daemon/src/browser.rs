@@ -49,6 +49,14 @@ pub struct Row {
     pub p_model: Option<f64>,
 }
 
+impl Row {
+    /// Return chance on this user's time scale, the figure the close rule
+    /// compares with `close_below_return` (see [`tabrank::at_pace`]).
+    pub fn close_chance(&self, cfg: &ramwarden_core::config::Tabs) -> f64 {
+        tabrank::at_pace(self.p_return, cfg.close_idle_minutes())
+    }
+}
+
 pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -428,7 +436,8 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
     let min_idle = cfg.close_idle_minutes();
     // Three ways past the floor (owner, 2026-11-19: "24 hours is too long",
     // the point is a tab strip you can navigate):
-    // - unlikely to return: idle past the floor and below the return ceiling;
+    // - unlikely to return: idle past the floor and, on this user's own time
+    //   scale (`Row::close_chance`), below the return ceiling;
     // - left: idle twice the floor, whatever the estimate. The return model
     //   saturates around 0.6-0.8 for hours-old tabs, so on its own it kept
     //   every tab the user had walked away from;
@@ -440,7 +449,7 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         && !r.work
         && (r.status == "browser page" && r.inactive_minutes >= min_idle
             || matches!(r.status, "candidate" | "unloaded")
-                && ((r.inactive_minutes >= min_idle && r.p_return < ceiling)
+                && ((r.inactive_minutes >= min_idle && r.close_chance(cfg) < ceiling)
                     || r.inactive_minutes >= min_idle.saturating_mul(2)
                     || (r.duplicate && dup_idle.is_some_and(|d| r.inactive_minutes >= d))))).collect();
     picked.sort_by(|a,b| close_priority(a,b));
@@ -546,7 +555,11 @@ mod manual_close_tests {
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        assert!(ids.is_empty(), "tab budgets cannot override eligibility");
+        // Only the mail tab is eligible on its own merits: past the 4 h floor,
+        // never revisited, so at the user's pace it is unlikely to be wanted.
+        // The budget adds nothing: 3 is too fresh, 5 and 6 are work pages, 7 is
+        // pinned, 8 and 9 are protected.
+        assert_eq!(ids, vec![4], "tab budgets cannot override eligibility");
     }
 
     #[test]
@@ -588,15 +601,22 @@ mod manual_close_tests {
     /// closed. A tab left twice the floor goes whatever the estimate.
     #[test]
     fn a_tab_left_twice_the_floor_closes_whatever_its_return_estimate() {
-        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 4.0, ..Default::default() };
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 4.0, close_below_return: 0.0, ..Default::default() };
         let mut rows = rank("b", &[
             idle(1, "https://example.org/left-ten-hours", 600, true),
             idle(2, "https://example.org/left-five-hours", 300, true),
             idle(3, "https://ap.www.namecheap.com/domains/list/", 900, true),
         ], 30);
         for r in &mut rows { r.p_return = 0.7; }
-        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
-        assert_eq!(ids, vec![1], "the work page stays, the 5 h tab waits: {ids:?}");
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1], "the work page stays, the 5 h tab is below the floor's 2x: {ids:?}");
+        // On the user's pace a 0.7 prior five hours out is about 0.1, so the
+        // 5 h tab closes on its own estimate too (`Row::close_chance`).
+        let cfg = ramwarden_core::config::Tabs { close_below_return: 0.3, ..cfg };
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "{ids:?}");
     }
 
     #[test]

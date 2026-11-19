@@ -17,7 +17,7 @@ function fixture(overrides = {}, fail = false, userAgent = "Firefox") {
     tabs:{onActivated:{addListener:f=>activated=f},onUpdated:event,onRemoved:{addListener:f=>removed=f},query:noop,
       get:(id,cb)=>cb(tab), discard:(id,cb)=>{discards.push(id);if (!fail) tab.discarded=true;cb(fail ? undefined : tab);}},
   };
-  const context = vm.createContext({chrome,navigator:{userAgent},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop});
+  const context = vm.createContext({chrome,navigator:{userAgent},console,Date,URL,Set,WebSocket:{OPEN:1},setInterval:noop,setTimeout:noop,clearTimeout:noop});
   vm.runInContext(fs.readFileSync('extension/background.js','utf8'),context);
   return {context,chrome,tab,discards,activate:x=>activated(x),remove:id=>removed(id)};
 }
@@ -96,6 +96,14 @@ test('only Warden-unloaded tabs are grouped visibly, leaving browser-discarded a
   assert.deepEqual(Array.from(grouped[0].tabIds),[1,2]);
   assert.equal(updates[0][0],77); assert.equal(updates[0][1].collapsed,false); assert.equal(updates[0][1].title,'Idle · 2');
 });
+test('the Idle count follows the tabs left in the group after closes', async()=>{
+  const f=fixture(); const updates=[];
+  f.chrome.runtime.lastError=undefined;
+  f.chrome.tabGroups={query:(_,cb)=>cb([{id:55,title:'DNS migration'},{id:77,title:'Idle · 68'}]), update:(id,p)=>updates.push([id,p])};
+  f.chrome.tabs.query=(q,cb)=>cb(q.groupId===77?[{id:1},{id:2},{id:3}]:[{id:9}]);
+  await f.context._retitleIdleGroups();
+  assert.deepEqual(updates.map(u=>[u[0],u[1].title]),[[77,'Idle · 3']]);
+});
 test('a single unloaded tab does not get a group of its own', async()=>{
   const f=fixture(); let grouped=0;
   f.chrome.tabGroups={query:(_,cb)=>cb([]), update:()=>{}};
@@ -169,6 +177,14 @@ test('reopening the same site at a different URL protects it, and every reopen c
   assert.ok(report[0].protectedUntilMs>Date.now(),'a different page on the reopened site is protected');
 });
 
+test('closing a page does not make the tabs already open on its site look reopened',async()=>{
+  const f=fixture();f.chrome.tabs.remove=(id,cb)=>cb();
+  await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000});
+  f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:8,url:'https://example.org/other'}]);
+  const report=await f.context.buildTabReport({});
+  assert.equal(report[0].protectedUntilMs,0,'a sibling that was already open stays closeable');
+  assert.equal(vm.runInContext('Object.keys(safety.sites).length',f.context),0);
+});
 test('reports the running worker safe-close capability only for socket browsers', async()=>{
   for (const [agent,supported] of [['Chrome',true],['Firefox',false]]) {
     const f=fixture({},false,agent); f.chrome.tabs.query=(_,cb)=>cb([f.tab]);

@@ -161,6 +161,33 @@ pub fn p_return(idle_minutes: i64, c: Class, older_duplicate: bool, half_life_mu
     if older_duplicate { p * DUPLICATE_FACTOR } else { p }
 }
 
+/// Share of a user's returns that come after their close floor. The floor is
+/// learned as the gap covering 9 in 10 returns (`ramwarden_core::tabpace`), so
+/// by definition about 1 in 10 come later.
+const RETURNS_AFTER_FLOOR: f64 = 0.1;
+
+/// The return chance the close rule uses: [`p_return`] with its time scale
+/// shrunk to this user's pace.
+///
+/// The class half-lives above are fixed priors (a plain page: 12 h), so a page
+/// left 10 h scored 0.6 and only fell under the 0.3 close ceiling after about
+/// 30 h; a reference page took 5 days. That quietly undid the learned floor: on
+/// the Mac (Nov 19) 21 tabs were idle past the 4 h floor, the user had not gone
+/// back to any of them, and none could close. Here the curve is rescaled so an
+/// ordinary page with no visits stands at [`RETURNS_AFTER_FLOOR`] at the floor,
+/// which is what the user's own returns say. Everything that stretched the
+/// curve (visits, a related tab in use, a work page) keeps stretching it by the
+/// same factor, and the curve is never stretched past the prior.
+///
+/// Weibull scaling is closed-form: `exp(-(t/(sλ))^k) = p^(s^-k)`, so the
+/// blended `p` (rules plus model) is rescaled without re-deriving its inputs.
+pub fn at_pace(p: f64, floor_minutes: i64) -> f64 {
+    let prior = half_life_minutes(Class::Page) / std::f64::consts::LN_2.powf(1.0 / SHAPE);
+    let paced = floor_minutes.max(1) as f64 / (1.0 / RETURNS_AFTER_FLOOR).ln().powf(1.0 / SHAPE);
+    let s = (paced / prior).min(1.0);
+    p.clamp(0.0, 1.0).powf(s.powf(-SHAPE))
+}
+
 /// MB released per unit of expected regret. Higher means release sooner.
 pub fn score(est_mb: u32, p_return: f64) -> f64 {
     est_mb as f64 / (p_return + EPSILON)
@@ -169,6 +196,34 @@ pub fn score(est_mb: u32, p_return: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plain_page_at_the_floor_has_the_floor_share_of_returns() {
+        for floor in [60, 240, 1_440] {
+            let p = at_pace(p_return(floor, Class::Page, false, 1.0), floor);
+            assert!((p - RETURNS_AFTER_FLOOR).abs() < 0.02, "floor {floor}: {p}");
+        }
+    }
+
+    #[test]
+    fn pace_closes_hours_idle_tabs_the_prior_kept() {
+        // The Mac on Nov 19: 4 h floor, pages idle 6-10 h scored 0.6+.
+        for (idle, class) in [(401, Class::Page), (593, Class::Page), (431, Class::Reference)] {
+            let prior = p_return(idle, class, false, 1.0);
+            assert!(prior > 0.3, "{prior}");
+            assert!(at_pace(prior, 240) < 0.3, "{class:?} idle {idle}: {}", at_pace(prior, 240));
+        }
+        // A tab visited often still outlasts one never revisited.
+        let busy = at_pace(p_return(300, Class::Page, false, half_life_multiplier(8.0, true)), 240);
+        assert!(busy > 0.3, "{busy}");
+    }
+
+    #[test]
+    fn pace_never_stretches_the_prior_and_keeps_order() {
+        assert_eq!(at_pace(0.4, 100_000), 0.4);
+        assert!(at_pace(0.8, 240) > at_pace(0.5, 240));
+        assert_eq!(at_pace(1.0, 240), 1.0);
+    }
 
     #[test]
     fn the_half_life_is_exact() {
