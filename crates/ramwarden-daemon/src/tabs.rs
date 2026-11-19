@@ -21,7 +21,7 @@
 //!   same `browser_id` with a fresh tab list. Appending would double-count every
 //!   tab; replacing is correct.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -214,6 +214,7 @@ impl Registry {
         for id in ids {
             self.owners.remove(id);
         }
+        let ids: HashSet<i64> = ids.iter().copied().collect();
         for tabs in self.socket_tabs.values_mut().chain(self.poll_tabs.values_mut()) {
             tabs.retain(|t| !ids.contains(&t.id));
         }
@@ -305,6 +306,7 @@ impl Registry {
 
     pub fn forget_tabs_for(&mut self, browser: &str, ids: &[i64]) {
         if let Some(tabs) = self.socket_tabs.get_mut(browser).or_else(|| self.poll_tabs.get_mut(browser)) {
+            let ids: HashSet<i64> = ids.iter().copied().collect();
             tabs.retain(|t| !ids.contains(&t.id));
         }
     }
