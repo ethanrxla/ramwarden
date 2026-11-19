@@ -144,8 +144,18 @@ impl Walk<'_> {
                 complete = false;
                 break;
             }
+            let Ok(entry) = entry else {
+                complete = false;
+                continue;
+            };
+            // Before any lookup: even a stat of a guarded folder can make
+            // macOS ask.
+            if self.budget.private(&entry.path()) {
+                complete = false;
+                continue;
+            }
             // `DirEntry::metadata` does not follow links.
-            let Ok(meta) = entry.and_then(|e| e.metadata().map(|m| (e, m))) else {
+            let Ok(meta) = entry.metadata().map(|m| (entry, m)) else {
                 complete = false;
                 continue;
             };
@@ -159,7 +169,7 @@ impl Walk<'_> {
                 if device != self.device {
                     continue;
                 }
-                if depth >= MAX_DEPTH || self.budget.private(&entry.path()) {
+                if depth >= MAX_DEPTH {
                     complete = false;
                     continue;
                 }

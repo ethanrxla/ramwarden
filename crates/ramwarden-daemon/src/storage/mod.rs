@@ -250,23 +250,29 @@ impl Storage {
     // ── Explain ─────────────────────────────────────────────────────────────
 
     /// The last scan, if it is no older than `max_age`.
+    /// A scan that left out folders which are now readable (Full Disk Access
+    /// was granted since) is stale whatever its age.
     pub fn cached(&self, max_age: Duration, unix: u64) -> Option<Arc<Usage>> {
-        self.usage.lock().unwrap().clone().filter(|u| unix.saturating_sub(u.at) <= max_age.as_secs())
+        let private = self.places.clone().guarded().private;
+        self.usage.lock().unwrap().clone().filter(|u| unix.saturating_sub(u.at) <= max_age.as_secs() && u.private == private)
     }
 
     /// Measure the known places and the home folder. Blocking: call it from
     /// `spawn_blocking`. Takes at most about `seconds`.
     pub fn scan(&self, seconds: u64, unix: u64) -> Arc<Usage> {
         let started = Instant::now();
-        let budget = Budget::new(Duration::from_secs(seconds.clamp(1, 120)), SCAN_ENTRIES).skipping(&self.places.private);
+        // Asked afresh each scan: Full Disk Access can be granted while the
+        // daemon runs, and the next scan should include what it opens.
+        let here = self.places.clone().guarded();
+        let budget = Budget::new(Duration::from_secs(seconds.clamp(1, 120)), SCAN_ENTRIES).skipping(&here.private);
         let mut places: Vec<Row> = Vec::new();
-        for item in self.places.items() {
+        for item in here.items() {
             // A place macOS guards (Downloads, Docker's data) is named in
             // `not_measured`, not listed at 0 bytes.
-            if !item.paths.is_empty() && item.paths.iter().all(|t| self.places.template_private(t)) {
+            if !item.paths.is_empty() && item.paths.iter().all(|t| here.template_private(t)) {
                 continue;
             }
-            let paths: Vec<PathBuf> = item.paths.iter().flat_map(|t| self.places.resolve(t)).collect();
+            let paths: Vec<PathBuf> = item.paths.iter().flat_map(|t| here.resolve(t)).collect();
             let mut bytes = 0;
             let mut complete = true;
             for p in &paths {
@@ -289,8 +295,8 @@ impl Storage {
         }
 
         let caches = Mutex::new(Vec::new());
-        let has_home = self.places.home.parent().is_some();
-        let children = if has_home { scan::children(&self.places.home, &budget, &caches) } else { Vec::new() };
+        let has_home = here.home.parent().is_some();
+        let children = if has_home { scan::children(&here.home, &budget, &caches) } else { Vec::new() };
         let folders = children
             .into_iter()
             .filter(|c| c.measured.bytes > 0)
@@ -328,10 +334,10 @@ impl Storage {
             at: unix,
             took_ms: started.elapsed().as_millis() as u64,
             partial: budget.spent(),
-            home: self.places.home.clone(),
+            home: here.home.clone(),
             folders,
             places,
-            private: self.places.private.clone(),
+            private: here.private.clone(),
         });
         *self.usage.lock().unwrap() = Some(usage.clone());
         usage
