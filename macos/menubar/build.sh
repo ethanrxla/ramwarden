@@ -28,6 +28,9 @@ cat > "$STAGE/RamWarden.app/Contents/Info.plist" <<'PL'
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PL
+# Inside out: on Intel the linker leaves the nested helper unsigned, and a
+# bundle with an unsigned subcomponent fails to sign.
+codesign --force --sign - "$STAGE/RamWarden.app/Contents/MacOS/ramwarden-quit" >/dev/null
 codesign --force --sign - "$STAGE/RamWarden.app" >/dev/null
 mkdir -p "$(dirname "$APP")"
 # ditto preserves bundle permissions and metadata; compilation failed => no install.
