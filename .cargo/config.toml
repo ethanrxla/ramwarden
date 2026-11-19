@@ -1,0 +1,9 @@
+# Compile-time settings for every build of this workspace: `cargo build`,
+# `cargo run`, the Mac and Windows install scripts and the packagers.
+[env]
+# The server's entitlement-signing PUBLIC key (ed25519, base64). Not a secret:
+# it only verifies passes the server signed. A daemon or ramwarden-usage-sync
+# built without it rejects every signed pass, so sign-in looks broken and paid
+# wardens stay locked (the Nov 4 rebuild did exactly that). An exported
+# RAMWARDEN_ENTITLEMENT_PUBLIC_KEY still overrides this for a staging key.
+RAMWARDEN_ENTITLEMENT_PUBLIC_KEY = "hTls0YWZ95AXQvytzYEsX/Gb6DYroDeI24ypliRi5zw="
