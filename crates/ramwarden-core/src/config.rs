@@ -335,7 +335,8 @@ pub struct Tabs {
     /// A tab must have been idle at least this long to be closed. Never below
     /// one hour (`Tabs::close_idle_minutes`), whatever the file says.
     pub close_after_hours: f64,
-    /// Close only below this chance of the user returning.
+    /// Past the idle floor, close below this chance of the user returning
+    /// (at most 0.95). Past twice the floor a tab is closed whatever the chance.
     pub close_below_return: f64,
     /// An older tab on the same site as a more recently used one is closed after
     /// this long idle, whatever its return chance: the newer tab already covers

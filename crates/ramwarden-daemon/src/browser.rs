@@ -426,11 +426,23 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
     }
     let min_idle = cfg.close_idle_minutes();
+    // Three ways past the floor (owner, 2026-11-19: "24 hours is too long",
+    // the point is a tab strip you can navigate):
+    // - unlikely to return: idle past the floor and below the return ceiling;
+    // - left: idle twice the floor, whatever the estimate. The return model
+    //   saturates around 0.6-0.8 for hours-old tabs, so on its own it kept
+    //   every tab the user had walked away from;
+    // - an older copy of a page open more recently, after its own delay.
+    let ceiling = cfg.close_below_return.clamp(0.0, 0.95);
+    let dup_idle = (cfg.close_duplicates_after_hours > 0.0)
+        .then(|| ((cfg.close_duplicates_after_hours.max(1.0)) * 60.0) as i64);
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
-        && r.inactive_minutes >= min_idle
-        && (r.status == "browser page"
-            || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
+        && (r.status == "browser page" && r.inactive_minutes >= min_idle
+            || matches!(r.status, "candidate" | "unloaded")
+                && ((r.inactive_minutes >= min_idle && r.p_return < ceiling)
+                    || r.inactive_minutes >= min_idle.saturating_mul(2)
+                    || (r.duplicate && dup_idle.is_some_and(|d| r.inactive_minutes >= d))))).collect();
     picked.sort_by(|a,b| close_priority(a,b));
     picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
 }
@@ -570,6 +582,21 @@ mod manual_close_tests {
         let tabs = vec![idle(3, "https://example.org/forty-minutes", 40, false), idle(4, "https://example.org/two-hours", 120, false)];
         let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &eager).iter().map(|t| t.id).collect();
         assert_eq!(ids, vec![4]);
+    }
+
+    /// 2026-11-19: tabs left 6-12 hours scored 0.6-0.8 to return and none
+    /// closed. A tab left twice the floor goes whatever the estimate.
+    #[test]
+    fn a_tab_left_twice_the_floor_closes_whatever_its_return_estimate() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 4.0, ..Default::default() };
+        let mut rows = rank("b", &[
+            idle(1, "https://example.org/left-ten-hours", 600, true),
+            idle(2, "https://example.org/left-five-hours", 300, true),
+            idle(3, "https://ap.www.namecheap.com/domains/list/", 900, true),
+        ], 30);
+        for r in &mut rows { r.p_return = 0.7; }
+        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![1], "the work page stays, the 5 h tab waits: {ids:?}");
     }
 
     #[test]
