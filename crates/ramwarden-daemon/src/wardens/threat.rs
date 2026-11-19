@@ -238,6 +238,7 @@ impl ThreatWarden {
                 return true;
             }
             Err(e) => {
+                let transient = e.is_transient();
                 report.problems.push(e.to_string());
                 let status = if report.local.is_connected() {
                     Status::new(Level::Watch, "Can't reach ThreatWarden's service", e.to_string(), now)
@@ -245,7 +246,7 @@ impl ThreatWarden {
                     Status::off("Can't reach ThreatWarden's service", e.to_string(), now)
                 };
                 self.set(status, Some(report));
-                return false;
+                return !transient;
             }
         };
         report.manager = match report.agent_name.as_str() {
@@ -292,6 +293,9 @@ impl ThreatWarden {
             ..Default::default()
         };
         let mut levels = Vec::new();
+        // Tracked apart from the status shown: an outage can read as Watch,
+        // Alert or Off depending on the local agent, and must retry either way.
+        let mut transient = false;
         match client {
             None => report.problems.push("No Wazuh manager configured; showing this computer's agent only.".into()),
             Some(client) => {
@@ -302,7 +306,10 @@ impl ThreatWarden {
                             "The manager has no agent named \"{}\". Set [wardens.threat] agent_name if it enrolled under another name.",
                             report.agent_name
                         )),
-                        Err(e) => report.problems.push(e.to_string()),
+                        Err(e) => {
+                            transient |= e.is_transient();
+                            report.problems.push(e.to_string())
+                        }
                     }
                 }
                 if client.has_indexer() {
@@ -311,7 +318,10 @@ impl ThreatWarden {
                             levels = a.iter().map(|x| x.level).collect();
                             report.alerts = a;
                         }
-                        Err(e) => report.problems.push(e.to_string()),
+                        Err(e) => {
+                            transient |= e.is_transient();
+                            report.problems.push(e.to_string())
+                        }
                     }
                 } else {
                     report.problems.push("No indexer configured, so alerts are not shown.".into());
@@ -319,21 +329,17 @@ impl ThreatWarden {
             }
         }
         let mut status = wardens::assess_threats(report.health(), &levels, self.thresholds(), wardens::now());
-        let mut reached = true;
         // "Clear" must not hide that part of the picture is missing.
         if status.level == Level::Clear && !report.problems.is_empty() {
             let why = report.problems.join(" ");
             if report.manager.is_none() && !report.local.is_connected() {
                 status = Status::off("Cannot reach Wazuh", why, status.checked_at);
-                // With a manager configured this is an outage worth retrying;
-                // without one, polling sooner would not change the answer.
-                reached = client.is_none();
             } else {
                 status.detail = format!("{} {why}", status.detail);
             }
         }
         self.set(status, Some(report));
-        reached
+        !transient
     }
 
     /// Start the one-click setup: enrol with the hosted API, then install
@@ -538,6 +544,20 @@ mod tests {
         for _ in 0..100 {
             assert!(pace.after(false) <= Duration::from_secs(120));
         }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_self_hosted_manager_is_retried_soon() {
+        // Port 9 (discard) has nothing listening, so the manager is unreachable
+        // whatever this machine's own agent reports.
+        let cfg = config::Wazuh { mode: "self".into(), manager_url: "http://127.0.0.1:9".into(), timeout_seconds: 2, ..Default::default() };
+        let client = self_hosted_client(&cfg).unwrap().expect("manager configured");
+        let mut c = config::Config::default();
+        c.wardens.threat = cfg;
+        let warden = ThreatWarden::new(&c);
+        assert!(!warden.poll_self(Some(&client)).await, "an outage must enter the retry schedule");
+        // No manager configured is a setting, not an outage: the full interval.
+        assert!(warden.poll_self(None).await);
     }
 
     #[test]

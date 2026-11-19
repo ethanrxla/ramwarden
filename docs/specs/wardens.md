@@ -97,11 +97,14 @@ token written at device sign-in (`<config dir>/ramwarden/device-token`).
   ```
 
   The daemon polls every `poll_seconds` (default 120). A poll that fails
-  without an answer (the service unreachable, or a 5xx such as a 502 while
-  the API restarts) shows "Can't reach ThreatWarden's service" and is retried
+  without an answer (the service unreachable, a 429, or a 5xx such as a 502
+  while the API restarts) shows "Can't reach ThreatWarden's service" and is retried
   after 15 s, then 30 s, 60 s, doubling up to `poll_seconds`; the first answer
   replaces the error and resets the schedule. Signed-out and no-pass answers
-  are definite and wait the full interval. The same schedule runs on every OS.
+  are definite and wait the full interval, as do other 4xx answers. Self-hosted
+  mode retries the same way when its manager or indexer is unreachable,
+  whatever status the local agent leaves on screen. The same schedule runs on
+  every OS.
 
   The API only ever returns the caller's own account's agents and alerts:
   tenant isolation is enforced by the API filtering on the account's agent
