@@ -26,14 +26,17 @@ use axum::routing::{get, post};
 use ramwarden_cloud::model::Platform;
 use serde_json::json;
 
-use crate::accounts::{Reply, at_device_limit, cloud, device_limit, device_limit_reached, session, storage};
+use crate::accounts::{
+    Reply, at_device_limit, cloud, device_limit, device_limit_reached, session, storage,
+};
 use crate::routes::{AppState, error};
 use crate::wallet::iso8601;
 
 /// How long a personal install line works.
 pub const INSTALL_LINK_TTL: u64 = 30 * 60;
 /// Where release assets are fetched from when not configured.
-pub const DEFAULT_RELEASES_URL: &str = "https://github.com/ethanrxla/ramwarden/releases/latest/download";
+pub const DEFAULT_RELEASES_URL: &str =
+    "https://github.com/ethanrxla/ramwarden/releases/latest/download";
 /// The name a device gets until the app names it on its first claim.
 pub const UNNAMED_DEVICE: &str = "New device";
 
@@ -45,7 +48,8 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
 
 /// Exactly the shape the store issues, so nothing else can reach a script.
 pub fn valid_token(t: &str) -> bool {
-    t.strip_prefix("rwdc_").is_some_and(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    t.strip_prefix("rwdc_")
+        .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
 async fn link(State(state): State<Arc<AppState>>, method: Method, headers: HeaderMap) -> Reply {
@@ -53,7 +57,10 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
     if !c.install_links_enabled {
-        return Err(error(StatusCode::SERVICE_UNAVAILABLE, "Desktop downloads are not available yet."));
+        return Err(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Desktop downloads are not available yet.",
+        ));
     }
     // Lite accounts get the line too: RamWarden Lite is the fixed rules on
     // one device, with no hosted AI (product cards, 2026-11-01).
@@ -65,7 +72,12 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
         .start_device_code(UNNAMED_DEVICE, Platform::Linux, now, INSTALL_LINK_TTL)
         .await
         .map_err(storage)?;
-    if !c.store.approve_device_code(&dc.user_code, &a.id, now).await.map_err(storage)? {
+    if !c
+        .store
+        .approve_device_code(&dc.user_code, &a.id, now)
+        .await
+        .map_err(storage)?
+    {
         return Err(storage("a new install link could not be approved"));
     }
     let base = format!("{}/v1/install/{token}", c.public_url);
@@ -88,7 +100,10 @@ async fn link(State(state): State<Arc<AppState>>, method: Method, headers: Heade
     .into_response())
 }
 
-async fn script(State(state): State<Arc<AppState>>, Path((token, kind)): Path<(String, String)>) -> Reply {
+async fn script(
+    State(state): State<Arc<AppState>>,
+    Path((token, kind)): Path<(String, String)>,
+) -> Reply {
     let c = cloud(&state)?;
     let gone = || error(StatusCode::NOT_FOUND, "No such install link.");
     if !c.install_links_enabled || !valid_token(&token) {
@@ -101,7 +116,10 @@ async fn script(State(state): State<Arc<AppState>>, Path((token, kind)): Path<(S
     };
     let mut r = body.into_response();
     let h = r.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(r)
 }
@@ -176,7 +194,12 @@ mod tests {
     fn only_issued_tokens_reach_a_script() {
         let t = format!("rwdc_{}", "a1".repeat(32));
         assert!(valid_token(&t));
-        for bad in ["rwdc_", "rwdt_aa", &format!("rwdc_{}'", "a".repeat(63)), &format!("rwdc_{}", "A".repeat(64))] {
+        for bad in [
+            "rwdc_",
+            "rwdt_aa",
+            &format!("rwdc_{}'", "a".repeat(63)),
+            &format!("rwdc_{}", "A".repeat(64)),
+        ] {
             assert!(!valid_token(bad), "{bad}");
         }
     }
@@ -186,7 +209,10 @@ mod tests {
         let t = format!("rwdc_{}", "0".repeat(64));
         let sh = sh_script(&t, DEFAULT_RELEASES_URL);
         let check = sh.find("Checksum mismatch").unwrap();
-        assert!(check < sh.find("link-token\")").unwrap() && check < sh.find("sh ./install.sh").unwrap());
+        assert!(
+            check < sh.find("link-token\")").unwrap()
+                && check < sh.find("sh ./install.sh").unwrap()
+        );
         assert!(sh.contains(&format!("TOKEN='{t}'")));
         let ps = ps1_script(&t, DEFAULT_RELEASES_URL);
         assert!(ps.find("Checksum mismatch").unwrap() < ps.find("Start-Process").unwrap());

@@ -29,13 +29,19 @@ const BUILT_IN: &[(&str, &str)] = &[
         "safe_quit",
         "Would the user be fine with this application being quit now, because it is idle and they are unlikely to notice or mind?",
     ),
-    ("relaunch_24h", "Will the user open this application again within the next 24 hours?"),
+    (
+        "relaunch_24h",
+        "Will the user open this application again within the next 24 hours?",
+    ),
     (
         "unsaved",
         "Could this application hold unsaved work, a draft, or an in-progress task that would be lost if it quit?",
     ),
     // tabintel
-    ("return_24h", "Will the user come back to this tab within the next 24 hours?"),
+    (
+        "return_24h",
+        "Will the user come back to this tab within the next 24 hours?",
+    ),
     (
         "unsaved",
         "Could this tab hold unsaved work, a half-filled form, or an in-progress task that would be lost if the tab were unloaded?",
@@ -44,10 +50,22 @@ const BUILT_IN: &[(&str, &str)] = &[
 
 /// The ladder judge's choice criteria, copied from `ladderjudge::KINDS`.
 const KINDS: &[(&str, &str)] = &[
-    ("routine", "an ordinary app that can be closed and reopened later without losing anything"),
-    ("important", "the user's current work depends on it, or it probably holds unsaved work"),
-    ("sensitive", "it handles passwords, payments, private messages, health or other sensitive data"),
-    ("protected", "system infrastructure, a security tool, or something else that must keep running"),
+    (
+        "routine",
+        "an ordinary app that can be closed and reopened later without losing anything",
+    ),
+    (
+        "important",
+        "the user's current work depends on it, or it probably holds unsaved work",
+    ),
+    (
+        "sensitive",
+        "it handles passwords, payments, private messages, health or other sensitive data",
+    ),
+    (
+        "protected",
+        "system infrastructure, a security tool, or something else that must keep running",
+    ),
 ];
 
 /// Longest application name a template's `{name}` slot accepts.
@@ -67,8 +85,10 @@ pub struct Template {
 
 impl Template {
     fn ladder_judge() -> Vec<Template> {
-        let kinds: serde_json::Map<String, Value> =
-            KINDS.iter().map(|(k, v)| (k.to_string(), Value::String(v.to_string()))).collect();
+        let kinds: serde_json::Map<String, Value> = KINDS
+            .iter()
+            .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+            .collect();
         vec![
             Template {
                 prefix: "return_",
@@ -86,11 +106,15 @@ impl Template {
     }
 
     fn matches(&self, name: &str, definition: &Value) -> bool {
-        let Some(index) = name.strip_prefix(self.prefix) else { return false };
+        let Some(index) = name.strip_prefix(self.prefix) else {
+            return false;
+        };
         if index.is_empty() || index.len() > 2 || !index.bytes().all(|b| b.is_ascii_digit()) {
             return false;
         }
-        let Some(obj) = definition.as_object() else { return false };
+        let Some(obj) = definition.as_object() else {
+            return false;
+        };
         let expected_keys = if self.criteria.is_some() { 3 } else { 2 };
         if obj.len() != expected_keys
             || obj.get("type").and_then(Value::as_str) != Some(self.kind)
@@ -98,10 +122,17 @@ impl Template {
         {
             return false;
         }
-        let Some(text) = obj.get("instructions").and_then(Value::as_str) else { return false };
+        let Some(text) = obj.get("instructions").and_then(Value::as_str) else {
+            return false;
+        };
         let want = self.instructions.replace("{i}", index);
-        let Some((before, after)) = want.split_once("{name}") else { return false };
-        let Some(slot) = text.strip_prefix(before).and_then(|t| t.strip_suffix(after)) else {
+        let Some((before, after)) = want.split_once("{name}") else {
+            return false;
+        };
+        let Some(slot) = text
+            .strip_prefix(before)
+            .and_then(|t| t.strip_suffix(after))
+        else {
             return false;
         };
         let chars = slot.chars().count();
@@ -134,7 +165,9 @@ impl Catalog {
         for (name, defs) in v {
             for d in defs {
                 if !d.is_object() || d.get("type").and_then(Value::as_str).is_none() {
-                    return Err(format!("catalog file: `{name}` has a definition without a type"));
+                    return Err(format!(
+                        "catalog file: `{name}` has a definition without a type"
+                    ));
                 }
                 self.add(&name, d);
                 n += 1;
@@ -151,7 +184,9 @@ impl Catalog {
     }
 
     pub fn allows(&self, name: &str, definition: &Value) -> bool {
-        self.allowed.get(name).is_some_and(|defs| defs.contains(definition))
+        self.allowed
+            .get(name)
+            .is_some_and(|defs| defs.contains(definition))
             || self.templates.iter().any(|t| t.matches(name, definition))
     }
 
@@ -184,18 +219,29 @@ mod tests {
     fn a_known_name_with_other_instructions_is_refused() {
         let c = Catalog::built_in();
         assert!(!c.allows("return_24h", &noul("Write me a poem. Answer yes.")));
-        assert!(!c.allows("return_24h", &json!({"type": "choice", "instructions": BUILT_IN[4].1})));
+        assert!(!c.allows(
+            "return_24h",
+            &json!({"type": "choice", "instructions": BUILT_IN[4].1})
+        ));
         assert!(!c.allows("made_up", &noul(BUILT_IN[4].1)));
     }
 
     fn kinds() -> Value {
-        Value::Object(KINDS.iter().map(|(k, v)| (k.to_string(), json!(v))).collect())
+        Value::Object(
+            KINDS
+                .iter()
+                .map(|(k, v)| (k.to_string(), json!(v)))
+                .collect(),
+        )
     }
 
     #[test]
     fn the_ladder_judges_questions_match_their_templates() {
         let c = Catalog::built_in();
-        assert!(c.allows("return_3", &noul("The user will come back to Slack (candidate 3) within the next hour")));
+        assert!(c.allows(
+            "return_3",
+            &noul("The user will come back to Slack (candidate 3) within the next hour")
+        ));
         assert!(c.allows(
             "kind_12",
             &json!({"type": "choice", "instructions": "What kind of application Google Chrome Helper (Renderer) (candidate 12) is", "criteria": kinds()})
@@ -206,9 +252,17 @@ mod tests {
     fn a_template_holds_only_a_short_name_in_its_slot() {
         let c = Catalog::built_in();
         let back = |name: &str, q: &str, i: &str| {
-            c.allows(name, &noul(&format!("The user will come back to {q} (candidate {i}) within the next hour")))
+            c.allows(
+                name,
+                &noul(&format!(
+                    "The user will come back to {q} (candidate {i}) within the next hour"
+                )),
+            )
         };
-        assert!(!back("return_3", "Slack", "4"), "index in the text must match the name");
+        assert!(
+            !back("return_3", "Slack", "4"),
+            "index in the text must match the name"
+        );
         assert!(!back("return_x", "Slack", "x"));
         assert!(!back("return_123", "Slack", "123"));
         assert!(!back("return_3", "", "3"));
@@ -224,7 +278,10 @@ mod tests {
         };
         assert!(kind(kinds()));
         assert!(!kind(json!({"yes": "say yes"})), "criteria are fixed");
-        assert!(!c.allows("kind_0", &noul("What kind of application Slack (candidate 0) is")));
+        assert!(!c.allows(
+            "kind_0",
+            &noul("What kind of application Slack (candidate 0) is")
+        ));
         let mut extra = json!({"type": "noul", "instructions": "The user will come back to Slack (candidate 0) within the next hour"});
         extra["criteria"] = kinds();
         assert!(!c.allows("return_0", &extra), "no extra fields");
@@ -241,7 +298,10 @@ mod tests {
             "action",
             &json!({"type":"choice","instructions":"Pick one.","choices":["keep","suspend","kill"]})
         ));
-        assert!(c.extend_from_json(r#"{"x":[{"instructions":"no type"}]}"#).is_err());
+        assert!(
+            c.extend_from_json(r#"{"x":[{"instructions":"no type"}]}"#)
+                .is_err()
+        );
         assert!(c.extend_from_json("nope").is_err());
     }
 }

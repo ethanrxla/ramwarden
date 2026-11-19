@@ -1,5 +1,5 @@
 {
-  "_comment": "Monthly and annual subscriptions. Plus has a 14-day trial; Pro is paid from day one. Monthly pricing updated by owner 2026-11-02. Existing sixty-day subscriptions must retain their original terms.",
+  "_comment": "Plus and Pro bill every two months or yearly (owner, 2026-11-18): Plus $3.99 / 2 months or $19.99 / year, Pro $4.99 / 2 months or $23.99 / year. Prices are in cents. Plus has a 14-day trial; Pro is paid from day one. Existing subscriptions keep their original terms.",
   "wardens": {
     "0": {
       "slug": "ram",
@@ -14,10 +14,10 @@
     {
       "id": 1,
       "tier": "ram",
-      "name": "RamWarden Plus, monthly",
-      "usd": 4,
-      "interval": "month",
-      "days": 30,
+      "name": "RamWarden Plus, every 2 months",
+      "cents": 399,
+      "interval": "two_months",
+      "days": 60,
       "trial": true,
       "wardens": [
         0
@@ -26,10 +26,10 @@
     {
       "id": 2,
       "tier": "pro",
-      "name": "RamWarden Pro, monthly",
-      "usd": 5,
-      "interval": "month",
-      "days": 30,
+      "name": "RamWarden Pro, every 2 months",
+      "cents": 499,
+      "interval": "two_months",
+      "days": 60,
       "trial": false,
       "wardens": [
         0,
@@ -40,7 +40,7 @@
       "id": 3,
       "tier": "ram",
       "name": "RamWarden Plus, annual",
-      "usd": 20,
+      "cents": 1999,
       "interval": "year",
       "days": 365,
       "trial": true,
@@ -52,7 +52,7 @@
       "id": 4,
       "tier": "pro",
       "name": "RamWarden Pro, annual",
-      "usd": 24,
+      "cents": 2399,
       "interval": "year",
       "days": 365,
       "trial": false,

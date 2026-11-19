@@ -98,9 +98,9 @@ async function run() {
     assert.deepEqual(await p.$$eval("[data-os-panel]", (ps) => ps.filter((x) => x.offsetParent !== null).map((x) => x.dataset.osPanel)), ["linux"]);
     assert.equal(await p.$$eval("[data-install] .cmd", (c) => c.length), 0);
     assert.ok(await p.isVisible('[data-os-panel="linux"] >> text=Choose a plan'));
-    // Pricing: monthly by default, the toggle switches prices and plan links.
-    assert.equal(await p.textContent('.tier-ram [data-price="month"]'), "$4 / month");
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    // Pricing: every 2 months by default, the toggle switches prices and plan links.
+    assert.equal(await p.textContent('.tier-ram [data-price="two_months"]'), "$3.99 every 2 months");
+    assert.equal(await p.textContent('.tier-pro [data-price="two_months"]'), "$4.99 every 2 months");
     assert.match(await p.getAttribute('[data-buy="pro"]', "href"), /plan=2$/);
     // Three cards: Free signs up, Plus has the trial, Pro has none.
     assert.equal(await p.$$eval(".price-cards .price", (c) => c.map((x) => x.dataset.tier).join()), "lite,ram,pro");
@@ -108,7 +108,7 @@ async function run() {
     assert.equal((await p.textContent('[data-buy="ram"]')).trim(), "Start 14-day free trial");
     assert.equal((await p.textContent('[data-buy="pro"]')).trim(), "Get Pro");
     await p.click('[data-interval="year"]');
-    assert.ok(await p.isVisible('.tier-pro >> text=$24'));
+    assert.ok(await p.isVisible('.tier-pro >> text=$23.99'));
     assert.match(await p.getAttribute('[data-buy="ram"]', "href"), /plan=3$/);
     assert.ok(await p.isVisible("text=open source on GitHub"));
     // The hero is the radar with RamWarden's own ram; the demo is in How it works.
@@ -150,7 +150,7 @@ async function run() {
     assert.match(await p.textContent(".catchline em"), /click every link/);
     assert.ok(await p.isVisible('[data-pet] img[src$="threat.svg"]'));
     await p.waitForSelector('[data-install][data-state="signed-out"]');
-    assert.equal(await p.textContent('.tier-pro [data-price="month"]'), "$5 / month");
+    assert.equal(await p.textContent('.tier-pro [data-price="two_months"]'), "$4.99 every 2 months");
     assert.ok(await p.isVisible('#top .radar img[data-sprite="threat"]'), "the radar stays in the hero");
     assert.ok(await p.isVisible('#meet [data-part="visor"]'));
     assert.ok(await p.isVisible('.tier-pro >> text=Paid from day one'));
@@ -251,7 +251,7 @@ async function run() {
   });
 
   t("account page: ?plan= preselects a plan the server sells, ignores others", async () => {
-    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "month"], ["99", "ram", "month"], ["", "ram", "month"]]) {
+    for (const [q, tier, interval] of [["4", "pro", "year"], ["2", "pro", "two_months"], ["99", "ram", "two_months"], ["", "ram", "two_months"]]) {
       const p = await page(fakeMetaMask);
       await p.goto(`${base}/account.html?mock=1&plan=${q}`);
       await p.getByRole("button", { name: /MetaMask/ }).click();
@@ -375,7 +375,7 @@ async function run() {
     // A typed question gets the price; the pet's jokes stay out of the way.
     await p.fill('#warden-chat input[name="message"]', "How much is Pro?");
     await p.press('#warden-chat input[name="message"]', "Enter");
-    await p.waitForSelector("#warden-chat >> text=Pro is $5 per month");
+    await p.waitForSelector("#warden-chat >> text=Pro is $4.99 every 2 months");
     assert.ok((await p.getAttribute(".chat-offers a", "href")).endsWith("mock=1#pricing"));
     assert.equal(await p.isVisible("[data-say]"), false);
     assert.equal(await p.isVisible(".chat-ticket"), false, "no ticket offered for a price question");

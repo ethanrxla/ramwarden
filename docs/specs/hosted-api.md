@@ -87,8 +87,8 @@ confirmed by the user 2026-11-01):
 | Card | Plan | Tier id | Price | Trial | Wardens | Devices |
 | --- | --- | --- | --- | --- | --- | --- |
 | RamWarden Lite | none | `null` | free | | fixed rules only, no hosted AI, no warden pet | 1 |
-| RamWarden Plus | 1, 3 | `ram` | $4 / month, $20 / year | 14 days | `ram` | 3 |
-| RamWarden Pro | 2, 4 | `pro` | $5 / month, $24 / year | none | `ram`, `threat` | 5 |
+| RamWarden Plus | 1, 3 | `ram` | $3.99 every 2 months, $19.99 / year | 14 days | `ram` | 3 |
+| RamWarden Pro | 2, 4 | `pro` | $4.99 every 2 months, $23.99 / year | none | `ram`, `threat` | 5 |
 
 Plans 1 and 2 now bill monthly (`interval: "month"`, 30-day crypto periods;
 Stripe calendar-month recurrence), per owner clarification 2026-11-02.

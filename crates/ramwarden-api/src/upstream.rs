@@ -30,9 +30,23 @@ pub struct Upstream {
 }
 
 impl Upstream {
-    pub fn new(base_url: &str, model: &str, key: Secret, timeout: Duration) -> Result<Self, String> {
-        let http = reqwest::Client::builder().timeout(timeout).build().map_err(|e| e.to_string())?;
-        Ok(Upstream { http, base_url: base_url.trim_end_matches('/').into(), model: model.into(), key, openai: None })
+    pub fn new(
+        base_url: &str,
+        model: &str,
+        key: Secret,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(Upstream {
+            http,
+            base_url: base_url.trim_end_matches('/').into(),
+            model: model.into(),
+            key,
+            openai: None,
+        })
     }
 
     /// Production only. Personal/development instances keep their existing provider.
@@ -42,9 +56,16 @@ impl Upstream {
     }
 
     /// Sales routing prefers the production model; local tests keep Jev.
-    pub async fn ask_sales(&self, state: &str, questions: &Map<String, Value>) -> Result<(Value, u64), UpstreamError> {
-        if self.openai.is_some() { self.ask_openai(state, questions).await }
-        else { self.ask(state, questions).await }
+    pub async fn ask_sales(
+        &self,
+        state: &str,
+        questions: &Map<String, Value>,
+    ) -> Result<(Value, u64), UpstreamError> {
+        if self.openai.is_some() {
+            self.ask_openai(state, questions).await
+        } else {
+            self.ask(state, questions).await
+        }
     }
 
     pub fn model(&self) -> &str {
@@ -56,7 +77,11 @@ impl Upstream {
     }
 
     /// Ask `questions` about `state`. Returns Jev's reply and its input tokens.
-    pub async fn ask(&self, state: &str, questions: &Map<String, Value>) -> Result<(Value, u64), UpstreamError> {
+    pub async fn ask(
+        &self,
+        state: &str,
+        questions: &Map<String, Value>,
+    ) -> Result<(Value, u64), UpstreamError> {
         let primary = self.ask_jev(state, questions).await;
         match primary {
             Err(_) if self.openai.is_some() => self.ask_openai(state, questions).await,
@@ -64,8 +89,15 @@ impl Upstream {
         }
     }
 
-    async fn ask_openai(&self, state: &str, questions: &Map<String, Value>) -> Result<(Value, u64), UpstreamError> {
-        let (key, model, base) = self.openai.as_ref().ok_or_else(|| UpstreamError::Reply("production model is not configured".into()))?;
+    async fn ask_openai(
+        &self,
+        state: &str,
+        questions: &Map<String, Value>,
+    ) -> Result<(Value, u64), UpstreamError> {
+        let (key, model, base) = self
+            .openai
+            .as_ref()
+            .ok_or_else(|| UpstreamError::Reply("production model is not configured".into()))?;
         let mut body = json!({
             "model": model, "reasoning_effort": "none", "max_completion_tokens": 1800,
             "response_format": {"type":"json_object"},
@@ -74,16 +106,35 @@ impl Upstream {
                 {"role":"user", "content":json!({"state":state,"questions":questions}).to_string()}
             ]
         });
-        let messages = body["messages"].as_array().ok_or_else(|| UpstreamError::Reply("missing model input".into()))?;
-        body["messages"] = json!(ramwarden_ai::nyquest::compress(messages).await.map_err(|_| UpstreamError::Unreachable("prompt compression is temporarily unavailable".into()))?);
-        let response = self.http.post(format!("{base}/v1/chat/completions")).bearer_auth(key.expose()).json(&body)
-            .send().await.map_err(|_| UpstreamError::Unreachable("production model transport failed".into()))?;
+        let messages = body["messages"]
+            .as_array()
+            .ok_or_else(|| UpstreamError::Reply("missing model input".into()))?;
+        body["messages"] = json!(ramwarden_ai::nyquest::compress(messages).await.map_err(
+            |_| UpstreamError::Unreachable("prompt compression is temporarily unavailable".into())
+        )?);
+        let response = self
+            .http
+            .post(format!("{base}/v1/chat/completions"))
+            .bearer_auth(key.expose())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| UpstreamError::Unreachable("production model transport failed".into()))?;
         if !response.status().is_success() {
-            return Err(UpstreamError::Status(response.status().as_u16(), "production model request refused".into()));
+            return Err(UpstreamError::Status(
+                response.status().as_u16(),
+                "production model request refused".into(),
+            ));
         }
-        let envelope: Value = response.json().await.map_err(|_| UpstreamError::Reply("invalid model envelope".into()))?;
-        let content = envelope["choices"][0]["message"]["content"].as_str().ok_or_else(|| UpstreamError::Reply("empty model answer".into()))?;
-        let mut value: Value = serde_json::from_str(content).map_err(|_| UpstreamError::Reply("invalid model JSON".into()))?;
+        let envelope: Value = response
+            .json()
+            .await
+            .map_err(|_| UpstreamError::Reply("invalid model envelope".into()))?;
+        let content = envelope["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| UpstreamError::Reply("empty model answer".into()))?;
+        let mut value: Value = serde_json::from_str(content)
+            .map_err(|_| UpstreamError::Reply("invalid model JSON".into()))?;
         validate_answers(&value, questions)?;
         let tokens = envelope["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
         value["model"] = json!(model);
@@ -91,7 +142,11 @@ impl Upstream {
         Ok((value, tokens))
     }
 
-    async fn ask_jev(&self, state: &str, questions: &Map<String, Value>) -> Result<(Value, u64), UpstreamError> {
+    async fn ask_jev(
+        &self,
+        state: &str,
+        questions: &Map<String, Value>,
+    ) -> Result<(Value, u64), UpstreamError> {
         let body = json!({"model": self.model, "state": state, "questions": questions});
         let resp = self
             .http
@@ -102,11 +157,18 @@ impl Upstream {
             .await
             .map_err(|e| UpstreamError::Unreachable(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| UpstreamError::Unreachable(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| UpstreamError::Unreachable(e.to_string()))?;
         if !status.is_success() {
-            return Err(UpstreamError::Status(status.as_u16(), text.chars().take(200).collect()));
+            return Err(UpstreamError::Status(
+                status.as_u16(),
+                text.chars().take(200).collect(),
+            ));
         }
-        let v: Value = serde_json::from_str(&text).map_err(|e| UpstreamError::Reply(e.to_string()))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| UpstreamError::Reply(e.to_string()))?;
         if !v.is_object() {
             return Err(UpstreamError::Reply("not a JSON object".into()));
         }
@@ -118,20 +180,31 @@ impl Upstream {
 fn validate_answers(value: &Value, questions: &Map<String, Value>) -> Result<(), UpstreamError> {
     let bad = || UpstreamError::Reply("model answer did not match the requested questions".into());
     let answers = value["answers"].as_object().ok_or_else(bad)?;
-    if answers.len() != questions.len() { return Err(bad()); }
+    if answers.len() != questions.len() {
+        return Err(bad());
+    }
     for (id, question) in questions {
         let answer = answers.get(id).ok_or_else(bad)?;
-        if answer["type"] != question["type"] { return Err(bad()); }
+        if answer["type"] != question["type"] {
+            return Err(bad());
+        }
         let probability = match question["type"].as_str() {
             Some("noul") => answer["noul"].as_f64(),
             Some("choice") => {
                 let choice = answer["choice"].as_str().ok_or_else(bad)?;
-                if !question["criteria"].as_object().is_some_and(|criteria| criteria.contains_key(choice)) { return Err(bad()); }
+                if !question["criteria"]
+                    .as_object()
+                    .is_some_and(|criteria| criteria.contains_key(choice))
+                {
+                    return Err(bad());
+                }
                 answer["confidence"].as_f64()
             }
             _ => return Err(bad()),
         };
-        if !probability.is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)) { return Err(bad()); }
+        if !probability.is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)) {
+            return Err(bad());
+        }
     }
     Ok(())
 }
@@ -148,9 +221,11 @@ mod tests {
         let mut bad = good.clone();
         bad["answers"]["topic"]["choice"] = json!("invented");
         assert!(validate_answers(&bad, &questions).is_err());
-        bad = good.clone(); bad["answers"]["safe"]["noul"] = json!(1.1);
+        bad = good.clone();
+        bad["answers"]["safe"]["noul"] = json!(1.1);
         assert!(validate_answers(&bad, &questions).is_err());
-        bad = good; bad["answers"].as_object_mut().unwrap().remove("safe");
+        bad = good;
+        bad["answers"].as_object_mut().unwrap().remove("safe");
         assert!(validate_answers(&bad, &questions).is_err());
     }
 
@@ -167,13 +242,29 @@ mod tests {
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
-        let mut upstream = Upstream::new("http://127.0.0.1:9", "jev-test", Secret::new("jev-test-key"), Duration::from_secs(2)).unwrap()
-            .with_openai(Secret::new("openai-test-key"), "gpt-6-luna".into());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut upstream = Upstream::new(
+            "http://127.0.0.1:9",
+            "jev-test",
+            Secret::new("jev-test-key"),
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        .with_openai(Secret::new("openai-test-key"), "gpt-6-luna".into());
         upstream.openai.as_mut().unwrap().2 = base;
-        let questions = json!({"safe":{"type":"noul","instructions":"Safe?"}}).as_object().unwrap().clone();
+        let questions = json!({"safe":{"type":"noul","instructions":"Safe?"}})
+            .as_object()
+            .unwrap()
+            .clone();
         for sales in [true, false] {
-            let (reply, tokens) = if sales { upstream.ask_sales("synthetic fixture", &questions).await } else { upstream.ask("synthetic fixture", &questions).await }.unwrap();
+            let (reply, tokens) = if sales {
+                upstream.ask_sales("synthetic fixture", &questions).await
+            } else {
+                upstream.ask("synthetic fixture", &questions).await
+            }
+            .unwrap();
             assert_eq!(tokens, 42);
             assert_eq!(reply["answers"]["safe"]["noul"], 0.1);
             assert_eq!(reply["model"], "gpt-6-luna");

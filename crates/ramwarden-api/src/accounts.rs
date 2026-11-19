@@ -72,9 +72,12 @@ pub fn plan_name(a: &Account, now: u64) -> &'static str {
 /// A refusal naming the limit, for the page the person is looking at.
 pub fn device_limit_reached(limit: u32) -> Response {
     let msg = if limit <= FREE_DEVICE_LIMIT {
-        "RamWarden Lite covers 1 device. Remove it on your account page, or upgrade to Plus for 3.".to_string()
+        "RamWarden Lite covers 1 device. Remove it on your account page, or upgrade to Plus for 3."
+            .to_string()
     } else if limit <= PLUS_DEVICE_LIMIT {
-        format!("RamWarden Plus covers {limit} devices. Remove one on your account page, or upgrade to Pro for {PRO_DEVICE_LIMIT}.")
+        format!(
+            "RamWarden Plus covers {limit} devices. Remove one on your account page, or upgrade to Pro for {PRO_DEVICE_LIMIT}."
+        )
     } else {
         format!("This account already has {limit} devices. Remove one on your account page first.")
     };
@@ -144,22 +147,30 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
 pub type Reply = Result<Response, Response>;
 
 pub fn cloud(state: &AppState) -> Result<&Cloud, Response> {
-    state
-        .cloud
-        .as_ref()
-        .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Hosted sign-in is not enabled on this server."))
+    state.cloud.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hosted sign-in is not enabled on this server.",
+        )
+    })
 }
 
 pub fn storage<E: std::fmt::Display>(e: E) -> Response {
     tracing::error!("store: {e}");
-    error(StatusCode::SERVICE_UNAVAILABLE, "The server could not reach its database. Try again in a minute.")
+    error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "The server could not reach its database. Try again in a minute.",
+    )
 }
 
 pub fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .map(str::trim)
         .filter(|t| !t.is_empty())
 }
@@ -186,25 +197,66 @@ pub fn session_token(headers: &HeaderMap) -> Option<&str> {
 /// something must also come from the site's own origin: SameSite=Strict
 /// already keeps other sites' requests from carrying the cookie, and this
 /// keeps that true on a browser that ignores the attribute.
-pub async fn session(c: &Cloud, method: &Method, headers: &HeaderMap, now: u64) -> Result<Account, Response> {
-    let refuse = || error(StatusCode::UNAUTHORIZED, "Your sign-in has expired. Sign in again.");
+pub async fn session(
+    c: &Cloud,
+    method: &Method,
+    headers: &HeaderMap,
+    now: u64,
+) -> Result<Account, Response> {
+    let refuse = || {
+        error(
+            StatusCode::UNAUTHORIZED,
+            "Your sign-in has expired. Sign in again.",
+        )
+    };
     let raw = session_token(headers).ok_or_else(refuse)?;
     if method != Method::GET
         && cookie(headers, SESSION_COOKIE).is_some()
         && let Some(o) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())
         && o != c.site.origin
     {
-        return Err(error(StatusCode::FORBIDDEN, "That request did not come from the RamWarden site."));
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "That request did not come from the RamWarden site.",
+        ));
     }
-    let id = c.store.session_account(raw, now).await.map_err(storage)?.ok_or_else(refuse)?;
-    c.store.account(&id).await.map_err(storage)?.ok_or_else(refuse)
+    let id = c
+        .store
+        .session_account(raw, now)
+        .await
+        .map_err(storage)?
+        .ok_or_else(refuse)?;
+    c.store
+        .account(&id)
+        .await
+        .map_err(storage)?
+        .ok_or_else(refuse)
 }
 
-pub async fn device(c: &Cloud, headers: &HeaderMap, now: u64) -> Result<(Device, Account), Response> {
-    let refuse = || error(StatusCode::UNAUTHORIZED, "This device is not signed in, or was removed from the account.");
+pub async fn device(
+    c: &Cloud,
+    headers: &HeaderMap,
+    now: u64,
+) -> Result<(Device, Account), Response> {
+    let refuse = || {
+        error(
+            StatusCode::UNAUTHORIZED,
+            "This device is not signed in, or was removed from the account.",
+        )
+    };
     let raw = bearer(headers).ok_or_else(refuse)?;
-    let d = c.store.device_for_token(raw, now).await.map_err(storage)?.ok_or_else(refuse)?;
-    let a = c.store.account(&d.account_id).await.map_err(storage)?.ok_or_else(refuse)?;
+    let d = c
+        .store
+        .device_for_token(raw, now)
+        .await
+        .map_err(storage)?
+        .ok_or_else(refuse)?;
+    let a = c
+        .store
+        .account(&d.account_id)
+        .await
+        .map_err(storage)?
+        .ok_or_else(refuse)?;
     Ok((d, a))
 }
 
@@ -263,31 +315,70 @@ async fn account(State(state): State<Arc<AppState>>, method: Method, headers: He
 
 /// Replaces `prefs` (spec 4.3: warden colors, the pet-comment mute). The
 /// server keeps it opaque and small; the apps read it at sign-in.
-async fn set_prefs(State(state): State<Arc<AppState>>, method: Method, headers: HeaderMap, Json(b): Json<Value>) -> Reply {
+async fn set_prefs(
+    State(state): State<Arc<AppState>>,
+    method: Method,
+    headers: HeaderMap,
+    Json(b): Json<Value>,
+) -> Reply {
     let c = cloud(&state)?;
     let now = (state.now)();
     let a = session(c, &method, &headers, now).await?;
     let Value::Object(mut prefs) = b else {
-        return Err(error(StatusCode::UNPROCESSABLE_ENTITY, "prefs must be a JSON object"));
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "prefs must be a JSON object",
+        ));
     };
     if Value::Object(prefs.clone()).to_string().len() > MAX_PREFS_BYTES {
-        return Err(error(StatusCode::PAYLOAD_TOO_LARGE, "prefs are limited to 4 KB"));
+        return Err(error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "prefs are limited to 4 KB",
+        ));
     }
     // Consent timestamps are server-owned. Unrelated preference edits must
     // neither enable sharing nor erase a previous opt-in silently.
-    let old_enabled=a.prefs.get("share_usage").and_then(|v|v.as_bool()).unwrap_or(false);
-    let enabled=match prefs.get("share_usage") {
-        Some(value)=>value.as_bool().ok_or_else(||error(StatusCode::UNPROCESSABLE_ENTITY,"share_usage must be true or false"))?,
-        None=>old_enabled,
+    let old_enabled = a
+        .prefs
+        .get("share_usage")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let enabled = match prefs.get("share_usage") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "share_usage must be true or false",
+            )
+        })?,
+        None => old_enabled,
     };
     prefs.remove("usage_since");
-    if prefs.contains_key("share_usage") || old_enabled {prefs.insert("share_usage".into(),json!(enabled));}
-    if enabled {
-        let since=if old_enabled {a.prefs.get("usage_since").and_then(|v|v.as_u64()).unwrap_or(now)} else {now};
-        prefs.insert("usage_since".into(),json!(since));
+    if prefs.contains_key("share_usage") || old_enabled {
+        prefs.insert("share_usage".into(), json!(enabled));
     }
-    if !enabled && prefs.contains_key("share_usage") {c.store.disable_device_consents(&a.id).await.map_err(storage)?;}
-    let a = c.store.set_prefs(&a.id, prefs).await.map_err(storage)?.ok_or_else(|| storage("account vanished"))?;
+    if enabled {
+        let since = if old_enabled {
+            a.prefs
+                .get("usage_since")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(now)
+        } else {
+            now
+        };
+        prefs.insert("usage_since".into(), json!(since));
+    }
+    if !enabled && prefs.contains_key("share_usage") {
+        c.store
+            .disable_device_consents(&a.id)
+            .await
+            .map_err(storage)?;
+    }
+    let a = c
+        .store
+        .set_prefs(&a.id, prefs)
+        .await
+        .map_err(storage)?
+        .ok_or_else(|| storage("account vanished"))?;
     Ok(Json(json!({"prefs": a.prefs})).into_response())
 }
 
@@ -302,7 +393,10 @@ async fn revoke_device(
     if c.store.revoke_device(&a.id, &id).await.map_err(storage)? {
         Ok(Json(json!({"ok": true})).into_response())
     } else {
-        Err(error(StatusCode::NOT_FOUND, "No such device on this account."))
+        Err(error(
+            StatusCode::NOT_FOUND,
+            "No such device on this account.",
+        ))
     }
 }
 
@@ -315,7 +409,10 @@ async fn device_account(State(state): State<Arc<AppState>>, headers: HeaderMap) 
     let now = (state.now)();
     let (_, a) = device(c, &headers, now).await?;
     let count = c.store.devices(&a.id).await.map_err(storage)?.len();
-    Ok(Json(json!({"plan":plan_name(&a,now),"device_limit":device_limit(&a,now),"devices_used":count})).into_response())
+    Ok(Json(
+        json!({"plan":plan_name(&a,now),"device_limit":device_limit(&a,now),"devices_used":count}),
+    )
+    .into_response())
 }
 
 /// The signed record the daemon saves as `entitlement.json`.
@@ -323,10 +420,12 @@ async fn entitlement(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
     let c = cloud(&state)?;
     let now = (state.now)();
     let (d, a) = device(c, &headers, now).await?;
-    let signer = c
-        .signer
-        .as_ref()
-        .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Entitlements are not enabled on this server."))?;
+    let signer = c.signer.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Entitlements are not enabled on this server.",
+        )
+    })?;
     Ok(Json(signer.sign(Claims::for_account(&a, &d.id, now))).into_response())
 }
 
@@ -344,7 +443,8 @@ async fn download(
     let plain = |s: &str| {
         !s.is_empty()
             && !s.starts_with('.')
-            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
     };
     if !plain(&warden) || !plain(&file) {
         return Err(error(StatusCode::NOT_FOUND, "No such download."));
@@ -358,13 +458,21 @@ async fn download(
         };
         return Err(error(StatusCode::FORBIDDEN, why));
     }
-    let dir = c.downloads_dir.as_ref().ok_or_else(|| error(StatusCode::NOT_FOUND, "No such download."))?;
+    let dir = c
+        .downloads_dir
+        .as_ref()
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, "No such download."))?;
     let path = dir.join(&warden).join(&file);
-    let f = tokio::fs::File::open(&path).await.map_err(|_| error(StatusCode::NOT_FOUND, "No such download."))?;
+    let f = tokio::fs::File::open(&path)
+        .await
+        .map_err(|_| error(StatusCode::NOT_FOUND, "No such download."))?;
     let len = f.metadata().await.map(|m| m.len()).ok();
     let mut r = Body::from_stream(tokio_util::io::ReaderStream::new(f)).into_response();
     let h = r.headers_mut();
-    h.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/octet-stream"));
+    h.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/octet-stream"),
+    );
     if let Some(len) = len {
         h.insert(header::CONTENT_LENGTH, len.into());
     }
@@ -385,13 +493,15 @@ mod developer_tests {
         let mut a = Account::new("owner".into(), Identity::email("owner@example.com"), now);
         a.developer_access = true;
         assert_eq!(device_limit(&a, now), 1);
-        for (tier, limit, threat) in [(Tier::Ram,3,false),(Tier::Pro,5,true)] {
-            a.tier = Some(tier); a.paid_until = Some(now+100);
-            assert_eq!(device_limit(&a,now),limit);
-            assert!(a.active("ram",now)); assert_eq!(a.active("threat",now),threat);
+        for (tier, limit, threat) in [(Tier::Ram, 3, false), (Tier::Pro, 5, true)] {
+            a.tier = Some(tier);
+            a.paid_until = Some(now + 100);
+            assert_eq!(device_limit(&a, now), limit);
+            assert!(a.active("ram", now));
+            assert_eq!(a.active("threat", now), threat);
         }
         a.cancelled = true;
-        assert_eq!(device_limit(&a,now+101),1);
-        assert!(!a.active("threat",now+101));
+        assert_eq!(device_limit(&a, now + 101), 1);
+        assert!(!a.active("threat", now + 101));
     }
 }

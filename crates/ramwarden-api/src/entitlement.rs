@@ -118,7 +118,9 @@ impl EntitlementSigner {
             .ok()
             .and_then(|b| b.try_into().ok())
             .ok_or("RAMWARDEN_ENTITLEMENT_KEY must be base64 of 32 bytes")?;
-        Ok(EntitlementSigner { key: SigningKey::from_bytes(&bytes) })
+        Ok(EntitlementSigner {
+            key: SigningKey::from_bytes(&bytes),
+        })
     }
 
     /// Base64 of the public key, the value compiled into the daemon.
@@ -151,7 +153,11 @@ pub fn verify(record: &Record, public_key_b64: &str) -> bool {
     else {
         return false;
     };
-    let Some(sig) = B64.decode(&record.sig).ok().and_then(|b| <[u8; 64]>::try_from(b).ok()) else {
+    let Some(sig) = B64
+        .decode(&record.sig)
+        .ok()
+        .and_then(|b| <[u8; 64]>::try_from(b).ok())
+    else {
         return false;
     };
     record.v == VERSION
@@ -224,9 +230,17 @@ mod tests {
         use ramwarden_cloud::model::{Account, BillingUpdate, Identity, Tier};
         let mut a = Account::new("a".into(), Identity::email("x@y.z"), 100);
         let c = Claims::for_account(&a, "d", 100);
-        assert_eq!((c.tier.as_str(), c.status.as_str(), c.wardens.len()), ("none", "none", 0));
-        BillingUpdate { tier: Some(Tier::Ram), paid_until: Some(1000), trial_ends_at: Some(1000), ..Default::default() }
-            .apply(&mut a);
+        assert_eq!(
+            (c.tier.as_str(), c.status.as_str(), c.wardens.len()),
+            ("none", "none", 0)
+        );
+        BillingUpdate {
+            tier: Some(Tier::Ram),
+            paid_until: Some(1000),
+            trial_ends_at: Some(1000),
+            ..Default::default()
+        }
+        .apply(&mut a);
         let c = Claims::for_account(&a, "d", 100);
         assert_eq!((c.tier.as_str(), c.status.as_str()), ("ram", "trial"));
         assert!(c.wardens.contains_key("ram") && !c.wardens.contains_key("threat"));

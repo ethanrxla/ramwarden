@@ -27,8 +27,12 @@ impl Refusal {
     pub fn message(self) -> &'static str {
         match self {
             Refusal::Minute => "too many requests this minute",
-            Refusal::Day => "daily quota used up; RamWarden falls back to its local estimate until tomorrow (UTC)",
-            Refusal::Budget => "hosted decisions are paused for today; RamWarden falls back to its local estimate",
+            Refusal::Day => {
+                "daily quota used up; RamWarden falls back to its local estimate until tomorrow (UTC)"
+            }
+            Refusal::Budget => {
+                "hosted decisions are paused for today; RamWarden falls back to its local estimate"
+            }
         }
     }
 }
@@ -57,7 +61,12 @@ pub struct Limits {
 
 impl Limits {
     pub fn new(per_minute: u32, per_day: u32, daily_input_tokens: u64) -> Self {
-        Limits { per_minute, per_day, daily_input_tokens, inner: Mutex::new(Inner::default()) }
+        Limits {
+            per_minute,
+            per_day,
+            daily_input_tokens,
+            inner: Mutex::new(Inner::default()),
+        }
     }
 
     /// Take one request slot for `token` at `now` (Unix seconds). On success,
@@ -88,13 +97,20 @@ impl Limits {
 
     /// Diagnostics have their own inexpensive budget; sharing must never
     /// spend the user's AI quota or depend on the upstream model budget.
-    pub fn take_diagnostics(&self,key:&TokenHash,now:u64)->bool {
-        let mut g=self.inner.lock().unwrap_or_else(|p|p.into_inner());
-        roll_day(&mut g,now);
-        let u=g.diagnostics.entry(*key).or_default();
-        if u.minute != now/60 {u.minute=now/60;u.in_minute=0;}
-        if u.in_minute>=4 || u.in_day>=1000 {return false;}
-        u.in_minute+=1;u.in_day+=1;true
+    pub fn take_diagnostics(&self, key: &TokenHash, now: u64) -> bool {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        roll_day(&mut g, now);
+        let u = g.diagnostics.entry(*key).or_default();
+        if u.minute != now / 60 {
+            u.minute = now / 60;
+            u.in_minute = 0;
+        }
+        if u.in_minute >= 4 || u.in_day >= 1000 {
+            return false;
+        }
+        u.in_minute += 1;
+        u.in_day += 1;
+        true
     }
 
     /// Whether today's upstream budget has room. For callers that have
