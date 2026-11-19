@@ -75,6 +75,7 @@ mod tests {
             target: Target { browser: "b".into(), id, url: url.into() },
             title: "t".into(),
             inactive_minutes: 300,
+            active_idle_minutes: 300,
             eligible: true,
             closeable: true,
             safe_close_supported: true,

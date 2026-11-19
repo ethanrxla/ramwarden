@@ -575,6 +575,7 @@ mod tests {
             target: Target { browser: "b".into(), id, url: format!("https://secret{id}.example.com/private") },
             title: "private title".into(),
             inactive_minutes: 500 + id * 400,
+            active_idle_minutes: 500 + id * 400,
             eligible,
             closeable: true,
             safe_close_supported: true,
