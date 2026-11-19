@@ -108,7 +108,7 @@ async function run() {
     assert.equal((await p.textContent('[data-buy="ram"]')).trim(), "Start 14-day free trial");
     assert.equal((await p.textContent('[data-buy="pro"]')).trim(), "Get Pro");
     await p.click('[data-interval="year"]');
-    assert.ok(await p.isVisible('.tier-pro >> text=$24'));
+    assert.ok(await p.isVisible('.tier-pro >> text=$23.99'));
     assert.match(await p.getAttribute('[data-buy="ram"]', "href"), /plan=3$/);
     assert.ok(await p.isVisible("text=open source on GitHub"));
     // The hero is the radar with RamWarden's own ram; the demo is in How it works.

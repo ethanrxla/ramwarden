@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use hmac::{Hmac, Mac};
 use ramwarden_ai::secret::Secret;
-use ramwarden_cloud::model::{Billing, BillingMethod, BillingUpdate, Interval, Tier};
+use ramwarden_cloud::model::{Billing, BillingMethod, BillingUpdate, Tier};
 use serde_json::Value;
 use sha2::Sha256;
 
@@ -366,6 +366,7 @@ pub fn update_from_event(event: &Value, plans: &Plans) -> Option<(String, Billin
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use ramwarden_cloud::model::Interval;
     use serde_json::json;
 
     /// "$3.99 every 2 months" must reach Stripe as a two-month interval, not
