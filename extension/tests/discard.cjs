@@ -185,6 +185,17 @@ test('closing a page does not make the tabs already open on its site look reopen
   assert.equal(report[0].protectedUntilMs,0,'a sibling that was already open stays closeable');
   assert.equal(vm.runInContext('Object.keys(safety.sites).length',f.context),0);
 });
+test('a reopen keeps its own host only, and browser pages are never kept',async()=>{
+  const f=fixture({url:'https://www.google.com/search?q=a'});f.chrome.tabs.remove=(id,cb)=>cb();
+  await f.context.closeSafe({requestId:'r',tabs:[{id:7,url:'https://www.google.com/search?q=a'}],minInactiveMinutes:60,expiresAt:Date.now()+10000});
+  f.context.observeReopen({...f.tab,id:9,url:'https://www.google.com/search?q=b'});
+  f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:10,url:'https://mail.google.com/mail/u/0/'},{...f.tab,id:11,url:'https://www.google.com/search?q=c'}]);
+  const report=await f.context.buildTabReport({});
+  assert.equal(report[0].protectedUntilMs,0,'Gmail is a different host');
+  assert.ok(report[1].protectedUntilMs>Date.now(),'the reopened host is kept');
+  f.context.observeReopen({...f.tab,id:12,url:'chrome://newtab/'});
+  assert.equal(vm.runInContext('safety.pages["chrome://newtab/"]',f.context),undefined);
+});
 test('reports the running worker safe-close capability only for socket browsers', async()=>{
   for (const [agent,supported] of [['Chrome',true],['Firefox',false]]) {
     const f=fixture({},false,agent); f.chrome.tabs.query=(_,cb)=>cb([f.tab]);

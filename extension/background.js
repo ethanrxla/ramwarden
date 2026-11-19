@@ -130,6 +130,19 @@ function siteOf(url) {
   catch { return ""; }
 }
 
+// The key a reopen keeps: the exact web host (without "www."). The registered
+// domain was too wide: reopening one Google search kept Gmail, Cloud Console,
+// Search Console and Workspace for a day (Mac, Nov 19: 8 tabs). Browser pages
+// (chrome://newtab, chrome://extensions) hold nothing to come back to and have
+// no key.
+function keepKeyOf(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    return u.hostname.toLowerCase().replace(/^www\./, "");
+  } catch { return ""; }
+}
+
 function isProtectedFor(url, idleMinutes) {
   if (isHardProtected(url)) return true;
   return isProtected(url) && idleMinutes < RELEASE_MINUTES;
@@ -303,7 +316,7 @@ async function buildTabReport(activity) {
         if (tab.active) selectedByWindow.set(tab.windowId,tab.id);
         const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
         tabActivity[tab.id]={...known,url:tab.url || "",title:tab.title || "",lastActiveMs};
-        const page = safety.pages[tab.url] || {}, site = safety.sites[siteOf(tab.url)] || {};
+        const page = safety.pages[tab.url] || {}, site = safety.sites[keepKeyOf(tab.url)] || {};
         const feedback = {until: Math.max(page.until || 0, site.until || 0), negative: Math.max(page.negative || 0, site.negative || 0)};
         report.push({
           id: tab.id,
@@ -661,7 +674,14 @@ const safetyReady = new Promise(resolve => chrome.storage.local.get("tabSafety",
   // Before v2 every tab already open on a site counted as a "reopen" of it once
   // the warden closed one of its pages, so one close protected the whole site
   // for a day (Mac, Nov 19: 14 of 36 tabs). Those site keeps are not the user's.
-  if (safety.v !== 2) { safety.sites = {}; safety.v = 2; }
+  if (safety.v !== 2 && safety.v !== 3) { safety.sites = {}; safety.v = 2; }
+  // v3: keeps are per host, and the page keeps that v1 made in bulk (every open
+  // tab on a closed site, all at once) are lifted. Visit counts stay.
+  if (safety.v === 2) {
+    safety.sites = {}; safety.closedSites = {};
+    for (const p of Object.values(safety.pages)) p.until = 0;
+    safety.v = 3;
+  }
   const cutoff=Date.now()-30*86400000;
   for (const [url,p] of Object.entries(safety.pages)) if (p.updated<cutoff) delete safety.pages[url];
   for (const [url,p] of Object.entries(safety.closed)) if (p.at<cutoff) delete safety.closed[url];
@@ -680,7 +700,7 @@ function protectPage(url,kind) {
   delete safety.closed[url];
   // A reopen protects the whole site, and each reopen counts: reopening a site
   // twice is the strongest "I am coming back to this" there is.
-  const site=siteOf(url);
+  const site=keepKeyOf(url);
   if (kind==="reopened" && site) {
     const s=safety.sites[site] || {};
     safety.sites[site]={until:Date.now()+86400000,negative:Math.min(4,(s.negative||0)+1),updated:Date.now()};
@@ -696,7 +716,8 @@ function protectPage(url,kind) {
 function observeReopen(tab) {
   const url = tab.url || tab.pendingUrl || "";
   if (!url || safetyClosing.has(tab.id)) return;
-  if (safety.closed[url] || safety.closedSites[siteOf(url)]) protectPage(url,"reopened");
+  if (!keepKeyOf(url)) return;
+  if (safety.closed[url] || safety.closedSites[keepKeyOf(url)]) protectPage(url,"reopened");
 }
 async function keepTabs(targets) {
   await safetyReady;
@@ -732,7 +753,7 @@ async function closeSafe(command) {
     const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
     if (ok) {
       safety.closed[tab.url]={at:Date.now()}; closed.push(tab);
-      if (siteOf(tab.url)) safety.closedSites[siteOf(tab.url)]={at:Date.now()};
+      if (keepKeyOf(tab.url)) safety.closedSites[keepKeyOf(tab.url)]={at:Date.now()};
       postFeedback(tab.url,"confirmed");
     } else safetyClosing.delete(tab.id);
   }
