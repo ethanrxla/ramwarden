@@ -412,6 +412,7 @@ impl Store for MongoStore {
                         "trial_ends_at": 0_i64,
                         "cancelled": true,
                         "billing": to_bson(&p.billing),
+                        "prepaid_rate": p.rate as i64,
                     },
                     "$push": { "prepaid_payments": payment_id },
                 },

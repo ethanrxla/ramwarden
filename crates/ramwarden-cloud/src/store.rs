@@ -411,6 +411,7 @@ impl Store for MemoryStore {
         a.trial_ends_at = Some(0);
         a.cancelled = true;
         a.billing = Some(p.billing.clone());
+        a.prepaid_rate = Some(p.rate);
         a.prepaid_payments.push(payment_id.to_string());
         Ok(Prepaid::Applied)
     }
@@ -685,6 +686,7 @@ pub mod contract {
             tier: Tier::Ram,
             interval: Interval::Month,
             paid_until: until,
+            rate: 1,
             billing: Billing { method: BillingMethod::Thorchain, reference: "bc1qbuyer".into() },
         };
         assert_eq!(s.apply_prepaid(&p.id, "thor-1", Some(NOW), &grant(NOW + 30)).await.unwrap(), Prepaid::Changed, "nothing paid yet");

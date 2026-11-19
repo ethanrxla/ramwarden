@@ -244,8 +244,9 @@ payment not yet in `prepaid_payments`); the payment is confirmed after it,
 so retries and concurrent watchers add each period exactly once and a crash
 in between is finished by the next poll. A payment buys one period:
 `paid_until` = later of now and current `paid_until`, plus the plan's days;
-time left on another tier is converted at its value (price per day), so
-Plus days become fewer Pro days. The account is recorded as not renewing
+time left is kept by value (`prepaid_rate`, the average price per second of
+everything bought ahead), so on a tier change Plus days become fewer Pro
+days, and monthly and annual purchases each count at what they cost. The account is recorded as not renewing
 (`cancelled`), with no trial, and the account page offers "Add time". EVM
 coins (ETH, ETH on Base, BNB, AVAX) are sent as the router's
 `depositWithExpiry`; the rest by hand with the memo.

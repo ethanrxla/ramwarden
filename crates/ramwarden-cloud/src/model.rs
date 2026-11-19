@@ -181,6 +181,11 @@ pub struct Account {
     /// retried or concurrent grant never adds the same period twice.
     #[serde(default)]
     pub prepaid_payments: Vec<Id>,
+    /// What the prepaid time left is worth: nanocents per second, averaged
+    /// over every period bought, so monthly and annual purchases keep their
+    /// own value when the tier changes.
+    #[serde(default)]
+    pub prepaid_rate: Option<u64>,
 }
 
 fn default_device_limit() -> u32 {
@@ -204,6 +209,7 @@ impl Account {
             developer_access: false,
             prefs: Default::default(),
             prepaid_payments: Vec::new(),
+            prepaid_rate: None,
         }
     }
 
@@ -278,6 +284,8 @@ pub struct PrepaidGrant {
     pub tier: Tier,
     pub interval: Interval,
     pub paid_until: u64,
+    /// The value of the time from now to `paid_until`, nanocents per second.
+    pub rate: u64,
     pub billing: Billing,
 }
 

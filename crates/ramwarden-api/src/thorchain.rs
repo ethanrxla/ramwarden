@@ -259,30 +259,42 @@ pub enum Recorded {
     Short { payment_id: String, received: u64 },
 }
 
-/// When a new period ends: after the time already paid for, or from now.
+/// A plan's value per second of service, in nanocents.
+pub fn plan_rate(plan: &PlanDef) -> u64 {
+    (u128::from(plan_cents(plan)) * 1_000_000_000 / u128::from((plan.days * 86_400).max(1))) as u64
+}
+
+/// When a new period ends, and what the time from now to then is worth.
 ///
-/// Time left on a different tier is converted at its value, not carried
-/// over day for day: a year of Plus does not become a year of Pro because
-/// one month of Pro was bought (and Pro left over buys more days of Plus).
-pub fn prepaid_until(plans: &Plans, a: &Account, plan: &PlanDef, now: u64) -> u64 {
+/// Time left is kept by value, not day for day. Its value is the account's
+/// running `prepaid_rate` (so monthly and annual purchases each count at
+/// what they cost), or, for time not paid ahead (a cancelled card or Base
+/// plan), the rate of the plan it was on. Same tier: the days carry over and
+/// the rate becomes the average. Another tier: the value buys days at the
+/// new plan's rate, so a year of Plus does not become a year of Pro because
+/// one month of Pro was bought, and Pro left over buys more days of Plus.
+pub fn prepaid_until(plans: &Plans, a: &Account, plan: &PlanDef, now: u64) -> (u64, u64) {
+    let new_secs = plan.days * 86_400;
+    let new_rate = plan_rate(plan);
     let left = a.paid_until.unwrap_or(0).saturating_sub(now);
-    let left = match a.tier {
-        Some(tier) if left > 0 && tier != plan.tier() => {
-            let old = plans
-                .plans
-                .iter()
-                .find(|p| p.tier() == tier && Some(p.interval()) == a.interval)
-                .or_else(|| plans.plans.iter().find(|p| p.tier() == tier));
-            match old {
-                // left x (old cents per day) / (new cents per day)
-                Some(old) => (u128::from(left) * u128::from(plan_cents(old)) * u128::from(plan.days)
-                    / (u128::from(old.days) * u128::from(plan_cents(plan)).max(1))) as u64,
-                None => 0,
-            }
-        }
-        _ => left,
+    let old_rate = match (a.tier, a.billing.as_ref().map(|b| b.method), a.prepaid_rate) {
+        (Some(_), Some(BillingMethod::Thorchain), Some(r)) => Some(r),
+        (Some(tier), _, _) => plans
+            .plans
+            .iter()
+            .find(|p| p.tier() == tier && Some(p.interval()) == a.interval)
+            .or_else(|| plans.plans.iter().find(|p| p.tier() == tier))
+            .map(plan_rate),
+        _ => None,
     };
-    now + left + plan.days * 86_400
+    let (left, left_value) = match old_rate {
+        Some(r) if left > 0 => (left, u128::from(left) * u128::from(r)),
+        _ => (0, 0),
+    };
+    let total_value = left_value + u128::from(new_secs) * u128::from(new_rate);
+    let secs = if a.tier == Some(plan.tier()) { left + new_secs } else { (total_value / u128::from(new_rate.max(1))) as u64 };
+    let rate = (total_value / u128::from(secs.max(1))) as u64;
+    (now + secs, rate)
 }
 
 /// Grants the period a swap paid for.
@@ -310,10 +322,12 @@ pub async fn record(store: &dyn Store, plans: &Plans, swap: &Swap, now: u64) -> 
             paid_until = a.paid_until;
             break;
         }
+        let (until, rate) = prepaid_until(plans, &a, plan, now);
         let grant = PrepaidGrant {
             tier: plan.tier(),
             interval: plan.interval(),
-            paid_until: prepaid_until(plans, &a, plan, now),
+            paid_until: until,
+            rate,
             billing: Billing { method: BillingMethod::Thorchain, reference: swap.from.clone() },
         };
         match store.apply_prepaid(&a.id, &id, a.paid_until, &grant).await.map_err(err)? {
@@ -546,24 +560,54 @@ pub(crate) mod tests {
 
     #[test]
     fn time_left_on_another_tier_converts_at_its_value() {
-        use ramwarden_cloud::model::{Identity, Interval, Tier};
+        use ramwarden_cloud::model::Identity;
         let plans = Plans::built_in();
-        let (plus, pro) = (plans.plan(1).unwrap(), plans.plan(2).unwrap());
+        let (plus_m, pro_m, plus_y) = (plans.plan(1).unwrap(), plans.plan(2).unwrap(), plans.plan(3).unwrap());
         let now = 1_000_000;
-        let mut a = Account::new("a".into(), Identity::email("a@example.com"), now);
-        assert_eq!(prepaid_until(&plans, &a, plus, now), now + plus.days * 86_400, "nothing left");
-        a.tier = Some(Tier::Ram);
-        a.interval = Some(Interval::Month);
-        a.paid_until = Some(now + 300 * 86_400);
-        assert_eq!(prepaid_until(&plans, &a, plus, now), now + 330 * 86_400, "same tier: days carry over");
-        let pro_until = prepaid_until(&plans, &a, pro, now);
-        let left = 300 * 86_400 * plan_cents(plus) / plan_cents(pro);
-        assert_eq!(pro_until, now + left + pro.days * 86_400, "Plus days become fewer Pro days");
-        assert!(pro_until < now + 330 * 86_400);
-        a.tier = Some(Tier::Pro);
-        assert!(prepaid_until(&plans, &a, plus, now) > now + 330 * 86_400, "Pro days become more Plus days");
+        let day = 86_400;
+        let fresh = Account::new("a".into(), Identity::email("a@example.com"), now);
+        assert_eq!(prepaid_until(&plans, &fresh, plus_m, now), (now + plus_m.days * day, plan_rate(plus_m)), "nothing left");
+
+        // Buy each plan in turn, as the watcher would, at `now`.
+        let buy = |a: &mut Account, plan: &PlanDef| {
+            let (until, rate) = prepaid_until(&plans, a, plan, now);
+            a.tier = Some(plan.tier());
+            a.interval = Some(plan.interval());
+            a.paid_until = Some(until);
+            a.prepaid_rate = Some(rate);
+            a.billing = Some(Billing { method: BillingMethod::Thorchain, reference: "x".into() });
+        };
+        let value = |a: &Account| u128::from(a.paid_until.unwrap() - now) * u128::from(a.prepaid_rate.unwrap());
+        let cents = |p: &PlanDef| u128::from(plan_cents(p)) * 1_000_000_000;
+        let close = |got: u128, want: u128| got.abs_diff(want) * 10_000 < want; // within 0.01%
+
+        let mut a = fresh.clone();
+        buy(&mut a, plus_m);
+        buy(&mut a, plus_m);
+        assert_eq!(a.paid_until, Some(now + 2 * plus_m.days * day), "same tier: days carry over");
+
+        // Monthly then annual Plus, then monthly Pro: every dollar keeps its value.
+        let mut a = fresh.clone();
+        buy(&mut a, plus_m);
+        buy(&mut a, plus_y);
+        assert_eq!(a.paid_until, Some(now + (plus_m.days + plus_y.days) * day));
+        buy(&mut a, pro_m);
+        assert!(close(value(&a), cents(plus_m) + cents(plus_y) + cents(pro_m)), "value kept");
+        let pro_days = (a.paid_until.unwrap() - now) as f64 / day as f64;
+        let want = (plan_cents(plus_m) + plan_cents(plus_y) + plan_cents(pro_m)) as f64 / plan_cents(pro_m) as f64 * pro_m.days as f64;
+        assert!((pro_days - want).abs() < 0.01, "{pro_days} Pro days, want {want}");
+        assert!(pro_days < (plus_m.days + plus_y.days + pro_m.days) as f64, "fewer Pro days than Plus days");
+
+        // The other order lands on the same value.
+        let mut b = fresh.clone();
+        buy(&mut b, plus_y);
+        buy(&mut b, plus_m);
+        buy(&mut b, pro_m);
+        assert!(close(value(&b), value(&a)));
+
+        // Lapsed time is gone.
         a.paid_until = Some(now - 5);
-        assert_eq!(prepaid_until(&plans, &a, plus, now), now + plus.days * 86_400, "lapsed time is gone");
+        assert_eq!(prepaid_until(&plans, &a, plus_m, now).0, now + plus_m.days * day);
     }
 
     #[test]

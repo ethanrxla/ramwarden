@@ -185,6 +185,7 @@ async fn a_grant_interrupted_before_confirming_finishes_once() {
         tier: ramwarden_cloud::model::Tier::Ram,
         interval: ramwarden_cloud::model::Interval::Month,
         paid_until: NOW + 30 * DAY,
+        rate: 1,
         billing: Billing { method: BillingMethod::Thorchain, reference: "bc1qbuyer".into() },
     };
     assert_eq!(a.store.apply_prepaid(&account_id, &pid, None, &grant).await.unwrap(), Prepaid::Applied);
