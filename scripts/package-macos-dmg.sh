@@ -23,7 +23,11 @@ RAMWARDEN_SETUP_DEST="$APP" bash "$ROOT/macos/setup/build.sh"
 RES="$APP/Contents/Resources"
 mkdir -p "$RES/payload"
 RAMWARDEN_APP_DEST="$RES/payload/RamWarden.app" bash "$ROOT/macos/menubar/build.sh"
+# Inside out: the nested quit helper is its own Mach-O and keeps only its
+# ad-hoc linker signature unless signed itself, which notarization rejects.
+codesign "${SIGN[@]}" "$RES/payload/RamWarden.app/Contents/MacOS/ramwarden-quit"
 codesign "${SIGN[@]}" "$RES/payload/RamWarden.app"
+codesign --verify --deep --strict "$RES/payload/RamWarden.app"
 ditto "$RES/payload/RamWarden.app" "$STAGE/RamWarden.app"
 for ITEM in ramwarden-daemon ramwarden-usage-sync ramwarden ramwarden-launcher; do
   test -x "$ROOT/target/release/$ITEM"
