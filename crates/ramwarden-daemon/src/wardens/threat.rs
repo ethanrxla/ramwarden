@@ -189,10 +189,13 @@ impl ThreatWarden {
         if !self.hosted(){return Err("Source-event retrieval is not configured for this self-hosted connection".into());}
         self.cloud().map_err(|_|"Sign in on this computer to read its security evidence".to_string())?.event(id).await.map_err(|_|"The source event is unavailable or access changed".into())
     }
-    /// One poll. The caller has checked the warden is unlocked.
-    pub async fn poll(&self, self_hosted: Option<&Client>) {
+    /// One poll. The caller has checked the warden is unlocked. Returns
+    /// whether the service answered: `false` means a transient failure (an
+    /// unreachable service, a 502) that the poller retries soon, rather than
+    /// leaving "Can't reach" on screen for a whole poll interval.
+    pub async fn poll(&self, self_hosted: Option<&Client>) -> bool {
         if !self.cfg.enabled {
-            return;
+            return true;
         }
         let sensors = ramwarden_wazuh::sensors::collect().await;
         *self.sensors.write().unwrap() = sensors;
@@ -203,7 +206,7 @@ impl ThreatWarden {
         }
     }
 
-    async fn poll_hosted(&self) {
+    async fn poll_hosted(&self) -> bool {
         let now = wardens::now();
         let mut report = WazuhReport {
             mode: "hosted".into(),
@@ -213,21 +216,26 @@ impl ThreatWarden {
         };
         let cloud = match self.cloud() {
             Ok(c) => c,
-            Err(status) => return self.set(status, Some(report)),
+            Err(status) => {
+                self.set(status, Some(report));
+                return true;
+            }
         };
         let s = match cloud.status().await {
             Ok(s) => s,
             Err(Error::SignedOut) => {
-                return self.set(
+                self.set(
                     Status::off("Sign in to RamWarden again", "This computer's sign-in has expired.", now),
                     Some(report),
                 );
+                return true;
             }
             Err(Error::NoPass) => {
-                return self.set(
+                self.set(
                     Status::off("Your ThreatWarden pass isn't active", "Renew your ThreatWarden pass, or a bundle that includes it.", now),
                     Some(report),
                 );
+                return true;
             }
             Err(e) => {
                 report.problems.push(e.to_string());
@@ -236,7 +244,8 @@ impl ThreatWarden {
                 } else {
                     Status::off("Can't reach ThreatWarden's service", e.to_string(), now)
                 };
-                return self.set(status, Some(report));
+                self.set(status, Some(report));
+                return false;
             }
         };
         report.manager = match report.agent_name.as_str() {
@@ -267,9 +276,10 @@ impl ThreatWarden {
             status.detail = summary.clone();
         }
         self.set(status, Some(report));
+        true
     }
 
-    async fn poll_self(&self, client: Option<&Client>) {
+    async fn poll_self(&self, client: Option<&Client>) -> bool {
         let c = &self.cfg;
         let mut report = WazuhReport {
             mode: "self".into(),
@@ -309,16 +319,21 @@ impl ThreatWarden {
             }
         }
         let mut status = wardens::assess_threats(report.health(), &levels, self.thresholds(), wardens::now());
+        let mut reached = true;
         // "Clear" must not hide that part of the picture is missing.
         if status.level == Level::Clear && !report.problems.is_empty() {
             let why = report.problems.join(" ");
             if report.manager.is_none() && !report.local.is_connected() {
                 status = Status::off("Cannot reach Wazuh", why, status.checked_at);
+                // With a manager configured this is an outage worth retrying;
+                // without one, polling sooner would not change the answer.
+                reached = client.is_none();
             } else {
                 status.detail = format!("{} {why}", status.detail);
             }
         }
         self.set(status, Some(report));
+        reached
     }
 
     /// Start the one-click setup: enrol with the hosted API, then install
@@ -386,15 +401,45 @@ impl ThreatWarden {
                     }
                 }
             };
-            let every = Duration::from_secs(self.cfg.poll_seconds.max(30));
-            tracing::info!("threatwarden ({}): polling every {}s", self.cfg.mode, every.as_secs());
+            let mut pace = Pace::new(Duration::from_secs(self.cfg.poll_seconds.max(30)));
+            tracing::info!("threatwarden ({}): polling every {}s", self.cfg.mode, pace.every.as_secs());
             loop {
-                if unlocked() {
-                    self.poll(client.as_ref()).await;
+                let reached = !unlocked() || self.poll(client.as_ref()).await;
+                let wait = pace.after(reached);
+                if !reached {
+                    tracing::info!("threatwarden: service unreachable, checking again in {}s", wait.as_secs());
                 }
-                tokio::time::sleep(every).await;
+                tokio::time::sleep(wait).await;
             }
         });
+    }
+}
+
+/// When to poll next. A poll that reached the service waits the full
+/// interval. A transient failure (a 502 while the API restarts, a dropped
+/// connection) is retried after 15 s, then 30 s, 60 s, ... up to the interval,
+/// so a recovered service clears "Can't reach ThreatWarden's service" within
+/// seconds instead of minutes, without hammering one that is down.
+struct Pace {
+    every: Duration,
+    failures: u32,
+}
+
+impl Pace {
+    const FIRST_RETRY: Duration = Duration::from_secs(15);
+
+    fn new(every: Duration) -> Pace {
+        Pace { every, failures: 0 }
+    }
+
+    fn after(&mut self, reached: bool) -> Duration {
+        if reached {
+            self.failures = 0;
+            return self.every;
+        }
+        let wait = Pace::FIRST_RETRY.saturating_mul(1 << self.failures.min(16));
+        self.failures = self.failures.saturating_add(1);
+        wait.min(self.every)
     }
 }
 
@@ -478,6 +523,21 @@ mod tests {
         let e = self_hosted_client(&c).err().unwrap();
         assert!(e.contains("https"), "{e}");
         assert!(self_hosted_client(&config::Wazuh::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_failed_poll_retries_soon_and_backs_off_to_the_interval() {
+        let mut pace = Pace::new(Duration::from_secs(120));
+        assert_eq!(pace.after(true).as_secs(), 120);
+        let waits: Vec<u64> = (0..5).map(|_| pace.after(false).as_secs()).collect();
+        assert_eq!(waits, [15, 30, 60, 120, 120]);
+        // One success resets the schedule, so the next outage retries quickly again.
+        assert_eq!(pace.after(true).as_secs(), 120);
+        assert_eq!(pace.after(false).as_secs(), 15);
+        // Many failures in a row never overflow or exceed the interval.
+        for _ in 0..100 {
+            assert!(pace.after(false) <= Duration::from_secs(120));
+        }
     }
 
     #[test]
