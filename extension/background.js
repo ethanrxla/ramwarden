@@ -165,7 +165,13 @@ function mergeActivity(stored) {
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   // Reading counts until the user leaves, not merely when they first selected it.
   const previous=selectedByWindow.get(windowId);
-  if (previous && tabActivity[previous]) tabActivity[previous].lastActiveMs=Date.now();
+  if (previous && previous!==tabId && tabActivity[previous]) {
+    const row=tabActivity[previous], now=Date.now();
+    row.lastActiveMs=now;
+    // When the user left, so the daemon can tell time away from time spent
+    // reading (an activation alone is only when a visit started).
+    row.departures=[...(row.departures||[]), now].slice(-24);
+  }
   selectedByWindow.set(windowId,tabId);
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
@@ -180,6 +186,7 @@ chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
       lastActiveMs: Date.now(),
       incognito: tab.incognito || false,
       activations: [...prior, Date.now()].slice(-24),
+      departures: tabActivity[tabId]?.departures ?? [],
     };
     persistActivity();
   });
@@ -191,7 +198,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     // piece of work: keep its visit history. A new site starts fresh.
     const prior = tabActivity[tabId];
     const keep = prior && siteOf(prior.url) && siteOf(prior.url) === siteOf(changeInfo.url);
-    tabActivity[tabId] = {url:changeInfo.url,lastActiveMs:Date.now(),activations:keep ? (prior.activations || []) : []};
+    // Typed, restored or followed from elsewhere: a reopen if the warden closed it.
+    if (!keep) observeReopen({...tab, id: tabId, url: changeInfo.url});
+    tabActivity[tabId] = {url:changeInfo.url,lastActiveMs:Date.now(),activations:keep ? (prior.activations || []) : [],departures:keep ? (prior.departures || []) : []};
     delete safety.work[tabId]; persistSafety(); persistActivity();
   }
   if (changeInfo.status !== "complete") return;
@@ -201,6 +210,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     lastActiveMs: tabActivity[tabId]?.lastActiveMs ?? (tab.lastAccessed || Date.now()),
     incognito: tab.incognito || false,
     activations: tabActivity[tabId]?.activations ?? [],
+    departures: tabActivity[tabId]?.departures ?? [],
   };
   persistActivity();
 });
@@ -214,6 +224,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   safetyClosing.delete(tabId); delete safety.work[tabId]; persistSafety();
   delete tabActivity[tabId];
   persistActivity();
+  _retitleIdleGroupsSoon();
 });
 
 function persistActivity() {
@@ -292,7 +303,6 @@ async function buildTabReport(activity) {
         if (tab.active) selectedByWindow.set(tab.windowId,tab.id);
         const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
         tabActivity[tab.id]={...known,url:tab.url || "",title:tab.title || "",lastActiveMs};
-        observeReopen(tab);
         const page = safety.pages[tab.url] || {}, site = safety.sites[siteOf(tab.url)] || {};
         const feedback = {until: Math.max(page.until || 0, site.until || 0), negative: Math.max(page.negative || 0, site.negative || 0)};
         report.push({
@@ -313,6 +323,7 @@ async function buildTabReport(activity) {
           discardSupported: typeof chrome.tabs.discard === "function",
           safeCloseSupported: !IS_FIREFOX, // correlated close acknowledgements use the live socket
           activations: known?.activations ?? [],
+          departures: known?.departures ?? [],
           activityVersion: 1,
           workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,
           protectedUntilMs: feedback.until || 0,
@@ -434,7 +445,31 @@ async function _tidyIdleGroups(liveTabs) {
 async function _leaveIdleGroup(tab) {
   if (!chrome.tabGroups?.get || tab.groupId === undefined || tab.groupId === NO_GROUP) return;
   const group = await new Promise(r => chrome.tabGroups.get(tab.groupId, g => r(chrome.runtime.lastError ? null : g)));
-  if (group && (group.title || "").startsWith(IDLE_PREFIX + " ·")) chrome.tabs.ungroup(tab.id, () => void chrome.runtime.lastError);
+  if (group && (group.title || "").startsWith(IDLE_PREFIX + " ·")) {
+    chrome.tabs.ungroup(tab.id, () => { void chrome.runtime.lastError; _retitleIdleGroupsSoon(); });
+  }
+}
+
+// Recount every Idle group from Chrome itself. The count in the title was only
+// rewritten when tabs joined, so after the warden closed tabs the chip kept
+// saying "Idle · 68" over a handful (Mac, Nov 19). Counting from the group's
+// own tabs covers closes, a tab opened from the group, and the user dragging
+// tabs out, whatever the last report held.
+async function _retitleIdleGroups() {
+  if (!chrome.tabGroups?.query) return;
+  const groups = await new Promise(r => chrome.tabGroups.query({}, g => r(chrome.runtime.lastError ? [] : g)));
+  for (const g of groups) {
+    if (!(g.title || "").startsWith(IDLE_PREFIX + " ·")) continue;
+    const members = await new Promise(r => chrome.tabs.query({ groupId: g.id }, t => r(chrome.runtime.lastError ? null : t)));
+    if (members && g.title !== _idleTitle(members.length)) chrome.tabGroups.update(g.id, { title: _idleTitle(members.length) });
+  }
+}
+
+// Closes come in bursts (a sweep closes up to ten): recount once after them.
+let _retitleTimer = null;
+function _retitleIdleGroupsSoon() {
+  clearTimeout(_retitleTimer);
+  _retitleTimer = setTimeout(() => { _retitleTimer = null; _retitleIdleGroups(); }, 500);
 }
 
 // The badge shows how many tabs RamWarden has unloaded: Chrome keeps them in
@@ -623,6 +658,10 @@ let safety = {pages:{},closed:{},work:{},sites:{},closedSites:{}};
 const safetyClosing = new Set();
 const safetyReady = new Promise(resolve => chrome.storage.local.get("tabSafety", r => {
   safety = {pages:{},closed:{},work:{},sites:{},closedSites:{},...(r?.tabSafety || {})};
+  // Before v2 every tab already open on a site counted as a "reopen" of it once
+  // the warden closed one of its pages, so one close protected the whole site
+  // for a day (Mac, Nov 19: 14 of 36 tabs). Those site keeps are not the user's.
+  if (safety.v !== 2) { safety.sites = {}; safety.v = 2; }
   const cutoff=Date.now()-30*86400000;
   for (const [url,p] of Object.entries(safety.pages)) if (p.updated<cutoff) delete safety.pages[url];
   for (const [url,p] of Object.entries(safety.closed)) if (p.at<cutoff) delete safety.closed[url];
@@ -650,6 +689,10 @@ function protectPage(url,kind) {
   persistSafety();
   if (kind==="reopened") postFeedback(url,kind);
 }
+// A reopen is a tab the user opens, or navigates to from another site, after
+// the warden closed that page or site. A tab that was already open is not one:
+// checking every open tab against closed sites made each close protect all its
+// siblings and report them as reopens, which also skewed the learned pace.
 function observeReopen(tab) {
   const url = tab.url || tab.pendingUrl || "";
   if (!url || safetyClosing.has(tab.id)) return;
@@ -664,7 +707,7 @@ chrome.runtime.onMessage?.addListener((message,sender) => {
   if (message?.type!=="rw_activity" || !sender.tab || sender.frameId!==0) return;
   const tab=sender.tab, now=Date.now();
   const old=tabActivity[tab.id] || {};
-  tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[]};
+  tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[],departures:old.departures||[]};
   if (message.dirty===true) safety.work[tab.id]={url:tab.url,dirty:true};
   persistActivity(); persistSafety();
 });
@@ -679,7 +722,8 @@ async function closeSafe(command) {
     if (!tab || tab.url!==target.url || (!approved && isWorkPage(tab.url))
       || (!approved && !disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
-      || tab.status!=="complete" || tab.autoDiscardable===false
+      // A discarded tab reports "unloaded"; only a page still loading is unsettled.
+      || (tab.status!=="complete" && tab.status!=="unloaded") || tab.autoDiscardable===false
       || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
       || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))
       // Approval covers a batch the user may not have read tab by tab.

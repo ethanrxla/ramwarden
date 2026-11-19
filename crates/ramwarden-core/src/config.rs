@@ -332,9 +332,11 @@ pub struct Tabs {
     pub sweep_minutes: f64,
     /// `off`, `review` (require approval), `dry-run` (log what would close) or `live`.
     pub close: String,
-    /// A tab must have been idle at least this long to be closed.
+    /// A tab must have been idle at least this long to be closed. Never below
+    /// one hour (`Tabs::close_idle_minutes`), whatever the file says.
     pub close_after_hours: f64,
-    /// Close only below this chance of the user returning.
+    /// Past the idle floor, close below this chance of the user returning
+    /// (at most 0.95). Past twice the floor a tab is closed whatever the chance.
     pub close_below_return: f64,
     /// An older tab on the same site as a more recently used one is closed after
     /// this long idle, whatever its return chance: the newer tab already covers
@@ -349,6 +351,24 @@ pub struct Tabs {
     pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
+    /// Learn the idle floor from how this user comes back to tabs
+    /// (`tabpace`), within one hour and one day. `close_after_hours` is used
+    /// until there is enough evidence, or always when this is false.
+    pub learn_pace: bool,
+}
+
+impl Tabs {
+    /// The least idle time, in minutes, before a tab may be closed unattended.
+    ///
+    /// Until 2026-11-18 this was pinned at 24 hours in two places (the sweep and
+    /// the extension's safe-close command), after the 2026-11-02 closures of
+    /// tabs in use. A whole day meant almost nothing ever qualified, so the
+    /// warden stopped closing tabs the user had stopped using. What protects a
+    /// tab in use is the other guards (recent tabs, work pages, forms, reopens,
+    /// return chance), so the floor follows the setting again, down to an hour.
+    pub fn close_idle_minutes(&self) -> i64 {
+        (self.close_after_hours.max(1.0) * 60.0) as i64
+    }
 }
 
 impl Default for Tabs {
@@ -356,12 +376,13 @@ impl Default for Tabs {
         Tabs {
             sweep_minutes: 5.0,
             close: "dry-run".into(),
-            close_after_hours: 24.0,
+            close_after_hours: 4.0,
             close_below_return: 0.3,
             close_duplicates_after_hours: 4.0,
             keep_tabs: 6,
             budget_idle_minutes: 60.0,
             max_close_per_sweep: 10,
+            learn_pace: true,
         }
     }
 }

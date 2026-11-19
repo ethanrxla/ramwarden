@@ -6,9 +6,12 @@
 //!
 //! * `mode = "dry-run"` logs and records what it *would* quit, so the first
 //!   hours can be read before anything is closed.
-//! * `mode = "live"` sends the app its own quit request (`tell application ... to
-//!   quit`), never a signal. An app with unsaved work shows its save prompt and
-//!   stays; if it has not quit when the request times out we leave it.
+//! * `mode = "live"` sends the app its own quit request, never a signal: on
+//!   macOS through `ramwarden-quit` (AppKit's `NSRunningApplication.terminate`),
+//!   never `osascript`, whose Apple event made macOS ask "RamWarden wants to
+//!   control Music" mid-use, once per app. An app with unsaved work shows its
+//!   save prompt and stays; if it has not quit when the request times out we
+//!   leave it. No helper installed means no quit, logged, not a prompt.
 //! * One quit per pass, biggest first, so memory is re-read before the next.
 
 use std::collections::VecDeque;
@@ -20,6 +23,31 @@ use ramwarden_core::history::NewAction;
 
 use crate::appintel::{self, Decision};
 use crate::hub::AppState;
+
+/// Where the macOS quit helper lives: inside RamWarden.app, wherever it was
+/// installed, or `RAMWARDEN_QUIT_HELPER`.
+pub fn quit_helper() -> Option<std::path::PathBuf> {
+    let home = ramwarden_core::config::home();
+    std::env::var_os("RAMWARDEN_QUIT_HELPER")
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .chain([std::path::PathBuf::from("/Applications/RamWarden.app"), home.join("Applications/RamWarden.app")].map(|a| a.join("Contents/MacOS/ramwarden-quit")))
+        .find(|p| p.is_file())
+}
+
+/// Ask `app` to quit as its own Quit menu item would. True when the request
+/// was delivered; the app may still refuse.
+fn ask_to_quit(app: &str) -> bool {
+    match quit_helper() {
+        // The helper returns at once: AppKit sends the request and does not
+        // wait for the app. Exit 0 means it was sent.
+        Some(helper) => std::process::Command::new(helper).arg(app).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()),
+        None => {
+            tracing::warn!("quit: {app} not asked: ramwarden-quit is not installed (rebuild RamWarden.app)");
+            false
+        }
+    }
+}
 
 pub struct Quitter {
     /// The last reason each allow-listed app was kept, so a refusal is logged
@@ -54,11 +82,6 @@ fn note_kept(kept: &mut std::collections::HashMap<String, String>, app: &str, wh
         tracing::info!("quit: kept {app}: {why}");
         kept.insert(app.to_string(), why.to_string());
     }
-}
-
-/// AppleScript string literal for an app name: quotes and backslashes escaped.
-fn script_quote(name: &str) -> String {
-    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitter) {
@@ -156,7 +179,7 @@ pub fn consider(state: &AppState, handle: &tokio::runtime::Handle, q: &mut Quitt
                 if !live {
                     q.announced.insert(app.clone(), Instant::now());
                 }
-                let ok = live && ramwarden_core::exec::run("osascript", &["-e", &format!("tell application {} to quit", script_quote(app))]).is_some();
+                let ok = live && ask_to_quit(app);
                 tracing::info!(
                     "{} {app} ({:.0} MB, quiet {:.0} min, p={:.2}, memory {:.0}% used)",
                     if !live { "would quit" } else if ok { "asked to quit" } else { "quit request failed for" },
@@ -209,11 +232,5 @@ mod tests {
         assert_eq!(kept.get("Console").map(String::as_str), Some("working right now"));
         note_kept(&mut kept, "Console", "only quiet for 3 min");
         assert_eq!(kept.get("Console").map(String::as_str), Some("only quiet for 3 min"));
-    }
-
-    #[test]
-    fn app_names_are_quoted_for_applescript() {
-        assert_eq!(script_quote("zoom.us"), "\"zoom.us\"");
-        assert_eq!(script_quote("A\"B\\C"), "\"A\\\"B\\\\C\"");
     }
 }

@@ -75,6 +75,10 @@ pub struct Tab {
     /// oldest first. Absent from older extensions.
     #[serde(default, deserialize_with = "lenient_f64_list")]
     pub activations: Vec<f64>,
+    /// When the user left this tab for another in its window, same units.
+    /// Absent from extensions before 2026-11-18.
+    #[serde(default, deserialize_with = "lenient_f64_list")]
+    pub departures: Vec<f64>,
     #[serde(default, rename = "activityVersion")]
     pub activity_version: u32,
     #[serde(default, rename = "workInProgress")]
@@ -335,6 +339,17 @@ impl Registry {
 
     pub fn queued_count(&self, browser: &str) -> usize {
         self.poll_queue.get(browser).map_or(0, Vec::len)
+    }
+}
+
+
+impl Tab {
+    /// Whether the page has finished loading. Chrome reports a discarded tab
+    /// as `unloaded`, never `complete`; until 2026-11-18 only `complete`
+    /// counted, so every unloaded tab ranked as "page is loading" and could
+    /// never be closed (11 of 28 tabs on the Mac, idle up to 54 hours).
+    pub fn settled(&self) -> bool {
+        matches!(self.status.as_deref(), Some("complete" | "unloaded"))
     }
 }
 

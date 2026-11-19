@@ -102,6 +102,9 @@ async fn an_agent_proposes_and_the_user_frees_from_the_bubble() {
     assert!(b["bubble"]["sound"].is_null(), "an agent's proposal is not an alert");
     let (_, shown) = send(&st, "POST", "/warden/answer", json!({"id": b["bubble"]["id"], "choice": "show"})).await;
     assert!(shown["reply"].as_str().unwrap().contains("I can clear"), "{shown}");
+    // The same scan as rows the popup draws as a list, without paths.
+    assert!(shown["usage"]["places"].as_array().unwrap().iter().any(|r| r["kind"] == "clear"), "{shown}");
+    assert!(shown["usage"]["home_folders"].as_array().unwrap().iter().all(|f| f.get("path").is_none()));
     assert!(blob.exists());
 
     let (_, b) = send(&st, "GET", "/warden/bubble", Value::Null).await;
@@ -124,7 +127,8 @@ async fn not_now_declines_and_nothing_is_removed() {
     let st = state(dir.path(), 3.0);
     let (_, p) = send(&st, "POST", "/storage/cleanup/propose", json!({})).await;
     let (_, b) = send(&st, "GET", "/warden/bubble", Value::Null).await;
-    send(&st, "POST", "/warden/answer", json!({"id": b["bubble"]["id"], "choice": "dismiss"})).await;
+    let (_, said) = send(&st, "POST", "/warden/answer", json!({"id": b["bubble"]["id"], "choice": "dismiss"})).await;
+    assert!(said["reply"].as_str().unwrap().starts_with("Okay, I'll leave it"), "Not now must say something: {said}");
     let (_, after) = send(&st, "GET", &format!("/storage/cleanup/{}", p["id"].as_str().unwrap()), Value::Null).await;
     assert_eq!(after["state"], "declined");
     assert_eq!(send(&st, "POST", &format!("/storage/cleanup/{}/apply", p["id"].as_str().unwrap()), Value::Null).await.0, 409);
@@ -143,7 +147,7 @@ async fn a_due_alert_baas_once_with_the_offer() {
     ramwarden_daemon::storage::routes::raise(st.clone(), alert).await;
     let (_, b) = send(&st, "GET", "/warden/bubble", Value::Null).await;
     assert_eq!(b["bubble"]["sound"], "baa_critical");
-    assert!(b["bubble"]["text"].as_str().unwrap().starts_with("Baa! / is nearly full: 0.2 GB left of 930 GB."), "{b}");
+    assert!(b["bubble"]["text"].as_str().unwrap().starts_with("/ is nearly full: 0.2 GB left of 930 GB."), "{b}");
     assert!(b["bubble"]["proposal"].is_string());
 }
 

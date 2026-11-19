@@ -23,6 +23,7 @@ pub mod roles;
 pub mod signals;
 pub mod storage;
 pub mod structures;
+pub mod tabpace;
 pub mod tidy;
 pub mod wardens;
 pub mod workspaces;

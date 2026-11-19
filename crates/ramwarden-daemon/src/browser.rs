@@ -49,6 +49,14 @@ pub struct Row {
     pub p_model: Option<f64>,
 }
 
+impl Row {
+    /// Return chance on this user's time scale, the figure the close rule
+    /// compares with `close_below_return` (see [`tabrank::at_pace`]).
+    pub fn close_chance(&self, cfg: &ramwarden_core::config::Tabs) -> f64 {
+        tabrank::at_pace(self.p_return, cfg.close_idle_minutes())
+    }
+}
+
 pub fn rank(browser: &str, tabs: &[Tab], threshold: i64) -> Vec<Row> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -123,7 +131,7 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
                 )
             } else if t.auto_discardable != Some(true) {
                 ("protected", "browser opted out of discarding")
-            } else if t.status.as_deref() != Some("complete") {
+            } else if !t.settled() {
                 ("protected", "page is loading")
             } else if t.work_in_progress || t.protected_until_ms > now_ms {
                 ("protected", "recent work or explicit keep/reopen feedback")
@@ -415,6 +423,22 @@ mod selection_tests {
 /// forever. Now: the budget and same-site rules are gone, work pages are never
 /// auto-closed, browser settings pages go first, and every pick must clear the
 /// same idle floor and return-chance ceiling.
+/// The idle time a tab must reach before an unattended close: the close floor,
+/// or an older duplicate's own delay when that is shorter. The extension
+/// re-checks idle time with this figure, so the sweep and the close agree on
+/// every target it picks.
+pub fn close_floor(row: &Row, cfg: &ramwarden_core::config::Tabs) -> i64 {
+    let min_idle = cfg.close_idle_minutes();
+    match duplicate_idle(cfg) {
+        Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => min_idle.min(d),
+        _ => min_idle,
+    }
+}
+
+fn duplicate_idle(cfg: &ramwarden_core::config::Tabs) -> Option<i64> {
+    (cfg.close_duplicates_after_hours > 0.0).then(|| (cfg.close_duplicates_after_hours.max(1.0) * 60.0) as i64)
+}
+
 pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec<Target> {
     // A budget is a keep floor, never permission to close. Preserve the newest
     // N tabs in each browser even when an old tab passes the normal safety floor.
@@ -425,12 +449,24 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
         tabs.sort_by_key(|r| (r.inactive_minutes, r.target.id));
         kept.extend(tabs.iter().take(cfg.keep_tabs).map(|r| r.target.clone()));
     }
-    let min_idle = (cfg.close_after_hours.max(24.0) * 60.0) as i64;
+    let min_idle = cfg.close_idle_minutes();
+    // Three ways past the floor (owner, 2026-11-19: "24 hours is too long",
+    // the point is a tab strip you can navigate):
+    // - unlikely to return: idle past the floor and, on this user's own time
+    //   scale (`Row::close_chance`), below the return ceiling;
+    // - left: idle twice the floor, whatever the estimate. The return model
+    //   saturates around 0.6-0.8 for hours-old tabs, so on its own it kept
+    //   every tab the user had walked away from;
+    // - an older copy of a page open more recently, after its own delay.
+    let ceiling = cfg.close_below_return.clamp(0.0, 0.95);
+    let dup_idle = duplicate_idle(cfg);
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
         && !r.work
-        && r.inactive_minutes >= min_idle
-        && (r.status == "browser page"
-            || (matches!(r.status, "candidate" | "unloaded") && r.p_return < cfg.close_below_return.min(0.3)))).collect();
+        && (r.status == "browser page" && r.inactive_minutes >= min_idle
+            || matches!(r.status, "candidate" | "unloaded")
+                && ((r.inactive_minutes >= min_idle && r.close_chance(cfg) < ceiling)
+                    || r.inactive_minutes >= min_idle.saturating_mul(2)
+                    || (r.duplicate && dup_idle.is_some_and(|d| r.inactive_minutes >= d))))).collect();
     picked.sort_by(|a,b| close_priority(a,b));
     picked.into_iter().take(cfg.max_close_per_sweep).map(|r| r.target.clone()).collect()
 }
@@ -448,7 +484,7 @@ pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
 pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
     can_close(tab) && tab.activity_version >= 1
         && tab.active == Some(false) && tab.pinned == Some(false)
-        && tab.audible == Some(false) && tab.status.as_deref() == Some("complete")
+        && tab.audible == Some(false) && tab.settled()
         && tab.auto_discardable == Some(true) && !tab.work_in_progress
         && tab.protected_until_ms <= now_ms
         && tab.last_active_ms.is_finite() && tab.last_active_ms > 0.0
@@ -474,7 +510,8 @@ mod manual_close_tests {
     fn idle(id: i64, url: &str, minutes: i64, discarded: bool) -> Tab {
         serde_json::from_value(serde_json::json!({"id":id,"url":url,"inactiveMinutes":minutes,
             "active":false,"pinned":false,"audible":false,"discarded":discarded,"autoDiscardable":true,
-            "status":"complete","discardSupported":true,"activityVersion":1,
+            // Chrome reports a discarded tab as "unloaded", never "complete".
+            "status":if discarded {"unloaded"} else {"complete"},"discardSupported":true,"activityVersion":1,
             "lastActiveMs": ramwarden_core::history::unix_now() as f64 * 1000.0 - minutes as f64 * 60000.0})).unwrap()
     }
 
@@ -533,7 +570,11 @@ mod manual_close_tests {
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        assert!(ids.is_empty(), "tab budgets cannot override eligibility");
+        // Only the mail tab is eligible on its own merits: past the 4 h floor,
+        // never revisited, so at the user's pace it is unlikely to be wanted.
+        // The budget adds nothing: 3 is too fresh, 5 and 6 are work pages, 7 is
+        // pinned, 8 and 9 are protected.
+        assert_eq!(ids, vec![4], "tab budgets cannot override eligibility");
     }
 
     #[test]
@@ -544,10 +585,85 @@ mod manual_close_tests {
     }
 
     #[test]
+    fn every_pick_clears_the_floor_the_extension_is_sent() {
+        // An eight-hour floor and a four-hour duplicate delay: a five-hour-old
+        // copy is picked, so the close must carry its four hours, not eight,
+        // or the extension refuses it and the sweep wastes the slot.
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 8.0, close_duplicates_after_hours: 4.0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/a", 30, false)];
+        let rows = rank("b", &tabs, 30);
+        let picked = close_candidates(&rows, &cfg);
+        assert_eq!(picked.iter().map(|t| t.id).collect::<Vec<_>>(), vec![1]);
+        for t in &picked {
+            let row = rows.iter().find(|r| &r.target == t).unwrap();
+            assert_eq!(close_floor(row, &cfg), 240);
+            assert!(row.inactive_minutes >= close_floor(row, &cfg));
+        }
+        let fresh = rows.iter().find(|r| r.target.id == 2).unwrap();
+        assert_eq!(close_floor(fresh, &cfg), 480, "the copy kept is not a duplicate");
+    }
+
+    #[test]
     fn duplicate_closing_can_be_turned_off() {
         let cfg = ramwarden_core::config::Tabs { close_duplicates_after_hours: 0.0, ..Default::default() };
         let tabs = vec![idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 90, false)];
         assert!(close_candidates(&rank("b", &tabs, 30), &cfg).is_empty());
+    }
+
+    #[test]
+    fn the_idle_floor_follows_the_setting_and_never_drops_below_an_hour() {
+        // A tab left five hours, that the warden thinks you won't come back to,
+        // closes on the default settings; it used to wait a whole day.
+        let unlikely = |tabs: &[Tab]| {
+            let mut rows = rank("b", tabs, 30);
+            for r in &mut rows { r.p_return = 0.1; }
+            rows
+        };
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let tabs = vec![idle(1, "https://example.org/left", 300, false), idle(2, "https://example.org/just-now", 90, false)];
+        let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![1]);
+
+        let eager = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 0.1, ..Default::default() };
+        assert_eq!(eager.close_idle_minutes(), 60);
+        let tabs = vec![idle(3, "https://example.org/forty-minutes", 40, false), idle(4, "https://example.org/two-hours", 120, false)];
+        let ids: Vec<i64> = close_candidates(&unlikely(&tabs), &eager).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![4]);
+    }
+
+    /// 2026-11-19: tabs left 6-12 hours scored 0.6-0.8 to return and none
+    /// closed. A tab left twice the floor goes whatever the estimate.
+    #[test]
+    fn a_tab_left_twice_the_floor_closes_whatever_its_return_estimate() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_after_hours: 4.0, close_below_return: 0.0, ..Default::default() };
+        let mut rows = rank("b", &[
+            idle(1, "https://example.org/left-ten-hours", 600, true),
+            idle(2, "https://example.org/left-five-hours", 300, true),
+            idle(3, "https://ap.www.namecheap.com/domains/list/", 900, true),
+        ], 30);
+        for r in &mut rows { r.p_return = 0.7; }
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1], "the work page stays, the 5 h tab is below the floor's 2x: {ids:?}");
+        // On the user's pace a 0.7 prior five hours out is about 0.1, so the
+        // 5 h tab closes on its own estimate too (`Row::close_chance`).
+        let cfg = ramwarden_core::config::Tabs { close_below_return: 0.3, ..cfg };
+        let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "{ids:?}");
+    }
+
+    #[test]
+    fn an_unloaded_tab_can_still_be_closed_and_a_loading_one_cannot() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, ..Default::default() };
+        let unloaded = idle(1, "https://example.org/unloaded-days-ago", 3_000, true);
+        assert_eq!(unloaded.status.as_deref(), Some("unloaded"));
+        let mut loading = idle(2, "https://example.org/stuck-loading", 3_000, false);
+        loading.status = Some("loading".into());
+        let rows = rank("b", &[unloaded, loading], 30);
+        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![1]);
+        assert_eq!(rows.iter().find(|r| r.target.id == 2).unwrap().reason, "page is loading");
     }
 
     #[test]

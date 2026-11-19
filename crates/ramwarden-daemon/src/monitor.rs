@@ -116,6 +116,7 @@ impl TabCloser for Tabs {
 /// user is unlikely to come back to (when `[tabs] close` allows it).
 async fn release_tabs(state: &AppState, trigger: &str) {
     state.request_all_tabs().await;
+    state.learn_pace();
     let (to_unload, to_close, decided, est_mb) = {
         let rows = crate::tabreview::snapshot(state);
         let mut close = crate::browser::close_candidates(&rows, &state.tabs_config());
