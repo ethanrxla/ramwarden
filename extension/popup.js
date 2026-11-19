@@ -122,7 +122,7 @@ async function wardenPost(path, body, timeout = 40000) {
 async function refreshWarden() {
   const el = document.getElementById("warden");
   // Don't wipe the focus checklist, or a half-typed answer, mid-use.
-  if (lastFocus) return;
+  if (lastFocus || showingUsage) return;
   const typing = el.querySelector("input.warden-input");
   if (typing && (typing.value || document.activeElement === typing)) return;
   let view = null;
@@ -130,10 +130,12 @@ async function refreshWarden() {
   el.innerHTML = wardenHTML(view);
   el.hidden = !view;
   el.dataset.id = view?.id || "";
+  el.dataset.kind = view?.kind || "";
 }
 
 function wardenSay(text) {
   const el = document.getElementById("warden");
+  showingUsage = false;
   if (!text) return refreshWarden();
   el.innerHTML = wardenHTML({ text, buttons: [], muted: true });
   el.hidden = false;
@@ -150,11 +152,36 @@ document.getElementById("warden").addEventListener("click", async (e) => {
       await wardenPost("/warden/mute", { muted: false });
       return refreshWarden();
     }
-    const r = await wardenPost("/warden/answer", { id: el.dataset.id, choice: b.dataset.choice });
+    const choice = b.dataset.choice;
+    // Storage answers can take a few seconds (a scan, a clean-up): say so now.
+    const storage = el.dataset.kind === "storage";
+    if (storage && STORAGE_WORKING[choice]) {
+      el.querySelector(".warden-text").textContent = STORAGE_WORKING[choice];
+      el.querySelector(".warden-choices").innerHTML = "";
+    }
+    const r = await wardenPost("/warden/answer", { id: el.dataset.id, choice });
     chrome.runtime.sendMessage?.({ type: "warden-answered" });
-    wardenSay(r.body.reply);
-  } catch { wardenSay("I couldn't reach the daemon."); }
+    if (r.status !== 200) console.warn("warden answer", r.status, r.body);
+    if (choice === "show" && r.status === 200 && r.body.usage) return showUsage(r.body);
+    wardenSay(answerText(choice, r.status, r.body));
+  } catch (err) {
+    console.warn("warden answer failed", err);
+    wardenSay("I couldn't reach RamWarden on this computer. Is it running?");
+  }
 });
+
+// The breakdown stays until put away or answered: it is something to read.
+let showingUsage = false;
+async function showUsage(body) {
+  const el = document.getElementById("warden");
+  let view = null;
+  try { view = wardenView(await daemonJSON("/warden/bubble")); } catch { /* the list still shows */ }
+  showingUsage = true;
+  el.innerHTML = storageHTML(body.reply, body.usage, view && view.id ? view : null);
+  el.hidden = false;
+  el.dataset.id = view?.id || "";
+  el.dataset.kind = "storage";
+}
 
 // Typing to the warden: Enter (or the arrow) sends the focus.
 let lastFocus = null;
@@ -183,6 +210,7 @@ document.getElementById("warden").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   if (b.dataset.act === "focus-done") { lastFocus = null; return refreshWarden(); }
+  if (b.dataset.act === "storage-done") { showingUsage = false; const w = document.getElementById("warden"); w.hidden = true; w.innerHTML = ""; return; }
   if (b.dataset.act !== "focus-keep" || !lastFocus || !lastFocus.proposal) return;
   const el = document.getElementById("warden");
   const ticked = new Set([...el.querySelectorAll("input[data-tab]:checked")].map(x => Number(x.dataset.tab)));
