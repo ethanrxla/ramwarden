@@ -28,7 +28,7 @@ struct SetupView: View {
     @State private var connectStatus = ""
     @State private var connectURL: URL?
     @State private var loginProcess: Process?
-    private let titles = ["Welcome", "License agreement", "Your account", "Install or update", "Check your warden", "Bring your other PCs"]
+    private let titles = ["Welcome", "License agreement", "Your account", "Install or update", "Allow once", "Check your warden", "Bring your other PCs"]
     private var site: String {
         let configured = ProcessInfo.processInfo.environment["RAMWARDEN_SETUP_SITE"] ?? (Bundle.main.object(forInfoDictionaryKey: "WardenSiteURL") as? String) ?? "https://ramwarden.com"
         return configured == "http://localhost:8000" ? configured : "https://ramwarden.com"
@@ -86,6 +86,8 @@ struct SetupView: View {
                     Button("Show browser extension folder") { NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RamWarden/extension")) }
                     Text("After installation, enable the browser extension in each profile you want your warden to manage. The browser page explains the steps.").foregroundStyle(.secondary)
                 case 4:
+                    PermissionsView()
+                case 5:
                     Text("Check whether this Mac’s existing daemon is answering. This does not verify your subscription, browser extension, or every security engine.")
                     HStack { Button(checking ? "Checking…" : "Check this Mac") { Task { await check() } }.disabled(checking); Text(health).accessibilityLabel("Daemon status: \(health)") }
                     Text("Open the companion to verify its connection. In Customize your ram, choose its name, colors, eyes, and size when supported by your installed version.").foregroundStyle(.secondary)
@@ -99,7 +101,7 @@ struct SetupView: View {
                     Button(copied ? "Copied" : "Copy setup request + agent skill") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(prompt + "\n\n" + bundledSkill, forType: .string); copied = true }
                 }
             }.frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true) }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
-            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == 5 ? "Done" : "Continue") { if step == 5 { SetupEvents.record(.completed,step:step,result:installationComplete);if let done=done {done()} else {NSApp.terminate(nil)} } else { if step == 2 {sharingConfirmed=true;Task{await saveSharingChoice()}};step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == 5 && !installationComplete) || (step == 1 && !licenseAccepted)) }
+            HStack { Button("Back") { step -= 1 }.disabled(step == 0); Spacer(); Text((site == "http://localhost:8000" ? "Local preview · " : "") + "Step \(step + 1) of \(titles.count)").font(.caption).foregroundStyle(.secondary); Button(step == titles.count - 1 ? "Done" : "Continue") { if step == titles.count - 1 { SetupEvents.record(.completed,step:step,result:installationComplete);if let done=done {done()} else {NSApp.terminate(nil)} } else { if step == 2 {sharingConfirmed=true;Task{await saveSharingChoice()}};step += 1 } }.buttonStyle(.borderedProminent).tint(.red).disabled(installing || (step == titles.count - 1 && !installationComplete) || (step == 1 && !licenseAccepted)) }
                     Button("Show setup diagnostic log"){NSWorkspace.shared.activateFileViewerSelecting([SetupEvents.path])}.font(.caption)
         }.padding(32).onChange(of:step){SetupEvents.record(.stepEntered,step:$0)}.onAppear{SetupEvents.record(.opened,step:step);if let previous=UserDefaults.standard.object(forKey:"setup.shareUsage") as? Bool {shareUsage=previous};licenseAccepted=UserDefaults.standard.string(forKey:"setup.licenseHash") == licenseHash && !licenseText.isEmpty;reachedLicenseEnd=licenseAccepted}.onDisappear { SetupEvents.record(.closed,step:step);loginProcess?.terminate() }
     }

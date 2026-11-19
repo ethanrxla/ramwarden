@@ -41,8 +41,8 @@ import AppKit
     }}
     private func perform(_ action:() async throws->Void) async {
         guard !busy else{return};busy=true;let started=Date();var success=false
-        SetupEvents.record(.pairingOperationStarted,step:5)
-        defer{busy=false;SetupEvents.record(.pairingOperationFinished,step:5,result:success,duration:Date().timeIntervalSince(started))}
+        SetupEvents.record(.pairingOperationStarted,step:6)
+        defer{busy=false;SetupEvents.record(.pairingOperationFinished,step:6,result:success,duration:Date().timeIntervalSince(started))}
         do {try await action();success=true} catch let error as PairingError {status=error.localizedDescription} catch {status="The local companion or hosted pairing service could not be reached. Install the latest app and try again."}
     }
     enum PairingError:LocalizedError {

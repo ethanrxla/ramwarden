@@ -32,6 +32,7 @@ pub fn router(state: AppState) -> Router {
     let router = Router::new()
         .merge(crate::agent_network::routes(state.cfg.db_path.with_file_name("agent-network")))
         .merge(crate::settings::routes())
+        .merge(crate::permissions::routes())
         .merge(crate::tabreview::routes())
         .merge(crate::decisionlog::routes())
         // â”€â”€ Contracts the shipped extensions depend on â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

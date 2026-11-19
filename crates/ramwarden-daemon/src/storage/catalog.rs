@@ -280,12 +280,18 @@ pub const MAC_PRIVATE: &[&str] = &[
     "Library/Application Support/com.apple.TCC",
     "Library/Application Support/Knowledge",
     "Pictures/Photos Library.photoslibrary",
+    // Media & Apple Music: opening the Music or TV library makes macOS ask
+    // to "access Apple Music, your music and video activity, and your media
+    // library" (reference Mac, 2026-11-19).
+    "Music/Music",
+    "Music/iTunes",
+    "Movies/TV",
 ];
 
 /// Whether this process may read every folder without macOS asking. The TCC
 /// database is readable only with Full Disk Access, and a refused open fails
 /// quietly: Full Disk Access is never prompted for, unlike the folders above.
-fn full_disk_access(home: &Path) -> bool {
+pub fn full_disk_access(home: &Path) -> bool {
     std::fs::File::open(home.join("Library/Application Support/com.apple.TCC/TCC.db")).is_ok()
 }
 
