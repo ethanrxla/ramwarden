@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
       TEST=1; shift 2 ;;
     --definitions) DEFINITIONS="${2:?definitions required}"; shift 2 ;;
     --verify)
-      for ITEM in ramwarden-daemon ramwarden-usage-sync ramwarden ramwarden-launcher config.toml extension; do test -e "$PAYLOAD/$ITEM"; done
+      for ITEM in daemon/RamWarden.app/Contents/MacOS/ramwarden-daemon ramwarden-usage-sync ramwarden ramwarden-launcher config.toml extension; do test -e "$PAYLOAD/$ITEM"; done
       echo 'Bundled installation payload verified.'; exit 0 ;;
     *) echo 'Unknown installer argument.'; exit 2 ;;
   esac
@@ -28,13 +28,16 @@ done
 [ "$(id -u)" -ne 0 ] || { echo 'Open RamWarden as your normal Mac user.'; exit 1; }
 BIN_DIR="$BASE/.local/bin"; CONFIG_DIR="$BASE/.config/ramwarden"; AGENTS="$BASE/Library/LaunchAgents"
 SUPPORT="$BASE/Library/Application Support/RamWarden"
+# The daemon runs from its own bundle so Full Disk Access lists it as
+# "RamWarden" with the ram icon; ~/.local/bin/ramwarden-daemon links to it.
+DAEMON_APP="$SUPPORT/RamWarden.app"
 BACKUP="$SUPPORT/Backups/$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$AGENTS" "$SUPPORT" "$BASE/Applications" "$BASE/Library/Logs" "$BACKUP/LaunchAgents"
 chmod 700 "$BACKUP" "$BACKUP/LaunchAgents"
 STAGE="$(mktemp -d "$BASE/Applications/.warden-install.XXXXXX")"
 DOMAIN="gui/$(id -u)"; CHANGED=0; SUCCESS=0
 LABELS='com.ramwarden.daemon com.ramwarden.menubar com.ramwarden.usage'
-BINS='ramwarden-daemon ramwarden-usage-sync ramwarden ramwarden-launcher'
+BINS='ramwarden-usage-sync ramwarden ramwarden-launcher'
 stop_job() {
   [ "$TEST" -eq 0 ] || return 0
   if [ "$APP_MODE" -eq 1 ] && [ "$1" = com.ramwarden.menubar ]; then return 0; fi
@@ -48,9 +51,14 @@ cleanup() {
   if [ "$SUCCESS" -eq 0 ] && [ "$CHANGED" -eq 1 ]; then
     echo 'Installation stopped; restoring previous components.'
     for LABEL in $LABELS; do stop_job "$LABEL" || true; done
-    for ITEM in $BINS; do
-      if [ -f "$BACKUP/$ITEM" ]; then cp -p "$BACKUP/$ITEM" "$BIN_DIR/$ITEM"; else rm -f "$BIN_DIR/$ITEM"; fi
+    # rm first: the daemon's name is a link into its bundle, and copying onto
+    # a link would write through it.
+    for ITEM in $BINS ramwarden-daemon; do
+      rm -f "$BIN_DIR/$ITEM"
+      if [ -e "$BACKUP/$ITEM" ] || [ -L "$BACKUP/$ITEM" ]; then cp -pRP "$BACKUP/$ITEM" "$BIN_DIR/$ITEM"; fi
     done
+    rm -rf "$DAEMON_APP"
+    [ ! -d "$BACKUP/daemon/RamWarden.app" ] || ditto "$BACKUP/daemon/RamWarden.app" "$DAEMON_APP"
     for LABEL in $LABELS; do
       if [ -f "$BACKUP/LaunchAgents/$LABEL.plist" ]; then cp -p "$BACKUP/LaunchAgents/$LABEL.plist" "$AGENTS/$LABEL.plist"; else rm -f "$AGENTS/$LABEL.plist"; fi
     done
@@ -69,7 +77,7 @@ cleanup() {
     echo "Rollback backup: $BACKUP"
   fi
   rm -rf "$STAGE"
-  for ITEM in $BINS; do rm -f "$BIN_DIR/.$ITEM.new"; done
+  for ITEM in $BINS ramwarden-daemon; do rm -f "$BIN_DIR/.$ITEM.new"; done
   exit "$CODE"
 }
 trap cleanup EXIT
@@ -78,6 +86,11 @@ for ITEM in $BINS; do
   [ ! -f "$BIN_DIR/$ITEM" ] || cp -p "$BIN_DIR/$ITEM" "$BACKUP/$ITEM"
   install -m 755 "$PAYLOAD/$ITEM" "$BIN_DIR/.$ITEM.new"
 done
+# The previous daemon may be a plain file (before it had a bundle) or the link.
+if [ -e "$BIN_DIR/ramwarden-daemon" ] || [ -L "$BIN_DIR/ramwarden-daemon" ]; then cp -pRP "$BIN_DIR/ramwarden-daemon" "$BACKUP/ramwarden-daemon"; fi
+[ ! -d "$DAEMON_APP" ] || { mkdir -p "$BACKUP/daemon"; ditto "$DAEMON_APP" "$BACKUP/daemon/RamWarden.app"; }
+ditto "$PAYLOAD/daemon/RamWarden.app" "$STAGE/daemon.app"
+ln -s "$DAEMON_APP/Contents/MacOS/ramwarden-daemon" "$BIN_DIR/.ramwarden-daemon.new"
 for LABEL in $LABELS; do
   [ ! -f "$AGENTS/$LABEL.plist" ] || cp -p "$AGENTS/$LABEL.plist" "$BACKUP/LaunchAgents/$LABEL.plist"
   if [ -n "$DEFINITIONS" ]; then plutil -lint "$DEFINITIONS/$LABEL.plist" >/dev/null; fi
@@ -95,7 +108,8 @@ if [ "$APP_MODE" -eq 0 ]; then
   rm -rf "$BASE/Applications/RamWarden.app"; mv "$STAGE/RamWarden.app" "$BASE/Applications/RamWarden.app"
 fi
 rm -rf "$SUPPORT/extension"; mv "$STAGE/extension" "$SUPPORT/extension"
-for ITEM in $BINS; do mv -f "$BIN_DIR/.$ITEM.new" "$BIN_DIR/$ITEM"; done
+rm -rf "$DAEMON_APP"; mv "$STAGE/daemon.app" "$DAEMON_APP"
+for ITEM in $BINS ramwarden-daemon; do rm -f "$BIN_DIR/$ITEM"; mv -f "$BIN_DIR/.$ITEM.new" "$BIN_DIR/$ITEM"; done
 if [ -n "$DEFINITIONS" ]; then
   for LABEL in $LABELS; do install -m 600 "$DEFINITIONS/$LABEL.plist" "$AGENTS/$LABEL.plist"; done
 fi

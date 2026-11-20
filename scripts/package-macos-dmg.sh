@@ -29,7 +29,11 @@ codesign "${SIGN[@]}" "$RES/payload/RamWarden.app/Contents/MacOS/ramwarden-quit"
 codesign "${SIGN[@]}" "$RES/payload/RamWarden.app"
 codesign --verify --deep --strict "$RES/payload/RamWarden.app"
 ditto "$RES/payload/RamWarden.app" "$STAGE/RamWarden.app"
-for ITEM in ramwarden-daemon ramwarden-usage-sync ramwarden ramwarden-launcher; do
+# The daemon ships as its own bundle so Full Disk Access shows it as RamWarden
+# with the ram icon, and a Developer ID grant survives updates.
+bash "$ROOT/macos/daemon/bundle.sh" "$ROOT/target/release/ramwarden-daemon" "$RES/payload/daemon/RamWarden.app" "$IDENTITY"
+codesign --verify --deep --strict "$RES/payload/daemon/RamWarden.app"
+for ITEM in ramwarden-usage-sync ramwarden ramwarden-launcher; do
   test -x "$ROOT/target/release/$ITEM"
   install -m 755 "$ROOT/target/release/$ITEM" "$RES/payload/$ITEM"
   codesign "${SIGN[@]}" "$RES/payload/$ITEM"

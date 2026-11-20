@@ -24,6 +24,30 @@ struct PermissionNeed: Identifiable, Equatable {
     }
 }
 
+/// Full Disk Access is the one grant a user has to give by hand, so RamWarden
+/// opens its pane for them exactly once: from the setup step, or, if setup was
+/// skipped (a script install), from the menu-bar app's first run. A marker
+/// file shared by both apps records that it was asked; after that only the
+/// setup step's own button opens the pane again. Compiled into both apps.
+@MainActor enum FullDiskAccess {
+    static let pane = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
+    static var marker: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RamWarden/full-disk-access-asked")
+    }
+    static var asked: Bool { FileManager.default.fileExists(atPath: marker.path) }
+    static func markAsked() {
+        try? FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: marker.path, contents: Data())
+    }
+    /// Shows the daemon's bundle in Finder (its row in the list reads
+    /// "RamWarden" with the ram; drag it in with + if it is not listed yet)
+    /// and opens the Full Disk Access pane.
+    static func open(program: String?, settings: URL? = nil) {
+        if let program = program { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: program)]) }
+        NSWorkspace.shared.open(settings ?? pane)
+    }
+}
+
 @MainActor final class PermissionsModel: ObservableObject {
     @Published var needs: [PermissionNeed] = []
     @Published var status = "Not checked yet"
@@ -45,8 +69,16 @@ struct PermissionNeed: Identifiable, Equatable {
     /// Opens the right pane and shows the program to add, so the user drags it
     /// in rather than hunting for a hidden binary.
     func grant(_ need: PermissionNeed) {
-        if let program = need.program { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: program)]) }
-        if let url = need.settings { NSWorkspace.shared.open(url) }
+        guard let url = need.settings else { return }
+        FullDiskAccess.open(program: need.program, settings: url)
+    }
+
+    /// The first time setup finds Full Disk Access off, it opens the pane
+    /// itself rather than waiting for the button.
+    func openOnce() {
+        guard !FullDiskAccess.asked, let need = needs.first(where: { $0.id == "full_disk_access" && $0.granted == false }) else { return }
+        FullDiskAccess.markAsked()
+        grant(need)
     }
 }
 
@@ -69,13 +101,13 @@ struct PermissionsView: View {
                         if need.settings != nil {
                             Button("Open System Settings") { model.grant(need) }
                             if need.program != nil {
-                                Text("Turn on RamWarden's daemon in the list. If it is not there, press + and drag in the file Finder just showed you.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                Text("Turn on RamWarden (the red ram) in the list. If it is not there, press + and drag in the RamWarden that Finder just showed you.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
                 }.padding(10).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
             }
             HStack { Button(model.checking ? "Checking…" : "Check again") { Task { await model.refresh() } }.disabled(model.checking); Text(model.status).font(.caption).foregroundStyle(.secondary) }
-        }.task { await model.refresh() }
+        }.task { await model.refresh(); model.openOnce() }
     }
 }

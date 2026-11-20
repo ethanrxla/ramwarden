@@ -10,6 +10,25 @@
   `postinst` (which grants the page-out helper's capability itself).
 - A need left ungranted makes its feature smaller. It never causes a prompt
   later.
+- Full Disk Access is the one grant the user gives by hand, so RamWarden opens
+  its pane for them exactly once: the setup step opens it as soon as it finds
+  the grant off, and if setup never ran (a script install) the menu-bar app
+  asks once at its first run. A marker file,
+  `~/Library/Application Support/RamWarden/full-disk-access-asked`, shared by
+  both apps, records that it was asked. After that only the setup step's own
+  button opens the pane.
+- In that list the daemon reads "RamWarden" with the ram icon, not
+  `ramwarden-daemon` with the generic "exec" icon: it is installed as
+  `~/Library/Application Support/RamWarden/RamWarden.app`
+  (`macos/daemon/bundle.sh`, background-only, bundle id
+  `com.ramwarden.daemon`), its launchd job runs the bundle's executable, and
+  `~/.local/bin/ramwarden-daemon` is a link to it. `GET /permissions` names the
+  bundle as the program to add. The bundle icon is the bare ram edge to edge
+  (`assets/brand/RamWardenDaemon.icns`), the largest it can be drawn in a row.
+- On Windows the daemon and service executables carry the ram icon and a
+  readable name (`RamWarden Warden`, `RamWarden Service`) for Task Manager,
+  Startup apps and the firewall prompt. Linux has no per-program permission
+  list; the desktop entry already uses the ram icon.
 
 ## Policy
 
@@ -34,7 +53,11 @@ button. That is the user's action, not a mid-use prompt.
 
 ## Verification
 
-- `permissions::tests`: each OS lists its needs and the Full Disk Access pane.
+- `permissions::tests`: each OS lists its needs and the Full Disk Access pane,
+  and the program named is the daemon's bundle when it runs from one.
+- `scripts/tests/macos-install-rollback.py`: installing puts the daemon bundle
+  in place with the `~/.local/bin` link; a failed install restores the old
+  daemon and leaves no bundle.
 - `storage::tests::folders_macos_asks_about_are_never_opened_and_are_named_instead`.
 - `appquit`: no `osascript` remains (`rg osascript crates/ramwarden-daemon`).
 
@@ -46,7 +69,14 @@ button. That is the user's action, not a mid-use prompt.
   quietly without it. macOS never prompts for Full Disk Access itself.
 - An ad-hoc-signed build is a new program to macOS after each rebuild, so a
   Full Disk Access grant has to be given again after updating until releases
-  are signed with a stable identity.
+  are signed with a stable identity. `scripts/install-macos.sh` signs the
+  bundle with `RAMWARDEN_SIGN_IDENTITY`, or the first Developer ID Application
+  identity in the keychain, before falling back to ad hoc.
+- A grant given to the old bare `ramwarden-daemon` does not carry over to the
+  bundle; its row stays in the list until removed with the minus button.
+- That a bundle's main executable started by launchd is listed by bundle name
+  and icon is how macOS treats bundled programs generally; it has not been
+  confirmed on the reference Mac yet.
 - That `NSRunningApplication.terminate()` needs no Automation grant is from
   Apple's documentation and common use. It has not been confirmed on the
   reference Mac yet.

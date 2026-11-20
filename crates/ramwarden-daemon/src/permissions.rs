@@ -29,7 +29,7 @@
 //! | Linux | Page-out helper (installed with one `sudo` at install) | Kernel reclaim per process is skipped; the rest of the ladder runs |
 //! | Windows | RamWarden service (one UAC prompt at install) | Privileged trims and debloat are unavailable |
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
@@ -114,8 +114,24 @@ pub struct Checks {
     pub quit_helper: bool,
     pub page_out_helper: bool,
     pub service: bool,
-    /// This daemon's executable, which is what Full Disk Access must name.
+    /// What Full Disk Access must name: this daemon's bundle, or its bare
+    /// executable when it runs outside one (a `cargo run`).
     pub daemon: Option<String>,
+}
+
+/// The program to add in Privacy & Security for `exe`.
+///
+/// macOS lists a bare executable by file name with a generic "exec" icon, and
+/// a bundle's main executable by the bundle's name and icon. The daemon is
+/// installed as `RamWarden.app/Contents/MacOS/ramwarden-daemon`
+/// (`macos/daemon/bundle.sh`), so setup shows the user the bundle: that is the
+/// row that reads "RamWarden" with the ram, and what to drag in with +.
+pub fn grant_target(exe: &Path) -> PathBuf {
+    let bundle = exe.parent().filter(|d| d.ends_with("Contents/MacOS")).and_then(|d| d.parent()?.parent());
+    match bundle {
+        Some(app) if app.extension().is_some_and(|e| e == "app") => app.to_path_buf(),
+        _ => exe.to_path_buf(),
+    }
 }
 
 impl Checks {
@@ -128,7 +144,7 @@ impl Checks {
             quit_helper: os == "macos" && crate::appquit::quit_helper().is_some(),
             page_out_helper: helper["helper_present"].as_bool().unwrap_or(false),
             service: service_present(),
-            daemon: std::env::current_exe().ok().map(|p| p.display().to_string()),
+            daemon: std::env::current_exe().ok().map(|p| grant_target(&p).display().to_string()),
         }
     }
 }
@@ -180,6 +196,19 @@ mod tests {
         assert_eq!(needs("linux", &none)[0].id, "page_out_helper");
         assert_eq!(needs("windows", &none)[0].id, "service");
         assert!(needs("plan9", &none).is_empty());
+    }
+
+    #[test]
+    fn full_disk_access_names_the_bundle_so_macos_shows_its_icon() {
+        let home = "/Users/a/Library/Application Support/RamWarden";
+        let inside = PathBuf::from(format!("{home}/RamWarden.app/Contents/MacOS/ramwarden-daemon"));
+        assert_eq!(grant_target(&inside), PathBuf::from(format!("{home}/RamWarden.app")));
+        // Outside a bundle (cargo run, Linux) the executable itself is named.
+        let bare = PathBuf::from("/Users/a/ramwarden/target/release/ramwarden-daemon");
+        assert_eq!(grant_target(&bare), bare);
+        // A Contents/MacOS that is not inside an .app is not a bundle.
+        let odd = PathBuf::from("/tmp/x/Contents/MacOS/ramwarden-daemon");
+        assert_eq!(grant_target(&odd), odd);
     }
 
     #[test]
