@@ -159,8 +159,8 @@ pub fn rank_at(browser: &str, tabs: &[Tab], threshold: i64, now_ms: f64) -> Vec<
             let frec = tabrank::frecency(&t.activations, now_ms) + f64::from(t.negative_feedback.min(4));
             let related = tabrank::site_key(&t.url).is_some_and(|k| active_sites.contains(&k));
             // A work page keeps its return chance four times longer, so it is the
-            // last thing unloaded once its protection lifts. It is never closed
-            // automatically at all (see `can_auto_close_at`).
+            // last thing unloaded once its protection lifts, and it is closed
+            // unattended only after that unload (see `close_candidates`).
             let mult = tabrank::half_life_multiplier(frec, related) * if work { WORK_FACTOR } else { 1.0 };
             let p_rules = tabrank::p_return(t.inactive_minutes, class, duplicate, mult);
             let features = crate::tabintel::Features {
@@ -425,9 +425,9 @@ mod selection_tests {
 /// a twice-reopened Namecheap tab were all "ordinary pages" to the rules (no
 /// protection matched their hosts), so an hour in another tab was enough. A
 /// `chrome://extensions` tab survived because every non-web page was protected
-/// forever. Now: the budget and same-site rules are gone, work pages are never
-/// auto-closed, browser settings pages go first, and every pick must clear the
-/// same idle floor and return-chance ceiling.
+/// forever. Now: the budget and same-site rules are gone, work pages go last
+/// and only once unloaded, browser settings pages go first, and every pick
+/// must clear its own bar of browsing done elsewhere.
 /// Jev's own return estimate at or above this keeps a tab past its bar.
 const JEV_KEEP: f64 = 0.8;
 
@@ -441,6 +441,13 @@ pub fn close_floor(row: &Row, cfg: &ramwarden_core::config::Tabs) -> i64 {
     let need = row.needed_minutes(cfg);
     let need = match duplicate_idle(cfg) {
         Some(d) if row.duplicate && matches!(row.status, "candidate" | "unloaded") => need.min(d),
+        _ => need,
+    };
+    // A tab picked for being untouched a day cleared that bar, not its own:
+    // with a bar set longer than the untouched limit, sending the bar made
+    // the extension refuse every such close.
+    let need = match cfg.untouched_minutes() {
+        Some(u) if matches!(row.status, "candidate" | "unloaded") && row.inactive_minutes >= u => need.min(u),
         _ => need,
     };
     need.max(60)
@@ -477,8 +484,13 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
     let ceiling = cfg.close_below_return.clamp(0.0, 0.95);
     let dup_idle = duplicate_idle(cfg);
     let untouched = cfg.untouched_minutes();
+    // A work page (console, account, form) goes last and only once it is
+    // unloaded: nothing is left in it to lose, and it has then also waited the
+    // longest bar any tab can have (`Row::needed_minutes`). Owner, 2026-11-20:
+    // "many of these I have not used since yesterday": 10 of 46 tabs were
+    // unloaded consoles that no rule would ever close.
     let mut picked: Vec<_> = rows.iter().filter(|r| !kept.contains(&r.target) && r.auto_closeable
-        && !r.work
+        && (!r.work || r.status == "unloaded")
         && {
             let idle = r.active_idle_minutes;
             let need = r.needed_minutes(cfg);
@@ -495,8 +507,10 @@ pub fn close_candidates(rows: &[Row], cfg: &ramwarden_core::config::Tabs) -> Vec
 }
 
 pub(crate) fn close_priority(a: &Row, b: &Row) -> std::cmp::Ordering {
-    // Prefer disposable browser pages, exact copies, then the lowest return chance.
+    // Prefer disposable browser pages, ordinary pages before work pages, exact
+    // copies, then the lowest return chance.
     (b.status == "browser page").cmp(&(a.status == "browser page"))
+        .then(a.work.cmp(&b.work))
         .then(b.duplicate.cmp(&a.duplicate))
         .then(a.p_return.total_cmp(&b.p_return))
         .then(b.inactive_minutes.cmp(&a.inactive_minutes))
@@ -514,7 +528,11 @@ pub fn can_auto_close_at(tab: &Tab, now_ms: f64) -> bool {
         && tab.last_active_ms <= now_ms
         && now_ms - tab.last_active_ms >= 3_600_000.0
         && tab.inactive_minutes >= 60
-        && (tabpolicy::is_disposable_browser_page(&tab.url) || !tabpolicy::is_protected(&tab.url))
+        && (tabpolicy::is_disposable_browser_page(&tab.url) || !tabpolicy::is_protected(&tab.url)
+            // An unloaded page holds no state, so a soft protection (a console,
+            // an account page) lifts for it after the usual four hours. Hard
+            // ones (dev servers, editors) never do.
+            || (tab.discarded == Some(true) && !tabpolicy::is_protected_for(&tab.url, tab.inactive_minutes)))
 }
 
 pub fn can_close(tab: &Tab) -> bool {
@@ -587,8 +605,10 @@ mod manual_close_tests {
             idle(3, "https://c.example/three", 50, false),     // outside the budget, but not left alone long enough
             idle(4, "https://d.example/four", 300, false),
             idle(10, "https://mail.google.com/mail/u/0/", 300, false), // mail waits twice as long: 2 h
-            idle(5, "https://console.tailscale.com/admin", 400, true), // protection lifted after 4 h
-            idle(6, "https://console.tailscale.com/x", 100, false),    // still protected: used 100 min ago... but a copy of 5
+            idle(5, "https://console.tailscale.com/admin", 400, false), // a loaded console: it may hold a form
+            idle(6, "https://console.tailscale.com/x", 100, false),     // still protected: used 100 min ago
+            idle(11, "https://console.tailscale.com/acls", 400, true),  // unloaded and past the longest bar (4 h)
+            idle(12, "https://console.tailscale.com/dns", 200, true),   // unloaded, but under 4 h
             pinned,
             idle(8, "http://10.0.0.1/", 900, false),            // the router: never
             idle(9, "https://vscode.dev/", 900, false),         // local-state editor: never
@@ -596,10 +616,11 @@ mod manual_close_tests {
         let rows = rank("b", &tabs, 30);
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        // 4 and the mail tab are unused on their own merits. The budget adds
-        // nothing: 3 is too fresh, 5 and 6 are work pages, 7 is pinned, 8 and
-        // 9 are protected.
-        assert_eq!(ids, vec![4, 10], "tab budgets cannot override eligibility");
+        // 4 and the mail tab are unused on their own merits, and so is the
+        // console that is already unloaded (11). The budget adds nothing: 3 is
+        // too fresh, 5, 6 and 12 are work pages still loaded or left under
+        // four hours, 7 is pinned, 8 and 9 are protected.
+        assert_eq!(ids, vec![4, 10, 11], "tab budgets cannot override eligibility");
     }
 
     /// Active idle: two and a half hours closes a tab passed over during busy
@@ -700,17 +721,53 @@ mod manual_close_tests {
         let mut rows = rank("b", &[
             idle(1, "https://example.org/left-ten-hours", 600, true),
             idle(2, "https://example.org/left-five-hours", 300, true),
-            idle(3, "https://ap.www.namecheap.com/domains/list/", 900, true),
+            idle(3, "https://ap.www.namecheap.com/domains/list/", 900, false),
             idle(4, "https://example.org/left-two-days", 2_880, true),
         ], 30);
         for r in &mut rows { r.p_return = 0.7; }
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
-        assert_eq!(ids, vec![1, 2, 4], "the work page stays: {ids:?}");
+        assert_eq!(ids, vec![1, 2, 4], "the loaded work page stays: {ids:?}");
         for r in &mut rows { if r.target.id != 1 { r.p_model = Some(0.9); } }
         let mut ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
         ids.sort();
         assert_eq!(ids, vec![1, 4], "Jev keeps the 5 h tab, not the one untouched two days: {ids:?}");
+    }
+
+    /// 2026-11-20: 10 of 46 tabs were consoles the warden had unloaded hours
+    /// earlier and that no rule would ever close. An unloaded page has nothing
+    /// in it to lose, so it goes once it clears the longest bar; ordinary
+    /// pages go first, and a dev server or an editor never goes.
+    #[test]
+    fn an_unloaded_work_page_closes_last_and_a_loaded_one_never() {
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, close_duplicates_after_hours: 0.0, ..Default::default() };
+        let rows = rank("b", &[
+            idle(1, "https://cloud.oracle.com/db/adb", 1_300, true),
+            idle(2, "https://cloud.oracle.com/compute", 1_300, false),
+            idle(3, "https://example.org/article", 300, false),
+            idle(4, "https://cloud.digitalocean.com/droplets", 200, true),
+            idle(5, "http://localhost:3000/", 1_900, true),
+            idle(6, "https://vscode.dev/", 1_900, true),
+        ], 30);
+        let ids: Vec<i64> = close_candidates(&rows, &cfg).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![3, 1], "the article first, then the unloaded console: {ids:?}");
+        let console = rows.iter().find(|r| r.target.id == 1).unwrap();
+        assert_eq!(console.needed_minutes(&cfg), 240, "a work page waits the longest bar");
+        assert_eq!(close_floor(console, &cfg), 240, "which is also when the extension lets it go");
+    }
+
+    #[test]
+    fn a_tab_picked_as_untouched_is_sent_the_untouched_floor() {
+        // An eight-hour bar and a four-hour untouched limit: the five-hour tab
+        // is picked as untouched, so the extension must be told four hours.
+        let cfg = ramwarden_core::config::Tabs { keep_tabs: 0, unused_after_minutes: 480.0, close_untouched_after_hours: 4.0,
+            close_duplicates_after_hours: 0.0, ..Default::default() };
+        let rows = rank("b", &[idle(1, "https://example.org/a", 300, false), idle(2, "https://example.org/b", 200, false)], 30);
+        let picked = close_candidates(&rows, &cfg);
+        assert_eq!(picked.iter().map(|t| t.id).collect::<Vec<_>>(), vec![1]);
+        let row = rows.iter().find(|r| r.target.id == 1).unwrap();
+        assert_eq!(close_floor(row, &cfg), 240);
+        assert!(row.inactive_minutes >= close_floor(row, &cfg));
     }
 
     #[test]

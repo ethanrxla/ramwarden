@@ -40,6 +40,17 @@ pub fn snapshot(st:&AppState)->Vec<Row> {
     }
     rows
 }
+/// The tabs a "close my tabs" request covers: the ones the sweep would take
+/// on its own, then the ones it would only ask about, in the sweep's order.
+pub fn closable(st:&AppState)->Vec<Row> {
+    let rows=snapshot(st);
+    let cfg=st.tabs_config();
+    let auto=crate::browser::close_candidates(&rows,&cfg);
+    let mut rows:Vec<_>=rows.into_iter().filter(|r|r.safe_close_supported && (auto.contains(&r.target) || r.offerable_for_close())).collect();
+    rows.sort_by(crate::browser::close_priority);
+    rows.truncate(cfg.max_close_per_sweep.max(1));
+    rows
+}
 pub fn routes()->Router<AppState> {
     Router::new().route("/browser/review",get(review)).route("/browser/review/respond",post(respond))
         .route("/browser/feedback",post(feedback))

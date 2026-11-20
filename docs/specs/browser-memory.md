@@ -27,7 +27,8 @@ explicit; Unload selected keeps tabs open and reloadable.
 - A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
   pressure, so a machine with spare RAM still releases idle tabs. It may also
   close tabs, the one exception to "keep tabs open": only rows that passed every
-  unload guard or were already unloaded, not a work page, and one of:
+  unload guard or were already unloaded, a work page only once it is
+  unloaded (see tab-feedback.md), and one of:
   **unused** (active idle at least its bar, unless Jev's own estimate is 0.8
   or more); past its bar with a return chance below `close_below_return`;
   untouched by the wall clock for `close_untouched_after_hours` (default 24);
@@ -45,7 +46,7 @@ explicit; Unload selected keeps tabs open and reloadable.
   (`Row::stretch`, at most 4x): visits `1 + 0.5 * min(frecency, 8)` (at most
   3x), 1.5x on a site in use now, mail, calendar, chat and music 2x, reference
   1.25x, feeds 0.5x, an older copy 0.5x; browser settings pages use the plain
-  bar. The extension's wall-clock recheck uses the lowest bar the tab could
+  bar and work pages the full 4x. Ordinary pages are taken before work pages. The extension's wall-clock recheck uses the lowest bar the tab could
   have cleared, never under an hour; active idle is never more than
   wall-clock idle, so the two always agree. The return chance on the user's
   time scale (`tabrank::at_pace`) is kept as a second way past the bar. `close` is `off`, `review`, `dry-run`

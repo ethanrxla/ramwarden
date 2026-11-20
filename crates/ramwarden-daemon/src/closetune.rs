@@ -130,10 +130,14 @@ impl Row {
 
     /// Active-idle minutes this tab needs before the sweep may take it: the
     /// user's browsing elsewhere since they last used it. A browser settings
-    /// page holds no work, so it gets the plain base.
+    /// page holds no work, so it gets the plain base; a console, account or
+    /// form page gets the longest bar there is.
     pub fn needed_minutes(&self, cfg: &Tabs) -> i64 {
         let base = cfg.unused_minutes();
-        let need = if self.status == "browser page" { base } else { base * self.stretch() };
+        // A work page waits the longest any tab can, whatever else is known.
+        let need = if self.status == "browser page" { base }
+            else if self.work { base * MAX_STRETCH }
+            else { base * self.stretch() };
         need.round() as i64
     }
 }

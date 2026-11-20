@@ -69,6 +69,12 @@ final class ReviewProtocol: URLProtocol {
             }
             preconditionFailure("review response timed out")
         }
+        // A refused voice request says why, and only a real outage (never mute,
+        // "nothing to say" or "resting") hands over to the Mac's own voice.
+        precondition(CompanionSpeech.refusal(Data("{\"error\":\"ElevenLabs says this key's character quota is used up.\"}".utf8))?.contains("quota") == true)
+        precondition(CompanionSpeech.refusal(Data("not json".utf8)) == nil)
+        precondition([401, 402, 502, 503].allSatisfy(CompanionSpeech.fallsBackToSystemVoice))
+        precondition(![200, 403, 422, 429].contains(where: CompanionSpeech.fallsBackToSystemVoice))
         precondition(model.chatHeight == 80)
         model.focusProposal = FocusProposal(token: "focus", tabs: [], expires_at: Date().timeIntervalSince1970 + 600)
         precondition(model.chatHeight == 360)

@@ -184,3 +184,59 @@ async fn close_rechecks_activity_and_sends_only_selected_identity() {
         worker.abort();
     }
 }
+
+/// 2026-11-20: asked to close tabs, the companion said it could not. It can:
+/// the daemon picks the tabs, the approval lists them, and nothing closes
+/// before the user approves.
+#[tokio::test]
+async fn asking_the_companion_to_close_tabs_lists_them_and_waits_for_approval() {
+    let st = state();
+    st.hub
+        .lock()
+        .unwrap()
+        .reg
+        .report("b", Transport::Poll, vec![tab(1), tab(2)]);
+    let app = ramwarden_daemon::routes::router(st.clone());
+    let post = |path: &'static str, body: Value| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status().as_u16();
+            let bytes = to_bytes(response.into_body(), 1000000).await.unwrap();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+        }
+    };
+    let (status, chat) = post("/assistant/chat", json!({"message":"Close my tabs","name":"Goatzie"})).await;
+    assert_eq!(status, 200);
+    assert_eq!(chat["facts"]["closable_idle_tabs"], 2);
+    assert_eq!(chat["proposed_action"]["label"], "Close 2 unused tabs");
+    let preview = chat["proposed_action"]["preview"].as_str().unwrap();
+    assert_eq!(preview.lines().count(), 2);
+    assert!(preview.contains("review test · example.org"), "{preview}");
+    assert!(!preview.contains("https://"), "titles and sites only: {preview}");
+    assert!(chat["reply"].as_str().unwrap().contains("Nothing has been closed yet"));
+    // Approving runs the same guarded close as the review card. This browser
+    // only polls, so the close cannot be confirmed and is reported as such.
+    let token = chat["proposed_action"]["token"].as_str().unwrap();
+    let (status, done) = post("/assistant/action", json!({"token":token})).await;
+    assert_eq!(status, 200);
+    assert!(done["reply"].as_str().unwrap().starts_with("0 tabs closed. 2 stayed open"), "{done}");
+    let (status, _) = post("/assistant/action", json!({"token":token})).await;
+    assert_eq!(status, 409, "an approval is single use");
+
+    // With nothing left idle, the answer says so and offers nothing.
+    let quiet = state();
+    let (_, chat) = request(quiet, "/assistant/chat", Some(json!({"message":"close my tabs"}))).await;
+    assert!(chat["proposed_action"].is_null());
+    assert!(chat["reply"].as_str().unwrap().contains("No browser is reporting tabs"));
+}
