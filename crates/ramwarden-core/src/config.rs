@@ -351,6 +351,15 @@ pub struct Tabs {
     pub budget_idle_minutes: f64,
     /// At most this many closes per sweep.
     pub max_close_per_sweep: usize,
+    /// A tab is unused once the user has spent this many minutes browsing
+    /// other tabs since they last used it (active idle, not wall clock), times
+    /// its per-tab stretch. Time away from the browser does not count, so the
+    /// tabs of the last session survive a night; tabs left behind earlier do
+    /// not. At least 30.
+    pub unused_after_minutes: f64,
+    /// A tab untouched this long by the wall clock closes whatever its
+    /// active idle: nothing has used it for a day. 0 turns this off.
+    pub close_untouched_after_hours: f64,
     /// Learn the idle floor from how this user comes back to tabs
     /// (`tabpace`), within one hour and one day. `close_after_hours` is used
     /// until there is enough evidence, or always when this is false.
@@ -369,6 +378,16 @@ impl Tabs {
     pub fn close_idle_minutes(&self) -> i64 {
         (self.close_after_hours.max(1.0) * 60.0) as i64
     }
+
+    /// Active-idle minutes before an ordinary tab counts as unused.
+    pub fn unused_minutes(&self) -> f64 {
+        self.unused_after_minutes.max(30.0)
+    }
+
+    /// Wall-clock minutes after which an untouched tab closes, if enabled.
+    pub fn untouched_minutes(&self) -> Option<i64> {
+        (self.close_untouched_after_hours > 0.0).then(|| (self.close_untouched_after_hours.max(4.0) * 60.0) as i64)
+    }
 }
 
 impl Default for Tabs {
@@ -381,7 +400,9 @@ impl Default for Tabs {
             close_duplicates_after_hours: 4.0,
             keep_tabs: 6,
             budget_idle_minutes: 60.0,
-            max_close_per_sweep: 10,
+            max_close_per_sweep: 25,
+            unused_after_minutes: 60.0,
+            close_untouched_after_hours: 24.0,
             learn_pace: true,
         }
     }
