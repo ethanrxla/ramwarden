@@ -2,6 +2,10 @@
 // still sitting unsent in a field. Only true or false leaves the page: no page
 // text, no field names. The background holds a tab with unsent text; a search
 // that was run or a chat message that was sent no longer counts as work.
+//
+// Text counts as sent only when it is gone: the field was emptied or removed,
+// or the page moved on. Pressing Enter or submitting proves nothing: required
+// fields can block the submit and a save can fail, with the text still there.
 (() => {
   let last=0, sent=null, timer=0;
   const edited=new Map(); // field -> location.href when it was typed in
@@ -31,14 +35,11 @@
     if (!event.isTrusted || document.visibilityState!=="visible") return;
     const el=event.target;
     if (event.type==="input" && holdsWork(el)) edited.set(el,location.href);
-    // Sent: a form was submitted, or Enter was pressed in a one-line field.
-    if (event.type==="submit") for (const field of [...edited.keys()]) if (el?.contains?.(field)) edited.delete(field);
-    if (event.type==="keydown" && event.key==="Enter" && el?.tagName==="INPUT") edited.delete(el);
     // Apps empty or remove the field a moment after the event: look again then.
     if (!timer) timer=setTimeout(()=>{ timer=0; const dirty=unsent(); if (dirty!==sent) send(dirty); },1500);
     const dirty=unsent();
     if (dirty===sent && Date.now()-last<5000) return;
     send(dirty);
   }
-  for (const type of ["pointerdown","keydown","scroll","input","submit"]) document.addEventListener(type,report,{capture:true,passive:true});
+  for (const type of ["pointerdown","keydown","scroll","input"]) document.addEventListener(type,report,{capture:true,passive:true});
 })();

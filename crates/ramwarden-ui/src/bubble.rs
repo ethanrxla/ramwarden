@@ -276,7 +276,7 @@ fn checklist(client: &Rc<Client>, ui: &Rc<Ui>, body: &gtk4::Box, list: FocusProp
 fn confirm(client: &Rc<Client>, ui: &Rc<Ui>, button: &gtk4::Button, p: crate::voice::Proposed) {
     let dialog = gtk4::AlertDialog::builder()
         .message(&p.label)
-        .detail("Apply this change? Nothing else will be changed.")
+        .detail(p.detail())
         .buttons(["Cancel", "Apply fix"])
         .cancel_button(0)
         .default_button(0)

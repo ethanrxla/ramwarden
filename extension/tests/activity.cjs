@@ -37,19 +37,26 @@ test('typed text is unsent work until the field is emptied, removed or the page 
   assert.equal(p.last(), false, 'an in-page navigation carried the work away');
 });
 
-test('a submitted form, a search and a password are not unsent work', () => {
+// Enter or a submit attempt proves nothing: a required field can block the
+// submit and a save can fail, with the text still in the form.
+test('text stays unsent work through Enter and a blocked submit, until it is actually gone', () => {
   const p = page();
   const name = p.field('INPUT', {type:'text', name:'full-name'}); name.value = 'Ada';
-  const form = {nodeType:1, tagName:'FORM', contains:f=>f===name};
   p.fire('input', name); assert.equal(p.last(), true);
-  p.fire('submit', form); assert.equal(p.last(), false);
+  p.fire('keydown', name, {key:'Enter'}); p.later();
+  assert.equal(p.last(), true, 'validation blocked the submit; the name is still there');
+  p.fire('pointerdown', {nodeType:1}); p.later();
+  assert.equal(p.last(), true, 'a failed save leaves it unsent too');
+  name.value = ''; p.fire('pointerdown', {nodeType:1}); p.later();
+  assert.equal(p.last(), false, 'the app cleared the form after saving');
+});
+
+test('a search, a filter, a password and a checkbox are not unsent work', () => {
+  const p = page();
   for (const attrs of [{type:'search'}, {type:'text', placeholder:'Search issues'}, {type:'text', role:'combobox'}, {type:'password'}, {type:'checkbox'}]) {
     const f = p.field('INPUT', attrs); f.value = 'x'; p.later(); p.fire('input', f);
     assert.equal(p.last(), false, JSON.stringify(attrs));
   }
-  const q = p.field('INPUT', {type:'text', name:'title'}); q.value = 'typed then entered';
-  p.later(); p.fire('input', q); assert.equal(p.last(), true);
-  p.fire('keydown', q, {key:'Enter'}); assert.equal(p.last(), false, 'Enter in a one-line field sends it');
 });
 
 test('hidden pages and synthetic events report nothing, and idle reports are throttled', () => {

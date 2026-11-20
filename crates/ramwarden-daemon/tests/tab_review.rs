@@ -240,3 +240,26 @@ async fn asking_the_companion_to_close_tabs_lists_them_and_waits_for_approval() 
     assert!(chat["proposed_action"].is_null());
     assert!(chat["reply"].as_str().unwrap().contains("No browser is reporting tabs"));
 }
+
+/// Review mode closes nothing unattended, so its checklist must carry what the
+/// sweep would have closed, including an unloaded console. A loaded console is
+/// still never offered.
+#[tokio::test]
+async fn review_mode_offers_an_unloaded_console_but_never_a_loaded_one() {
+    let mut st = state();
+    {
+        let cfg = Arc::make_mut(&mut st.cfg);
+        cfg.tabs.close = "review".into();
+        cfg.tabs.keep_tabs = 0;
+    }
+    let console = |id: i64, path: &str, discarded: bool| -> Tab {
+        serde_json::from_value(json!({"id":id,"url":format!("https://cloud.oracle.com/{path}"),"title":"console",
+            "inactiveMinutes":1300,"lastActiveMs":ramwarden_core::history::unix_now() as f64*1000.0-1300.0*60000.0,
+            "activityVersion":1,"active":false,"pinned":false,"audible":false,"discarded":discarded,
+            "autoDiscardable":true,"status":if discarded {"unloaded"} else {"complete"},"discardSupported":true,"safeCloseSupported":true})).unwrap()
+    };
+    st.hub.lock().unwrap().reg.report("b", Transport::Poll, vec![console(1, "db/adb", true), console(2, "compute", false)]);
+    let (_, v) = request(st, "/browser/review", None).await;
+    let ids: Vec<i64> = v["proposal"]["tabs"].as_array().unwrap().iter().map(|t| t["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, vec![1], "{v}");
+}
