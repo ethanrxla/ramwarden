@@ -25,18 +25,22 @@
   <main class="app prose">
     <div class="wrap narrow">
       <h1>Privacy</h1>
-      <p class="muted">Draft. Last updated 2 November 2026.</p>
+      <p class="muted">Last updated 20 November 2026.</p>
 
       <h2>The short version</h2>
       <p>RamWarden runs on your computer. When it needs a decision about something it might close, it sends a short description of that one thing, gets an answer, and the description is forgotten. Hosted features, account sign-in, support chat and optional usage diagnostics have the separate data flows described below.</p>
 
-      <h2>What stays on your computer</h2>
+      <h2>Data on your computer</h2>
       <ul>
         <li>Your process list, memory figures, window focus and activity history.</li>
-        <li>Your browser tabs. The browser helper talks only to RamWarden on your own computer.</li>
+        <li>Your browser keeps tab activity timestamps, work-protection settings and a limited history of tabs you can reopen.</li>
         <li>Your settings, watchlist and allowlist.</li>
         <li>Quarantined files. If you enable hosted ThreatWarden monitoring, its agent sends security logs, inventory and findings to the hosted manager.</li>
       </ul>
+
+      <h2>Browser extension and companion connection</h2>
+      <p>Browser Cleanup uses tab URLs, titles, tab state and recent activity to identify idle tabs and protect work in progress. On web pages, the extension records when you interact and whether editing may be in progress. It does not read the text you type, passwords or page text for this purpose.</p>
+      <p>Standalone cleanup runs in your browser. When connected, the extension shares tab metadata and activity signals with the RamWarden desktop companion to coordinate cleanup. By default it connects to your own computer. If you enter another device's address and grant Chrome permission, the extension can send this information to that device. Chrome may sync the companion address across your browsers if you enable Chrome Sync. The desktop companion's hosted decision requests are described below.</p>
 
       <h2>What a decision sends</h2>
       <p>Only when memory is short and your warden is choosing what to close: the candidate's name (an app name, or a tab's title and site), how long it has been idle, how much memory it uses, and one of a fixed set of questions, such as whether you are likely to come back to it within a day. Request contents are not stored or logged. Logs hold a short fingerprint of your device, which questions were asked, sizes and timings.</p>
