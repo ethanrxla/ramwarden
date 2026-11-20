@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 SOURCE = Path(__file__).resolve().parents[2] / 'macos/setup/install-payload.sh'
-BINS = ('ramwarden-daemon', 'ramwarden-usage-sync', 'ramwarden', 'ramwarden-launcher')
+BINS = ('ramwarden-usage-sync', 'ramwarden', 'ramwarden-launcher')
 LABELS = ('com.ramwarden.daemon', 'com.ramwarden.menubar', 'com.ramwarden.usage')
 
 for fail in (False, True):
@@ -36,6 +36,13 @@ for fail in (False, True):
             new.write_text('#!/bin/sh\n# new\n')
             new.chmod(0o755)
             (binary_dir/name).write_text('original-binary')
+        # Before its bundle the daemon was a plain file in ~/.local/bin.
+        (binary_dir/'ramwarden-daemon').write_text('original-daemon')
+        daemon = payload/'daemon/RamWarden.app/Contents/MacOS/ramwarden-daemon'
+        daemon.parent.mkdir(parents=True)
+        daemon.write_text('#!/bin/sh\n# new daemon\n')
+        daemon.chmod(0o755)
+        installed_daemon = home/'Library/Application Support/RamWarden/RamWarden.app'
         for folder in (payload/'RamWarden.app', payload/'extension'):
             folder.mkdir()
             (folder/'version').write_text('new')
@@ -57,6 +64,15 @@ for fail in (False, True):
         assert (old_extension/'version').read_text() == expected
         for name in BINS:
             assert (binary_dir/name).read_text() == ('original-binary' if fail else '#!/bin/sh\n# new\n')
+        link = binary_dir/'ramwarden-daemon'
+        if fail:
+            assert not link.is_symlink() and link.read_text() == 'original-daemon'
+            assert not installed_daemon.exists()
+        else:
+            # The name everyone knows points into the bundle macOS lists by icon.
+            assert link.is_symlink()
+            assert Path(os.readlink(link)) == installed_daemon/'Contents/MacOS/ramwarden-daemon'
+            assert link.read_text() == '#!/bin/sh\n# new daemon\n'
         for label in LABELS:
             assert plistlib.loads((agents/(label+'.plist')).read_bytes())['fixture'] == expected
             if not fail:

@@ -23,6 +23,10 @@ for size in [16,32,48,64,128,256,512,1024]:
  image=platform_source.resize((size,size),Image.Resampling.NEAREST);image.save(brand/f'icon{size}.png')
  if size in [16,48,128]:image.save(root/f'extension/icons/icon{size}.png')
  if size==32:(brand/'icon32.rgba').write_bytes(image.tobytes())
+# The Mac daemon's own bundle icon. macOS lists the daemon by this icon in
+# Privacy & Security (Full Disk Access), where a row is ~32 pt: the bare ram,
+# edge to edge with no tile, is the largest it can be drawn there.
+platform_source.resize((1024,1024),Image.Resampling.NEAREST).save(brand/'RamWardenDaemon.icns',format='ICNS')
 if '--platform-icons-only' not in sys.argv and shutil.which('iconutil'):
  with tempfile.TemporaryDirectory() as tmp:
   iconset=Path(tmp)/'Warden.iconset';iconset.mkdir()

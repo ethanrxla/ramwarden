@@ -73,6 +73,7 @@ func gb(_ mb: Double) -> String { String(format: "%.1f GB", mb / 1024) }
         companion.restore()
         threatCompanion.restore()
         Task { await refresh() }
+        Task { await FullDiskPrompt.askOnce() }
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             Task { await self.refresh() }
         }

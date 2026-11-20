@@ -6,6 +6,9 @@ set -euo pipefail
 
 LABEL=com.ramwarden.daemon
 BIN="$HOME/.local/bin/ramwarden-daemon"
+# The daemon runs from its own bundle so Full Disk Access lists it as
+# "RamWarden" with the ram icon (macos/daemon/bundle.sh). BIN is a link to it.
+DAEMON_APP="$HOME/Library/Application Support/RamWarden/RamWarden.app"
 CONF="$HOME/.config/ramwarden/config.toml"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
@@ -18,6 +21,7 @@ if [ "${1:-}" = "uninstall" ]; then
   rm -f "$HOME/Library/LaunchAgents/com.ramwarden.menubar.plist"
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
   rm -f "$PLIST" "$BIN"
+  rm -rf "$DAEMON_APP"
   rm -f "$HOME/.local/bin/ramwarden" "$HOME/.local/bin/ramwarden-doctor"
   echo "removed $LABEL (config left in $CONF)"
   exit 0
@@ -27,7 +31,16 @@ fi
 cargo build --release -p ramwarden-daemon -p ramwarden-cloud -p ramwarden-cli --bin ramwarden-daemon --bin ramwarden-usage-sync --bin ramwarden --manifest-path "$ROOT/Cargo.toml"
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$CONF")" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-install -m 755 "$ROOT/target/release/ramwarden-daemon" "$BIN"
+# A stable signing identity keeps the Full Disk Access grant across rebuilds;
+# ad hoc signing makes every rebuild a new program to macOS.
+IDENTITY="${RAMWARDEN_SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+fi
+[ -n "$IDENTITY" ] || IDENTITY=-
+bash "$ROOT/macos/daemon/bundle.sh" "$ROOT/target/release/ramwarden-daemon" "$DAEMON_APP" "$IDENTITY"
+rm -f "$BIN"
+ln -s "$DAEMON_APP/Contents/MacOS/ramwarden-daemon" "$BIN"
 install -m 755 "$ROOT/target/release/ramwarden-usage-sync" "$HOME/.local/bin/ramwarden-usage-sync"
 # Never copy the operator environment into a client installation.
 # Existing per-user provider credentials remain untouched.

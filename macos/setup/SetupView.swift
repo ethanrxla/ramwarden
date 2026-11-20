@@ -183,7 +183,7 @@ struct SetupView: View {
             }
         }
         guard let installedApp=installedApp else {installResult="Drag this disk image’s RamWarden.app into Applications first. If asked, replace the older app, then click Install again.";return}
-        for item in ["ramwarden-daemon", "ramwarden-usage-sync", "ramwarden-launcher", "config.toml", "extension"] {
+        for item in ["daemon/RamWarden.app/Contents/MacOS/ramwarden-daemon", "ramwarden-usage-sync", "ramwarden-launcher", "config.toml", "extension"] {
             guard FileManager.default.fileExists(atPath: resources.appendingPathComponent("payload/" + item).path) else { installResult = "This disk image is incomplete; nothing was installed."; return }
         }
         do {
@@ -193,7 +193,8 @@ struct SetupView: View {
             try FileManager.default.createDirectory(at:definitionsDirectory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
             defer {try? FileManager.default.removeItem(at:definitionsDirectory)}
             let definitions: [(String, [String])] = [
-                ("com.ramwarden.daemon", [home.appendingPathComponent(".local/bin/ramwarden-daemon").path]),
+                // The bundle, not the ~/.local/bin link: macOS lists the bundle by name and icon in Full Disk Access.
+                ("com.ramwarden.daemon", [home.appendingPathComponent("Library/Application Support/RamWarden/RamWarden.app/Contents/MacOS/ramwarden-daemon").path]),
                 ("com.ramwarden.menubar", [installedApp.appendingPathComponent("Contents/MacOS/RamWarden").path]),
                 ("com.ramwarden.usage", [home.appendingPathComponent(".local/bin/ramwarden-usage-sync").path, "--watch"])
             ]

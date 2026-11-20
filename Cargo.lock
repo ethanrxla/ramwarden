@@ -5544,6 +5544,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "winresource",
 ]
 
 [[package]]
@@ -5649,6 +5650,7 @@ dependencies = [
  "tracing-subscriber",
  "windows",
  "windows-service",
+ "winresource",
 ]
 
 [[package]]
