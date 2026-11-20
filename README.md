@@ -373,8 +373,13 @@ memory anyway — that fallback is a normal configuration, not a broken one.
 same `/ws` and `POST /api/tabs` contracts.
 
 ```bash
-bash scripts/build-ext.sh   # produces Chrome and Firefox zips in dist/
+bash scripts/build-ext.sh          # produces Chrome and Firefox zips in dist/
+bash scripts/build-ext.sh --site   # also refreshes web/downloads/ramwarden-chrome.zip
 ```
+
+The website serves a committed copy of the Chrome package. After any change in
+`extension/`, run the `--site` form and commit the result; CI fails while the
+copy and `extension/` differ.
 
 Chrome and Brave hold a WebSocket. Firefox's extension is an event page the
 browser suspends, so it polls every 30 seconds and close commands are queued for

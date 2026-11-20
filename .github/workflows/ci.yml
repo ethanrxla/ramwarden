@@ -129,6 +129,7 @@ jobs:
           node extension/tests/live.cjs
           bash scripts/build-ext.sh
           python3 scripts/tests/store-package.py
+          python3 scripts/tests/site-extension.py
           node extension/tests/popup.cjs
 
   # The checkout contract in contracts/. Hardhat compiles with the solc-js build

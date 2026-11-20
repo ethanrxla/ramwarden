@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Build the browser extension packages.
 #
-#   scripts/build-ext.sh
+#   scripts/build-ext.sh           build and check the packages
+#   scripts/build-ext.sh --site    also refresh the copy the website serves
 #
 # Produces:
 #   dist/ramwarden-chrome-<version>.zip    Chrome Web Store upload
 #   dist/ramwarden-firefox-<version>.zip   addons.mozilla.org / temporary load
+#   web/downloads/ramwarden-chrome.zip     (--site) the account page's download
+#
+# The website has no build step, so its download is a committed copy of the
+# Chrome package. It went stale once: on 2026-11-20 the site still served the
+# 2026-11-13 files under the same 0.3.3. scripts/tests/site-extension.py now
+# fails CI when the copy and extension/ differ; --site is how to refresh it.
 #
 # extension/ stays the single source of truth. Only the manifest differs between
 # targets — the JS is byte-identical and branches on IS_FIREFOX at runtime.
@@ -110,3 +117,14 @@ for target in ['chrome','firefox']:
     print(output)
 ZIP
 python3 "$ROOT/scripts/check-store-package.py" "$DIST/ramwarden-chrome-$VERSION.zip"
+
+if [ "${1:-}" = "--site" ]; then
+    SITE="$ROOT/web/downloads/ramwarden-chrome.zip"
+    cp "$DIST/ramwarden-chrome-$VERSION.zip" "$SITE"
+    python3 - "$SITE" <<'SUM'
+import hashlib,pathlib,sys
+site=pathlib.Path(sys.argv[1])
+site.with_name(site.name+'.sha256').write_text(hashlib.sha256(site.read_bytes()).hexdigest()+'  '+site.name+'\n')
+print(site)
+SUM
+fi
