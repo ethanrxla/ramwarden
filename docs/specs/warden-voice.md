@@ -117,10 +117,25 @@ When ElevenLabs refuses, the daemon logs its status and `detail.status`
 (never the key) and answers `{"error": "..."}` with the cause in plain words:
 quota used up, free tier paused for unusual activity, key rejected or missing
 text-to-speech permission, voice not on the account, rate limited, or a server
-problem. Auth refusals come back as 401, quota as 402, rate limits as 429,
-anything else as 502. A 5xx or dropped connection is retried once after 600 ms.
+problem. Auth refusals come back as 401, quota as 402 (ElevenLabs reports a
+used-up quota as its own 401 `quota_exceeded`), rate limits as 429, anything
+else as 502. A 5xx or dropped connection is retried once after 600 ms.
 A call that produced no audio does not count against the per-minute or daily
-budget. The Windows "Test voice" shows the daemon's sentence.
+budget. The Windows "Test voice" shows the daemon's sentence, and so does the
+Mac's companion settings (it used to say only "unavailable on this service").
+When no audio can be made at all (401, 402, 502, 503: no key, key rejected,
+quota used up, provider unreachable) the Mac reads the reply in its own
+built-in voice and says so beside the error, so the companion is still heard.
+It stays silent for 403 (voice off or muted), 422 and 429 (resting, or already
+speaking).
+
+### The companion's name
+
+The Mac sends the name the user gave the companion with each chat message. The
+daemon keeps letters, digits, spaces, hyphens, apostrophes and full stops, at
+most 32 characters, and tells the model that this is its own name and never
+the user's. The chat header shows the name once; replies are not labelled with
+it again.
 
 Production website sales chat remains separate from this local focus session.
 

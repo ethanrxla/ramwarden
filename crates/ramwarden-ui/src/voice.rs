@@ -147,6 +147,25 @@ pub struct FocusReply {
 pub struct Proposed {
     pub token: String,
     pub label: String,
+    /// What exactly would change, when the label alone does not say: the tabs
+    /// a "Close 12 unused tabs" would close. Absent on older daemons.
+    #[serde(default)]
+    pub preview: Option<String>,
+}
+
+impl Proposed {
+    /// The text under the label in an approval dialog: the preview, cut to a
+    /// length a dialog can show, then the question.
+    pub fn detail(&self) -> String {
+        const ASK: &str = "Apply this change? Nothing else will be changed.";
+        const LINES: usize = 30;
+        let Some(preview) = self.preview.as_deref().map(str::trim).filter(|p| !p.is_empty()) else { return ASK.into() };
+        let total = preview.lines().count();
+        let mut shown: Vec<&str> = preview.lines().take(LINES).collect();
+        let more = format!("and {} more", total.saturating_sub(LINES));
+        if total > LINES { shown.push(&more); }
+        format!("{}\n\n{ASK}", shown.join("\n"))
+    }
 }
 
 /// `POST /assistant/chat`.
@@ -272,6 +291,22 @@ const CHAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Close 12 unused tabs" must show which twelve before it is approved.
+    #[test]
+    fn a_proposal_shows_its_preview_and_older_ones_still_parse() {
+        let r: ChatReply = serde_json::from_str(r#"{"reply":"ok","proposed_action":{"token":"t","label":"Close 2 unused tabs",
+            "preview":"Docs · example.org\nNews · example.com","expires_in_seconds":120,"scope_id":null}}"#).unwrap();
+        let p = r.proposed_action.unwrap();
+        assert_eq!(p.detail(), "Docs · example.org\nNews · example.com\n\nApply this change? Nothing else will be changed.");
+        for old in [r#"{"token":"t","label":"Pause"}"#, r#"{"token":"t","label":"Pause","preview":null}"#] {
+            let p: Proposed = serde_json::from_str(old).unwrap();
+            assert_eq!(p.detail(), "Apply this change? Nothing else will be changed.");
+        }
+        let long = Proposed { preview: Some((1..=40).map(|i| format!("Tab {i}")).collect::<Vec<_>>().join("\n")), ..Default::default() };
+        assert!(long.detail().contains("Tab 30\nand 10 more\n\nApply"), "{}", long.detail());
+        assert!(!long.detail().contains("Tab 31"));
+    }
 
     #[test]
     fn a_check_in_parses_with_its_tab_and_choices() {

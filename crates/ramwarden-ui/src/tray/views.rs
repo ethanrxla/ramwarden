@@ -161,7 +161,7 @@ fn said(ui: &mut egui::Ui, snap: &Snapshot, view: &mut UiState) -> Option<Comman
     {
         view.confirm = Some((
             Command::Act { token: p.token.clone() },
-            format!("{}\n\nApply this change? Nothing else will be changed.", p.label),
+            format!("{}\n\n{}", p.label, p.detail()),
         ));
     }
     command

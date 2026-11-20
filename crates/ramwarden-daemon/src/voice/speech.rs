@@ -30,12 +30,14 @@ fn refund(text: &str) {
     }
 }
 
-/// The status the UI gets for an ElevenLabs refusal.
-fn map_status(upstream: u16) -> StatusCode {
-    match upstream {
-        401 | 403 => StatusCode::UNAUTHORIZED,
-        402 => StatusCode::PAYMENT_REQUIRED,
-        429 => StatusCode::TOO_MANY_REQUESTS,
+/// The status the UI gets for an ElevenLabs refusal. ElevenLabs reports a
+/// used-up quota as 401 with `quota_exceeded`; that is a payment matter, not a
+/// rejected key, so it goes out as 402 like the spec says.
+fn map_status(upstream: u16, code: &str) -> StatusCode {
+    match (upstream, code) {
+        (_, "quota_exceeded") | (402, _) => StatusCode::PAYMENT_REQUIRED,
+        (401 | 403, _) => StatusCode::UNAUTHORIZED,
+        (429, _) => StatusCode::TOO_MANY_REQUESTS,
         _ => StatusCode::BAD_GATEWAY,
     }
 }
@@ -116,7 +118,7 @@ pub async fn speak(State(st): State<AppState>, Json(request): Json<Request>) -> 
         let code = detail["detail"]["status"].as_str().or_else(|| detail["detail"]["code"].as_str()).unwrap_or("").to_string();
         let message: String = detail["detail"]["message"].as_str().or_else(|| detail["detail"].as_str()).unwrap_or("").chars().take(300).collect();
         tracing::warn!(status = status.as_u16(), code = %code, message = %message, voice = %voice, model = %model, "ElevenLabs refused speech");
-        return Err(refuse(map_status(status.as_u16()), explain(status.as_u16(), &code)));
+        return Err(refuse(map_status(status.as_u16(), &code), explain(status.as_u16(), &code)));
     }
     if response.content_length().is_some_and(|n|n>2_000_000) { return Err(refuse(StatusCode::BAD_GATEWAY,"ElevenLabs sent more audio than expected.")); }
     let bytes = response.bytes().await.map_err(|e|{ tracing::warn!(error = %e, "ElevenLabs audio was cut off"); refuse(StatusCode::BAD_GATEWAY,"The voice audio was cut off. Try again.") })?.to_vec();
@@ -138,7 +140,8 @@ mod tests {
         assert!(explain(401, "invalid_api_key").contains("rejected the API key"));
         assert!(explain(404, "").contains("voice"));
         assert!(explain(503, "").contains("server problem"));
-        assert_eq!(map_status(401), StatusCode::UNAUTHORIZED);
-        assert_eq!(map_status(500), StatusCode::BAD_GATEWAY);
+        assert_eq!(map_status(401, "invalid_api_key"), StatusCode::UNAUTHORIZED);
+        assert_eq!(map_status(401, "quota_exceeded"), StatusCode::PAYMENT_REQUIRED);
+        assert_eq!(map_status(500, ""), StatusCode::BAD_GATEWAY);
     }
 }

@@ -134,7 +134,7 @@ test('safe closing refuses navigation, recent activity, dirty work, protection a
     assert.equal(removed,0);
   }
   const f=fixture();f.chrome.tabs.remove=(id,cb)=>cb();
-  vm.runInContext('safety.work[7]={url:"https://example.org/article",dirty:true}',f.context);
+  vm.runInContext('safety.work[7]={url:"https://example.org/article",dirty:true,at:Date.now()}',f.context);
   assert.equal((await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000})).length,0);
   vm.runInContext('safety.work={}',f.context);
   assert.equal((await f.context.closeSafe({...command,expiresAt:Date.now()-1})).length,0);
@@ -166,15 +166,16 @@ test('safe closing never takes a work page but does take a browser settings page
   assert.deepEqual(Array.from(await f.context.closeSafe({requestId:'r',tabs:[{id:7,url}],minInactiveMinutes:60,expiresAt:Date.now()+10000})),[7]);
   assert.equal(f.context.isDisposableBrowserPage('chrome-extension://abc/popup.html'),false);
 });
-test('reopening the same site at a different URL protects it, and every reopen counts',async()=>{
+test('reopening the same site at a different URL keeps the reopened page, and every reopen counts',async()=>{
   const f=fixture();f.chrome.tabs.remove=(id,cb)=>cb();
   await f.context.closeSafe({...command,minInactiveMinutes:60,expiresAt:Date.now()+10000});
   f.context.observeReopen({...f.tab,id:9,url:'https://www.example.org/'});
-  assert.ok(vm.runInContext('safety.sites["example.org"].until>Date.now()',f.context));
   assert.equal(vm.runInContext('safety.sites["example.org"].negative',f.context),1);
+  assert.ok(vm.runInContext('safety.pages["https://www.example.org/"].until>Date.now()',f.context),'the reopened page is kept');
   f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:9,url:'https://www.example.org/deals'}]);
   const report=await f.context.buildTabReport({});
-  assert.ok(report[0].protectedUntilMs>Date.now(),'a different page on the reopened site is protected');
+  assert.equal(report[0].protectedUntilMs,0,'another page on the host is not locked');
+  assert.equal(report[0].negativeFeedback,1,'but the reopen counts toward its return estimate');
 });
 
 test('closing a page does not make the tabs already open on its site look reopened',async()=>{
@@ -185,6 +186,63 @@ test('closing a page does not make the tabs already open on its site look reopen
   assert.equal(report[0].protectedUntilMs,0,'a sibling that was already open stays closeable');
   assert.equal(vm.runInContext('Object.keys(safety.sites).length',f.context),0);
 });
+// Mac, Nov 20: one reopen locked every tab on its host for a day, and a close
+// stayed on record for 30 days, so any later visit to the host was a "reopen".
+test('a reopen keeps the reopened page only, soon after the close only, and never a browser page',async()=>{
+  const url='https://github.com/a/old';
+  const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
+  await f.context.closeSafe({requestId:'r',tabs:[{id:7,url}],minInactiveMinutes:60,expiresAt:Date.now()+10000});
+  f.context.observeReopen({...f.tab,id:9,url:'https://github.com/a/back-again'});
+  f.chrome.tabs.query=(_,cb)=>cb([{...f.tab,id:9,url:'https://github.com/a/back-again'},{...f.tab,id:10,url:'https://github.com/b/left-open'},
+    {...f.tab,id:11,url:'https://gist.github.com/x'}]);
+  const report=await f.context.buildTabReport({});
+  assert.ok(report[0].protectedUntilMs>Date.now(),'the page the user came back to is kept');
+  assert.equal(report[1].protectedUntilMs,0,'its neighbours on the host are not');
+  assert.equal(report[2].protectedUntilMs,0,'nor another host');
+  // A close five hours ago: opening the host now is a new visit, not a reopen.
+  vm.runInContext('safety.closedSites["github.com"]={at:Date.now()-5*3600000}',f.context);
+  f.context.observeReopen({...f.tab,id:12,url:'https://github.com/c/new-visit'});
+  assert.equal(vm.runInContext('safety.pages["https://github.com/c/new-visit"]',f.context),undefined);
+  // The exact page the warden closed still counts whenever it comes back.
+  vm.runInContext('safety.closed["https://github.com/a/exact"]={at:Date.now()-5*3600000}',f.context);
+  f.context.observeReopen({...f.tab,id:13,url:'https://github.com/a/exact'});
+  assert.ok(vm.runInContext('safety.pages["https://github.com/a/exact"].until>Date.now()',f.context));
+  f.context.observeReopen({...f.tab,id:14,url:'chrome://newtab/'});
+  assert.equal(vm.runInContext('safety.pages["chrome://newtab/"]',f.context),undefined);
+});
+
+// Mac, Nov 20: every tab ever typed in was "work in progress" for good.
+test('typing holds a tab four hours, unsent text a day, and sending it lets go',async()=>{
+  const f=fixture();f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
+  const held=async()=>(await f.context.buildTabReport({}))[0].workInProgress;
+  const set=js=>vm.runInContext(`safety.work[7]=${js}`,f.context);
+  set('{url:"https://example.org/article",dirty:true}');
+  assert.equal(await held(),false,'a flag from before typing was timed has lapsed');
+  set('{url:"https://example.org/article",dirty:true,at:Date.now()-3*3600000}');
+  assert.equal(await held(),true,'typed in three hours ago');
+  set('{url:"https://example.org/article",dirty:true,at:Date.now()-5*3600000}');
+  assert.equal(await held(),false,'typed in five hours ago: could be a search or a sent message');
+  set('{url:"https://example.org/article",dirty:true,unsent:true,at:Date.now()-5*3600000}');
+  assert.equal(await held(),true,'text still unsent in a field holds for a day');
+  set('{url:"https://example.org/article",dirty:true,unsent:true,at:Date.now()-25*3600000}');
+  assert.equal(await held(),false);
+  set('{url:"https://example.org/other",dirty:true,unsent:true,at:Date.now()}');
+  assert.equal(await held(),false,'the tab has navigated since');
+});
+
+test('an unloaded console left four hours may go unattended; a loaded one, a recent one and a dev server may not',async()=>{
+  const url='https://cloud.oracle.com/db/adb', old=Date.now()-300*60000;
+  const run=async(override,target=url)=>{
+    const f=fixture({url:target,lastAccessed:old,...override});let removed=0;f.chrome.tabs.remove=(id,cb)=>{removed++;cb();};
+    await f.context.closeSafe({requestId:'r',tabs:[{id:7,url:target}],minInactiveMinutes:240,expiresAt:Date.now()+10000});
+    return removed;
+  };
+  assert.equal(await run({discarded:true,status:'unloaded'}),1,'unloaded and left five hours');
+  assert.equal(await run({}),0,'still loaded: it may hold a form');
+  assert.equal(await run({discarded:true,status:'unloaded',lastAccessed:Date.now()-120*60000}),0,'unloaded but used two hours ago');
+  assert.equal(await run({discarded:true,status:'unloaded'},'http://localhost:3000/'),0,'a dev server never');
+});
+
 test('reports the running worker safe-close capability only for socket browsers', async()=>{
   for (const [agent,supported] of [['Chrome',true],['Firefox',false]]) {
     const f=fixture({},false,agent); f.chrome.tabs.query=(_,cb)=>cb([f.tab]);
@@ -233,7 +291,7 @@ test('explicit approval closes recent selected tabs but preserves live-work guar
     assert.equal(result.length,Object.keys(extra).length===0?1:0);
   }
   const f=fixture({url});f.chrome.tabs.remove=(id,cb)=>cb();
-  vm.runInContext('safety.work[7]={dirty:true}',f.context);
+  vm.runInContext('safety.work[7]={url:"chrome://extensions/",dirty:true,at:Date.now()}',f.context);
   assert.equal((await f.context.closeSafe({approved:true,tabs:[{id:7,url}],expiresAt:Date.now()+10000})).length,0);
 });
 

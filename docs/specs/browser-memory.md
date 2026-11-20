@@ -27,31 +27,29 @@ explicit; Unload selected keeps tabs open and reloadable.
 - A timed sweep (`[tabs] sweep_minutes`) runs the same bounded unload at any
   pressure, so a machine with spare RAM still releases idle tabs. It may also
   close tabs, the one exception to "keep tabs open": only rows that passed every
-  unload guard or were already unloaded, not a work page, and one of: idle
-  past the close floor with a return chance below `close_below_return` (at
-  most 0.95); idle twice the floor, whatever the estimate; or an older copy of
-  an open page idle `close_duplicates_after_hours`. At most
-  `max_close_per_sweep` per sweep. Idle here is **active idle**
-  (`closetune::ActivityClock`): the browsing done in other tabs since this
-  one was last used, from the union of every tab's last 24 activations, with
-  each gap counted up to 10 minutes, so a night or a meeting away adds at most
-  that. With no activation history (old extension, polling) it is wall-clock
-  idle. The extension keeps 24 activations per tab, so before the oldest one a
-  full tab kept, history is incomplete and that span counts as wall clock.
-  Activations of tabs already closed are gone, which undercounts and errs
-  toward keeping. The floor is stretched per tab (`Row::stretch`): visits
-  `1 + 0.5 * min(frecency, 8)` (at most 5x), 2x on a site in use now, mail,
-  calendar, chat and music 3x, reference 1.5x, feeds 0.5x, an older copy 0.5x;
-  browser settings pages use the plain floor. The extension's wall-clock
-  recheck uses the lowest bar the tab could have cleared, never under an hour;
-  active idle is never more than wall-clock idle, so the two always agree.
-  The return chance used for closing is the
-  Jev-adjusted estimate on the user's own time scale
-  (`tabrank::at_pace`): the class half-lives are fixed priors (a page: 12 h)
-  that kept tabs left 6 to 10 h near 0.6, so the curve is rescaled until an
-  unvisited page stands at 0.1 at the learned floor, matching the 1 in 10
-  returns that come later. Visits, a related tab in use and work pages stretch
-  it by the same factors as before; it is never stretched past the prior. `close` is `off`, `review`, `dry-run`
+  unload guard or were already unloaded, a work page only once it is
+  unloaded (see tab-feedback.md), and one of:
+  **unused** (active idle at least its bar, unless Jev's own estimate is 0.8
+  or more); past its bar with a return chance below `close_below_return`;
+  untouched by the wall clock for `close_untouched_after_hours` (default 24);
+  or an older copy of an open page idle `close_duplicates_after_hours`. At
+  most `max_close_per_sweep` (default 25) per sweep. The owner's rule
+  (2026-11-19): with 50 tabs open and 45 unused, 45 close. Idle here is
+  **active idle** (`closetune::ActivityClock`): the browsing done in other
+  tabs since this one was last used, from the union of every tab's last 24
+  activations, with each gap counted up to 10 minutes. So the tabs of the last
+  session (its working set) survive a night, while tabs left behind earlier
+  already reached their bar while the user browsed. With no activation history
+  (old extension, polling) it is wall-clock idle. Before the oldest activation
+  a full tab kept, history is incomplete and counts as wall clock. The bar is
+  `unused_after_minutes` (default 60, at least 30) stretched per tab
+  (`Row::stretch`, at most 4x): visits `1 + 0.5 * min(frecency, 8)` (at most
+  3x), 1.5x on a site in use now, mail, calendar, chat and music 2x, reference
+  1.25x, feeds 0.5x, an older copy 0.5x; browser settings pages use the plain
+  bar and work pages the full 4x. Ordinary pages are taken before work pages. The extension's wall-clock recheck uses the lowest bar the tab could
+  have cleared, never under an hour; active idle is never more than
+  wall-clock idle, so the two always agree. The return chance on the user's
+  time scale (`tabrank::at_pace`) is kept as a second way past the bar. `close` is `off`, `review`, `dry-run`
   (default: log only) or `live`. The extension rechecks each tab live with the
   same idle floor before closing, answers every close command, and saves closed
   URLs to a reopen list in the popup. A tab budget (`keep_tabs`, default 6)

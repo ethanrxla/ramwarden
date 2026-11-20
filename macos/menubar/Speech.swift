@@ -24,6 +24,20 @@ import Combine
     }
     private var speakingReply: String?
     private var speechID = UUID()
+    // The Mac's own voice, for when the daemon cannot produce the warden's: no
+    // key, the provider's quota used up, or the provider unreachable. A reply
+    // nobody hears looked like a broken feature (2026-11-20: the key had no
+    // credit left and the app said only "unavailable on this service").
+    private let systemVoice = AVSpeechSynthesizer()
+    private var systemVoiceOwner: String?
+    /// Statuses that mean "no audio could be made": key rejected or missing,
+    /// quota, provider down. Not 403 (voice off or muted), 422 (nothing to
+    /// say) or 429 (resting, or already speaking): those must stay silent.
+    nonisolated static func fallsBackToSystemVoice(_ status: Int) -> Bool { [401, 402, 502, 503].contains(status) }
+    /// The daemon's own sentence for a refusal: {"error": "..."}.
+    nonisolated static func refusal(_ data: Data) -> String? {
+        ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["error"] as? String
+    }
 
     static func chunks(_ text: String) -> [String] {
         var remaining = text.unicodeScalars[...]
@@ -60,16 +74,27 @@ import Combine
         tasks[warden] = Task { @MainActor in
             defer { if speechID == id { stop(warden) } }
             do {
+                var useSystemVoice = false
                 for chunk in parts {
                     try Task.checkCancellation()
                     guard canSpeak(warden) else { return }
+                    if useSystemVoice { try await self.speakWithSystemVoice(chunk, warden: warden); continue }
                     var request = URLRequest(url: base.appendingPathComponent("warden/speech"))
                     request.httpMethod = "POST"; request.timeoutInterval = 30
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(withJSONObject: ["warden": warden, "text": chunk])
                     let (data, response) = try await URLSession.shared.data(for: request)
                     try Task.checkCancellation()
-                    if (response as? HTTPURLResponse)?.statusCode != 200 { self.errors[warden]="Spoken voice is unavailable on this service right now. Text chat still works."; return }
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if status != 200 {
+                        // Say why in the daemon's words, so it can be fixed.
+                        let why = Self.refusal(data) ?? "The warden's voice is unavailable right now."
+                        guard Self.fallsBackToSystemVoice(status) else { self.errors[warden] = why + " Text chat still works."; return }
+                        self.errors[warden] = why + " Using this Mac's built-in voice until that is fixed."
+                        useSystemVoice = true
+                        try await self.speakWithSystemVoice(chunk, warden: warden)
+                        continue
+                    }
                     guard canSpeak(warden), data.count <= 2_000_000 else { return }
                     self.errors[warden]=nil
                     let player = try AVAudioPlayer(data: data)
@@ -81,9 +106,17 @@ import Combine
         }
     }
 
+    private func speakWithSystemVoice(_ text: String, warden: String) async throws {
+        guard canSpeak(warden) else { return }
+        systemVoiceOwner = warden
+        systemVoice.speak(AVSpeechUtterance(string: text))
+        while systemVoice.isSpeaking { try await Task.sleep(for: .milliseconds(100)) }
+    }
+
     func stop(_ warden: String) {
         tasks.removeValue(forKey: warden)?.cancel()
         players.removeValue(forKey: warden)?.stop()
+        if systemVoiceOwner == warden { systemVoice.stopSpeaking(at: .immediate); systemVoiceOwner = nil }
         if speakingReply == warden { speakingReply = nil }
     }
 }

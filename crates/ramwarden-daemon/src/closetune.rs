@@ -12,10 +12,15 @@
 //!   old extension, polling) has no clock, and wall-clock idle is used instead.
 //!   Known limit: one long read in a single tab, with no switching, adds only
 //!   up to ten minutes, which errs toward keeping tabs.
-//! * **Per-tab stretch** ([`Row::stretch`]): the floor (`close_idle_minutes`, which
-//!   `tabpace` already learns from this user's habits) is lengthened for a tab
-//!   visited often, on a site in use now, or of a kind people keep open (mail,
-//!   chat, docs), and shortened for feeds and older copies of an open page.
+//! * **Per-tab stretch** ([`Row::stretch`]): the base (`unused_after_minutes`,
+//!   one hour of browsing elsewhere) is lengthened for a tab visited often, on
+//!   a site in use now, or of a kind people keep open (mail, chat, docs), and
+//!   shortened for feeds and older copies of an open page, at most 4x.
+//!
+//! What survives a night is the working set of the last session: tabs used
+//! within its last hour or so of browsing. Tabs left behind earlier already
+//! cleared the bar while the user browsed. A tab nothing has touched for a
+//! day of wall clock closes too (`close_untouched_after_hours`).
 //!
 //! Active idle is never more than wall-clock idle, so the wall-clock floor the
 //! extension re-checks ([`crate::browser::close_floor`]) is always met by a
@@ -33,7 +38,10 @@ pub const AWAY_GAP_MINUTES: f64 = 10.0;
 /// oldest retained activation.
 pub const ACTIVATIONS_KEPT: usize = 24;
 /// At most this much longer for a tab visited often.
-const MAX_VISIT_STRETCH: f64 = 5.0;
+const MAX_VISIT_STRETCH: f64 = 3.0;
+/// No tab's bar is more than this many times the base: with a one-hour base,
+/// four hours of browsing elsewhere is unused whatever the tab is.
+const MAX_STRETCH: f64 = 4.0;
 
 /// The user's recent browsing activity in one browser, as sorted timestamps (ms).
 #[derive(Debug, Default)]
@@ -99,26 +107,37 @@ impl ActivityClock {
 }
 
 impl Row {
-    /// How much longer than the floor this tab must go unused.
+    /// How much longer than the base this tab must go unused.
+    ///
+    /// Owner, 2026-11-19: "if I have 50 tabs and I'm not using 45 of them,
+    /// then 45 tabs should close." With the 4 h learned floor times up to
+    /// 5 x 2 x 3, a visited mail tab needed 120 h of browsing elsewhere, and
+    /// 4 tabs closed in a day out of ~60. The stretch now only orders tabs
+    /// within a few hours: capped at [`MAX_STRETCH`].
     pub fn stretch(&self) -> f64 {
         let visits = crate::tabrank::half_life_multiplier(self.frecency, false).min(MAX_VISIT_STRETCH);
-        let related = if self.related { 2.0 } else { 1.0 };
+        let related = if self.related { 1.5 } else { 1.0 };
         let class = match self.class {
             "feed" => 0.5,
-            "reference" => 1.5,
+            "reference" => 1.25,
             // Mail, calendar, chat, music: tabs people keep open to come back to.
-            "app" => 3.0,
+            "app" => 2.0,
             _ => 1.0,
         };
         let copy = if self.duplicate { 0.5 } else { 1.0 };
-        visits * related * class * copy
+        (visits * related * class * copy).min(MAX_STRETCH)
     }
 
-    /// Active-idle minutes this tab needs before the sweep may take it. A
-    /// browser settings page holds no work, so it gets the plain floor.
+    /// Active-idle minutes this tab needs before the sweep may take it: the
+    /// user's browsing elsewhere since they last used it. A browser settings
+    /// page holds no work, so it gets the plain base; a console, account or
+    /// form page gets the longest bar there is.
     pub fn needed_minutes(&self, cfg: &Tabs) -> i64 {
-        let floor = cfg.close_idle_minutes() as f64;
-        let need = if self.status == "browser page" { floor } else { floor * self.stretch() };
+        let base = cfg.unused_minutes();
+        // A work page waits the longest any tab can, whatever else is known.
+        let need = if self.status == "browser page" { base }
+            else if self.work { base * MAX_STRETCH }
+            else { base * self.stretch() };
         need.round() as i64
     }
 }

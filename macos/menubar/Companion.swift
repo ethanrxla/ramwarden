@@ -213,7 +213,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
                 var req = URLRequest(url: base.appendingPathComponent("assistant/chat"))
                 req.httpMethod = "POST"; req.timeoutInterval = 60
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                req.httpBody = try JSONSerialization.data(withJSONObject: ["message":message,"history":history,"warden":profile.id])
+                req.httpBody = try JSONSerialization.data(withJSONObject: ["message":message,"history":history,"warden":profile.id,"name":name])
                 let (data, response) = try await URLSession.shared.data(for: req)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200 else {
@@ -282,7 +282,7 @@ struct FocusProposal: Decodable { let token: String; let tabs: [FocusChoice]; le
         if automated && (!automaticTools || !proposedAutoEligible || proposedScope.isEmpty || proposedScope != UserDefaults.standard.string(forKey:"\(profile.id).autoToolScope")){return}
         if !automated {
         let alert = NSAlert()
-        alert.messageText = proposedPreview.isEmpty ? proposedLabel : "Review Warden’s action"
+        alert.messageText = proposedLabel.isEmpty ? "Review this action" : proposedLabel
         if !proposedPreview.isEmpty {
             let scroll=NSScrollView(frame:NSRect(x:0,y:0,width:520,height:260));scroll.hasVerticalScroller=true
             let text=NSTextView(frame:scroll.bounds);text.isEditable=false;text.isSelectable=true;text.font=NSFont.monospacedSystemFont(ofSize:11,weight:.regular)
@@ -465,7 +465,8 @@ struct AssistantView: View {
                         if model.turns.isEmpty { Text("Ask me what’s using RAM or what I’ve been doing.").foregroundStyle(.secondary) }
                         ForEach(model.turns) { turn in
                             VStack(alignment:.leading,spacing:4) {
-                                Text(turn.role == "user" ? "You" : model.name).font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary)
+                                // The header already names the companion; repeating it over every reply read as a stutter.
+                                if turn.role == "user" { Text("You").font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary) }
                                 if let result=turn.toolResult {
                                     DisclosureGroup(result.label) {
                                         Text(result.output).font(.system(size:10,design:.monospaced)).textSelection(.enabled)

@@ -97,8 +97,10 @@ function isHardProtected(url) {
 }
 
 // Mirrors tabpolicy::is_work_page: signed-in consoles, registrars, and pages in
-// the middle of a form, order or setting. Never closed unattended. (2026-11-02:
-// an Oracle Cloud DB console, an Agensi submit form and Namecheap were closed.)
+// the middle of a form, order or setting. Closed unattended only once the page
+// is unloaded and has sat RELEASE_MINUTES (closeSafe). (2026-11-02: an Oracle
+// Cloud DB console, an Agensi submit form and Namecheap were closed while
+// loaded and in use.)
 const WORK_HOSTS = ["cloud.oracle.com","oraclecloud.com","portal.azure.com","cloud.mongodb.com",
   "cloud.digitalocean.com","app.netlify.com","vercel.com","supabase.com","railway.app","fly.io",
   "namecheap.com","godaddy.com","porkbun.com","name.com","dynadot.com","domains.squarespace.com",
@@ -128,6 +130,19 @@ function isDisposableBrowserPage(url) {
 function siteOf(url) {
   try { const h = new URL(url).hostname.toLowerCase(); return h ? h.split(".").slice(-2).join(".") : ""; }
   catch { return ""; }
+}
+
+// The key a reopen keeps: the exact web host (without "www."). The registered
+// domain was too wide: reopening one Google search kept Gmail, Cloud Console,
+// Search Console and Workspace for a day (Mac, Nov 19: 8 tabs). Browser pages
+// (chrome://newtab, chrome://extensions) hold nothing to come back to and have
+// no key.
+function keepKeyOf(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    return u.hostname.toLowerCase().replace(/^www\./, "");
+  } catch { return ""; }
 }
 
 function isProtectedFor(url, idleMinutes) {
@@ -303,8 +318,10 @@ async function buildTabReport(activity) {
         if (tab.active) selectedByWindow.set(tab.windowId,tab.id);
         const lastActiveMs = tab.active ? now : Math.max(known?.lastActiveMs ?? 0, tab.lastAccessed ?? 0) || now;
         tabActivity[tab.id]={...known,url:tab.url || "",title:tab.title || "",lastActiveMs};
-        const page = safety.pages[tab.url] || {}, site = safety.sites[siteOf(tab.url)] || {};
-        const feedback = {until: Math.max(page.until || 0, site.until || 0), negative: Math.max(page.negative || 0, site.negative || 0)};
+        // A keep holds the page it was given to. A reopen also counts toward its
+        // host's return estimate, but it no longer locks the host's other tabs.
+        const page = safety.pages[tab.url] || {}, site = safety.sites[keepKeyOf(tab.url)] || {};
+        const feedback = {until: page.until || 0, negative: Math.max(page.negative || 0, site.negative || 0)};
         report.push({
           id: tab.id,
           url: tab.url || "",
@@ -325,7 +342,7 @@ async function buildTabReport(activity) {
           activations: known?.activations ?? [],
           departures: known?.departures ?? [],
           activityVersion: 1,
-          workInProgress: safety.work[tab.id]?.url === tab.url && safety.work[tab.id]?.dirty === true,
+          workInProgress: workHeld(tab, now),
           protectedUntilMs: feedback.until || 0,
           negativeFeedback: feedback.negative || 0,
         });
@@ -364,7 +381,7 @@ async function closeTabs(tabIds) {
   for (const id of (tabIds || [])) {
     const tab = await new Promise(r => chrome.tabs.get(id, t => r(chrome.runtime.lastError ? null : t)));
     if (tab && !isProtectedFor(tab.url, _idleMinutes(tab)) && !tab.active && !tab.pinned && !tab.audible && !tab.incognito
-        && !_recentlyUsed(tab) && !safety.work[tab.id]?.dirty && (safety.pages[tab.url]?.until || 0) <= Date.now()) tabs.push(tab);
+        && !_recentlyUsed(tab) && !workHeld(tab) && (safety.pages[tab.url]?.until || 0) <= Date.now()) tabs.push(tab);
   }
   const closed = [];
   for (const tab of tabs) {
@@ -629,7 +646,7 @@ async function discardTabs(command) {
     const tab = await new Promise(resolve => chrome.tabs.get(target.id, tab => {
       resolve(chrome.runtime.lastError ? null : tab);
     }));
-    if (!tab || safety.work[tab.id]?.dirty || (safety.pages[tab.url]?.until||0)>Date.now() || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
+    if (!tab || workHeld(tab) || (safety.pages[tab.url]?.until||0)>Date.now() || tab.url !== target.url || isProtectedFor(tab.url, _idleMinutes(tab)) || tab.active || tab.pinned || tab.audible
         || tab.incognito || tab.discarded || tab.autoDiscardable === false || tab.status !== "complete") continue;
     const last = Math.max(tabActivity[tab.id]?.lastActiveMs || 0, tab.lastAccessed || 0);
     if (!last || (Date.now() - last) / 60000 < minimum) continue;
@@ -661,7 +678,14 @@ const safetyReady = new Promise(resolve => chrome.storage.local.get("tabSafety",
   // Before v2 every tab already open on a site counted as a "reopen" of it once
   // the warden closed one of its pages, so one close protected the whole site
   // for a day (Mac, Nov 19: 14 of 36 tabs). Those site keeps are not the user's.
-  if (safety.v !== 2) { safety.sites = {}; safety.v = 2; }
+  if (safety.v !== 2 && safety.v !== 3) { safety.sites = {}; safety.v = 2; }
+  // v3: keeps are per host, and the page keeps that v1 made in bulk (every open
+  // tab on a closed site, all at once) are lifted. Visit counts stay.
+  if (safety.v === 2) {
+    safety.sites = {}; safety.closedSites = {};
+    for (const p of Object.values(safety.pages)) p.until = 0;
+    safety.v = 3;
+  }
   const cutoff=Date.now()-30*86400000;
   for (const [url,p] of Object.entries(safety.pages)) if (p.updated<cutoff) delete safety.pages[url];
   for (const [url,p] of Object.entries(safety.closed)) if (p.at<cutoff) delete safety.closed[url];
@@ -678,25 +702,49 @@ function protectPage(url,kind) {
   const old=safety.pages[url] || {};
   safety.pages[url]={until:Date.now()+86400000,negative:Math.min(4,(old.negative||0)+1),updated:Date.now()};
   delete safety.closed[url];
-  // A reopen protects the whole site, and each reopen counts: reopening a site
-  // twice is the strongest "I am coming back to this" there is.
-  const site=siteOf(url);
+  // Each reopen also counts for its host: reopening a site twice is the
+  // strongest "I am coming back to this" there is. It raises the return
+  // estimate of the host's tabs; it does not lock them (see observeReopen).
+  const site=keepKeyOf(url);
   if (kind==="reopened" && site) {
     const s=safety.sites[site] || {};
-    safety.sites[site]={until:Date.now()+86400000,negative:Math.min(4,(s.negative||0)+1),updated:Date.now()};
+    safety.sites[site]={negative:Math.min(4,(s.negative||0)+1),updated:Date.now()};
     delete safety.closedSites[site];
   }
   persistSafety();
   if (kind==="reopened") postFeedback(url,kind);
 }
 // A reopen is a tab the user opens, or navigates to from another site, after
-// the warden closed that page or site. A tab that was already open is not one:
-// checking every open tab against closed sites made each close protect all its
-// siblings and report them as reopens, which also skewed the learned pace.
+// the warden closed that page, or soon after it closed another page on the
+// same host (reopening Namecheap lands on a different URL than the one closed).
+// A tab that was already open is not one.
+//
+// Mac, Nov 20: 23 of 46 tabs were locked. A close on github.com stayed on
+// record for 30 days, so the next GitHub page opened, even days later, was a
+// "reopen", and a reopen locked every tab on the host for a day. Now only a
+// visit within REOPEN_WINDOW_MS of the close counts for the host, and a reopen
+// keeps the page that was reopened, not its neighbours.
+const REOPEN_WINDOW_MS = 4*3600000;
 function observeReopen(tab) {
   const url = tab.url || tab.pendingUrl || "";
   if (!url || safetyClosing.has(tab.id)) return;
-  if (safety.closed[url] || safety.closedSites[siteOf(url)]) protectPage(url,"reopened");
+  const host=keepKeyOf(url);
+  if (!host) return;
+  const soon=Date.now()-(safety.closedSites[host]?.at||0) < REOPEN_WINDOW_MS;
+  if (safety.closed[url] || soon) protectPage(url,"reopened");
+}
+// Typed text holds a tab only while it can still be lost. activity.js (v2)
+// reports whether text the user typed is still sitting unsent in a field, and
+// that holds the tab until it is sent, the page navigates, or a day passes.
+// A page still running the older script can only say "something was typed
+// here once": a search, a sent chat message and a half-written form look the
+// same, and that flag never cleared, so every tab ever typed in was held for
+// good (Mac, Nov 20). That weaker signal now lapses after WORK_HOLD_MS, the
+// same four hours after which every other soft protection lifts.
+const WORK_HOLD_MS = RELEASE_MINUTES*60000, UNSENT_HOLD_MS = 86400000;
+function workHeld(tab, now=Date.now()) {
+  const w=safety.work[tab.id];
+  return w?.dirty===true && w.url===tab.url && now-(w.at||0) < (w.unsent ? UNSENT_HOLD_MS : WORK_HOLD_MS);
 }
 async function keepTabs(targets) {
   await safetyReady;
@@ -708,7 +756,8 @@ chrome.runtime.onMessage?.addListener((message,sender) => {
   const tab=sender.tab, now=Date.now();
   const old=tabActivity[tab.id] || {};
   tabActivity[tab.id]={...old,url:tab.url,title:tab.title,lastActiveMs:now,activations:old.activations||[],departures:old.departures||[]};
-  if (message.dirty===true) safety.work[tab.id]={url:tab.url,dirty:true};
+  if (message.dirty===true) safety.work[tab.id]={url:tab.url,dirty:true,at:now,unsent:message.v===2};
+  else if (message.v===2 && message.dirty===false) delete safety.work[tab.id];
   persistActivity(); persistSafety();
 });
 async function closeSafe(command) {
@@ -719,12 +768,16 @@ async function closeSafe(command) {
     const tab=await new Promise(r=>chrome.tabs.get(target.id,t=>r(chrome.runtime.lastError?null:t)));
     const disposable=isDisposableBrowserPage(tab?.url);
     const approved=command.approved===true;
-    if (!tab || tab.url!==target.url || (!approved && isWorkPage(tab.url))
-      || (!approved && !disposable && (isProtected(tab.url) || isHardProtected(tab.url)))
+    // An unloaded page has no state left in it to lose, so once it has also sat
+    // RELEASE_MINUTES a console or account page may go unattended like any
+    // other tab. Hard protections (dev servers, editors) never lift.
+    const lifted=tab?.discarded===true && !isHardProtected(tab.url) && _idleMinutes(tab)>=RELEASE_MINUTES;
+    if (!tab || tab.url!==target.url
+      || (!approved && !disposable && !lifted && (isWorkPage(tab.url) || isProtected(tab.url) || isHardProtected(tab.url)))
       || tab.active!==false || tab.pinned!==false || tab.audible===true || tab.incognito
       // A discarded tab reports "unloaded"; only a page still loading is unsettled.
       || (tab.status!=="complete" && tab.status!=="unloaded") || tab.autoDiscardable===false
-      || safety.work[tab.id]?.dirty || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
+      || workHeld(tab) || (!approved && (safety.pages[tab.url]?.until||0)>Date.now())
       || (!approved && _idleMinutes(tab)<Math.max(60,command.minInactiveMinutes||1440))
       // Approval covers a batch the user may not have read tab by tab.
       || (approved && _recentlyUsed(tab))) continue;
@@ -732,7 +785,7 @@ async function closeSafe(command) {
     const ok=await new Promise(r=>chrome.tabs.remove(tab.id,()=>r(!chrome.runtime.lastError)));
     if (ok) {
       safety.closed[tab.url]={at:Date.now()}; closed.push(tab);
-      if (siteOf(tab.url)) safety.closedSites[siteOf(tab.url)]={at:Date.now()};
+      if (keepKeyOf(tab.url)) safety.closedSites[keepKeyOf(tab.url)]={at:Date.now()};
       postFeedback(tab.url,"confirmed");
     } else safetyClosing.delete(tab.id);
   }

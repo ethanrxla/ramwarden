@@ -40,6 +40,17 @@ pub fn snapshot(st:&AppState)->Vec<Row> {
     }
     rows
 }
+/// The tabs a "close my tabs" request covers: the ones the sweep would take
+/// on its own, then the ones it would only ask about, in the sweep's order.
+pub fn closable(st:&AppState)->Vec<Row> {
+    let rows=snapshot(st);
+    let cfg=st.tabs_config();
+    let auto=crate::browser::close_candidates(&rows,&cfg);
+    let mut rows:Vec<_>=rows.into_iter().filter(|r|r.safe_close_supported && (auto.contains(&r.target) || r.offerable_for_close())).collect();
+    rows.sort_by(crate::browser::close_priority);
+    rows.truncate(cfg.max_close_per_sweep.max(1));
+    rows
+}
 pub fn routes()->Router<AppState> {
     Router::new().route("/browser/review",get(review)).route("/browser/review/respond",post(respond))
         .route("/browser/feedback",post(feedback))
@@ -55,8 +66,12 @@ async fn review(State(st):State<AppState>)->Json<serde_json::Value> {
     if !matches!(st.cfg.tabs.close.as_str(),"live"|"review") || st.on_hold() {return Json(serde_json::json!({"proposal":null}));}
     let rows=snapshot(&st);
     let auto=crate::browser::close_candidates(&rows,&st.tabs_config());
-    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| r.offerable_for_close()
-        && (st.cfg.tabs.close == "review" || !auto.contains(&r.target))).collect();
+    // Live mode asks only about what the sweep will not take on its own. Review
+    // mode closes nothing unattended, so it also asks about everything the
+    // sweep would have taken, which includes unloaded work pages that the
+    // general "may I offer this" test leaves out.
+    let reviewing = st.cfg.tabs.close == "review";
+    let mut uncertain: Vec<_> = rows.into_iter().filter(|r| if auto.contains(&r.target) { reviewing } else { r.offerable_for_close() }).collect();
     uncertain.sort_by(crate::browser::close_priority);
     uncertain.truncate(10);
     let proposal=st.hub.lock().unwrap().tab_review.offer(uncertain,ramwarden_core::history::unix_now());
