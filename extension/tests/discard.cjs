@@ -365,3 +365,18 @@ test('unloads are logged as unloaded, closes as closed',async()=>{
   await g.context.closeTabs([7]);
   assert.equal(closed?.[0]?.kind,'closed');
 });
+
+test('discard replacement uses the new tab for history and acknowledges the requested ID', async () => {
+  const f = fixture();
+  let current = f.tab;
+  let history;
+  f.chrome.tabs.get = (id, cb) => cb(id === current.id ? current : undefined);
+  f.chrome.tabs.discard = (_, cb) => {
+    current = {...current, id: 12, discarded: true};
+    cb(current);
+  };
+  f.chrome.storage.local.set = (data, cb) => { if (data.releasedTabs) history = data.releasedTabs; cb?.(); };
+  assert.deepEqual(Array.from(await f.context.discardTabs(command)), [7]);
+  assert.equal(history[0].tabId, 12);
+  assert.equal(history[0].kind, 'unloaded');
+});
