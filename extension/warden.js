@@ -59,9 +59,10 @@ function analysisHTML(a) {
   const n = (l) => (l || []).length;
   const unload = n(a.unload) ? `<button class="warden-choice" data-act="unload">Unload ${n(a.unload)} tab${n(a.unload) > 1 ? "s" : ""}</button>` : "";
   const close = n(a.close) ? `<button class="warden-choice danger" data-act="close">Close ${n(a.close)} tab${n(a.close) > 1 ? "s" : ""}</button>` : "";
+  const ignore = unload || close ? '<button class="warden-choice" data-act="ignore">Ignore</button>' : "";
   const note = a.tier === "facts" ? `<div class="warden-note">Rules only: no AI model answered.</div>` : "";
   return `<div class="warden-ram" aria-hidden="true">🐏</div><div class="warden-bubble">
-    <div class="warden-text">${wardenEsc(a.reply)}</div><div class="warden-choices">${unload}${close}</div>${note}</div>`;
+    <div class="warden-text">${wardenEsc(a.reply)}</div><div class="warden-choices">${unload}${close}${ignore}</div>${note}</div>`;
 }
 
 // What a storage button is doing while the daemon works, so a press always
