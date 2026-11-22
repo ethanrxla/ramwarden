@@ -6,8 +6,11 @@ const {chromium}=require('playwright');const fs=require('node:fs');const os=requ
  try{
   const cdp=await context.browser().newBrowserCDPSession();const loaded=await cdp.send('Extensions.loadUnpacked',{path:ext});const page=await context.newPage();
   let offline=false;let paid=true;let closedTabs=[];const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  let cleanupRequests = 0;
   await page.route('http://localhost:7823/**',route=>{
    if(offline)return route.abort();const pathname=new URL(route.request().url()).pathname;
+   if (['/browser/close', '/browser/discard'].includes(pathname)) cleanupRequests++;
+   if (pathname === '/browser/explain') return route.fulfill({json:{reply:'One idle tab', unload:[{id:1,url:'https://example.org/'}]}});
    const alert={timestamp:'2026-11-03T13:22:00Z',rule_id:'550',level:7,description:'Demo: a monitored configuration file changed.'};
    const memoryReport = {available_mb: 512, by_verdict_mb: {PROTECTED: 300, IN_USE: 128, IDLE: 0}};
    const body=pathname==='/ram-report'?memoryReport:pathname==='/stats'?{percent:67,used_mb:10977,total_mb:16384,browsers_connected:1}:pathname==='/wardens/threat'?{unlocked:true,status:{headline:'Security events to review',detail:'Demonstration report. No real device data.'},report:{engines:[{name:'Sentinel',state:'on'},{name:'Antivirus',state:'on'}],alerts:Array.from({length:60},(_,i)=>({...alert,rule_id:String(550+i)}))}}:pathname==='/history'?{closed_tabs:closedTabs}:pathname==='/wardens'?{paid:paid?['ram','threat']:[],tier:'pro'}:{};
@@ -20,6 +23,10 @@ const {chromium}=require('playwright');const fs=require('node:fs');const os=requ
   for (const line of ['Protected: 300 MB', 'In use: 128 MB', 'Idle: 0 MB', 'Available: 512 MB']) {
     await breakdown.getByText(line, {exact:true}).waitFor();
   }
+  await page.getByRole('button',{name:'Analyze Now'}).click();
+  await page.getByRole('button',{name:'Ignore',exact:true}).click();
+  assert.equal(await page.locator('#analysis-result').isHidden(), true);
+  assert.equal(cleanupRequests, 0);
   const url='https://example.com/confirmed';
   await page.evaluate(url=>chrome.storage.local.set({releasedTabs:[{url,title:'Local closure',closedAt:Date.parse('2026-11-13T13:00:00Z')}]}),url);
   await page.getByRole('link',{name:'Local closure'}).waitFor();
