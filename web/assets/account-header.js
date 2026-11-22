@@ -34,7 +34,9 @@ export class HeaderAccount {
     this.link.classList.toggle('account-connected',!!identity);
     this.link.dataset.accountState=identity?'signed-in':unknown?'unknown':'signed-out';
     if(!identity) {
-      this.link.textContent=unknown?'Account':'Sign in · Wallet or email';
+      // The hint drops off on narrow screens (style.css) so the header fits one row.
+      if(unknown) this.link.textContent='Account';
+      else this.link.append('Sign in',h('span',{class:'account-hint'},'\u00a0· Wallet or email'));
       this.link.removeAttribute('aria-label');this.link.removeAttribute('title');return;
     }
     this.link.setAttribute('aria-label',`Account: ${identity.label} · signed in`);

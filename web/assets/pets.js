@@ -141,6 +141,7 @@ export class WardenPet {
     this.setMuted(this.muted);
     addEventListener("keydown", () => (this.lastKey = Date.now()), { passive: true });
     this.watchSections();
+    this.watchHero();
     this.watchDemo();
     this.schedule();
   }
@@ -185,6 +186,22 @@ export class WardenPet {
       const s = document.getElementById(id);
       if (s) io.observe(s);
     }
+  }
+
+  // On a phone the corner pet would sit on the hero's copy, and the hero
+  // already shows the same warden on its radar, so the pet steps aside until
+  // most of the hero has scrolled away. Wider screens keep it in the corner.
+  watchHero() {
+    const hero = document.getElementById("top");
+    if (!hero) return;
+    const narrow = matchMedia("(max-width: 700px)");
+    let heroShown = false;
+    const apply = () => this.el.classList.toggle("tucked", narrow.matches && heroShown);
+    new IntersectionObserver(([e]) => {
+      heroShown = e.intersectionRatio > 0.35;
+      apply();
+    }, { threshold: [0, 0.35, 1] }).observe(hero);
+    narrow.addEventListener("change", apply);
   }
 
   // A remark when the demo slider crosses into high or low pressure.
