@@ -181,6 +181,15 @@ fn clamav(log: &Path, db: &Path, now: u64) -> Sensor {
             "watch",
             "No timestamped successful scan in the last 48 hours".to_string(),
         ),
+        Some("scan_finished") if event["exit_code"] == 2 => {
+            let detail = match event["reason"].as_str() {
+                Some("access_denied") => "Scan incomplete: access denied. Check scanner access to selected folders",
+                Some("timeout") => "Scan incomplete: time limit reached",
+                Some("scanner_unavailable") => "Scan could not start. Check the scanner installation",
+                _ => "Scanner returned an error (exit 2); coverage of selected folders is incomplete",
+            };
+            ("error", detail.to_string())
+        }
         _ => (
             "error",
             "Last scan failed or its completion is unverified".to_string(),

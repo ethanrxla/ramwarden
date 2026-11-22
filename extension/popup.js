@@ -39,7 +39,9 @@ async function init() {
   try {
     const report = await daemonJSON("/ram-report");
     renderRamBreakdown(report);
-  } catch { /* daemon may not have profiler data yet */ }
+  } catch {
+    document.getElementById("ram-breakdown").textContent = "Could not load the desktop memory report.";
+  }
 
   chrome.storage.local.get("tabActivity", (result) => {
     const count = Object.keys(result.tabActivity || {}).length;
@@ -275,6 +277,26 @@ document.getElementById("analysis-result").addEventListener("click", async (e) =
 
 function renderRamBreakdown(report) {
   const el = document.getElementById("ram-breakdown");
+  if (report?.by_verdict_mb) {
+    const labels = { PROTECTED: "Protected", IN_USE: "In use", IDLE: "Idle" };
+    const rows = [];
+    for (const [key, label] of Object.entries(labels)) {
+      const mb = report.by_verdict_mb[key];
+      if (!Number.isFinite(mb)) continue;
+      const row = document.createElement("div");
+      row.textContent = `${label}: ${Math.round(mb).toLocaleString()} MB`;
+      rows.push(row);
+    }
+    if (Number.isFinite(report.available_mb)) {
+      const available = document.createElement("div");
+      available.textContent = `Available: ${Math.round(report.available_mb).toLocaleString()} MB`;
+      rows.push(available);
+    }
+    if (rows.length) {
+      el.replaceChildren(...rows);
+      return;
+    }
+  }
   if (!report?.by_category) { el.textContent = "No profiler data yet"; return; }
 
   const CAT_LABEL = {

@@ -634,6 +634,7 @@ if (!IS_FIREFOX) {
 async function discardTabs(command) {
   await safetyReady;
   const confirmed = [];
+  const requestedIds = [];
   const minimum = Math.max(5, Number(command.minInactiveMinutes) || 5);
   for (const target of (command.tabs || []).slice(0, 5)) {
     if(command.standaloneLite){
@@ -652,22 +653,28 @@ async function discardTabs(command) {
     if (!last || (Date.now() - last) / 60000 < minimum) continue;
     // Check stored activity again: activation may have arrived while get awaited.
     if (Date.now() - (tabActivity[tab.id]?.lastActiveMs || last) < minimum * 60000) continue;
-    const ok = await new Promise(resolve => chrome.tabs.discard(tab.id, result => {
+    const discarded = await new Promise(resolve => chrome.tabs.discard(tab.id, result => {
       if (chrome.runtime.lastError) { resolve(false); return; }
       // Firefox may return no Tab from discard; confirm from fresh state.
-      chrome.tabs.get(tab.id, observed => {
-        resolve(!chrome.runtime.lastError && observed?.url === target.url && observed?.discarded === true);
+      chrome.tabs.get(result?.id ?? tab.id, observed => {
+        resolve(!chrome.runtime.lastError && observed?.url === target.url && observed.discarded ? observed : null);
       });
     }));
-    if (ok) { confirmed.push(tab); wardenDiscarded.add(tab.id); }
+    if (discarded) {
+      // Chromium can replace the tab on discard. History targets the current
+      // tab, while the daemon acknowledges the ID from the original command.
+      confirmed.push({...tab, id: discarded.id});
+      requestedIds.push(target.id);
+      wardenDiscarded.add(discarded.id);
+    }
   }
   if (confirmed.length) await _rememberReleased(confirmed, "unloaded");
   if (!IS_FIREFOX) {
-    _send({action: "tabs_discarded", requestId: command.requestId, tabIds: confirmed.map(t => t.id)});
+    _send({action: "tabs_discarded", requestId: command.requestId, tabIds: requestedIds});
     await _sendTabReport();
   }
   // Poll transport reports the resulting discarded flags in its next report.
-  return confirmed.map(t => t.id);
+  return requestedIds;
 }
 
 // Local feedback survives service-worker and browser restarts. No page text is collected.

@@ -58,14 +58,18 @@ def main():
                 result = subprocess.run(command + ['--', *args.paths], stdout=output,
                                         stderr=subprocess.STDOUT, timeout=3 * 3600)
                 code = result.returncode
-            except (OSError, subprocess.TimeoutExpired):
-                event(log, 'scan_finished', exit_code=2)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                reason = 'timeout' if isinstance(exc, subprocess.TimeoutExpired) else 'scanner_unavailable'
+                event(log, 'scan_finished', exit_code=2, reason=reason)
                 return 2
             output.seek(0)
+            reason = None
             for line in output:
+                if any(msg in line.lower() for msg in ('permission denied', 'operation not permitted')):
+                    reason = 'access_denied'
                 if line.rstrip().endswith(' FOUND'):
                     event(log, 'malware_found', detail=line.strip()[:4096])
-            event(log, 'scan_finished', exit_code=code)
+            event(log, 'scan_finished', exit_code=code, **({'reason': reason} if code == 2 and reason else {}))
         return code
 
 
