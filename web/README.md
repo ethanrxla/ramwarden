@@ -33,6 +33,10 @@ command. A push to `main` deploys production. Every other branch gets a preview.
 the site. With the root directory set to `web`, Vercel never reads the repo-root
 `vercel.json`, which describes a separate container setup for the API.
 
+Previews (`*.vercel.app`) are for layout checks. They call the production API,
+which only allows `https://ramwarden.com`, so live sign-in fails there by
+design. Test account flows with `?mock=1`.
+
 `favicon.ico` and `apple-touch-icon.png` are the app icon
 (`assets/brand/mac-app-icon.png`) at browser sizes. Hosts and link previews,
 including Vercel's project tile, look for these files at the site root.
