@@ -264,6 +264,12 @@ document.getElementById("analysis-result").addEventListener("click", async (e) =
   const b = e.target.closest("button[data-act]");
   if (!b || !lastAnalysis) return;
   const act = b.dataset.act;
+  if (act === "ignore") {
+    lastAnalysis = null;
+    document.getElementById("analysis-result").hidden = true;
+    document.getElementById("analyze-btn").focus();
+    return;
+  }
   const targets = (lastAnalysis[act] || []).map(({ browser, id, url }) => ({ browser, id, url }));
   const names = (lastAnalysis[act] || []).map(t => `• ${t.title || t.url}`).slice(0, 12).join("\n");
   if (act === "close" && !confirm(`Close these ${targets.length} tab(s)?\n\n${names}\n\nThey go in the list below so you can reopen them.`)) return;
