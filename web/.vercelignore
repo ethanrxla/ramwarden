@@ -1,0 +1,8 @@
+# Vercel builds this folder straight from GitHub (project root directory: web).
+# Serve only the static site: the tests, container files and notes stay out,
+# as they did in the hand-made deploys before the Git connection.
+tests/
+Dockerfile
+.dockerignore
+nginx.conf
+README.md
