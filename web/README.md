@@ -26,8 +26,23 @@ node web/tests/e2e.cjs             # browser, needs Playwright + Chromium
 
 ## Deploy
 
-Upload the `web/` folder to any static host (Cloudflare Pages, Netlify,
-GitHub Pages). Before going live:
+ramwarden.com is the Vercel project `ethanrxlas-projects/ramwarden`, connected
+to this repository with **Root Directory `web`**, framework "Other" and no build
+command. A push to `main` deploys production. Every other branch gets a preview.
+`.vercelignore` keeps `tests/`, the Dockerfile, `nginx.conf` and this README off
+the site. With the root directory set to `web`, Vercel never reads the repo-root
+`vercel.json`, which describes a separate container setup for the API.
+
+Previews (`*.vercel.app`) are for layout checks. They call the production API,
+which only allows `https://ramwarden.com`, so live sign-in fails there by
+design. Test account flows with `?mock=1`.
+
+`favicon.ico` and `apple-touch-icon.png` are the app icon
+(`assets/brand/mac-app-icon.png`) at browser sizes. Hosts and link previews,
+including Vercel's project tile, look for these files at the site root.
+
+Any other static host (Cloudflare Pages, Netlify, GitHub Pages) works the same
+way: upload `web/`. Before going live:
 
 1. Set `apiBase` in `assets/config.js`, and the same origin in each page's
    `connect-src`.
