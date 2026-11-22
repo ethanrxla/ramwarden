@@ -41,5 +41,6 @@
 .chat-note { margin:8px 14px 10px; font-size:11px; color:var(--muted); }
 
 @media (max-width:600px) {
-  .chat { right:16px; left:16px; width:auto; bottom:150px; max-height:calc(100dvh - 166px); }
+  /* The corner pet is smaller on phones (style.css), so the panel sits lower. */
+  .chat { right:16px; left:16px; width:auto; bottom:96px; max-height:calc(100dvh - 112px); }
 }

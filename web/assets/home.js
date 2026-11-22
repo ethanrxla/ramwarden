@@ -12,6 +12,34 @@ export { detectOs };
 
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// A rotating line's box holds the tallest of its lines, so the headline under
+// it stays put as the lines change. On a phone the longest catchline wraps to
+// three lines and the shortest to one, and the hero jumped by two lines each
+// time. Measured again on resize, because the wrap depends on the width.
+// Phones only: on wide screens the longest line would leave a tall gap.
+function reserveTallest(el, em, lines) {
+  const phone = matchMedia("(max-width: 700px)");
+  const measure = () => {
+    const shown = em.textContent;
+    el.style.minHeight = "";
+    if (!phone.matches) return; // wider screens keep style.css's 2.2em
+    let tallest = 0;
+    for (const line of lines) {
+      em.textContent = line;
+      tallest = Math.max(tallest, el.offsetHeight);
+    }
+    em.textContent = shown;
+    el.style.minHeight = `${tallest}px`;
+  };
+  measure();
+  let width = innerWidth;
+  addEventListener("resize", () => {
+    if (innerWidth === width) return; // iOS fires resize as the toolbar hides
+    width = innerWidth;
+    measure();
+  });
+}
+
 // The italic catchline cycles through its lines, one every few seconds.
 // The lines are shown as written ("Your PC" stays "Your PC" on a Mac, by the
 // owner's choice). Reduced motion keeps the first.
@@ -26,6 +54,7 @@ export function setUpRotators(root = document) {
     if (reduceMotion()) continue;
     const em = el.querySelector("em") || el;
     let i = Math.max(0, lines.indexOf(em.textContent));
+    reserveTallest(el, em, lines);
     setInterval(() => {
       em.classList.add("out");
       setTimeout(() => {
