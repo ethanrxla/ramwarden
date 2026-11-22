@@ -381,14 +381,18 @@ async function run() {
       await p.setViewportSize({ width, height: 720 });
       for (const name of ["index", "threat"]) {
         await p.goto(`${base}/${name}.html?mock=1`);
+        // On a phone the pet steps aside while the hero is in view.
+        if (width < 700) await p.evaluate(() => scrollTo(0, document.getElementById("get").offsetTop));
         const ask = p.locator(".pet-ask");
         await ask.waitFor();
         const sprite = await p.locator("[data-pet] img").boundingBox();
         assert.ok((await ask.boundingBox()).y >= sprite.y + sprite.height + 6);
         await ask.click();
         const chat = await p.locator("#warden-chat").boundingBox();
-        const mute = await p.locator(".pet-mute").boundingBox();
-        assert.ok(chat.y + chat.height < mute.y);
+        // Phones hide Mute (the speech bubble it mutes is hidden there too),
+        // so the panel must clear whichever of the two is the top of the pet.
+        const top = (await p.locator(".pet-mute").boundingBox()) || sprite;
+        assert.ok(chat.y + chat.height < top.y);
       }
     }
   });
